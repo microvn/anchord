@@ -6,6 +6,7 @@
     "dev": "bun --hot src/index.ts",
     "start": "bun src/index.ts",
     "test": "bun test",
+    "test:integration": "RUN_INTEGRATION=1 bun test ./test/integration/*.itest.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun src/db/migrate.ts"

@@ -8,7 +8,7 @@
 // for). This transactional behaviour is integration-verified-later against a real
 // Postgres, not in the fast unit suite.
 
-import { and, asc, eq, max } from "drizzle-orm";
+import { and, asc, eq, max, sql } from "drizzle-orm";
 import { docs, docVersions } from "../db/schema";
 import type { DB } from "../db/client";
 import type { VersionRepo, NewVersionRow, VersionListRow } from "./version";
@@ -74,8 +74,16 @@ export function createVersionRepo(db: DB): VersionRepo {
  * Append a new version transactionally: read max + insert N+1 in one tx so two
  * concurrent submitters cannot both land the same version number (C-002). The
  * service-layer appendVersion() does the same arithmetic against the unit-tested
- * port; this is the production path that holds the row lock. Returns the new
- * version + the previous max (re-anchor seam, annotation-core:S-005).
+ * port; this is the production path. Returns the new version + the previous max
+ * (re-anchor seam, annotation-core:S-005).
+ *
+ * SERIALIZATION: read max()+1 is a read-then-write race — under Postgres' default
+ * READ COMMITTED, concurrent txs all read the same max() (a row lock can't help: the
+ * row being computed does not exist yet, and for a doc's FIRST extra version there is
+ * nothing to lock). We take a per-doc transaction-scoped ADVISORY lock first, so the
+ * max→insert is serialized PER DOC (different docs never block each other). The lock
+ * releases automatically at commit/rollback. The unique(doc_id, version) index is the
+ * backstop, but the advisory lock prevents the collision rather than rejecting a loser.
  */
 export async function appendVersionTx(
   db: DB,
@@ -85,6 +93,10 @@ export async function appendVersionTx(
   publishedBy: string | null = null,
 ): Promise<{ docId: string; version: number; previousVersion: number | null }> {
   return db.transaction(async (tx) => {
+    // Per-doc advisory lock keyed on the doc id (hashed to the bigint the lock takes).
+    // Held until this tx commits/rolls back; serializes concurrent appends for THIS doc.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${docId}, 0))`);
+
     const [row] = await tx
       .select({ max: max(docVersions.version) })
       .from(docVersions)
