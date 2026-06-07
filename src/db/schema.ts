@@ -86,6 +86,45 @@ export const shareLinks = pgTable(
   },
 );
 
+// doc_members (sharing S-003): per-doc membership granted by an email invite.
+// An owner invites someone by email + role; if that email already has an account
+// the row is ACTIVE immediately (userId set), otherwise it is PENDING (userId null,
+// matched by email) and activates when an account for that email is created + verified
+// (C-006). Reuses the share_role enum (viewer|commenter|editor) — owner is implicit/
+// separate, never an invited role.
+//
+// Portable on purpose (no Postgres-only features) so a future SQLite build stays open.
+// The live cross-module activation (auth's activatePendingInvites drives the concrete
+// repo at signup) is integration-verified-later; the row shape + repo logic are
+// unit-tested in src/sharing/invite.test.ts.
+export const memberStatus = pgEnum("member_status", ["active", "pending"]);
+
+export const docMembers = pgTable(
+  "doc_members",
+  {
+    id: id(),
+    docId: uuid("doc_id")
+      .notNull()
+      .references(() => docs.id, { onDelete: "cascade" }),
+    // Bound to a user once an account exists; NULL while the invite is pending.
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    // The invited email — the match key for pending invites (normalized lowercase+trim).
+    email: text("email").notNull(),
+    role: shareRole("role").notNull(),
+    message: text("message"),
+    invitedBy: text("invited_by")
+      .notNull()
+      .references(() => user.id),
+    status: memberStatus("status").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("doc_members_doc_idx").on(t.docId),
+    index("doc_members_email_idx").on(t.email),
+    index("doc_members_user_idx").on(t.userId),
+  ],
+);
+
 // ── better-auth tables (auth S-001) ────────────────────────────────────────
 // Hand-added to match better-auth's expected schema (getAuthTables(options)):
 // user / session / account / verification. better-auth maps its model fields to
