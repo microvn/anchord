@@ -128,6 +128,19 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
     // env). A missing provider is absent from socialProviders, so better-auth never
     // exposes its callback — the self-host "configure to enable" path (C-004 owned by S-004).
     socialProviders: socialProvidersFrom(opts.oauth),
+    // S-003 (C-003/AS-010): account-linking safety. Default-deny so better-auth never
+    // silently merges an UNTRUSTED email — no trustedProviders (nothing auto-links on the
+    // strength of the provider alone) and allowDifferentEmails:false (a different email can
+    // never link). The unit-tested security contract is decideAccountLink() in link.ts; the
+    // actual merge wiring here (and the require_confirmation "prove ownership" flow) is
+    // integration-verified-later ([→E2E]).
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: [],
+        allowDifferentEmails: false,
+      },
+    },
     // No JWT plugin + DB storage left on => sessions are DB-backed and revocable (C-001).
   });
 }
