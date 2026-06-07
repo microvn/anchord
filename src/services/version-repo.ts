@@ -8,7 +8,7 @@
 // for). This transactional behaviour is integration-verified-later against a real
 // Postgres, not in the fast unit suite.
 
-import { asc, eq, max } from "drizzle-orm";
+import { and, asc, eq, max } from "drizzle-orm";
 import { docs, docVersions } from "../db/schema";
 import type { DB } from "../db/client";
 import type { VersionRepo, NewVersionRow, VersionListRow } from "./version";
@@ -56,6 +56,16 @@ export function createVersionRepo(db: DB): VersionRepo {
         .from(docVersions)
         .where(eq(docVersions.docId, docId))
         .orderBy(asc(docVersions.version));
+    },
+
+    async getVersion(docId: string, version: number) {
+      // S-003 restore read: a single version's content + hash, or null if absent.
+      // Read-only — the service re-appends this content as a NEW version (append-copy).
+      const [row] = await db
+        .select({ content: docVersions.content, contentHash: docVersions.contentHash })
+        .from(docVersions)
+        .where(and(eq(docVersions.docId, docId), eq(docVersions.version, version)));
+      return row ?? null;
     },
   };
 }

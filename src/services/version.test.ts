@@ -3,6 +3,7 @@ import {
   appendVersion,
   updateTitle,
   listVersionHistory,
+  restoreVersion,
   type VersionRepo,
   type AppendResult,
   type VersionHistoryRow,
@@ -69,6 +70,10 @@ function fakeRepo(seed: {
         .filter((r) => r.docId === docId)
         .sort((a, b) => a.version - b.version)
         .map((r) => ({ version: r.version, createdAt: r.createdAt, publishedBy: r.publishedBy }));
+    },
+    async getVersion(docId, version) {
+      const found = rows.find((r) => r.docId === docId && r.version === version);
+      return found ? { content: found.content, contentHash: found.contentHash } : null;
     },
   };
   return { repo, rows, titles };
@@ -232,4 +237,92 @@ test("AS-003.T1: empty history — doc with no versions returns []", async () =>
   const history = await listVersionHistory("empty", f.repo);
 
   expect(history).toEqual([]);
+});
+
+// Story S-003: Restore a previous version. Restore is APPEND-COPY — it reads the
+// target version's content and appends a NEW version copying it (reusing
+// appendVersion, so numbering + the re-anchor seam are shared). It never mutates,
+// moves, or deletes an existing version (C-001 / C-004).
+
+test("AS-004.T1: restore appends a new version whose content + contentHash == the restored version's", async () => {
+  // doc at v3; restore v1 → v4 created with content (and hash) EQUAL to v1's.
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [{ content: "v1 body" }, { content: "v2 body" }, { content: "v3 body" }],
+  });
+  const v1Hash = f.rows[0].contentHash;
+
+  const res: AppendResult = await restoreVersion("doc-1", 1, f.repo);
+
+  expect(res.docId).toBe("doc-1");
+  expect(res.version).toBe(4); // append-copy → next number, not a pointer move
+  expect(res.previousVersion).toBe(3); // re-anchor seam: previous current was v3
+
+  // The new row copies v1's content AND its contentHash verbatim.
+  expect(f.rows).toHaveLength(4);
+  expect(f.rows[3].version).toBe(4);
+  expect(f.rows[3].content).toBe("v1 body");
+  expect(f.rows[3].contentHash).toBe(v1Hash);
+});
+
+test("AS-004.T2: current = the new version; intermediate versions (v2, v3) still present", async () => {
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [{ content: "v1 body" }, { content: "v2 body" }, { content: "v3 body" }],
+  });
+
+  await restoreVersion("doc-1", 1, f.repo);
+
+  // Current = the freshly created v4 (highest number).
+  expect(await f.repo.currentMaxVersion("doc-1")).toBe(4);
+  // Nothing deleted: v1, v2, v3 all remain, content untouched.
+  const versions = f.rows.map((r) => r.version).sort((a, b) => a - b);
+  expect(versions).toEqual([1, 2, 3, 4]);
+  expect(f.rows.find((r) => r.version === 2)?.content).toBe("v2 body");
+  expect(f.rows.find((r) => r.version === 3)?.content).toBe("v3 body");
+});
+
+test("C-004: restore deletes no version — history length grows by exactly 1, none removed", async () => {
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [{ content: "v1 body" }, { content: "v2 body" }, { content: "v3 body" }],
+  });
+  const before = f.rows.map((r) => ({ version: r.version, content: r.content }));
+
+  await restoreVersion("doc-1", 1, f.repo);
+
+  // Length grew by exactly one (append, never delete).
+  expect(f.rows).toHaveLength(before.length + 1);
+  // Every pre-existing row is still present, unchanged.
+  for (const prev of before) {
+    const still = f.rows.find((r) => r.version === prev.version);
+    expect(still?.content).toBe(prev.content);
+  }
+});
+
+test("C-004: restoring the CURRENT (highest) version still appends a copy", async () => {
+  // Edge — boundary: restoring the highest version is not a no-op; it appends.
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [{ content: "v1 body" }, { content: "v2 body" }, { content: "v3 body" }],
+  });
+
+  const res = await restoreVersion("doc-1", 3, f.repo);
+
+  expect(res.version).toBe(4);
+  expect(f.rows).toHaveLength(4);
+  expect(f.rows[3].content).toBe("v3 body"); // v4 copies v3
+  expect(await f.repo.currentMaxVersion("doc-1")).toBe(4);
+});
+
+test("AS-004.T1: restoring a non-existent version number rejects (no silent no-op)", async () => {
+  // Edge — error path: target version absent → throw/reject, do not append silently.
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [{ content: "v1 body" }, { content: "v2 body" }],
+  });
+
+  await expect(restoreVersion("doc-1", 99, f.repo)).rejects.toThrow();
+  // History unchanged — nothing appended on the error path.
+  expect(f.rows).toHaveLength(2);
 });

@@ -46,6 +46,14 @@ export interface VersionRepo {
   setTitle(docId: string, title: string): Promise<void>;
   /** Read all versions for a doc (S-002 history), ascending by version. */
   listVersions(docId: string): Promise<VersionListRow[]>;
+  /**
+   * Read a single version's content + hash (S-003 restore), or null if the
+   * (docId, version) pair does not exist. Read-only — never mutates a row.
+   */
+  getVersion(
+    docId: string,
+    version: number,
+  ): Promise<{ content: string; contentHash: string } | null>;
 }
 
 export interface AppendResult {
@@ -87,6 +95,33 @@ export async function appendVersion(
  */
 export async function updateTitle(docId: string, title: string, repo: VersionRepo): Promise<void> {
   await repo.setTitle(docId, title);
+}
+
+/**
+ * Restore a previous version (S-003 / AS-004). APPEND-COPY: read the target
+ * version's content+hash and append a NEW version copying it. The entire history
+ * stays intact — no existing version is mutated, moved, or deleted (C-001 / C-004).
+ * Restoring the current (highest) version still appends a copy; an unknown target
+ * version throws (no silent no-op).
+ *
+ * RE-ANCHOR SEAM: restore goes through `appendVersion`, so it returns the same
+ * `{ previousVersion, version }` shape — the hook a future re-anchor step
+ * (annotation-core:S-005) attaches to. Re-anchor on restore is wired via that same
+ * new-version seam and is deferred to the annotation-core cluster (AS-005 / C-005).
+ */
+export async function restoreVersion(
+  docId: string,
+  targetVersion: number,
+  repo: VersionRepo,
+  publishedBy: string | null = null,
+): Promise<AppendResult> {
+  const target = await repo.getVersion(docId, targetVersion);
+  if (!target) {
+    throw new Error(`Cannot restore: version ${targetVersion} not found for doc ${docId}`);
+  }
+  // Reuse appendVersion so numbering (C-002) + the re-anchor seam are shared, and
+  // the restored content is re-inserted verbatim (same content + contentHash).
+  return appendVersion(docId, target.content, target.contentHash, repo, publishedBy);
 }
 
 /** A history entry: a version row plus a current-version marker (S-002 / AS-003). */
