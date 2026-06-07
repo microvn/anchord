@@ -1,0 +1,42 @@
+# anchord self-host — `docker compose up` brings up app + Postgres. Data in named
+# volumes on your machine. No telemetry. SMTP is mandatory (set in .env).
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: anchord
+      POSTGRES_PASSWORD: anchord
+      POSTGRES_DB: anchord
+    volumes:
+      - anchord_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anchord"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }   # wait for Postgres healthy before boot (AS-002)
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://anchord:anchord@db:5432/anchord
+      APP_SECRET: ${APP_SECRET:?set APP_SECRET in .env (min 16 chars)}
+      SMTP_HOST: ${SMTP_HOST:?SMTP is mandatory — set SMTP_* in .env}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:?SMTP is mandatory}
+      SMTP_PASS: ${SMTP_PASS:?SMTP is mandatory}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      ASSETS_DIR: /data/assets
+    volumes:
+      - anchord_assets:/data/assets
+    ports:
+      - "3000:3000"
+
+volumes:
+  anchord_db:
+  anchord_assets:

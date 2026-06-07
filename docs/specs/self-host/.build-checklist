@@ -1,0 +1,12 @@
+[x] AS-001    — /health ok (db reachable) + integration: compose pg→migrate→/health | owner: S-001 | src/app.test.ts, integration-verify
+[x] AS-002    — /health degraded when db unreachable; compose depends_on healthy     | owner: S-001 | src/app.test.ts
+[x] AS-003    — thiếu/APP_SECRET<16 → ConfigError, named                              | owner: S-002 | src/config/env.test.ts
+[x] AS-004    — thiếu SMTP → ConfigError, named                                       | owner: S-002 | src/config/env.test.ts
+[x] AS-005    — ảnh lưu trên volume (ASSETS_DIR); content text Postgres               | owner: S-003 | src/storage/assets.test.ts
+[x] AS-006    — volume không ghi được → AssetStorageError rõ, không crash; chống traversal | owner: S-003 | src/storage/assets.test.ts
+[x] AS-007    — không outbound telemetry khi xử lý request                            | owner: S-004 | src/app.test.ts
+[~] C-001     — compose+Postgres+volume; migrate-on-boot fail-closed → INTEGRATION-verified (docker), no unit test | owner: S-001 | integration-verify + Dockerfile CMD
+[x] C-002     — config bắt buộc (APP_SECRET≥16/DATABASE_URL/SMTP_*) validate boot      | owner: S-002 | src/config/env.test.ts
+[x] C-003     — content text Postgres; ảnh binary trên volume                         | owner: S-003 | src/storage/assets.test.ts
+[x] C-004     — mặc định không telemetry                                              | owner: S-004 | src/app.test.ts
+[x] C-005     — lỗi storage báo rõ, không crash                                       | owner: S-003 | src/storage/assets.test.ts
