@@ -42,6 +42,9 @@ export const docVersions = pgTable(
     version: integer("version").notNull(),
     content: text("content").notNull(), // HTML/MD text; images live on the assets volume
     contentHash: text("content_hash").notNull(),
+    // Author who published this version (S-001). Nullable + no FK for now: the users
+    // table does not exist until the auth cluster; the FK is added there later.
+    publishedBy: uuid("published_by"),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("doc_version_uq").on(t.docId, t.version)],

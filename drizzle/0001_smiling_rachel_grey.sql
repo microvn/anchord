@@ -1,0 +1,1 @@
+ALTER TABLE "doc_versions" ADD COLUMN "published_by" uuid;
