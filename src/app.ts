@@ -19,6 +19,8 @@ export type AppDeps = {
   loadViewer?: (slug: string) => Promise<ViewerDoc | null>;
   /** Look up a version's raw content by version id (for /v/:id content route). */
   loadContent?: (versionId: string) => Promise<{ content: string; kind: ViewerDoc["kind"] } | null>;
+  /** better-auth request handler (auth S-001); mounted at /api/auth/*. */
+  authHandler?: (request: Request) => Promise<Response> | Response;
 };
 
 const esc = (s: string) =>
@@ -55,6 +57,14 @@ export function createApp(deps: AppDeps) {
       set.status = 200;
       return { status: db_ok ? "ok" : "degraded", db_ok, version: "0.0.0" };
     });
+
+  // /api/auth/* — better-auth handles sign up / sign in / session / logout (S-001).
+  // Mounted as a catch-all so better-auth owns the whole sub-tree (DB-backed,
+  // httpOnly session cookie signed with APP_SECRET — C-001).
+  if (deps.authHandler) {
+    const authHandler = deps.authHandler;
+    app.all("/api/auth/*", ({ request }) => authHandler(request));
+  }
 
   // /d/:slug — viewer shell (trusted app origin)
   if (deps.loadViewer) {

@@ -1,13 +1,21 @@
 import { loadConfig } from "./config/env";
 import { createDb } from "./db/client";
 import { createApp } from "./app";
+import { createAuth } from "./auth/auth";
 
-const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002)
-const { dbCheck } = createDb(cfg.DATABASE_URL);
+const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
+const { db, dbCheck } = createDb(cfg.DATABASE_URL);
+
+// S-001: better-auth bound to the real Postgres DB; APP_SECRET signs the session cookie.
+const auth = createAuth(db, {
+  secret: cfg.APP_SECRET,
+  baseURL: `http://localhost:${cfg.PORT}`,
+});
 
 const app = createApp({
   dbCheck,
   corsOrigin: cfg.CORS_ORIGIN === "*" ? true : cfg.CORS_ORIGIN.split(","),
+  authHandler: auth.handler,
 }).listen(cfg.PORT);
 
 console.log(`anchord on http://localhost:${cfg.PORT} (${cfg.NODE_ENV})`);

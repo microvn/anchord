@@ -41,6 +41,27 @@ test("AS-004: parseConfig refuses missing SMTP, names it", () => {
   expect((err as ConfigError).message).toContain("SMTP");
 });
 
+test("C-008: SMTP mandatory at boot — config load fails when SMTP_HOST is absent", () => {
+  // Auth C-008: the app must not start without SMTP (so email verification always
+  // works, no no-verify degrade mode). Boot config load is the enforcement point.
+  const { SMTP_HOST, ...rest } = valid;
+  let err: unknown;
+  try { parseConfig(rest); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ConfigError);
+  expect((err as ConfigError).message).toContain("SMTP_HOST");
+});
+
+test("C-008: SMTP mandatory at boot — missing SMTP_USER/SMTP_PASS also refuses boot", () => {
+  for (const missing of ["SMTP_USER", "SMTP_PASS"] as const) {
+    const rest = { ...valid };
+    delete (rest as Record<string, unknown>)[missing];
+    let err: unknown;
+    try { parseConfig(rest); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as ConfigError).message).toContain(missing);
+  }
+});
+
 test("C-002: parseConfig refuses a non-postgres DATABASE_URL", () => {
   let err: unknown;
   try { parseConfig({ ...valid, DATABASE_URL: "mysql://x" }); } catch (e) { err = e; }
