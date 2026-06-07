@@ -29,6 +29,14 @@ export interface NewVersionRow {
  * Note the surface: read current max + append a row + set the doc title. There is
  * intentionally NO method that mutates an existing version row (C-001 immutability).
  */
+/** A version row as read back for history display (S-002). Read-only projection. */
+export interface VersionListRow {
+  version: number;
+  createdAt: Date;
+  /** Author id; null until the auth cluster lands (see publishedBy seam). */
+  publishedBy: string | null;
+}
+
 export interface VersionRepo {
   /** Highest version number for the doc, or null if it has none yet. */
   currentMaxVersion(docId: string): Promise<number | null>;
@@ -36,6 +44,8 @@ export interface VersionRepo {
   insertVersion(row: NewVersionRow): Promise<{ version: number }>;
   /** Update docs.title only. Must not touch doc_versions. */
   setTitle(docId: string, title: string): Promise<void>;
+  /** Read all versions for a doc (S-002 history), ascending by version. */
+  listVersions(docId: string): Promise<VersionListRow[]>;
 }
 
 export interface AppendResult {
@@ -77,4 +87,35 @@ export async function appendVersion(
  */
 export async function updateTitle(docId: string, title: string, repo: VersionRepo): Promise<void> {
   await repo.setTitle(docId, title);
+}
+
+/** A history entry: a version row plus a current-version marker (S-002 / AS-003). */
+export interface VersionHistoryRow extends VersionListRow {
+  /** True for exactly one row — the highest version number (the current version). */
+  isCurrent: boolean;
+}
+
+/**
+ * List a doc's version history for display (S-002 / AS-003). Pure read-only
+ * mapping over the repo rows plus a current-marker computation: the current
+ * version is the highest version number. Rows are returned ASCENDING by version
+ * (oldest first, current last) — that order is the contract the tests assert.
+ *
+ * AUTH SEAM: `publishedBy` is the raw author id (or null) — resolving it to a
+ * user name waits for the auth cluster (no users table yet).
+ */
+export async function listVersionHistory(
+  docId: string,
+  repo: VersionRepo,
+): Promise<VersionHistoryRow[]> {
+  const rows = await repo.listVersions(docId);
+  if (rows.length === 0) return []; // empty history → nothing to mark current
+
+  const maxVersion = Math.max(...rows.map((r) => r.version));
+  return rows.map((r) => ({
+    version: r.version,
+    createdAt: r.createdAt,
+    publishedBy: r.publishedBy,
+    isCurrent: r.version === maxVersion,
+  }));
 }

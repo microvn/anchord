@@ -8,10 +8,10 @@
 // for). This transactional behaviour is integration-verified-later against a real
 // Postgres, not in the fast unit suite.
 
-import { eq, max } from "drizzle-orm";
+import { asc, eq, max } from "drizzle-orm";
 import { docs, docVersions } from "../db/schema";
 import type { DB } from "../db/client";
-import type { VersionRepo, NewVersionRow } from "./version";
+import type { VersionRepo, NewVersionRow, VersionListRow } from "./version";
 
 /** Construct a VersionRepo backed by a Drizzle DB handle. */
 export function createVersionRepo(db: DB): VersionRepo {
@@ -41,6 +41,21 @@ export function createVersionRepo(db: DB): VersionRepo {
     async setTitle(docId: string, title: string): Promise<void> {
       // C-003: title/metadata only — never touches doc_versions.
       await db.update(docs).set({ title }).where(eq(docs.id, docId));
+    },
+
+    async listVersions(docId: string): Promise<VersionListRow[]> {
+      // S-002 history read: all versions for the doc, ascending by version.
+      // The service computes the current-marker; this only selects rows.
+      // publishedBy is returned raw (null until the auth cluster resolves names).
+      return db
+        .select({
+          version: docVersions.version,
+          createdAt: docVersions.createdAt,
+          publishedBy: docVersions.publishedBy,
+        })
+        .from(docVersions)
+        .where(eq(docVersions.docId, docId))
+        .orderBy(asc(docVersions.version));
     },
   };
 }
