@@ -17,6 +17,7 @@ function cfg(oauth: Config["oauth"]): Config {
     PORT: 3000,
     APP_SECRET: "x".repeat(16),
     DATABASE_URL: "postgres://x",
+    email: { kind: "smtp", host: "h", port: 587, user: "u", pass: "p" },
     SMTP: { host: "h", port: 587, user: "u", pass: "p" },
     ASSETS_DIR: "/data/assets",
     CORS_ORIGIN: "*",

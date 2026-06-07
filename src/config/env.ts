@@ -8,40 +8,76 @@ export class ConfigError extends Error {
   }
 }
 
-// Required config validated at boot (self-host C-002). SMTP is mandatory (auth C-008):
-// the app must not start without it, so there is no "no-SMTP" degrade path.
-const schema = z.object({
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  PORT: z.coerce.number().int().positive().default(3000),
-  // APP_SECRET signs sessions/share-link tokens — must be hard to guess.
-  APP_SECRET: z.string().min(16, "APP_SECRET must be at least 16 characters"),
-  DATABASE_URL: z
-    .string()
-    .refine((s) => /^postgres(ql)?:\/\//.test(s), "DATABASE_URL must be a postgres:// URL"),
-  // SMTP — mandatory; missing any of these refuses boot.
-  SMTP_HOST: z.string().min(1, "SMTP_HOST is required (SMTP is mandatory)"),
-  SMTP_PORT: z.coerce.number().int().positive().default(587),
-  SMTP_USER: z.string().min(1, "SMTP_USER is required (SMTP is mandatory)"),
-  SMTP_PASS: z.string().min(1, "SMTP_PASS is required (SMTP is mandatory)"),
-  // Images live on a volume (C-003); content text lives in Postgres.
-  ASSETS_DIR: z.string().default("/data/assets"),
-  CORS_ORIGIN: z.string().default("*"),
+// Required config validated at boot (self-host C-002). An EMAIL PROVIDER is mandatory
+// (auth C-008): the app must not start unless EITHER a complete SMTP group OR
+// RESEND_API_KEY is configured — so email verification always works, no degrade path.
+// Both present → Resend HTTP API wins (resolved in `emailFrom`).
+const EMAIL_PROVIDER_REQUIRED =
+  "an email provider is required: set SMTP_* (HOST+PORT+USER+PASS) or RESEND_API_KEY";
+
+const schema = z
+  .object({
+    NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+    PORT: z.coerce.number().int().positive().default(3000),
+    // APP_SECRET signs sessions/share-link tokens — must be hard to guess.
+    APP_SECRET: z.string().min(16, "APP_SECRET must be at least 16 characters"),
+    DATABASE_URL: z
+      .string()
+      .refine((s) => /^postgres(ql)?:\/\//.test(s), "DATABASE_URL must be a postgres:// URL"),
+    // SMTP — now OPTIONAL per field. A provider is "SMTP" only when the WHOLE group
+    // (HOST+PORT+USER+PASS) is present; the cross-field rule below enforces that.
+    SMTP_HOST: z.string().min(1).optional(),
+    SMTP_PORT: z.coerce.number().int().positive().default(587),
+    SMTP_USER: z.string().min(1).optional(),
+    SMTP_PASS: z.string().min(1).optional(),
+    // Resend HTTP API key — the alternative email provider (auth C-008). Both present
+    // → Resend wins.
+    RESEND_API_KEY: z.string().min(1).optional(),
+    // Images live on a volume (C-003); content text lives in Postgres.
+    ASSETS_DIR: z.string().default("/data/assets"),
+    CORS_ORIGIN: z.string().default("*"),
   // OAuth providers (auth S-002) are OPTIONAL per self-host: an operator who does not
   // configure a provider simply does not get that sign-in button (C-004 / S-004 owns
   // the "disabled provider not shown" UI). A provider is ENABLED only when BOTH its id
   // and secret are present — a half-configured provider stays off, never half-on.
-  GITHUB_CLIENT_ID: z.string().min(1).optional(),
-  GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
-  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
-  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
-});
+    GITHUB_CLIENT_ID: z.string().min(1).optional(),
+    GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
+    GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+    GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+  })
+  // C-008 / self-host AS-004 + C-002: an email provider is mandatory. Valid only when
+  // EITHER the full SMTP group is present OR RESEND_API_KEY is set. Neither → refuse boot.
+  .superRefine((d, ctx) => {
+    const smtpComplete = Boolean(d.SMTP_HOST && d.SMTP_USER && d.SMTP_PASS);
+    const hasResend = Boolean(d.RESEND_API_KEY);
+    if (!smtpComplete && !hasResend) {
+      ctx.addIssue({ code: "custom", message: EMAIL_PROVIDER_REQUIRED, path: ["email"] });
+    }
+  });
+
+/**
+ * The resolved, active email provider (auth C-008). Exactly one transport runs:
+ * Resend HTTP API when RESEND_API_KEY is set (wins over SMTP), else SMTP.
+ */
+export type EmailProvider =
+  | { kind: "resend"; apiKey: string }
+  | { kind: "smtp"; host: string; port: number; user: string; pass: string };
 
 export type Config = {
   NODE_ENV: "development" | "production" | "test";
   PORT: number;
   APP_SECRET: string;
   DATABASE_URL: string;
-  SMTP: { host: string; port: number; user: string; pass: string };
+  /**
+   * The active email provider, resolved from the SMTP group or RESEND_API_KEY (both → resend).
+   * This is what the mail transport selector reads (auth AS-012).
+   */
+  email: EmailProvider;
+  /**
+   * Legacy raw SMTP block, present only when the SMTP group was supplied — kept for
+   * back-compat. Prefer `email`. Undefined when only Resend is configured.
+   */
+  SMTP?: { host: string; port: number; user: string; pass: string };
   ASSETS_DIR: string;
   CORS_ORIGIN: string;
   // Present only when both id+secret were supplied; otherwise undefined (provider off).
@@ -81,12 +117,22 @@ export function parseConfig(raw: Record<string, unknown>): Config {
     );
   }
   const d = r.data;
+  const smtpComplete = Boolean(d.SMTP_HOST && d.SMTP_USER && d.SMTP_PASS);
+  // Legacy SMTP block: only when the full group was supplied.
+  const smtp = smtpComplete
+    ? { host: d.SMTP_HOST!, port: d.SMTP_PORT, user: d.SMTP_USER!, pass: d.SMTP_PASS! }
+    : undefined;
+  // Resolve the ACTIVE provider: Resend wins when its key is present (C-008).
+  const email: EmailProvider = d.RESEND_API_KEY
+    ? { kind: "resend", apiKey: d.RESEND_API_KEY }
+    : { kind: "smtp", host: d.SMTP_HOST!, port: d.SMTP_PORT, user: d.SMTP_USER!, pass: d.SMTP_PASS! };
   return {
     NODE_ENV: d.NODE_ENV,
     PORT: d.PORT,
     APP_SECRET: d.APP_SECRET,
     DATABASE_URL: d.DATABASE_URL,
-    SMTP: { host: d.SMTP_HOST, port: d.SMTP_PORT, user: d.SMTP_USER, pass: d.SMTP_PASS },
+    email,
+    SMTP: smtp,
     ASSETS_DIR: d.ASSETS_DIR,
     CORS_ORIGIN: d.CORS_ORIGIN,
     oauth: oauthFrom(d),

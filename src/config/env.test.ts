@@ -1,20 +1,25 @@
 import { test, expect } from "bun:test";
 import { parseConfig, ConfigError } from "./env";
 
-const valid = {
+// A minimal valid env with the SMTP provider configured. Other tests vary the
+// email provider (SMTP / Resend / both / neither) on top of this base.
+const baseNoMail = {
   APP_SECRET: "x".repeat(16),
   DATABASE_URL: "postgres://anchord:anchord@localhost:5432/anchord",
+};
+const smtpEnv = {
   SMTP_HOST: "smtp.example.com",
   SMTP_PORT: "587",
   SMTP_USER: "anchord",
   SMTP_PASS: "secret",
 };
+const valid = { ...baseNoMail, ...smtpEnv };
 
 test("AS-001: parseConfig accepts a complete valid env", () => {
   const cfg = parseConfig(valid);
   expect(cfg.APP_SECRET).toBe(valid.APP_SECRET);
   expect(cfg.DATABASE_URL).toBe(valid.DATABASE_URL);
-  expect(cfg.SMTP.host).toBe("smtp.example.com");
+  expect(cfg.SMTP?.host).toBe("smtp.example.com");
   expect(cfg.PORT).toBe(3000); // default
 });
 
@@ -33,33 +38,61 @@ test("AS-003: parseConfig refuses APP_SECRET shorter than 16", () => {
   expect((err as ConfigError).message).toContain("APP_SECRET");
 });
 
-test("AS-004: parseConfig refuses missing SMTP, names it", () => {
-  const { SMTP_HOST, ...rest } = valid;
+test("AS-004 / self-host AS-004: no email provider at all (neither SMTP nor RESEND_API_KEY) refuses boot", () => {
+  // self-host AS-004 / C-002 + auth C-008: an email provider is mandatory. Drop every
+  // SMTP_* field AND leave RESEND_API_KEY unset → the app must refuse to start with a
+  // log that names the requirement (consistent across both specs).
   let err: unknown;
-  try { parseConfig(rest); } catch (e) { err = e; }
+  try { parseConfig({ ...baseNoMail }); } catch (e) { err = e; }
   expect(err).toBeInstanceOf(ConfigError);
-  expect((err as ConfigError).message).toContain("SMTP");
+  const m = (err as ConfigError).message;
+  expect(m).toContain("email provider");
+  expect(m).toContain("SMTP_*");
+  expect(m).toContain("RESEND_API_KEY");
 });
 
-test("C-008: SMTP mandatory at boot — config load fails when SMTP_HOST is absent", () => {
-  // Auth C-008: the app must not start without SMTP (so email verification always
-  // works, no no-verify degrade mode). Boot config load is the enforcement point.
-  const { SMTP_HOST, ...rest } = valid;
-  let err: unknown;
-  try { parseConfig(rest); } catch (e) { err = e; }
-  expect(err).toBeInstanceOf(ConfigError);
-  expect((err as ConfigError).message).toContain("SMTP_HOST");
-});
-
-test("C-008: SMTP mandatory at boot — missing SMTP_USER/SMTP_PASS also refuses boot", () => {
-  for (const missing of ["SMTP_USER", "SMTP_PASS"] as const) {
-    const rest = { ...valid };
-    delete (rest as Record<string, unknown>)[missing];
+test("C-008: an incomplete SMTP group with no RESEND_API_KEY refuses boot (half-configured provider is not a provider)", () => {
+  // SMTP_* is only a valid provider when HOST+PORT+USER+PASS are all present.
+  // A partial group (HOST only) with no Resend is "no provider" → refuse boot.
+  for (const missing of ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"] as const) {
+    const rest: Record<string, unknown> = { ...valid };
+    delete rest[missing];
     let err: unknown;
     try { parseConfig(rest); } catch (e) { err = e; }
     expect(err).toBeInstanceOf(ConfigError);
-    expect((err as ConfigError).message).toContain(missing);
+    expect((err as ConfigError).message).toContain("email provider");
   }
+});
+
+test("C-008: SMTP-only configured → boots, email.kind === 'smtp'", () => {
+  const cfg = parseConfig(valid);
+  expect(cfg.email.kind).toBe("smtp");
+  if (cfg.email.kind === "smtp") {
+    expect(cfg.email.host).toBe("smtp.example.com");
+    expect(cfg.email.port).toBe(587);
+    expect(cfg.email.user).toBe("anchord");
+    expect(cfg.email.pass).toBe("secret");
+  }
+});
+
+test("C-008: RESEND-only configured (no SMTP) → boots, email.kind === 'resend'", () => {
+  const cfg = parseConfig({ ...baseNoMail, RESEND_API_KEY: "re_test_key" });
+  expect(cfg.email.kind).toBe("resend");
+  if (cfg.email.kind === "resend") {
+    expect(cfg.email.apiKey).toBe("re_test_key");
+  }
+  // No SMTP group present → the legacy SMTP block is undefined.
+  expect(cfg.SMTP).toBeUndefined();
+});
+
+test("C-008: both SMTP and RESEND_API_KEY configured → Resend API wins (email.kind === 'resend')", () => {
+  const cfg = parseConfig({ ...valid, RESEND_API_KEY: "re_test_key" });
+  expect(cfg.email.kind).toBe("resend");
+  if (cfg.email.kind === "resend") {
+    expect(cfg.email.apiKey).toBe("re_test_key");
+  }
+  // SMTP is still parsed/retained for back-compat, but it is not the active provider.
+  expect(cfg.SMTP?.host).toBe("smtp.example.com");
 });
 
 test("C-002: parseConfig refuses a non-postgres DATABASE_URL", () => {
