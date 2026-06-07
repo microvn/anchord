@@ -1,0 +1,147 @@
+import { test, expect } from "bun:test";
+import { publishDoc, type DocRepo, type CreateDocInput } from "./service";
+import { deriveTitle } from "./title";
+import { sniffKind, validateSize, PublishRejected, MAX_TEXT_BYTES, MAX_IMAGE_BYTES } from "./sniff";
+
+const enc = (s: string) => new TextEncoder().encode(s);
+
+// In-memory fake repo: records every create, hands back a stable id, and lets a test
+// re-read what was stored (to assert the slug is set once and not regenerated).
+function fakeRepo() {
+  const rows: (CreateDocInput & { id: string; version: 1 })[] = [];
+  let n = 0;
+  const repo: DocRepo = {
+    async createDocWithV1(input) {
+      const id = `doc-${++n}`;
+      rows.push({ ...input, id, version: 1 });
+      return { id };
+    },
+  };
+  return { repo, rows };
+}
+
+// Deterministic deps so url/slug assertions are stable.
+const fixedSlug = (_t: string) => "payment-spec-v2-abc123";
+
+test("AS-001: publish a valid HTML file → doc with immutable slug + version 1 + /d/:slug link, content stored", async () => {
+  const { repo, rows } = fakeRepo();
+  // 1.2MB HTML carrying <title>, well under the 5MB cap.
+  const html = `<!doctype html><html><head><title>Payment Spec v2</title></head><body>${"x".repeat(1_200_000)}</body></html>`;
+  const res = await publishDoc(
+    { bytes: enc(html), filename: "spec.html" },
+    { repo, slugGen: fixedSlug },
+  );
+
+  expect(res.kind).toBe("html");
+  expect(res.version).toBe(1);
+  expect(res.slug).toBe("payment-spec-v2-abc123");
+  expect(res.url).toBe("/d/payment-spec-v2-abc123");
+  expect(res.docId).toBe("doc-1");
+
+  // Side effect: exactly one doc created, at version 1, with the content persisted.
+  expect(rows).toHaveLength(1);
+  expect(rows[0].version).toBe(1);
+  expect(rows[0].kind).toBe("html");
+  expect(rows[0].content).toContain("<title>Payment Spec v2</title>");
+  expect(rows[0].contentHash).toBeString();
+  expect(rows[0].contentHash.length).toBeGreaterThan(0);
+
+  // Boundary edge: content well over 1MB still publishes (cap is 5MB).
+  expect(rows[0].content.length).toBeGreaterThan(1_000_000);
+});
+
+test("AS-002: publish via paste with format=Markdown → doc kind=markdown + version 1 + link", async () => {
+  const { repo, rows } = fakeRepo();
+  const md = "# Release Notes\n\n- shipped publish flow\n";
+  const res = await publishDoc(
+    { bytes: enc(md), declaredKind: "markdown" }, // paste: no filename, explicit format
+    { repo, slugGen: () => "release-notes-xyz999" },
+  );
+
+  expect(res.kind).toBe("markdown");
+  expect(res.version).toBe(1);
+  expect(res.url).toBe("/d/release-notes-xyz999");
+  expect(rows).toHaveLength(1);
+  expect(rows[0].kind).toBe("markdown");
+  expect(rows[0].content).toBe(md);
+  // Title auto-suggested from the H1 when the author doesn't override.
+  expect(rows[0].title).toBe("Release Notes");
+});
+
+test("AS-003: title auto-derived (<title>/H1/filename) and editable before publish", () => {
+  // HTML: prefer <title>, else first H1.
+  expect(deriveTitle("html", "<title>Payment Spec v2</title><h1>Other</h1>")).toBe("Payment Spec v2");
+  expect(deriveTitle("html", "<h1>Only An H1</h1>")).toBe("Only An H1");
+  // Markdown: first H1 (ATX).
+  expect(deriveTitle("markdown", "# Release Notes\nbody")).toBe("Release Notes");
+  // Image: file name without extension.
+  expect(deriveTitle("image", new Uint8Array([0x89, 0x50, 0x4e, 0x47]), "diagrams/flow.png")).toBe("flow");
+
+  // Edge — empty / whitespace title falls back, never empty.
+  expect(deriveTitle("html", "<title>   </title>")).toBe("Untitled");
+  expect(deriveTitle("markdown", "no heading here")).toBe("Untitled");
+  // Edge — trimmed.
+  expect(deriveTitle("html", "<title>  Spaced  </title>")).toBe("Spaced");
+  // Edge — unicode title survives.
+  expect(deriveTitle("html", "<title>Báo cáo Quý 2</title>")).toBe("Báo cáo Quý 2");
+
+  // Editable: the author's edit overrides the auto-suggested title at publish time.
+  return (async () => {
+    const { repo, rows } = fakeRepo();
+    await publishDoc(
+      { bytes: enc("<title>Payment Spec v2</title>"), filename: "s.html", editedTitle: "Payment Spec" },
+      { repo, slugGen: fixedSlug },
+    );
+    expect(rows[0].title).toBe("Payment Spec"); // edited, not the derived "Payment Spec v2"
+  })();
+});
+
+test("AS-004 / C-003: over-cap artifact is rejected before any doc is created, message has actual size", async () => {
+  const { repo, rows } = fakeRepo();
+  // 8.1MB of HTML, over the 5MB text cap.
+  const big = "x".repeat(Math.floor(8.1 * 1024 * 1024));
+  let err: unknown;
+  try {
+    await publishDoc({ bytes: enc(big), filename: "report.html" }, { repo, slugGen: fixedSlug });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(PublishRejected);
+  expect((err as Error).message).toContain("8.1MB");
+  expect((err as Error).message).toContain("5.0MB");
+  // No doc created — reject happened before persistence.
+  expect(rows).toHaveLength(0);
+
+  // Boundary: exactly at the cap is allowed; one byte over is rejected.
+  expect(() => validateSize("html", MAX_TEXT_BYTES)).not.toThrow();
+  expect(() => validateSize("html", MAX_TEXT_BYTES + 1)).toThrow(PublishRejected);
+  expect(() => validateSize("image", MAX_IMAGE_BYTES)).not.toThrow();
+  expect(() => validateSize("image", MAX_IMAGE_BYTES + 1)).toThrow(PublishRejected);
+});
+
+test("AS-005 / C-005: content whose sniffed type contradicts the .html extension is rejected, nothing published", async () => {
+  const { repo, rows } = fakeRepo();
+  // report.html but the bytes are binary (NUL + non-UTF8) — not real HTML.
+  const binary = new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x99]);
+  let err: unknown;
+  try {
+    await publishDoc({ bytes: binary, filename: "report.html" }, { repo, slugGen: fixedSlug });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(PublishRejected);
+  expect(rows).toHaveLength(0);
+
+  // Sniff directly: a PNG payload declared as .html is also a mismatch.
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+  expect(() => sniffKind("photo.html", png)).toThrow(PublishRejected);
+
+  // Edge — empty content is rejected (nothing to publish).
+  expect(() => sniffKind("x.html", new Uint8Array([]))).toThrow(PublishRejected);
+
+  // Special chars: valid UTF-8 with unicode is fine, sniffs as text/markdown.
+  expect(sniffKind(undefined, enc("# Tiêu đề 日本語"))).toBe("markdown");
+
+  // A clean PNG with an image extension sniffs as image (positive control).
+  expect(sniffKind("flow.png", png)).toBe("image");
+});
