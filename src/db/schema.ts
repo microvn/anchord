@@ -15,6 +15,10 @@ export const generalAccess = pgEnum("general_access", [
   "anyone_with_link",
 ]);
 
+// The role granted to "anyone with the link" (sharing S-001). NOT "owner":
+// owner is conferred by ownership, never by a link. Roles ordered low→high.
+export const shareRole = pgEnum("share_role", ["viewer", "commenter", "editor"]);
+
 export const docs = pgTable(
   "docs",
   {
@@ -48,6 +52,38 @@ export const docVersions = pgTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("doc_version_uq").on(t.docId, t.version)],
+);
+
+// share_links (sharing S-001): the general-access config for a doc — the role
+// granted to anyone-with-link + the guest-commenting sub-toggle. One row per doc
+// (unique docId, C-001): a doc has exactly one general-access config. The actual
+// access *level* lives on docs.general_access; this row carries the link-scoped
+// role + guest toggle (and, later, S-004's link controls).
+//
+// password_hash / expires_at / view_limit / view_count are S-004's link controls.
+// Added now as NULLABLE so S-004 attaches without a schema migration; they are
+// independent of the general-access setting (C-001) and untouched by S-001.
+export const shareLinks = pgTable(
+  "share_links",
+  {
+    id: id(),
+    docId: uuid("doc_id")
+      .notNull()
+      .unique() // C-001: one general-access config per doc
+      .references(() => docs.id, { onDelete: "cascade" }),
+    role: shareRole("role").notNull().default("viewer"),
+    guestCommenting: boolean("guest_commenting").notNull().default(false),
+    // ── S-004 link controls (nullable; not set by S-001) ──
+    passwordHash: text("password_hash"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    viewLimit: integer("view_limit"),
+    viewCount: integer("view_count").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => sql`now()`),
+  },
 );
 
 // ── better-auth tables (auth S-001) ────────────────────────────────────────
