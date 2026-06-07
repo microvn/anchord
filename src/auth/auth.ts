@@ -23,6 +23,7 @@ import type { DB } from "../db/client";
 import * as schema from "../db/schema";
 import { MIN_PASSWORD_LENGTH } from "./password";
 import { activatePendingInvites, type PendingInviteRepo } from "./invite";
+import { oauthEmailVerified, type OAuthProvider } from "./oauth";
 
 // auth S-005 (AS-008/C-005): after a user's email is verified, activate any pending
 // invite issued to that exact email so they get the invited role. This is the thin
@@ -46,12 +47,57 @@ export async function onEmailVerified(
 export const SIGNIN_RATE_LIMIT_MAX = 5;
 export const SIGNIN_RATE_LIMIT_WINDOW_SECONDS = 15 * 60; // 900s
 
+/** Per-provider OAuth credentials (auth S-002). Present only when the operator set both. */
+export type OAuthProviderCreds = { clientId: string; clientSecret: string };
+
 export type CreateAuthOptions = {
   /** Signs the session cookie + tokens — APP_SECRET from env (≥16 chars). */
   secret: string;
   /** Public base URL of the app; better-auth needs it for callbacks/cookies. */
   baseURL?: string;
+  /**
+   * OAuth providers (auth S-002). A provider is configured ONLY when its creds are
+   * present here; a missing provider is simply not added (not disabled-but-present).
+   * S-004 owns the operator-facing toggle + "disabled provider rejects callback"; this
+   * story only does the conditional config.
+   */
+  oauth?: {
+    github?: OAuthProviderCreds;
+    google?: OAuthProviderCreds;
+  };
 };
+
+/**
+ * C-002 — map an OAuth provider profile to better-auth's account fields, capturing the
+ * verified flag STRICTLY (via oauthEmailVerified). better-auth's `mapProfileToUser`
+ * hook calls this so a matched/created account is `emailVerified: true` ONLY when the
+ * provider explicitly asserted it. This is the CAPTURE; S-003 owns the auto-link DECISION.
+ */
+export function mapOAuthProfile(provider: OAuthProvider, profile: unknown) {
+  return { emailVerified: oauthEmailVerified(provider, profile as never) };
+}
+
+/** Build the better-auth `socialProviders` block, including ONLY providers with creds. */
+function socialProvidersFrom(oauth: CreateAuthOptions["oauth"]) {
+  const social: Record<string, unknown> = {};
+  if (oauth?.github) {
+    social.github = {
+      clientId: oauth.github.clientId,
+      clientSecret: oauth.github.clientSecret,
+      // C-002: capture GitHub's primary-email verified flag, never assume verified.
+      mapProfileToUser: (profile: unknown) => mapOAuthProfile("github", profile),
+    };
+  }
+  if (oauth?.google) {
+    social.google = {
+      clientId: oauth.google.clientId,
+      clientSecret: oauth.google.clientSecret,
+      // C-002: trust Google's email_verified claim only when strictly boolean true.
+      mapProfileToUser: (profile: unknown) => mapOAuthProfile("google", profile),
+    };
+  }
+  return social;
+}
 
 /**
  * Build the better-auth instance bound to the given Drizzle DB.
@@ -78,6 +124,10 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
       window: SIGNIN_RATE_LIMIT_WINDOW_SECONDS,
       max: SIGNIN_RATE_LIMIT_MAX,
     },
+    // S-002: OAuth providers, each present ONLY when its creds were supplied (gated on
+    // env). A missing provider is absent from socialProviders, so better-auth never
+    // exposes its callback — the self-host "configure to enable" path (C-004 owned by S-004).
+    socialProviders: socialProvidersFrom(opts.oauth),
     // No JWT plugin + DB storage left on => sessions are DB-backed and revocable (C-001).
   });
 }

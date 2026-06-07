@@ -7,9 +7,11 @@ const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, 
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
 
 // S-001: better-auth bound to the real Postgres DB; APP_SECRET signs the session cookie.
+// S-002: pass through OAuth creds — each provider is configured only when env supplied both.
 const auth = createAuth(db, {
   secret: cfg.APP_SECRET,
   baseURL: `http://localhost:${cfg.PORT}`,
+  oauth: cfg.oauth,
 });
 
 const app = createApp({
