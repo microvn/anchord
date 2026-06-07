@@ -22,6 +22,23 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import type { DB } from "../db/client";
 import * as schema from "../db/schema";
 import { MIN_PASSWORD_LENGTH } from "./password";
+import { activatePendingInvites, type PendingInviteRepo } from "./invite";
+
+// auth S-005 (AS-008/C-005): after a user's email is verified, activate any pending
+// invite issued to that exact email so they get the invited role. This is the thin
+// glue that the post-verify hook calls; the activation algorithm is unit-tested in
+// invite.ts against a fake repo. Wiring this into better-auth's verification
+// callback (and supplying the concrete PendingInviteRepo from sharing-permissions)
+// is integration-verified-later — better-auth fires the hook, this fn does the work.
+export async function onEmailVerified(
+  email: string,
+  userId: string,
+  repo: PendingInviteRepo,
+) {
+  // isVerified is true here by definition: this runs only after better-auth confirms
+  // the verification. The activation fn still gates on it (C-005) as defense in depth.
+  return activatePendingInvites(email, userId, true, repo);
+}
 
 // GAP-002 (deferred): sign-in rate-limit threshold/window were left to build time.
 // Sane default: 5 attempts per 15 minutes. Named so it is one place to tune and so
