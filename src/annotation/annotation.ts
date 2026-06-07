@@ -33,6 +33,12 @@ export interface Anchor {
   length: number;
   /** Present only for multi_range; a single range omits it. */
   segments?: AnchorSegment[];
+  /**
+   * Present only for an image-region anchor (S-002): a point/box in normalized 0..1
+   * coordinates relative to the ORIGINAL image. A text anchor omits it. Kept as a plain
+   * tagged record so the jsonb stays portable. Defined in image-region.ts.
+   */
+  region?: { kind: "point"; x: number; y: number } | { kind: "box"; x: number; y: number; w: number; h: number };
 }
 
 export interface BuildAnchorInput {
