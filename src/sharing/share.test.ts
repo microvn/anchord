@@ -118,7 +118,7 @@ test("C-001: one general-access config per doc — re-setting upserts the same r
   // them, so setting general-access never mutates them.
 });
 
-test("C-003: role must be viewer|commenter|editor — owner is not a valid anyone-with-link role", async () => {
+test("AS-018 / C-012: an invalid general-access role (owner) is rejected — only viewer|commenter|editor", async () => {
   const f = fakeRepo();
 
   await expect(

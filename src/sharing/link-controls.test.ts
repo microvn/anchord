@@ -101,7 +101,7 @@ describe("AS-010: expired link stops working", () => {
     expect(checkLinkExpiry(sevenDays, before)).toEqual({ allowed: true });
   });
 
-  test("AS-010.T2 (boundary): exactly AT expiry is still allowed; one ms later is denied", () => {
+  test("AS-020: expiry boundary — valid at exactly the expiry instant, denied one moment after", () => {
     expect(checkLinkExpiry(sevenDays, sevenDays)).toEqual({ allowed: true });
     expect(checkLinkExpiry(sevenDays, new Date(sevenDays.getTime() + 1))).toEqual({
       allowed: false,
@@ -114,7 +114,7 @@ describe("AS-010: expired link stops working", () => {
     expect(checkLinkExpiry(undefined, NOW)).toEqual({ allowed: true });
   });
 
-  test("C-005: an expired link is denied by checkLinkAccess before any password work", async () => {
+  test("AS-021 / C-005 / C-013: an expired link is refused before any password check (expiry→lockout→password)", async () => {
     const link: LinkControls = {
       id: "lnk-exp",
       passwordHash: await setPassword("pw"),
@@ -174,7 +174,7 @@ describe("AS-016: password link rate-limited / locked after a threshold", () => 
     expect(verifyCalls).toBe(0); // refused before the KDF runs
   });
 
-  test("AS-016.T2: a CORRECT password resets the counter (honest typos don't compound)", async () => {
+  test("AS-019 / C-014: a correct password resets the wrong-attempt counter (honest typos don't compound)", async () => {
     const rl = new LinkPasswordRateLimiter();
     rl.recordFailure("L", "ip", NOW);
     rl.recordFailure("L", "ip", NOW);
