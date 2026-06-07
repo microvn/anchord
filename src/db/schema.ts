@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 // Minimal foundational schema for the runnable skeleton: docs + immutable versions
 // (owned by render-publish). Feature clusters extend this (annotations, shares,
@@ -123,6 +123,65 @@ export const docMembers = pgTable(
     index("doc_members_email_idx").on(t.email),
     index("doc_members_user_idx").on(t.userId),
   ],
+);
+
+// ── annotations + comments (annotation-core S-001) ─────────────────────────
+// An annotation anchors to a doc (a Version, in the full model) and carries a
+// thread of comments. The anchor is stored as jsonb (allowed per CLAUDE.md for
+// flexible anchor descriptors): for a text range it holds
+// { block_id, text_snippet, offset, length, segments? }. block_id is a POSITIONAL
+// hint (C-001, see src/annotation/block-id.ts) — durability across versions rides
+// on text_snippet+offset+fuzzy+orphan (C-002, S-005), NOT on a stable block_id.
+//
+// type:        range | multi_range | block | doc (image-region lands in S-002).
+// is_orphaned: set true by re-anchor (S-005) when a block/snippet is lost; the
+//              annotation is never deleted, it detaches (C-002).
+// status:      unresolved | resolved — the resolve toggle (S-004).
+// Portable on purpose (jsonb is the one declared exception); the create-path
+// server re-authorization (C-009) + read authz (C-010) live in
+// src/annotation/annotation.ts and are unit-tested there. DB/HTTP glue +
+// the bridge transport are integration-/FE-verified later.
+export const annotationType = pgEnum("annotation_type", [
+  "range",
+  "multi_range",
+  "block",
+  "doc",
+]);
+export const annotationStatus = pgEnum("annotation_status", ["unresolved", "resolved"]);
+
+export const annotations = pgTable(
+  "annotations",
+  {
+    id: id(),
+    docId: uuid("doc_id")
+      .notNull()
+      .references(() => docs.id, { onDelete: "cascade" }),
+    type: annotationType("type").notNull(),
+    // Anchor descriptor — see Anchor in src/annotation/annotation.ts.
+    anchor: jsonb("anchor").notNull(),
+    isOrphaned: boolean("is_orphaned").notNull().default(false),
+    status: annotationStatus("status").notNull().default("unresolved"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("annotations_doc_idx").on(t.docId)],
+);
+
+export const comments = pgTable(
+  "comments",
+  {
+    id: id(),
+    annotationId: uuid("annotation_id")
+      .notNull()
+      .references(() => annotations.id, { onDelete: "cascade" }),
+    // Self-FK for a flat reply (S-003, C-004 — one level). NULL = top comment.
+    parentId: uuid("parent_id").references((): any => comments.id, { onDelete: "cascade" }),
+    // The signed-in author; NULL for a guest comment (S-007), which carries guestName.
+    authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
+    guestName: text("guest_name"),
+    body: text("body").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("comments_annotation_idx").on(t.annotationId)],
 );
 
 // ── better-auth tables (auth S-001) ────────────────────────────────────────

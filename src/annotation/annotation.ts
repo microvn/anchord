@@ -1,0 +1,176 @@
+// Annotation create + read (annotation-core S-001). Pure logic + an injectable
+// AnnotationRepo port, mirroring publish/service.ts (DocRepo) and services/version.ts.
+// The bridge/postMessage transport and the select→mark→margin UI are FRONTEND /
+// integration [→MANUAL]; this module owns: the anchor model, the create-path SERVER
+// re-authorization (C-009/AS-020), and the read authorization (C-010/AS-021).
+
+import { can, type Role } from "../sharing/roles";
+import { canViewDoc, type AccessDeps, type GeneralAccessLevel, type Viewer } from "../sharing/access";
+
+/** Annotation type — text range for S-001; image-region (S-002) reuses the table. */
+export type AnnotationType = "range" | "multi_range" | "block" | "doc";
+
+/**
+ * One segment of a (possibly multi-) range anchor. A single range has one segment;
+ * multi_range carries several (S-005 detaches the whole annotation if any is lost).
+ */
+export interface AnchorSegment {
+  blockId: string;
+  textSnippet: string;
+  offset: number;
+  length: number;
+}
+
+/**
+ * Anchor descriptor stored as the annotation's jsonb. block_id is a positional hint
+ * (C-001); text_snippet need only be unique WITHIN its block, disambiguated by block_id
+ * — which is how a duplicate quote in two blocks anchors to the chosen one (AS-003).
+ */
+export interface Anchor {
+  blockId: string;
+  textSnippet: string;
+  offset: number;
+  length: number;
+  /** Present only for multi_range; a single range omits it. */
+  segments?: AnchorSegment[];
+}
+
+export interface BuildAnchorInput {
+  blockId: string;
+  text: string;
+  offset: number;
+  length: number;
+  segments?: AnchorSegment[];
+}
+
+/**
+ * Build an anchor descriptor from a selection. Empty/whitespace-only text is NOT a
+ * real selection (AS-004): return null so the caller creates no annotation and shows
+ * no comment box. The raw selected text is trimmed into text_snippet but offset/length
+ * describe the ORIGINAL selection in the block (the UI maps back to it).
+ */
+export function buildAnchor(input: BuildAnchorInput): Anchor | null {
+  const { blockId, text, offset, length, segments } = input;
+
+  // AS-004: a 0-character or whitespace-only selection is ignored.
+  if (text == null || text.trim().length === 0) return null;
+
+  return {
+    blockId,
+    textSnippet: text,
+    offset,
+    length,
+    ...(segments && segments.length > 0 ? { segments } : {}),
+  };
+}
+
+/** A persisted annotation as the repo returns it. */
+export interface AnnotationRow {
+  id: string;
+  docId: string;
+  type: AnnotationType;
+  anchor: Anchor;
+  isOrphaned: boolean;
+  status: "unresolved" | "resolved";
+}
+
+/** What createAnnotation hands the repo to persist. */
+export interface NewAnnotation {
+  docId: string;
+  type: AnnotationType;
+  anchor: Anchor;
+}
+
+/**
+ * Persistence port — the real implementation is thin Drizzle glue
+ * (integration-verified-later). Keeping it a port makes the authz logic unit-testable
+ * without a DB, the project's established pattern.
+ */
+export interface AnnotationRepo {
+  insertAnnotation(input: NewAnnotation): Promise<{ id: string }>;
+  listByDoc(docId: string): Promise<AnnotationRow[]>;
+}
+
+export interface CreateAnnotationInput {
+  docId: string;
+  anchor: Anchor;
+  /** Who is acting (for audit/authoring); the WRITE gate is sessionRole, not this. */
+  viewer: Viewer;
+  /**
+   * The role resolved SERVER-side from the session (C-009). This — and ONLY this —
+   * authorizes the write. Never a client/iframe-supplied claim.
+   */
+  sessionRole: Role;
+  type?: AnnotationType;
+}
+
+export type CreateAnnotationResult =
+  | { created: true; id: string }
+  | { created: false; reason: "forbidden" };
+
+/**
+ * Create a text annotation, re-authorizing the write SERVER-side (C-009/AS-020).
+ *
+ * The bridge treats every message from the sandboxed iframe as an untrusted HINT: a
+ * forged `parent.postMessage({...annotation..., role:"owner", authorized:true})` from
+ * the doc body carries no authority. The write is gated SOLELY by `sessionRole`
+ * (resolved from the session), checked with `can(sessionRole, "comment")` — the shared
+ * capability contract. A spoofed authority field on the payload is structurally absent
+ * here: this function takes no such field, so it cannot be honored.
+ *
+ * AS-003: the anchor is persisted with the EXACT block_id the user selected, so a
+ * duplicate snippet living in another block never mis-anchors.
+ */
+export async function createAnnotation(
+  input: CreateAnnotationInput,
+  repo: AnnotationRepo,
+): Promise<CreateAnnotationResult> {
+  const { docId, anchor, sessionRole, type } = input;
+
+  // C-009/AS-020: server re-authorization. Only the session-resolved role gates the
+  // write — a viewer/none session cannot create an annotation no matter what the
+  // (untrusted) iframe message claimed.
+  if (!can(sessionRole, "comment")) {
+    return { created: false, reason: "forbidden" };
+  }
+
+  const { id } = await repo.insertAnnotation({
+    docId,
+    type: type ?? "range",
+    anchor, // AS-003: the chosen block_id is stored verbatim.
+  });
+  return { created: true, id };
+}
+
+export interface ListAnnotationsInput {
+  docId: string;
+  viewer: Viewer;
+  generalAccess: GeneralAccessLevel;
+  deps: AccessDeps;
+}
+
+export type ListAnnotationsResult =
+  | { allowed: true; annotations: AnnotationRow[] }
+  | { allowed: false; annotations: [] };
+
+/**
+ * List a doc's annotations, authorized by the reader's effective access to the PARENT
+ * doc (C-010/AS-021). Reuses canViewDoc — the same read-gate the doc-serve route uses.
+ * A reader without permission gets a clean deny with NO content: the repo is never
+ * even queried, so no annotation/comment text can leak.
+ */
+export async function listAnnotations(
+  input: ListAnnotationsInput,
+  repo: AnnotationRepo,
+): Promise<ListAnnotationsResult> {
+  const { docId, viewer, generalAccess, deps } = input;
+
+  const decision = canViewDoc({ docId, generalAccess, viewer, deps });
+  if (!decision.allowed) {
+    // AS-021: denied → no content. Do not touch the repo.
+    return { allowed: false, annotations: [] };
+  }
+
+  const annotations = await repo.listByDoc(docId);
+  return { allowed: true, annotations };
+}

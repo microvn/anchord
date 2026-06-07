@@ -36,6 +36,13 @@
       "when": 1780849076928,
       "tag": "0004_magenta_electro",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780851679183,
+      "tag": "0005_charming_christian_walker",
+      "breakpoints": true
     }
   ]
 }

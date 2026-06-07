@@ -1,0 +1,196 @@
+import { test, expect } from "bun:test";
+import {
+  buildAnchor,
+  createAnnotation,
+  listAnnotations,
+  type Anchor,
+  type AnnotationRepo,
+  type AnnotationRow,
+  type NewAnnotation,
+} from "./annotation";
+import type { AccessDeps, Viewer } from "../sharing/access";
+
+// annotation-core S-001 — anchor model + create-path SERVER re-auth (C-009/AS-020) +
+// read authz (C-010/AS-021). Pure logic against a fake repo (mirrors access.test.ts).
+
+// A recording fake repo: captures what was inserted, serves a canned list.
+function fakeRepo(seed: AnnotationRow[] = []): AnnotationRepo & { inserted: NewAnnotation[] } {
+  const inserted: NewAnnotation[] = [];
+  return {
+    inserted,
+    async insertAnnotation(input: NewAnnotation) {
+      inserted.push(input);
+      return { id: `ann-${inserted.length}` };
+    },
+    async listByDoc(_docId: string) {
+      return seed;
+    },
+  };
+}
+
+function deps(opts?: { invited?: string[]; members?: string[] }): AccessDeps {
+  const invited = new Set(opts?.invited ?? []);
+  const members = new Set(opts?.members ?? []);
+  return {
+    isInvited: (_d, u) => invited.has(u),
+    isWorkspaceMember: (u) => members.has(u),
+  };
+}
+
+const commenter: Viewer = { kind: "user", userId: "u-commenter" };
+const stranger: Viewer = { kind: "user", userId: "u-stranger" };
+const anon: Viewer = { kind: "anon" };
+
+test("AS-001: create a block-anchored text annotation on an HTML doc", async () => {
+  const repo = fakeRepo();
+  // The sentence "Payment expires after 24h" selected in the 7th block.
+  const anchor = buildAnchor({
+    blockId: "block-p-7",
+    text: "Payment expires after 24h",
+    offset: 0,
+    length: 26,
+  });
+  expect(anchor).not.toBeNull();
+
+  const res = await createAnnotation(
+    { docId: "doc-1", anchor: anchor!, viewer: commenter, sessionRole: "commenter" },
+    repo,
+  );
+
+  expect(res).toEqual({ created: true, id: "ann-1" });
+  expect(repo.inserted).toHaveLength(1);
+  expect(repo.inserted[0].anchor).toEqual({
+    blockId: "block-p-7",
+    textSnippet: "Payment expires after 24h",
+    offset: 0,
+    length: 26,
+  });
+  expect(repo.inserted[0].type).toBe("range");
+});
+
+test("AS-002: create a block-anchored text annotation on a Markdown doc (range inside a bullet)", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({
+    blockId: "block-li-2",
+    text: "second bullet text",
+    offset: 3,
+    length: 6,
+  });
+
+  const res = await createAnnotation(
+    { docId: "doc-md", anchor: anchor!, viewer: commenter, sessionRole: "commenter" },
+    repo,
+  );
+
+  expect(res.created).toBe(true);
+  expect(repo.inserted[0].anchor.blockId).toBe("block-li-2");
+});
+
+test("AS-003: a duplicate quote in two blocks anchors to the CHOSEN block_id (block-9)", async () => {
+  const repo = fakeRepo();
+  // "see below" exists in block-p-3 and block-p-9; user selected it in block-p-9.
+  const anchor = buildAnchor({
+    blockId: "block-p-9",
+    text: "see below",
+    offset: 0,
+    length: 9,
+  });
+
+  await createAnnotation(
+    { docId: "doc-dup", anchor: anchor!, viewer: commenter, sessionRole: "commenter" },
+    repo,
+  );
+
+  // Anchors to the chosen block, NOT block-p-3.
+  expect(repo.inserted[0].anchor.blockId).toBe("block-p-9");
+  expect(repo.inserted[0].anchor.blockId).not.toBe("block-p-3");
+});
+
+test("AS-004: empty/whitespace-only selection is ignored — buildAnchor returns null, no annotation", async () => {
+  expect(buildAnchor({ blockId: "block-p-1", text: "", offset: 0, length: 0 })).toBeNull();
+  expect(buildAnchor({ blockId: "block-p-1", text: "   \n\t ", offset: 0, length: 5 })).toBeNull();
+  // A null anchor never reaches createAnnotation, so the repo is never touched.
+  // (Guarding against a manufactured non-null whitespace anchor is the buildAnchor job above.)
+});
+
+test("AS-020 / C-009: a forged postMessage (viewer session) does NOT create an annotation — server re-auth", async () => {
+  const repo = fakeRepo();
+  const anchor: Anchor = { blockId: "block-p-1", text_snippet: "x" } as any; // shape irrelevant; gate fires first
+  // Simulate the untrusted iframe trying to spoof authority: the payload's own
+  // "role"/"authorized" claims are STRUCTURALLY absent from the API — only sessionRole
+  // gates the write, and this session is a viewer.
+  const forged = {
+    docId: "doc-1",
+    anchor: { blockId: "block-p-1", textSnippet: "x", offset: 0, length: 1 } as Anchor,
+    viewer: anon,
+    // sessionRole resolved SERVER-side from the (viewer) session — not from the message.
+    sessionRole: "viewer" as const,
+  };
+
+  const res = await createAnnotation(forged, repo);
+
+  expect(res).toEqual({ created: false, reason: "forbidden" });
+  expect(repo.inserted).toHaveLength(0); // nothing persisted
+  void anchor;
+});
+
+test("AS-020 / C-009: a commenter session is authorized (control for the forged-message test)", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "hi", offset: 0, length: 2 })!;
+  const res = await createAnnotation(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "commenter" },
+    repo,
+  );
+  expect(res.created).toBe(true);
+});
+
+test("AS-021 / C-010: a user without doc permission cannot read annotations — denied, no content", async () => {
+  const repo = fakeRepo([
+    {
+      id: "ann-secret",
+      docId: "doc-restricted",
+      type: "range",
+      anchor: { blockId: "block-p-1", textSnippet: "secret", offset: 0, length: 6 },
+      isOrphaned: false,
+      status: "unresolved",
+    },
+  ]);
+
+  const res = await listAnnotations(
+    {
+      docId: "doc-restricted",
+      viewer: stranger, // not invited
+      generalAccess: "restricted",
+      deps: deps({ invited: ["u-someone-else"] }),
+    },
+    repo,
+  );
+
+  expect(res.allowed).toBe(false);
+  expect(res.annotations).toEqual([]); // NO content leaks
+});
+
+test("C-010: an authorized reader gets the doc's annotations", async () => {
+  const row: AnnotationRow = {
+    id: "ann-1",
+    docId: "doc-ok",
+    type: "range",
+    anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 },
+    isOrphaned: false,
+    status: "unresolved",
+  };
+  const repo = fakeRepo([row]);
+
+  const res = await listAnnotations(
+    {
+      docId: "doc-ok",
+      viewer: stranger,
+      generalAccess: "anyone_with_link", // open → allowed even for a stranger
+      deps: deps(),
+    },
+    repo,
+  );
+
+  expect(res.allowed).toBe(true);
+  expect(res.annotations).toEqual([row]);
+});
