@@ -6,6 +6,7 @@ import { SignInScreen } from "./features/auth/sign-in-screen";
 import { createQueryClient } from "./app/query-client";
 import { SessionExpiryListener } from "./app/session-expiry-listener";
 import { BootstrapPanel } from "./app/bootstrap-panel";
+import { ThemeProvider } from "./app/theme-provider";
 
 // One shared QueryClient for the app's server-state layer (S-002). Its cache-level onError
 // centralizes session-expiry handling: any query that comes back UNAUTHENTICATED bounces the
@@ -33,10 +34,12 @@ export function AppRoutes() {
 
 export function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      {/* Mounted inside the Router (main.tsx) so it can navigate on session expiry. */}
-      <SessionExpiryListener />
-      <AppRoutes />
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        {/* Mounted inside the Router (main.tsx) so it can navigate on session expiry. */}
+        <SessionExpiryListener />
+        <AppRoutes />
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

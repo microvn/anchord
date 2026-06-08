@@ -1,21 +1,76 @@
+import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { UserMenu } from "./user-menu";
+import { isCompact, useBreakpoint } from "../lib/use-breakpoint";
 
-// AppShell placeholder (S-001) — the minimal authenticated chrome. Feature screens
-// (ProjectBrowser, doc viewer, share, diff) are OUT of web-core scope; they mount into
-// the content outlet, owned by their feature `-ui` specs. This slice just needs an
-// authenticated shell so AS-002 ("lands on the app") is observable: a thin top bar with
-// the UserMenu (→ sign out, AS-005) and an empty content outlet.
+// AppShell (S-001 chrome, S-003 design-system + responsive). The authenticated chrome:
+// a thin low-contrast top bar (chrome recedes behind content — DESIGN.md) + a side region
+// + the content outlet. Feature screens mount into the outlet (owned by feature `-ui` specs).
+//
+// S-003 / AS-010: the shell reflows off the ONE breakpoint hook (C-003). On desktop/laptop
+// the side region is persistent inline; on tablet/mobile it collapses to an off-canvas
+// drawer toggled by a button. Every interactive control is ≥40px (tap-target rule).
 export function AppShell() {
+  const tier = useBreakpoint();
+  const compact = isCompact(tier);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full flex-col" data-tier={tier}>
       <header className="flex items-center justify-between border-b border-line bg-surface px-4 py-2.5">
-        <span className="font-serif text-base tracking-tight text-ink">anchord</span>
+        <div className="flex items-center gap-2">
+          {/* Drawer toggle only exists at tablet/mobile (compact); desktop shows the side
+              region inline so no toggle is needed. ≥40px tap target. */}
+          {compact && (
+            <button
+              type="button"
+              aria-label="Open navigation"
+              aria-expanded={drawerOpen}
+              data-testid="drawer-toggle"
+              onClick={() => setDrawerOpen((v) => !v)}
+              className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-md border border-line bg-surface text-ink hover:border-accent"
+            >
+              <span aria-hidden="true">≡</span>
+            </button>
+          )}
+          <span className="font-serif text-base tracking-tight text-ink">anchord</span>
+        </div>
         <UserMenu />
       </header>
-      <main className="flex-1" data-testid="app-content">
-        <Outlet />
-      </main>
+
+      <div className="flex min-h-0 flex-1">
+        {/* Persistent side region — inline on desktop/laptop only. */}
+        {!compact && (
+          <nav
+            data-testid="side-region"
+            className="w-[236px] shrink-0 border-r border-line bg-surface"
+            aria-label="Workspace navigation"
+          />
+        )}
+
+        <main className="min-w-0 flex-1" data-testid="app-content">
+          <Outlet />
+        </main>
+      </div>
+
+      {/* Off-canvas drawer — the side region as a sheet at tablet/mobile, toggled above. */}
+      {compact && drawerOpen && (
+        <div
+          data-testid="side-drawer"
+          role="dialog"
+          aria-label="Workspace navigation"
+          className="fixed inset-y-0 left-0 z-20 w-[280px] max-w-[85vw] border-r border-line bg-elev"
+        >
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={() => setDrawerOpen(false)}
+            className="flex min-h-[40px] min-w-[40px] items-center justify-center text-muted hover:text-ink"
+          >
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
