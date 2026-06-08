@@ -83,6 +83,9 @@ const app = createApp({
     db,
     resolveSession,
     resolveDocRole: sharedResolveDocRole,
+    // Manage-sharing gate (C-007) reads editors_can_share from here (reuses the same
+    // concrete loader as annotation-core; the superset return shape covers both).
+    loadShareConfig: concreteLoadShareConfig,
     accessDeps: sharedAccessDeps,
   },
 }).listen(cfg.PORT);

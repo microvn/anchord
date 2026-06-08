@@ -57,10 +57,12 @@ export type AppDeps = {
   annotations?: AnnotationsRoutesDeps;
   /**
    * sharing-permissions S-001/S-003/S-004: enables the enveloped, session-gated,
-   * OWNER-only PUT /api/docs/:slug/access, POST /api/docs/:slug/invites, and PUT
-   * /api/docs/:slug/link routes. Provide a Drizzle handle (production) or pre-built
-   * repos (tests), plus the session resolver, the doc-scoped role resolver (the owner
-   * gate reads it), and access deps. Omit to leave these routes unmounted.
+   * manage-sharing-gated PUT /api/docs/:slug/access, POST /api/docs/:slug/invites, and
+   * PUT /api/docs/:slug/link routes (C-007 Google-Docs model: owner always; editor when
+   * editors_can_share is on; viewer/commenter never). Provide a Drizzle handle
+   * (production) or pre-built repos (tests), plus the session resolver, the doc-scoped
+   * role resolver, the share-config loader (editors_can_share), and access deps. Omit to
+   * leave these routes unmounted.
    */
   sharing?: SharingRoutesDeps;
 };

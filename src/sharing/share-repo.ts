@@ -25,20 +25,44 @@ export function createShareRepo(db: DB): ShareRepo {
         // 2. Upsert the doc's single share_links row (C-001 unique docId). Only the
         //    link role + guest toggle are set here; password/expiry/view-limit are
         //    S-004's controls and are left as-is on conflict.
+        //    editors_can_share (C-015): set it ONLY when the caller provided it (owner
+        //    flipping the toggle). When undefined, leave the column untouched on update
+        //    and let the column DEFAULT (true) apply on first insert — so an editor's
+        //    normal manage-sharing write never disturbs the owner's toggle.
+        const setOnConflict: { role: typeof setting.role; guestCommenting: boolean; editorsCanShare?: boolean } = {
+          role: setting.role,
+          guestCommenting: setting.guestCommenting,
+        };
+        if (setting.editorsCanShare !== undefined) {
+          setOnConflict.editorsCanShare = setting.editorsCanShare;
+        }
         const [row] = await tx
           .insert(shareLinks)
-          .values({ docId, role: setting.role, guestCommenting: setting.guestCommenting })
+          .values({
+            docId,
+            role: setting.role,
+            guestCommenting: setting.guestCommenting,
+            // On INSERT, undefined falls through to the column default (true).
+            ...(setting.editorsCanShare !== undefined
+              ? { editorsCanShare: setting.editorsCanShare }
+              : {}),
+          })
           .onConflictDoUpdate({
             target: shareLinks.docId,
-            set: { role: setting.role, guestCommenting: setting.guestCommenting },
+            set: setOnConflict,
           })
-          .returning({ role: shareLinks.role, guestCommenting: shareLinks.guestCommenting });
+          .returning({
+            role: shareLinks.role,
+            guestCommenting: shareLinks.guestCommenting,
+            editorsCanShare: shareLinks.editorsCanShare,
+          });
 
         return {
           docId,
           level: setting.level,
           role: row?.role ?? setting.role,
           guestCommenting: row?.guestCommenting ?? setting.guestCommenting,
+          editorsCanShare: row?.editorsCanShare ?? setting.editorsCanShare ?? true,
         };
       });
     },

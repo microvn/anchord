@@ -18,7 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { docs, docMembers, shareLinks, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
-import { createResolveDocRole } from "../../src/sharing/resolve-doc-role-repo";
+import { createResolveDocRole, createLoadShareConfig } from "../../src/sharing/resolve-doc-role-repo";
 import type { SessionResolver } from "../../src/http/auth-gate";
 import type { Role } from "../../src/sharing/roles";
 import { withMigratedDb, type MigratedDb } from "./harness";
@@ -87,13 +87,47 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
-    expect(json.data).toEqual({ level: "anyone_with_link", role: "commenter", guestCommenting: true });
+    expect(json.data).toEqual({
+      level: "anyone_with_link",
+      role: "commenter",
+      guestCommenting: true,
+      editorsCanShare: true, // default on (C-015), no toggle in this request
+    });
 
     const [doc] = await h.db.select().from(docs).where(eq(docs.id, docId));
     expect(doc?.generalAccess).toBe("anyone_with_link");
     const [link] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, docId));
     expect(link?.role).toBe("commenter");
     expect(link?.guestCommenting).toBe(true);
+    expect(link?.editorsCanShare).toBe(true); // default-on column persisted
+  });
+
+  test("AS-022 / C-015: owner sets editors_can_share=false → persisted; loadShareConfig reads it back", async () => {
+    const res = await app.handle(
+      req(`/api/docs/${slug}/access`, {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: false }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.editorsCanShare).toBe(false);
+
+    // Persisted on the row.
+    const [link] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, docId));
+    expect(link?.editorsCanShare).toBe(false);
+
+    // The concrete loader (the gate's input) reads the stored toggle.
+    const cfg = await createLoadShareConfig(h.db)(docId);
+    expect(cfg.editorsCanShare).toBe(false);
+
+    // Reset to on so later tests (editor-can-share) see the default again.
+    await app.handle(
+      req(`/api/docs/${slug}/access`, {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: true }),
+      }),
+    );
   });
 
   test("POST invite (no account) → a PENDING doc_members row", async () => {
@@ -165,5 +199,49 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     // A user with no invite + no owner source resolves via the link role only → commenter.
     const linkOnly = await resolve(docId, "u_random_viewer");
     expect(linkOnly).toBe("commenter");
+  });
+
+  test("AS-014: an invited editor (real resolution) CAN PUT access when editors_can_share is on", async () => {
+    // Ensure the toggle is ON for this doc.
+    await app.handle(
+      req(`/api/docs/${slug}/access`, {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: true }),
+      }),
+    );
+
+    // Build an app where the session is the invited editor (seeded in the prior test) and
+    // the role + toggle resolve over the REAL DB (no owner source).
+    const realResolve = createResolveDocRole(h.db, {
+      isOwner: async () => false,
+      isWorkspaceMember: () => true,
+    });
+    const editorApp = createApp({
+      dbCheck: async () => {},
+      sharing: {
+        db: h.db,
+        resolveSession: async () => ({ userId: "u_invited_editor" }),
+        resolveDocRole: realResolve,
+        loadShareConfig: createLoadShareConfig(h.db),
+        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      },
+    });
+
+    const res = await editorApp.handle(
+      req(`/api/docs/${slug}/access`, {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "editor" }),
+      }),
+    );
+    expect(res.status).toBe(200); // editor manages sharing (toggle on, real role resolution)
+
+    // C-015: the same editor may NOT flip editors_can_share → 403.
+    const toggleRes = await editorApp.handle(
+      req(`/api/docs/${slug}/access`, {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "editor", editorsCanShare: false }),
+      }),
+    );
+    expect(toggleRes.status).toBe(403);
   });
 });

@@ -57,6 +57,13 @@
       "when": 1780885059523,
       "tag": "0007_puzzling_lorna_dane",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780914079061,
+      "tag": "0008_simple_earthquake",
+      "breakpoints": true
     }
   ]
 }

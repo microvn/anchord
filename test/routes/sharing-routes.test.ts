@@ -1,6 +1,8 @@
 // In-process route tests for the sharing-permissions /api/docs/:slug/{access,invites,link}
 // mounts (no DB). Exercise the HTTP GLUE only — envelope + auth gate + Zod validation +
-// existence-hiding (C-006) + owner gate (C-007/AS-014) + the share/invite services — via
+// existence-hiding (C-006) + manage-sharing gate (C-007/C-015 Google-Docs model:
+// AS-014 editor-on, AS-023 editor-off, AS-024 viewer/commenter, AS-022 owner-only toggle)
+// + the share/invite services — via
 // app.handle(Request)→Response. Fake repos + a fake resolveSession + a fake resolveDocRole
 // are injected so route→service runs without Postgres; the real-DB path is covered by
 // test/integration/sharing-routes.itest.ts.
@@ -11,7 +13,10 @@
 //   AS-018  PUT access invalid role → 400 VALIDATION_ERROR
 //   AS-007  POST invites, existing account → 201 { status: "active" }
 //   AS-008  POST invites, no account → 201 { status: "pending" } + enqueue
-//   AS-014  non-owner (editor) on a VISIBLE doc → 403 FORBIDDEN
+//   AS-014  editor on a VISIBLE doc with editors_can_share ON → ALLOWED (200/201)
+//   AS-023  editor with editors_can_share OFF → 403 FORBIDDEN
+//   AS-024  viewer/commenter → 403 (never manage sharing)
+//   AS-022  owner sets editors_can_share off → 200; non-owner sets toggle → 403 (C-015)
 //   (gates) no session → 401; missing/hidden doc → 404
 
 import { describe, expect, test } from "bun:test";
@@ -27,6 +32,12 @@ const member: SessionResolver = async () => ({ userId: "u_owner" });
 const noSession: SessionResolver = async () => null;
 const asOwner = async (): Promise<Role | null> => "owner";
 const asEditor = async (): Promise<Role | null> => "editor";
+const asViewer = async (): Promise<Role | null> => "viewer";
+const asCommenter = async (): Promise<Role | null> => "commenter";
+
+// loadShareConfig fakes — the manage-sharing gate reads editors_can_share from here.
+const shareToggleOn = async () => ({ editorsCanShare: true });
+const shareToggleOff = async () => ({ editorsCanShare: false });
 
 const VISIBLE_DOC: DocLookup = {
   id: "doc_1",
@@ -51,7 +62,11 @@ function fakeShareRepo() {
   const calls: ResolvedShareSetting[] = [];
   const repo: ShareRepo = {
     async setGeneralAccess(docId, setting) {
-      const resolved: ResolvedShareSetting = { docId, ...setting };
+      const resolved: ResolvedShareSetting = {
+        docId,
+        ...setting,
+        editorsCanShare: setting.editorsCanShare ?? true,
+      };
       calls.push(resolved);
       return resolved;
     },
@@ -69,6 +84,7 @@ function req(path: string, init: RequestInit = {}) {
 function buildApp(opts: {
   resolveSession?: SessionResolver;
   resolveDocRole?: (docId: string, userId: string) => Promise<Role | null>;
+  loadShareConfig?: (docId: string) => Promise<{ editorsCanShare: boolean }>;
   doc?: DocLookup | null;
   shareRepo?: ShareRepo;
   findUserByEmail?: (email: string) => { id: string } | null;
@@ -85,6 +101,8 @@ function buildApp(opts: {
       enqueueInvite: opts.enqueueInvite ?? (() => {}),
       resolveSession: opts.resolveSession ?? member,
       resolveDocRole: opts.resolveDocRole ?? asOwner,
+      // Default toggle ON (the Google-Docs default) unless a test overrides it.
+      loadShareConfig: opts.loadShareConfig ?? shareToggleOn,
       accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
     },
   });
@@ -102,7 +120,12 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
-    expect(json.data).toEqual({ level: "anyone_with_link", role: "commenter", guestCommenting: true });
+    expect(json.data).toEqual({
+      level: "anyone_with_link",
+      role: "commenter",
+      guestCommenting: true,
+      editorsCanShare: true,
+    });
     expect(share.calls).toHaveLength(1);
     expect(share.calls[0]?.guestCommenting).toBe(true);
   });
@@ -135,8 +158,22 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     expect(json.error.code).toBe("VALIDATION_ERROR");
   });
 
-  test("AS-014: editor (non-owner) on a VISIBLE doc → 403 FORBIDDEN", async () => {
-    const app = buildApp({ resolveDocRole: asEditor });
+  test("AS-014: editor on a VISIBLE doc with editors_can_share ON → 200 ALLOWED", async () => {
+    const share = fakeShareRepo();
+    const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOn, shareRepo: share.repo });
+    const res = await app.handle(
+      req("/api/docs/doc-one/access", {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(share.calls).toHaveLength(1);
+  });
+
+  test("AS-023: editor with editors_can_share OFF → 403 FORBIDDEN (no persist)", async () => {
+    const share = fakeShareRepo();
+    const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOff, shareRepo: share.repo });
     const res = await app.handle(
       req("/api/docs/doc-one/access", {
         method: "PUT",
@@ -146,6 +183,60 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     expect(res.status).toBe(403);
     const json = (await res.json()) as any;
     expect(json.error.code).toBe("FORBIDDEN");
+    expect(share.calls).toHaveLength(0);
+  });
+
+  test("AS-024: viewer can never manage sharing → 403 (toggle on)", async () => {
+    const app = buildApp({ resolveDocRole: asViewer, loadShareConfig: shareToggleOn });
+    const res = await app.handle(
+      req("/api/docs/doc-one/access", {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("AS-024: commenter can never manage sharing → 403 (toggle on)", async () => {
+    const app = buildApp({ resolveDocRole: asCommenter, loadShareConfig: shareToggleOn });
+    const res = await app.handle(
+      req("/api/docs/doc-one/access", {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("AS-022 / C-015: owner sets editors_can_share off → 200 { editorsCanShare: false }", async () => {
+    const share = fakeShareRepo();
+    const app = buildApp({ resolveDocRole: asOwner, shareRepo: share.repo });
+    const res = await app.handle(
+      req("/api/docs/doc-one/access", {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "viewer", editorsCanShare: false }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.editorsCanShare).toBe(false);
+    expect(share.calls[0]?.editorsCanShare).toBe(false);
+  });
+
+  test("C-015: a non-owner editor trying to set editors_can_share → 403 (toggle owner-only, no persist)", async () => {
+    // Editor may otherwise manage sharing (toggle on) — but may NOT flip the toggle itself.
+    const share = fakeShareRepo();
+    const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOn, shareRepo: share.repo });
+    const res = await app.handle(
+      req("/api/docs/doc-one/access", {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "viewer", editorsCanShare: false }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("FORBIDDEN");
+    expect(share.calls).toHaveLength(0);
   });
 
   test("no session → 401 UNAUTHENTICATED", async () => {
@@ -227,8 +318,30 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
     expect(enqueued[0]?.kind).toBe("pending");
   });
 
-  test("AS-014: editor (non-owner) → 403", async () => {
-    const app = buildApp({ resolveDocRole: asEditor });
+  test("AS-014: editor with editors_can_share ON → 201 (can invite)", async () => {
+    const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOn });
+    const res = await app.handle(
+      req("/api/docs/doc-one/invites", {
+        method: "POST",
+        body: JSON.stringify({ email: "x@y.com", role: "viewer" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  test("AS-023: editor with editors_can_share OFF → 403", async () => {
+    const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOff });
+    const res = await app.handle(
+      req("/api/docs/doc-one/invites", {
+        method: "POST",
+        body: JSON.stringify({ email: "x@y.com", role: "viewer" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("AS-024: viewer → 403 (cannot invite, toggle on)", async () => {
+    const app = buildApp({ resolveDocRole: asViewer, loadShareConfig: shareToggleOn });
     const res = await app.handle(
       req("/api/docs/doc-one/invites", {
         method: "POST",
@@ -275,8 +388,16 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
 describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
   // The link route persists onto share_links and so needs a DB; the persistence path
   // is integration-verified. Here we assert the GATES that run BEFORE persistence.
-  test("AS-014: editor (non-owner) → 403 (before any DB write)", async () => {
-    const app = buildApp({ resolveDocRole: asEditor });
+  test("AS-023: editor with editors_can_share OFF → 403 (before any DB write)", async () => {
+    const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOff });
+    const res = await app.handle(
+      req("/api/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("AS-024: viewer → 403 (cannot set link controls)", async () => {
+    const app = buildApp({ resolveDocRole: asViewer, loadShareConfig: shareToggleOn });
     const res = await app.handle(
       req("/api/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
     );

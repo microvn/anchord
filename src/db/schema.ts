@@ -73,6 +73,11 @@ export const shareLinks = pgTable(
       .references(() => docs.id, { onDelete: "cascade" }),
     role: shareRole("role").notNull().default("viewer"),
     guestCommenting: boolean("guest_commenting").notNull().default(false),
+    // editors_can_share (sharing C-015 / AS-022): the owner-controlled toggle that
+    // lets editors manage sharing (Google-Docs style). Default ON — editors can share
+    // unless the owner turns it off. Only the OWNER may flip this; an editor managing
+    // sharing (when on) still cannot change the toggle itself.
+    editorsCanShare: boolean("editors_can_share").notNull().default(true),
     // ── S-004 link controls (nullable; not set by S-001) ──
     passwordHash: text("password_hash"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),

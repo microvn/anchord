@@ -5,6 +5,8 @@ import {
   maxRole,
   effectiveRole,
   can,
+  canManageSharing,
+  canToggleEditorsCanShare,
   type Role,
   type Action,
 } from "./roles";
@@ -45,13 +47,12 @@ test("AS-012: viewer can view but cannot comment (and the rest of the viewer row
   expect(can("viewer", "manage_sharing")).toBe(false);
 });
 
-test("AS-014 / C-007: only the owner manages sharing — editor (and lower) cannot", () => {
-  // C-007: v0 = ONLY the owner manages sharing (change access, invite, link controls).
+test("C-007 (static default): can(role, manage_sharing) is the conservative owner-only fallback", () => {
+  // The STATIC table is the owner-only fallback a caller falls back to if it ignores the
+  // per-doc editors_can_share toggle. The REAL gate is canManageSharing (below) — this
+  // asserts the static default stays conservative (editor not granted in the flat table).
   expect(can("owner", "manage_sharing")).toBe(true);
-
-  // An editor — the highest non-owner role — still cannot manage sharing.
   expect(can("editor", "manage_sharing")).toBe(false);
-  // And neither can commenter or viewer. Owner is the sole holder of this capability.
   expect(can("commenter", "manage_sharing")).toBe(false);
   expect(can("viewer", "manage_sharing")).toBe(false);
 
@@ -59,9 +60,43 @@ test("AS-014 / C-007: only the owner manages sharing — editor (and lower) cann
   expect(managers).toEqual(["owner"]);
 });
 
-test("AS-014: editor still has the editing capabilities it should (only manage_sharing is withheld)", () => {
-  // Guard against "fix" that withholds manage_sharing by neutering the editor role —
-  // editor keeps view/comment/resolve/edit, it just isn't an owner.
+test("AS-014: an editor CAN manage sharing when editors_can_share is enabled (default)", () => {
+  // The Google-Docs default (C-007): with the toggle ON, an editor manages sharing.
+  expect(canManageSharing({ role: "editor", editorsCanShare: true })).toBe(true);
+  // The owner always manages, toggle or not.
+  expect(canManageSharing({ role: "owner", editorsCanShare: true })).toBe(true);
+  expect(canManageSharing({ role: "owner", editorsCanShare: false })).toBe(true);
+});
+
+test("AS-023: an editor CANNOT manage sharing when editors_can_share is disabled", () => {
+  // The owner locked sharing to themselves → an editor is denied.
+  expect(canManageSharing({ role: "editor", editorsCanShare: false })).toBe(false);
+  // The owner is unaffected by the toggle.
+  expect(canManageSharing({ role: "owner", editorsCanShare: false })).toBe(true);
+});
+
+test("AS-024: a viewer/commenter can NEVER manage sharing, regardless of the toggle", () => {
+  for (const ecs of [true, false]) {
+    expect(canManageSharing({ role: "viewer", editorsCanShare: ecs })).toBe(false);
+    expect(canManageSharing({ role: "commenter", editorsCanShare: ecs })).toBe(false);
+  }
+});
+
+test("AS-022 / C-015: only the OWNER may toggle editors_can_share", () => {
+  // The toggle is owner-reserved — even an editor who may otherwise manage sharing
+  // (toggle on) cannot flip the toggle itself.
+  expect(canToggleEditorsCanShare("owner")).toBe(true);
+  expect(canToggleEditorsCanShare("editor")).toBe(false);
+  expect(canToggleEditorsCanShare("commenter")).toBe(false);
+  expect(canToggleEditorsCanShare("viewer")).toBe(false);
+
+  const togglers = ROLES.filter((r) => canToggleEditorsCanShare(r));
+  expect(togglers).toEqual(["owner"]);
+});
+
+test("AS-014: editor still has the editing capabilities it should (manage-sharing is contextual, not removed)", () => {
+  // Guard against a "fix" that neuters the editor role — editor keeps view/comment/
+  // resolve/edit; its manage-sharing ability is contextual (the toggle), not gone.
   expect(can("editor", "edit")).toBe(true);
   expect(can("editor", "comment")).toBe(true);
   expect(can("editor", "resolve")).toBe(true);

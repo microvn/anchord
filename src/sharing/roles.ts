@@ -11,8 +11,16 @@
 // AS-013 / C-002: highest role wins across multiple sources →
 //         effectiveRole(["commenter", "editor"]) === "editor" (invite=editor beats
 //         link=commenter).
-// AS-014 / C-007: only the owner manages sharing → can("editor", "manage_sharing")
-//         === false, can("owner", "manage_sharing") === true.
+// AS-014 / AS-023 / AS-024 / C-007: manage-sharing is the Google-Docs model and is
+//         CONTEXTUAL, not a flat per-role capability. The owner ALWAYS manages sharing;
+//         an editor manages sharing ONLY WHEN the doc's `editors_can_share` is on (the
+//         default); viewer/commenter NEVER. Because it depends on the per-doc toggle,
+//         the static `can(role, "manage_sharing")` table can NOT decide it — it stays
+//         conservatively false for editor (owner-only static default) and routes MUST
+//         use `canManageSharing({ role, editorsCanShare })` for the real gate.
+// AS-022 / C-015: `editors_can_share` defaults on; only the OWNER may toggle it (an
+//         editor cannot flip it even when it is on) → canToggleEditorsCanShare("owner")
+//         === true, false for every other role.
 //
 // Reuses share_role's values (viewer|commenter|editor) and adds `owner` — owner is a
 // model-level role, never a link/invite role stored in the share_role enum.
@@ -66,6 +74,15 @@ export function effectiveRole(sources: Role[]): Role {
  *   editor    → view, comment, resolve, edit
  *   owner     → all of the above + manage_sharing
  *
+ * NOTE on `manage_sharing`: this static table holds the CONSERVATIVE owner-only
+ * default (only `owner` has it). It is NOT the real authorization for managing
+ * sharing — that is contextual (C-007): an editor may manage sharing when the doc's
+ * `editors_can_share` toggle is on. The static table cannot see the per-doc toggle, so
+ * routes MUST gate on `canManageSharing({ role, editorsCanShare })`, not on
+ * `can(role, "manage_sharing")`. The `owner` cell here is still meaningful (owner
+ * always manages, no toggle needed); the absence of the editor cell is the safe default
+ * a caller falls back to if it ignores the toggle.
+ *
  * Each cell is load-bearing: flipping one entry flips exactly one capability test
  * (falsifiability). Stored as Sets so `can` is an O(1) membership check.
  */
@@ -81,10 +98,45 @@ const CAPABILITIES: Record<Role, ReadonlySet<Action>> = {
  *
  * Key contracts the consumers rely on:
  *   - AS-012: can("viewer", "comment") === false.
- *   - AS-014 / C-007: can("owner", "manage_sharing") === true while
- *     can("editor", "manage_sharing") === false — in v0 ONLY the owner manages
- *     sharing (change general-access, invite people, link controls).
+ *   - manage_sharing is the conservative owner-only static default:
+ *     can("owner", "manage_sharing") === true, can("editor", "manage_sharing")
+ *     === false. This is NOT the real manage-sharing gate (which is contextual,
+ *     C-007) — use `canManageSharing` for that. See the CAPABILITIES note.
  */
 export function can(role: Role, action: Action): boolean {
   return CAPABILITIES[role].has(action);
+}
+
+/**
+ * The AUTHORITATIVE manage-sharing gate (C-007, Google-Docs model). Whether `role`
+ * may manage sharing (change general-access, invite people, set link controls) on a
+ * doc whose `editors_can_share` toggle is `editorsCanShare`:
+ *   - owner            → always (AS-014/AS-023/AS-024 all leave the owner able).
+ *   - editor           → only when `editorsCanShare` is on (AS-014 on; AS-023 off).
+ *   - commenter/viewer → never, regardless of the toggle (AS-024).
+ *
+ * This is the function routes gate on — `can(role, "manage_sharing")` is only the
+ * static fallback and deliberately ignores the per-doc toggle.
+ */
+export function canManageSharing(ctx: { role: Role; editorsCanShare: boolean }): boolean {
+  switch (ctx.role) {
+    case "owner":
+      return true;
+    case "editor":
+      return ctx.editorsCanShare;
+    case "commenter":
+    case "viewer":
+      return false;
+  }
+}
+
+/**
+ * Whether `role` may toggle `editors_can_share` itself (C-015 / AS-022): ONLY the
+ * owner. An editor — even when `editors_can_share` is on and they may otherwise manage
+ * sharing — can NOT change the toggle. Distinct from `canManageSharing`: managing
+ * sharing (inviting, changing access) is one thing; changing who is ALLOWED to manage
+ * sharing is owner-reserved.
+ */
+export function canToggleEditorsCanShare(role: Role): boolean {
+  return role === "owner";
 }

@@ -13,14 +13,20 @@
 //   PUT  /api/docs/:slug/link    → S-004 AS-009..021         200 { link controls }
 //
 // EXISTENCE-HIDING (C-006): every route resolves :slug → a VISIBLE doc or 404 FIRST
-// (missing doc OR a doc the caller cannot view both collapse to 404), BEFORE the owner
-// gate — so managing sharing on an invisible doc is 404, never 403. 403 is reserved
-// for a VISIBLE doc whose role is below owner (AS-014: an editor cannot manage sharing).
+// (missing doc OR a doc the caller cannot view both collapse to 404), BEFORE the
+// manage-sharing gate — so managing sharing on an invisible doc is 404, never 403. 403
+// is reserved for a VISIBLE doc whose caller may not manage sharing.
 //
-// OWNER GATE SEAM: the owner check is `resolveDocRole(docId,userId) === "owner"`. The
+// MANAGE-SHARING GATE (C-007, Google-Docs model): the gate is
+// `canManageSharing({ role: resolveDocRole(...), editorsCanShare })` — owner always;
+// editor when the doc's editors_can_share toggle is on (AS-014) and denied when off
+// (AS-023); viewer/commenter never (AS-024). The editors_can_share toggle ITSELF is
+// owner-only (C-015/AS-022): PUT access carrying `editorsCanShare` from a non-owner →
+// 403.
+//
+// OWNER SOURCE SEAM: `resolveDocRole(docId,userId)` resolves the effective role; the
 // owner SOURCE is the remaining auth seam (no ownership column yet — see
-// resolve-doc-role-repo.ts). Tests inject a resolver that returns "owner"; live
-// owner-enforcement lands when auth adds the ownership column.
+// resolve-doc-role-repo.ts). Tests inject a resolver that returns the role under test.
 
 import { Elysia } from "elysia";
 import { z } from "zod";
@@ -30,7 +36,7 @@ import { withValidation } from "../http/validate";
 import { ValidationError, ForbiddenError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
 import { canViewDoc, type AccessDeps, type Viewer } from "../sharing/access";
-import { type Role } from "../sharing/roles";
+import { type Role, canManageSharing } from "../sharing/roles";
 import { setGeneralAccess, ShareRejected, type ShareRepo } from "../sharing/share";
 import { createShareRepo } from "../sharing/share-repo";
 import { inviteByEmail, type DocMemberRepo, type EnqueuedInvite, type InviteDeps } from "../sharing/invite";
@@ -38,6 +44,7 @@ import { createDocMemberRepo, findUserByEmail, createEnqueueInvite } from "../sh
 import { setPassword } from "../sharing/link-controls";
 import { setLinkControls } from "../sharing/link-controls-repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
+import { createLoadShareConfig } from "../sharing/resolve-doc-role-repo";
 import { MailQueue, type MailTransport } from "../auth/mail-queue";
 import type { DB } from "../db/client";
 
@@ -49,6 +56,9 @@ const accessBodySchema = z.object({
   // surfaces as the service's ShareRejected → 400, matching the contract's wording.
   role: z.string(),
   guestCommenting: z.boolean().optional(),
+  // C-015/AS-022: owner-only toggle. Present → the actor wants to change it; a non-owner
+  // sending it is 403 (gated below), an owner's change threads through to the service.
+  editorsCanShare: z.boolean().optional(),
 });
 
 const inviteBodySchema = z.object({
@@ -76,8 +86,15 @@ export interface SharingRoutesDeps {
   enqueueInvite?: (msg: EnqueuedInvite) => void;
   /** Resolves the better-auth session → actor; gates every route (401 if none). */
   resolveSession: SessionResolver;
-  /** Doc-scoped effective-role resolver; the owner gate reads this (seam: owner source). */
+  /** Doc-scoped effective-role resolver; the manage-sharing gate reads this (seam: owner source). */
   resolveDocRole: ResolveDocRole;
+  /**
+   * Reads the doc's per-doc share toggles — the manage-sharing gate needs
+   * `editorsCanShare` (C-007). Optional: built from `db` when omitted. Tests inject a
+   * fake. (Same shape annotation-core's loadShareConfig returns — guestCommenting is
+   * also present but unused here.)
+   */
+  loadShareConfig?: (docId: string) => Promise<{ editorsCanShare: boolean }>;
   /** Access deps for `canViewDoc` (existence-hiding). */
   accessDeps: AccessDeps;
   /** Mail wiring for the real enqueueInvite (prod). Omitted in tests (enqueueInvite injected). */
@@ -93,6 +110,8 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
   const docMemberRepo =
     deps.docMemberRepo ?? (deps.db ? createDocMemberRepo(deps.db) : need("docMemberRepo"));
   const lookupRepo = deps.lookupRepo ?? (deps.db ? createDocLookupRepo(deps.db) : need("lookupRepo"));
+  const loadShareConfig =
+    deps.loadShareConfig ?? (deps.db ? createLoadShareConfig(deps.db) : need("loadShareConfig"));
 
   // invite.ts's findUserByEmail port is SYNC; over Drizzle it must be async. We resolve
   // it per-request in the handler (await) and pass a resolved closure to the service.
@@ -114,10 +133,21 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
     return enforceReadAccess({ doc, allowed });
   }
 
-  /** Owner gate (C-007): a VISIBLE non-owner → 403 (AS-014). Seam: owner source. */
-  async function requireOwner(docId: string, userId: string): Promise<void> {
+  /**
+   * Manage-sharing gate (C-007, Google-Docs model): a VISIBLE doc whose caller may not
+   * manage sharing → 403. Owner always passes; an editor passes only when the doc's
+   * editors_can_share is on (AS-014/AS-023); viewer/commenter never (AS-024). Returns
+   * the resolved role so the access route can apply the owner-only toggle guard (C-015).
+   */
+  async function requireManageSharing(docId: string, userId: string): Promise<Role> {
     const role: Role | null = await deps.resolveDocRole(docId, userId);
-    if (role !== "owner") throw new ForbiddenError();
+    const { editorsCanShare } = role
+      ? await loadShareConfig(docId)
+      : { editorsCanShare: false };
+    if (!role || !canManageSharing({ role, editorsCanShare })) {
+      throw new ForbiddenError();
+    }
+    return role;
   }
 
   return (
@@ -131,7 +161,14 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
           .put("/api/docs/:slug/access", async ({ params, actor, validBody }) => {
             const body = validBody as z.infer<typeof accessBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
-            await requireOwner(doc.id, actor.userId); // 403 if not owner (AS-014)
+            // 403 if the caller may not manage sharing (AS-014/AS-023/AS-024).
+            const role = await requireManageSharing(doc.id, actor.userId);
+            const actorIsOwner = role === "owner";
+            // C-015/AS-022: a non-owner carrying editorsCanShare → 403 (owner-only toggle),
+            // before the service write. (The service guards this too — belt + braces.)
+            if (body.editorsCanShare !== undefined && !actorIsOwner) {
+              throw new ForbiddenError();
+            }
             try {
               const result = await setGeneralAccess(
                 doc.id,
@@ -140,13 +177,16 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
                   // role validity (AS-018) is the service's guard → ShareRejected → 400.
                   role: body.role as never,
                   guestCommenting: body.guestCommenting,
+                  editorsCanShare: body.editorsCanShare,
                 },
                 shareRepo,
+                { actorIsOwner },
               );
               return {
                 level: result.level,
                 role: result.role,
                 guestCommenting: result.guestCommenting,
+                editorsCanShare: result.editorsCanShare,
               };
             } catch (err) {
               // AS-018 invalid role + AS-003 guest-on-restricted → 400 VALIDATION_ERROR.
@@ -163,7 +203,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
           .post("/api/docs/:slug/invites", async ({ params, actor, validBody, set }) => {
             const body = validBody as z.infer<typeof inviteBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId);
-            await requireOwner(doc.id, actor.userId);
+            await requireManageSharing(doc.id, actor.userId);
             // findUserByEmail: sync port for the service. Resolve over Drizzle here if no
             // fake was injected, then hand the service a resolved closure.
             const account =
@@ -199,7 +239,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
           .put("/api/docs/:slug/link", async ({ params, actor, validBody }) => {
             const body = validBody as z.infer<typeof linkBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId);
-            await requireOwner(doc.id, actor.userId);
+            await requireManageSharing(doc.id, actor.userId);
             // Hash the password (argon2id, C-010) before it ever touches the DB; an
             // empty/omitted password clears it (null).
             const passwordHash =

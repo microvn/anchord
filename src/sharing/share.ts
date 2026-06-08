@@ -26,11 +26,14 @@ export type ShareRole = (typeof shareRole.enumValues)[number];
 
 const SHARE_ROLES: readonly ShareRole[] = ["viewer", "commenter", "editor"];
 
-/** Thrown when a requested setting violates a sharing rule (C-003 / role validation). */
+/** Thrown when a requested setting violates a sharing rule (C-003 / role validation / C-015). */
 export class ShareRejected extends Error {
   constructor(
     message: string,
-    readonly code: "guest_commenting_requires_link" | "invalid_role",
+    readonly code:
+      | "guest_commenting_requires_link"
+      | "invalid_role"
+      | "toggle_owner_only",
   ) {
     super(message);
     this.name = "ShareRejected";
@@ -42,6 +45,13 @@ export interface GeneralAccessInput {
   role: ShareRole;
   /** Default false. Only accepted when level === "anyone_with_link" (C-003). */
   guestCommenting?: boolean;
+  /**
+   * The owner-controlled `editors_can_share` toggle (C-015). Optional: when omitted
+   * the stored value is left untouched (defaults true on the first set). When present
+   * it changes the toggle and REQUIRES the actor be owner (`actorIsOwner`), else
+   * ShareRejected("toggle_owner_only"). An editor managing sharing leaves this out.
+   */
+  editorsCanShare?: boolean;
 }
 
 /** The resolved, persisted setting (what the repo stored). */
@@ -50,18 +60,26 @@ export interface ResolvedShareSetting {
   level: GeneralAccessLevel;
   role: ShareRole;
   guestCommenting: boolean;
+  editorsCanShare: boolean;
 }
 
 /** Persistence port. The real implementation (repo.ts) is thin Drizzle glue. */
 export interface ShareRepo {
   /**
    * Persist docs.general_access = level AND upsert the doc's single share_links row
-   * (role, guestCommenting) atomically. Returns the stored setting. The unique docId
-   * (C-001) means this is an upsert keyed on docId, never a second row.
+   * (role, guestCommenting, and `editorsCanShare` when present) atomically. Returns the
+   * stored setting. The unique docId (C-001) means this is an upsert keyed on docId,
+   * never a second row. `editorsCanShare` is OPTIONAL on the write: when undefined the
+   * stored toggle is left untouched (default true on first insert).
    */
   setGeneralAccess(
     docId: string,
-    setting: { level: GeneralAccessLevel; role: ShareRole; guestCommenting: boolean },
+    setting: {
+      level: GeneralAccessLevel;
+      role: ShareRole;
+      guestCommenting: boolean;
+      editorsCanShare?: boolean;
+    },
   ): Promise<ResolvedShareSetting>;
 }
 
@@ -70,18 +88,23 @@ function isShareRole(role: string): role is ShareRole {
 }
 
 /**
- * Set a doc's general-access level, its anyone-with-link role, and the guest-comment
- * toggle. Validates BEFORE the repo is touched, so a rejected setting never persists:
+ * Set a doc's general-access level, its anyone-with-link role, the guest-comment
+ * toggle, and (owner-only) the editors_can_share toggle. Validates BEFORE the repo is
+ * touched, so a rejected setting never persists:
  *   - role must be one of viewer | commenter | editor (owner is not a link role).
  *   - C-003 GUARD: guestCommenting === true is accepted ONLY when level is
  *     "anyone_with_link"; on any other level it throws ShareRejected (reject-with-
  *     clear-error, not silent-force-false).
+ *   - C-015 GUARD: changing `editorsCanShare` requires `actorIsOwner` — an editor
+ *     managing sharing may NOT flip the toggle, even when it is on. Omitting
+ *     `editorsCanShare` leaves the toggle untouched (an editor's normal path).
  * Returns the resolved setting the repo persisted.
  */
 export async function setGeneralAccess(
   docId: string,
   input: GeneralAccessInput,
   repo: ShareRepo,
+  ctx: { actorIsOwner: boolean } = { actorIsOwner: false },
 ): Promise<ResolvedShareSetting> {
   const { level, role } = input;
   const guestCommenting = input.guestCommenting ?? false;
@@ -101,5 +124,20 @@ export async function setGeneralAccess(
     );
   }
 
-  return repo.setGeneralAccess(docId, { level, role, guestCommenting });
+  // C-015 / AS-022: only the owner may change the editors_can_share toggle. A non-owner
+  // who tries to set it (even to its current value) is rejected — the toggle is the
+  // owner's lock on who else can share.
+  if (input.editorsCanShare !== undefined && !ctx.actorIsOwner) {
+    throw new ShareRejected(
+      "Only the owner can change editors_can_share",
+      "toggle_owner_only",
+    );
+  }
+
+  return repo.setGeneralAccess(docId, {
+    level,
+    role,
+    guestCommenting,
+    editorsCanShare: input.editorsCanShare,
+  });
 }
