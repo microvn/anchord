@@ -29,8 +29,25 @@ import type { ShareRole } from "./share";
 import type { GeneralAccessLevel } from "./access";
 import { activeRolesFor } from "./doc-member-repo";
 
-/** The remaining owner-source seam: does `userId` own `docId`? See the header note. */
+/** The owner-source port: does `userId` own `docId`? See the header note. */
 export type IsOwner = (docId: string, userId: string) => Promise<boolean>;
+
+/**
+ * Concrete owner-source read (auth-routes S-002, C-003): the doc owner = the user whose
+ * id matches `docs.owner_id` (recorded at publish by S-001). This CLOSES the seam
+ * `index.ts` wired to `async () => false`: a real `isOwner` so the owner's effective role
+ * folds to `owner` (highest wins) on every access decision (AS-003/AS-005). A missing doc
+ * or a null `owner_id` (an ownerless seed) → false (no one owns it).
+ */
+export function createIsDocOwner(db: DB): IsOwner {
+  return async (docId: string, userId: string): Promise<boolean> => {
+    const [doc] = await db
+      .select({ ownerId: docs.ownerId })
+      .from(docs)
+      .where(eq(docs.id, docId));
+    return doc?.ownerId != null && doc.ownerId === userId;
+  };
+}
 
 /** Workspace-membership read for the link-role source on `anyone_in_workspace`. */
 export type IsWorkspaceMember = (userId: string) => boolean | Promise<boolean>;

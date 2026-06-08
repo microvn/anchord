@@ -18,7 +18,11 @@ import { and, eq } from "drizzle-orm";
 import { docs, docMembers, shareLinks, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
-import { createResolveDocRole, createLoadShareConfig } from "../../src/sharing/resolve-doc-role-repo";
+import {
+  createResolveDocRole,
+  createLoadShareConfig,
+  createIsDocOwner,
+} from "../../src/sharing/resolve-doc-role-repo";
 import type { SessionResolver } from "../../src/http/auth-gate";
 import type { Role } from "../../src/sharing/roles";
 import { withMigratedDb, type MigratedDb } from "./harness";
@@ -243,5 +247,144 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
       }),
     );
     expect(toggleRes.status).toBe(403);
+  });
+});
+
+// auth-routes S-002: the OWNER SOURCE resolved against REAL Postgres via createIsDocOwner
+// (reads docs.owner_id, recorded by S-001's publish path). Proves the seam index.ts
+// closed works end-to-end: an owner resolves to "owner" (even with a lesser stored role)
+// and can PUT access; a viewer cannot.
+describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner_id (real Postgres)", () => {
+  let h: MigratedDb;
+  let ownerSlug: string;
+  let ownerDocId: string;
+
+  beforeAll(async () => {
+    h = await withMigratedDb();
+    // User A (owner) + user B (a plain viewer, not the owner).
+    await h.db.insert(user).values([
+      { id: "u_A_owner", name: "A", email: "a@itest.local" },
+      { id: "u_B_viewer", name: "B", email: "b@itest.local" },
+    ]);
+    ownerSlug = `owned-${process.pid}`;
+    // Seed a doc OWNED by A (docs.owner_id = A) via S-001's publish repo path.
+    const created = await createDocRepo(h.db).createDocWithV1({
+      slug: ownerSlug,
+      title: "A's Doc",
+      kind: "markdown",
+      content: "# v1\n",
+      contentHash: "hash-owned-v1",
+      ownerId: "u_A_owner",
+    });
+    ownerDocId = created.id;
+    // restricted: no link role → A's role comes purely from the owner source.
+    await h.db.update(docs).set({ generalAccess: "restricted" }).where(eq(docs.id, ownerDocId));
+  });
+
+  afterAll(async () => {
+    if (h) {
+      await h.close();
+      await h.stop();
+    }
+  });
+
+  function req(path: string, init: RequestInit = {}) {
+    return new Request(`http://localhost${path}`, {
+      headers: { "content-type": "application/json" },
+      ...init,
+    });
+  }
+
+  test("C-003: createIsDocOwner reads docs.owner_id — true for A, false for B", async () => {
+    const isOwner = createIsDocOwner(h.db);
+    expect(await isOwner(ownerDocId, "u_A_owner")).toBe(true);
+    expect(await isOwner(ownerDocId, "u_B_viewer")).toBe(false);
+  });
+
+  test("AS-003: A (owner) resolves to 'owner' over real PG", async () => {
+    const resolve = createResolveDocRole(h.db, {
+      isOwner: createIsDocOwner(h.db),
+      isWorkspaceMember: () => true,
+    });
+    expect(await resolve(ownerDocId, "u_A_owner")).toBe("owner");
+  });
+
+  test("AS-005: A owns the doc AND is an invited commenter → still resolves to 'owner'", async () => {
+    // Seed A also as an ACTIVE invited commenter (a lesser stored role) on the same doc.
+    await h.db.insert(docMembers).values({
+      docId: ownerDocId,
+      userId: "u_A_owner",
+      email: "a@itest.local",
+      role: "commenter",
+      invitedBy: "u_A_owner",
+      status: "active",
+    });
+    const resolve = createResolveDocRole(h.db, {
+      isOwner: createIsDocOwner(h.db),
+      isWorkspaceMember: () => true,
+    });
+    // owner (source) beats the invited commenter (stored) — highest wins (C-003).
+    expect(await resolve(ownerDocId, "u_A_owner")).toBe("owner");
+  });
+
+  test("AS-003: A (owner) CAN PUT access over the real route → 200", async () => {
+    const ownerApp = createApp({
+      dbCheck: async () => {},
+      sharing: {
+        db: h.db,
+        resolveSession: async () => ({ userId: "u_A_owner" }),
+        resolveDocRole: createResolveDocRole(h.db, {
+          isOwner: createIsDocOwner(h.db),
+          isWorkspaceMember: () => true,
+        }),
+        loadShareConfig: createLoadShareConfig(h.db),
+        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      },
+    });
+    const res = await ownerApp.handle(
+      req(`/api/docs/${ownerSlug}/access`, {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const [doc] = await h.db.select().from(docs).where(eq(docs.id, ownerDocId));
+    expect(doc?.generalAccess).toBe("anyone_with_link"); // saved
+  });
+
+  test("AS-004 / C-004: B (viewer, not owner) CANNOT PUT access → 403", async () => {
+    // B is an ACTIVE invited viewer (not the owner). The doc is now anyone_with_link
+    // (set by the prior test) granting a link role of commenter; B's effective role is
+    // the max(viewer, commenter) = commenter — still NOT owner → manage-sharing denied.
+    await h.db.insert(docMembers).values({
+      docId: ownerDocId,
+      userId: "u_B_viewer",
+      email: "b@itest.local",
+      role: "viewer",
+      invitedBy: "u_A_owner",
+      status: "active",
+    });
+    const viewerApp = createApp({
+      dbCheck: async () => {},
+      sharing: {
+        db: h.db,
+        resolveSession: async () => ({ userId: "u_B_viewer" }),
+        resolveDocRole: createResolveDocRole(h.db, {
+          isOwner: createIsDocOwner(h.db),
+          isWorkspaceMember: () => true,
+        }),
+        loadShareConfig: createLoadShareConfig(h.db),
+        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      },
+    });
+    const res = await viewerApp.handle(
+      req(`/api/docs/${ownerSlug}/access`, {
+        method: "PUT",
+        body: JSON.stringify({ level: "restricted", role: "viewer" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("FORBIDDEN");
   });
 });

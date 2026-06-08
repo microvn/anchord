@@ -6,6 +6,7 @@ import { betterAuthSessionResolver } from "./http/auth-gate";
 import {
   createResolveDocRole,
   createLoadShareConfig,
+  createIsDocOwner,
 } from "./sharing/resolve-doc-role-repo";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
@@ -37,17 +38,15 @@ const sharedAccessDeps = {
 //     (share_links.role when general-access admits) roles. Highest wins (C-002).
 //   - loadShareConfig: reads share_links.guest_commenting.
 //
-// REMAINING OWNER-SOURCE SEAM (flagged, NOT faked): `docs` has no owner column and
-// doc_versions.published_by is written null (auth seam), so "is this user the owner"
-// is not resolvable yet. We wire `isOwner: () => false` — the honest answer until the
-// auth cluster adds the ownership column. We do NOT fake owner=true (that would make
-// every caller an owner). Consequence: with no invites/link role, a caller currently
-// resolves to `null` (no role) → least privilege. The owner-only sharing routes and
-// the owner-gated annotation actions therefore stay closed in prod until ownership
-// lands — by design, this is the one seam left open, flagged here.
+// OWNER-SOURCE SEAM CLOSED (auth-routes S-002, C-003): S-001 added `docs.owner_id`
+// (the authenticated publisher), so "is this user the owner" is now resolvable. We wire
+// the CONCRETE `createIsDocOwner(db)` (reads docs.owner_id) in place of the old
+// `async () => false` placeholder. The owner now folds into effectiveRole → highest wins
+// (AS-003/AS-005), so the doc owner manages sharing for real, while a viewer/commenter
+// still resolves to their lesser role → denied (AS-004/C-004).
 const isWorkspaceMember = () => true;
 const sharedResolveDocRole = createResolveDocRole(db, {
-  isOwner: async () => false, // ← the flagged owner-source seam (auth-routes seam)
+  isOwner: createIsDocOwner(db), // ← concrete owner read (auth-routes S-002 closes the seam)
   isWorkspaceMember,
 });
 const concreteLoadShareConfig = createLoadShareConfig(db);
