@@ -40,6 +40,7 @@ import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
 import { docs, user as userTable } from "../../src/db/schema";
 import { createApp } from "../../src/app";
+import { createDocRepo } from "../../src/publish/repo";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
@@ -103,12 +104,24 @@ describe.skipIf(!RUN)("auth-routes S-004: live session cookie resolves the /api 
   beforeAll(async () => {
     h = await withMigratedDb();
     auth = makeAuth(h.db);
-    // SAME composition as src/index.ts: better-auth mounted + the gated /api/docs
-    // route wired to the REAL betterAuthSessionResolver(auth) — no fake resolver.
+    // better-auth mounted + the gated /api/docs route wired to the REAL
+    // betterAuthSessionResolver(auth) — no fake resolver. AS-009 tests the AUTH/cookie
+    // path in isolation; this user has no workspace, so no default project exists.
+    // Inject the seed-path project resolver (null project_id) so publish exercises the
+    // session→actor resolution under test, NOT workspace-project's default-project
+    // assignment (covered by projects.itest.ts). Without it the post-S-003 publish path
+    // 404s on the missing default project — unrelated to the auth concern here.
     app = createApp({
       dbCheck: async () => {},
       authHandler: auth.handler,
-      docs: { db: h.db, resolveSession: betterAuthSessionResolver(auth) },
+      docs: {
+        // Pass a pre-built repo (real persistence) but NOT `db`, so the publish path
+        // builds no default-project resolver → the doc is published with a null
+        // project_id (the seed path). AS-009 isolates session→actor resolution; the
+        // default-project assignment is workspace-project's concern (projects.itest.ts).
+        repo: createDocRepo(h.db),
+        resolveSession: betterAuthSessionResolver(auth),
+      },
     });
   });
 

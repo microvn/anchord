@@ -2,7 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { contentHeaders, sandboxIframe } from "./render/sandbox";
 import { renderMarkdown } from "./render/markdown";
-import { docsRoutes } from "./routes/docs";
+import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
@@ -38,11 +38,7 @@ export type AppDeps = {
    * Provide a Drizzle handle (production) or a pre-built DocRepo (tests), plus a
    * session resolver. Omit to leave /api/docs unmounted (e.g. viewer-only tests).
    */
-  docs?: {
-    db?: DB;
-    repo?: DocRepo;
-    resolveSession: SessionResolver;
-  };
+  docs?: DocsRoutesDeps;
   /**
    * versioning-diff S-001..S-004: enables the enveloped, session-gated version
    * create/title-patch/history/restore/diff routes under /api/docs/:slug. Provide
