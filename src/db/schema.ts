@@ -146,8 +146,21 @@ export const annotationType = pgEnum("annotation_type", [
   "multi_range",
   "block",
   "doc",
+  // S-006: a suggestion is a suggestion-TYPE annotation. It rides in this same table —
+  // the suggestion payload lives in `suggestion` jsonb and its lifecycle in
+  // `suggestion_status`, so a suggestion never touches doc content (C-003).
+  "suggestion",
 ]);
 export const annotationStatus = pgEnum("annotation_status", ["unresolved", "resolved"]);
+
+// S-006 suggestion lifecycle — DISTINCT from annotationStatus (unresolved|resolved) so
+// the two never collide. `stale` is first-class (a drifted `from`, C-011), not an error.
+export const suggestionStatus = pgEnum("suggestion_status", [
+  "pending",
+  "accepted",
+  "rejected",
+  "stale",
+]);
 
 export const annotations = pgTable(
   "annotations",
@@ -161,9 +174,44 @@ export const annotations = pgTable(
     anchor: jsonb("anchor").notNull(),
     isOrphaned: boolean("is_orphaned").notNull().default(false),
     status: annotationStatus("status").notNull().default("unresolved"),
+    // ── S-006 suggestion state (NULL for ordinary annotations) ──
+    // The suggestion payload (kind replace|delete, from/to, against_version) as jsonb,
+    // and its own lifecycle status, both nullable so a normal annotation carries neither
+    // (C-003: a suggestion only ever writes its own row, never doc content).
+    suggestion: jsonb("suggestion"),
+    suggestionStatus: suggestionStatus("suggestion_status"),
     createdAt: createdAt(),
   },
   (t) => [index("annotations_doc_idx").on(t.docId)],
+);
+
+// ── reanchor_ledger (annotation-core S-005, C-012) ─────────────────────────
+// The idempotency record for re-anchoring annotations onto a new version. One row per
+// (annotation_id, version_id): the outcome (carried|orphaned) + the carried anchor.
+// The UNIQUE(annotation_id, version_id) makes a re-run a no-op — the second attempt to
+// persist the same pair conflicts, so the ledger never double-applies (C-012). Matches
+// ReanchorLedgerEntry in src/annotation/reanchor.ts. version_id is the doc_versions row
+// id; no FK on it for now (re-anchor runs OFF the publish path and a version may be
+// referenced by ledger entries computed before/after — kept loose + portable).
+export const reanchorLedgerStatus = pgEnum("reanchor_ledger_status", ["carried", "orphaned"]);
+
+export const reanchorLedger = pgTable(
+  "reanchor_ledger",
+  {
+    id: id(),
+    annotationId: uuid("annotation_id")
+      .notNull()
+      .references(() => annotations.id, { onDelete: "cascade" }),
+    versionId: uuid("version_id").notNull(),
+    status: reanchorLedgerStatus("status").notNull(),
+    // The re-anchored anchor when carried; NULL when orphaned.
+    anchor: jsonb("anchor"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // C-012: one outcome per (annotation, version) — the idempotency backstop.
+    uniqueIndex("reanchor_ledger_uq").on(t.annotationId, t.versionId),
+  ],
 );
 
 export const comments = pgTable(
@@ -178,6 +226,8 @@ export const comments = pgTable(
     // The signed-in author; NULL for a guest comment (S-007), which carries guestName.
     authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
     guestName: text("guest_name"),
+    // Optional email a guest may supply with a comment (S-007 / AS-017). NULL when absent.
+    guestEmail: text("guest_email"),
     body: text("body").notNull(),
     createdAt: createdAt(),
   },
