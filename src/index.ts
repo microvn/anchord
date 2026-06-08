@@ -2,6 +2,7 @@ import { loadConfig } from "./config/env";
 import { createDb } from "./db/client";
 import { createApp } from "./app";
 import { createAuth } from "./auth/auth";
+import { betterAuthSessionResolver } from "./http/auth-gate";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -18,6 +19,8 @@ const app = createApp({
   dbCheck,
   corsOrigin: cfg.CORS_ORIGIN === "*" ? true : cfg.CORS_ORIGIN.split(","),
   authHandler: auth.handler,
+  // render-publish S-001: enveloped, session-gated POST /api/docs over the real DB.
+  docs: { db, resolveSession: betterAuthSessionResolver(auth) },
 }).listen(cfg.PORT);
 
 console.log(`anchord on http://localhost:${cfg.PORT} (${cfg.NODE_ENV})`);

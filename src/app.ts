@@ -2,6 +2,10 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { contentHeaders, sandboxIframe } from "./render/sandbox";
 import { renderMarkdown } from "./render/markdown";
+import { docsRoutes } from "./routes/docs";
+import type { DocRepo } from "./publish/service";
+import type { SessionResolver } from "./http/auth-gate";
+import type { DB } from "./db/client";
 
 export type ViewerDoc = {
   versionId: string;
@@ -21,6 +25,16 @@ export type AppDeps = {
   loadContent?: (versionId: string) => Promise<{ content: string; kind: ViewerDoc["kind"] } | null>;
   /** better-auth request handler (auth S-001); mounted at /api/auth/*. */
   authHandler?: (request: Request) => Promise<Response> | Response;
+  /**
+   * render-publish S-001: enables the enveloped, session-gated POST /api/docs.
+   * Provide a Drizzle handle (production) or a pre-built DocRepo (tests), plus a
+   * session resolver. Omit to leave /api/docs unmounted (e.g. viewer-only tests).
+   */
+  docs?: {
+    db?: DB;
+    repo?: DocRepo;
+    resolveSession: SessionResolver;
+  };
 };
 
 const esc = (s: string) =>
@@ -64,6 +78,14 @@ export function createApp(deps: AppDeps) {
   if (deps.authHandler) {
     const authHandler = deps.authHandler;
     app.all("/api/auth/*", ({ request }) => authHandler(request));
+  }
+
+  // /api/docs — render-publish S-001 publish endpoint. Self-enveloped + session-
+  // gated (docsRoutes composes apiEnvelope + requireSession + withValidation), so
+  // it lives UNDER the JSON envelope while /api/auth/* above stays OUTSIDE it
+  // (better-auth owns its own protocol — api-core C-009).
+  if (deps.docs) {
+    app.use(docsRoutes(deps.docs));
   }
 
   // /d/:slug — viewer shell (trusted app origin)
