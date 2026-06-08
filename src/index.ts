@@ -123,6 +123,17 @@ const app = createApp({
   // accessible docs (title + extracted content + comment bodies), access-filtered
   // (existence-hiding) and optionally project-scoped. FTS SQL isolated in the search repo.
   search: { db, resolveSession },
+  // workspace-project S-004: move/copy a doc between projects over the real DB. Move
+  // (relocate as-is) needs editor-or-owner on the source — uses the shared concrete
+  // resolveDocRole (owner folds in via createIsDocOwner) — or a workspace admin
+  // (isWorkspaceAdmin override). Copy (clean duplicate, no annotations — C-008) needs
+  // only read access. The move/copy repo + extract-text are built inside the route.
+  docMove: {
+    db,
+    resolveSession,
+    resolveDocRole: sharedResolveDocRole,
+    isWorkspaceAdmin,
+  },
   // sharing-permissions S-001/S-003/S-004: owner-only access/invites/link controls.
   // Owner gate reads the concrete resolver (owner source still seamed to false — see
   // above). Mail wiring is omitted here; the prod enqueueInvite degrades to a no-op

@@ -10,6 +10,7 @@ import { setupRoutes, type SetupRoutesDeps } from "./routes/setup";
 import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
 import { membersRoutes, type MembersRoutesDeps } from "./routes/members";
 import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
+import { docMoveRoutes, type DocMoveRoutesDeps } from "./routes/doc-move";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -99,6 +100,15 @@ export type AppDeps = {
    * session resolver. Omit to leave /api/search unmounted.
    */
   search?: SearchRoutesDeps;
+  /**
+   * workspace-project S-004: enables the enveloped, session-gated POST
+   * /api/docs/:slug/move and /api/docs/:slug/copy. Move relocates a doc as-is between
+   * projects (editor/owner/admin); copy duplicates the current version into another
+   * project as a clean new doc (any reader; no annotations/comments copied — C-008).
+   * Provide a Drizzle handle (production) or a pre-built repo (tests), plus the session
+   * resolver + the doc-scoped role resolver. Omit to leave these routes unmounted.
+   */
+  docMove?: DocMoveRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -206,6 +216,15 @@ export function createApp(deps: AppDeps) {
   // C-003), optionally project-scoped (AS-010). FTS SQL is isolated in the search repo.
   if (deps.search) {
     app.use(searchRoutes(deps.search));
+  }
+
+  // /api/docs/:slug/{move,copy} — workspace-project S-004. Self-enveloped + session-
+  // gated, mounted outside /api/auth/*. Move relocates a doc as-is between projects
+  // (editor/owner/admin); copy duplicates the current version as a clean new doc (any
+  // reader; no annotations/comments copied — C-008). Distinct paths from the versions
+  // cluster's /api/docs/:slug/versions, so the two coexist on /api/docs/:slug.
+  if (deps.docMove) {
+    app.use(docMoveRoutes(deps.docMove));
   }
 
   // /d/:slug — viewer shell (trusted app origin)
