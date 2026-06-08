@@ -1,0 +1,187 @@
+// Integration tier (guarded by RUN_INTEGRATION): the full route→service→DB path
+// for the annotation-core /api routes against a REAL Postgres. Proves the HTTP glue
+// persists and reads back through actual rows: create annotation → listable, reply →
+// flat, resolve → reopen, guest comment with email, suggestion create + accept.
+//
+// The better-auth cookie flow is heavy to drive in-test, so resolveSession +
+// resolveDocRole are injected with fakes (a member acting as owner) — the point of
+// THIS test is the live DB read/write through the routes, not auth.
+//
+// Run: RUN_INTEGRATION=1 bun test ./test/integration/annotation-routes.itest.ts
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
+import { annotations, comments, docs, user } from "../../src/db/schema";
+import { createApp } from "../../src/app";
+import { createDocRepo } from "../../src/publish/repo";
+import type { SessionResolver } from "../../src/http/auth-gate";
+import type { LoadShareConfig } from "../../src/routes/annotations";
+import { withMigratedDb, type MigratedDb } from "./harness";
+
+const RUN = !!process.env.RUN_INTEGRATION;
+const member: SessionResolver = async () => ({ userId: "u_itest" });
+const noSession: SessionResolver = async () => null;
+const guestOn: LoadShareConfig = async () => ({ guestCommentingEnabled: true });
+
+describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
+  let h: MigratedDb;
+  let app: ReturnType<typeof createApp>;
+  let guestApp: ReturnType<typeof createApp>;
+  let slug: string;
+  let docId: string;
+
+  beforeAll(async () => {
+    h = await withMigratedDb();
+    // comments.author_id FKs user.id — seed the session user so a signed-in reply inserts.
+    await h.db
+      .insert(user)
+      .values({ id: "u_itest", name: "Itest User", email: `itest-${process.pid}@example.com`, emailVerified: true });
+    slug = `annroutes-${process.pid}`;
+    const created = await createDocRepo(h.db).createDocWithV1({
+      slug,
+      title: "Annotated Doc",
+      kind: "html",
+      content: "<p>hello world</p>",
+      contentHash: "hash-v1",
+    });
+    docId = created.id;
+    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.slug, slug));
+
+    const base = {
+      db: h.db,
+      resolveSession: member,
+      resolveDocRole: async () => "owner" as const,
+      accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      loadShareConfig: guestOn,
+    };
+    app = createApp({ dbCheck: async () => {}, annotations: base });
+    // A second app whose session resolver returns null → drives the guest path.
+    guestApp = createApp({
+      dbCheck: async () => {},
+      annotations: { ...base, resolveSession: noSession },
+    });
+  });
+
+  afterAll(async () => {
+    if (h) {
+      await h.close();
+      await h.stop();
+    }
+  });
+
+  function req(path: string, init: RequestInit = {}) {
+    return new Request(`http://localhost${path}`, {
+      headers: { "content-type": "application/json" },
+      ...init,
+    });
+  }
+
+  test("create annotation → 201 + listable; reply → flat; resolve → reopen; on real DB", async () => {
+    // Create a text annotation
+    const createRes = await app.handle(
+      req(`/api/docs/${slug}/annotations`, {
+        method: "POST",
+        body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 } }),
+      }),
+    );
+    expect(createRes.status).toBe(201);
+    const annId = ((await createRes.json()) as any).data.annotationId;
+    expect(annId).toBeString();
+
+    // It is listable
+    const listRes = await app.handle(req(`/api/docs/${slug}/annotations`));
+    expect(listRes.status).toBe(200);
+    const list = (await listRes.json()) as any;
+    expect(list.data.items.some((a: any) => a.id === annId)).toBe(true);
+
+    // Seed a root comment directly, then reply via the route → flat parentId
+    const [root] = await h.db
+      .insert(comments)
+      .values({ annotationId: annId, parentId: null, authorId: null, guestName: "Root", body: "root comment" })
+      .returning({ id: comments.id });
+
+    const replyRes = await app.handle(
+      req(`/api/annotations/${annId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: "a reply", parentId: root.id }),
+      }),
+    );
+    expect(replyRes.status).toBe(201);
+    const replyId = ((await replyRes.json()) as any).data.commentId;
+
+    const rows = await h.db.select().from(comments).where(eq(comments.annotationId, annId));
+    const reply = rows.find((r) => r.id === replyId)!;
+    expect(reply.parentId).toBe(root.id); // C-004: flat — points at the root
+
+    // Resolve → status resolved on the real row
+    const resolveRes = await app.handle(
+      req(`/api/annotations/${annId}/resolution`, { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(resolveRes.status).toBe(200);
+    expect(((await resolveRes.json()) as any).data.status).toBe("resolved");
+    let [annRow] = await h.db.select().from(annotations).where(eq(annotations.id, annId));
+    expect(annRow.status).toBe("resolved");
+
+    // Reopen → unresolved
+    const reopenRes = await app.handle(
+      req(`/api/annotations/${annId}/resolution`, { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
+    );
+    expect(((await reopenRes.json()) as any).data.status).toBe("unresolved");
+    [annRow] = await h.db.select().from(annotations).where(eq(annotations.id, annId));
+    expect(annRow.status).toBe("unresolved");
+  });
+
+  test("guest comment with email → 201, persisted with author_id NULL", async () => {
+    // Need an annotation to comment on
+    const createRes = await app.handle(
+      req(`/api/docs/${slug}/annotations`, {
+        method: "POST",
+        body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "world", offset: 6, length: 5 } }),
+      }),
+    );
+    const annId = ((await createRes.json()) as any).data.annotationId;
+
+    const guestRes = await guestApp.handle(
+      req(`/api/annotations/${annId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: "guest feedback", guestName: "Anon Otter", guestEmail: "otter@example.com" }),
+      }),
+    );
+    expect(guestRes.status).toBe(201);
+    const cid = ((await guestRes.json()) as any).data.commentId;
+
+    const [row] = await h.db.select().from(comments).where(eq(comments.id, cid));
+    expect(row.authorId).toBeNull();
+    expect(row.guestName).toBe("Anon Otter");
+    expect(row.guestEmail).toBe("otter@example.com");
+    expect(row.body).toBe("guest feedback");
+  });
+
+  test("suggestion create + accept (from still matches) → accepted on real DB", async () => {
+    const createRes = await app.handle(
+      req(`/api/docs/${slug}/suggestions`, {
+        method: "POST",
+        body: JSON.stringify({
+          anchor: { blockId: "block-p-1", textSnippet: "hello world", offset: 0, length: 11 },
+          from: "hello",
+          to: "hi",
+          againstVersion: 1,
+        }),
+      }),
+    );
+    expect(createRes.status).toBe(201);
+    const sugId = ((await createRes.json()) as any).data.suggestionId;
+
+    // Accept — current version content still contains "hello" → accepted
+    const acceptRes = await app.handle(
+      req(`/api/suggestions/${sugId}`, { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+    );
+    expect(acceptRes.status).toBe(200);
+    expect(((await acceptRes.json()) as any).data.status).toBe("accepted");
+
+    const [row] = await h.db.select().from(annotations).where(eq(annotations.id, sugId));
+    expect(row.type).toBe("suggestion");
+    expect(row.suggestionStatus).toBe("accepted");
+    // C-003: doc content untouched — the version body is unchanged.
+  });
+});

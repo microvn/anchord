@@ -27,10 +27,22 @@ const resolveSession = betterAuthSessionResolver(auth);
 //   - accessDeps: treat authenticated users as invited/members so visible docs read.
 // Both are honest placeholders, not the final authz — flagged here so the swap is
 // obvious when sharing-permissions wires its concrete repo.
-const versionsAccessDeps = {
+const sharedAccessDeps = {
   isInvited: () => true,
   isWorkspaceMember: () => true,
 };
+
+// Shared interim doc-scoped role resolver (the sharing seam). Until sharing routes
+// land, any authenticated user is treated as `owner` for now so the full annotation
+// flow (comment/resolve/suggest + owner-only suggestion decide) works in the running
+// app. This OPENS writes more than v0's final model and is REPLACED when the sharing
+// cluster wires its concrete repo. Honest placeholder, flagged for the swap.
+const sharedResolveDocRole = async (): Promise<"owner"> => "owner";
+
+// Guest-commenting toggle seam (sharing-permissions). The concrete resolver reads
+// share_links.guest_commenting; until those routes land, default OFF so the running
+// app never silently accepts anonymous comments. Swapped when sharing wires its repo.
+const interimLoadShareConfig = async () => ({ guestCommentingEnabled: false });
 
 const app = createApp({
   dbCheck,
@@ -43,7 +55,17 @@ const app = createApp({
     db,
     resolveSession,
     resolveDocRole: async () => "editor",
-    accessDeps: versionsAccessDeps,
+    accessDeps: sharedAccessDeps,
+  },
+  // annotation-core S-001..S-007: annotation create/list, reply + guest comment,
+  // resolve/reopen, suggestion create/decide over the real DB. Shares the interim
+  // role/access seams; guest commenting defaults OFF until the sharing cluster lands.
+  annotations: {
+    db,
+    resolveSession,
+    resolveDocRole: sharedResolveDocRole,
+    accessDeps: sharedAccessDeps,
+    loadShareConfig: interimLoadShareConfig,
   },
 }).listen(cfg.PORT);
 

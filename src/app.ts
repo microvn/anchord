@@ -4,6 +4,7 @@ import { contentHeaders, sandboxIframe } from "./render/sandbox";
 import { renderMarkdown } from "./render/markdown";
 import { docsRoutes } from "./routes/docs";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
+import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -44,6 +45,15 @@ export type AppDeps = {
    * to leave these routes unmounted.
    */
   versions?: VersionsRoutesDeps;
+  /**
+   * annotation-core S-001..S-007: enables the enveloped annotation create/list,
+   * reply + guest comment, resolve/reopen, and suggestion create/decide routes
+   * under /api/docs/:slug and /api/annotations|suggestions/:id. Provide a Drizzle
+   * handle (production) or pre-built repos (tests), plus the session resolver, the
+   * doc-scoped role resolver (sharing seam), access deps, and the guest-commenting
+   * toggle resolver (sharing seam). Omit to leave these routes unmounted.
+   */
+  annotations?: AnnotationsRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -102,6 +112,13 @@ export function createApp(deps: AppDeps) {
   // mounted outside the /api/auth/* better-auth catch-all, alongside docsRoutes.
   if (deps.versions) {
     app.use(versionsRoutes(deps.versions));
+  }
+
+  // /api/docs/:slug/annotations|suggestions + /api/annotations|suggestions/:id —
+  // annotation-core S-001..S-007. Self-enveloped, mounted outside /api/auth/*. The
+  // comment route is guest-capable (no requireSession), so the plugin gates per-route.
+  if (deps.annotations) {
+    app.use(annotationsRoutes(deps.annotations));
   }
 
   // /d/:slug — viewer shell (trusted app origin)
