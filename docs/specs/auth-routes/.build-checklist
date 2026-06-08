@@ -1,0 +1,22 @@
+[x] AS-001 — signed-in publish records publisher as owner; v1 records publisher        | owner: S-001
+[x] AS-002 — publish without a session refused; no doc/owner created                     | owner: S-001
+[x] C-001  — doc records owner = first authenticated publisher; owner immutable v0       | owner: S-001
+[x] C-002  — publishing requires a session; no-session publish creates nothing           | owner: S-001
+[x] C-007  — owner_id + published_by reference user.id as text (not uuid)                | owner: S-001
+[x] AS-003 — owner can manage sharing (allowed + saved)                                  | owner: S-002
+[x] AS-004 — a viewer cannot manage sharing (refused)                                    | owner: S-002
+[x] AS-005 — owner role wins over a lesser stored role (owner > invited commenter)       | owner: S-002
+[x] C-003  — owner's effective role is owner (highest), overrides lesser stored role     | owner: S-002
+[x] C-004  — a viewer/commenter can never manage sharing (full model = sharing C-007)    | owner: S-002
+[x] AS-006 — signed-in version create records the publisher                              | owner: S-003
+[x] AS-007 — signed-in reply records the author (no guest name)                          | owner: S-003
+[x] AS-008 — guest reply records guest name, no account author                           | owner: S-003
+[x] C-005  — auth write records actor from session; guest = name only; never from body   | owner: S-003
+[x] AS-009 — valid session cookie resolves the calling user; handler runs as them        | owner: S-004
+[x] AS-010 — missing/invalid session cookie refused; handler not reached                 | owner: S-004
+[x] C-006  — /api routes resolve actor from live better-auth cookie server-side; no session → unauth | owner: S-004
+[ ] GAP-001 — no-session publish → ownerless doc; unreachable in app (C-002); deferred    | owner: —
+[N/A] transfer ownership / co-owners — Not in Scope (sharing v0.5)                        | owner: —
+[N/A] workspace-member-derived roles — Not in Scope (workspace-project)                   | owner: —
+[N/A] MCP-token publish ownership — Not in Scope (mcp-roundtrip)                          | owner: —
+[N/A] backfill owners for pre-existing docs — Not in Scope (greenfield)                   | owner: —

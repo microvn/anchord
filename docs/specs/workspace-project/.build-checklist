@@ -1,0 +1,31 @@
+[x] AS-001 — first-run creates workspace + first account is admin                    | owner: S-001
+[x] AS-002 — a later signup is a regular member (not admin)                          | owner: S-001
+[x] C-001  — v0 single workspace; first user admin, later users member               | owner: S-001
+[x] AS-003 — admin invites a member; they join with role member                      | owner: S-002
+[x] AS-004 — a member cannot manage membership/settings (admin only)                 | owner: S-002
+[x] AS-012 — removing a member keeps their doc; admin takes over its share           | owner: S-002
+[x] C-007  — doc belongs to project/workspace; member removal does not lose it        | owner: S-002
+[x] AS-005 — member creates a project + publishes a doc into it; member is owner      | owner: S-003
+[x] AS-006 — browse shows only docs the user has access to (doc A hidden)             | owner: S-003
+[x] AS-014 — each account gets an auto-created default project on joining             | owner: S-003
+[x] AS-007 — archiving a project hides it from browse; direct link works; unarchive   | owner: S-003
+[x] C-002  — members create projects/docs; only admins manage settings/members        | owner: S-003
+[x] C-005  — archive hides project from browse; reachable by link; unarchive shows     | owner: S-003
+[x] C-009  — default project per account; MCP fallback target                          | owner: S-003
+[x] AS-008 — move a doc to another project; access/sharing/version/annotation kept     | owner: S-004
+[x] AS-013 — copy a doc → new doc, new slug, current version as v1, no annotations     | owner: S-004
+[x] C-008  — copy = new doc no annotations; move = doc as-is                           | owner: S-004
+[x] AS-009 — search matches content+comments, access-filtered, no snippet/existence leak | owner: S-005
+[x] AS-010 — search scoped to a single project                                        | owner: S-005
+[x] C-003  — browse+search filter to accessible docs; no leak; existence-hiding        | owner: S-005
+[x] C-006  — search index = title + extracted text (HTML/MD) + comment bodies          | owner: S-005
+[x] AS-011 — a reply notifies participants + owner via in-app + email; not the replier | owner: S-006
+[x] C-004  — notify on reply → participants + owner, in-app + email, not replier        | owner: S-006
+[x] GAP-002 — RESOLVED → MVP always-send-per-event (AS-011/C-004); rich design deferred to TODO.md | owner: —
+[x] AS-015  — edited doc's latest content searchable (every version extracted at publish) | owner: S-005
+[x] GAP-003 — RESOLVED → AS-015/C-006: publish-time extraction into doc_versions.extracted_text | owner: —
+[N/A] multi-workspace / instance switcher — Not in Scope (v2)                          | owner: —
+[N/A] project membership/roles overriding workspace — Not in Scope (v0.5)             | owner: —
+[N/A] project default share settings — Not in Scope (v0.5)                            | owner: —
+[N/A] tags/labels, activity log, trash+restore — Not in Scope (v0.5)                  | owner: —
+[N/A] transfer ownership — Not in Scope (v0.5)                                        | owner: —

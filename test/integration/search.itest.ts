@@ -252,7 +252,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
   // Appending/restoring a version inserted a doc_versions row with NULL extracted_text,
   // so the NEW (current) content was not searchable. The search index covers the CURRENT
   // (max) version's extracted_text — so once append writes it, the new content matches.
-  test("C-006: appended version content is searchable (current-version index covers v2)", async () => {
+  test("AS-015 / C-006: an edited doc's latest content is searchable (current-version index covers v2)", async () => {
     // Publish v1 with a unique content token; v1 content IS searchable (publish path).
     const docId = await publish(A.cookie, {
       content: "# Edit Saga\n\nThe word zephyralpha appears in version one only.",
