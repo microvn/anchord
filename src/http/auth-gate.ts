@@ -1,0 +1,105 @@
+import { Elysia } from "elysia";
+import { UnauthenticatedError, ForbiddenError } from "./errors";
+import { can, type Role, type Action } from "../sharing/roles";
+
+/**
+ * S-003: the session auth gate for protected `/api/*` routes.
+ *
+ * Two guarantees, both keyed on the SERVER, never on client input (C-005):
+ *   1. A protected route never runs its handler without a valid better-auth
+ *      session — no/expired/invalid session → 401 UNAUTHENTICATED, and the gate
+ *      runs in a `resolve` step BEFORE the handler, so the handler is never
+ *      reached (AS-007).
+ *   2. The caller's identity AND role are resolved from that session and exposed
+ *      to the handler as `ctx.actor`. The handler reads identity/role ONLY from
+ *      `ctx.actor`; anything the client sends in the body/headers (a forged
+ *      `role: "owner"` / `userId`) is NEVER the auth source (AS-008).
+ *
+ * The session lookup is INJECTED via `resolveSession`, so unit tests drive the
+ * gate with a fake and never need a real cookie/DB. The concrete wiring (below)
+ * wraps better-auth `auth.api.getSession({ headers })` — that live resolution
+ * over real HTTP is integration-verified-later ([→E2E]).
+ */
+
+/** The server-resolved caller. Identity + role come from the session, never the client. */
+export type Actor = {
+  userId: string;
+  /**
+   * Role resolved from the session. Absent → treated as least-privileged
+   * (`viewer`) for capability checks, so a session without an explicit role can
+   * never be silently granted more than view access.
+   */
+  role?: Role;
+};
+
+/**
+ * Resolve a session from the request headers (cookie). Returns the
+ * server-resolved `{ userId, role? }`, or `null` when there is no valid session
+ * (no cookie, expired, or garbage). INJECTED so the gate is testable without a
+ * real better-auth cookie/DB.
+ */
+export type SessionResolver = (headers: Headers) => Promise<Actor | null>;
+
+/**
+ * The actor's role for capability checks: the session role, or `viewer` when the
+ * session carries no role. NEVER derived from client input.
+ */
+function actorRole(actor: Actor): Role {
+  return actor.role ?? "viewer";
+}
+
+/**
+ * Elysia plugin: gate a protected route group on a valid session.
+ *
+ * Mounted after `apiEnvelope` so a thrown `UnauthenticatedError` is wrapped by
+ * the envelope's onError into the 401 error envelope. The gate is a `resolve`
+ * step (runs before the handler): no session → throw `UnauthenticatedError`
+ * (→401) and the handler never runs (AS-007/C-005). On success it injects
+ * `ctx.actor` — the ONLY auth source the handler may read (AS-008).
+ */
+export function requireSession(opts: { resolveSession: SessionResolver }) {
+  return new Elysia({ name: "auth-gate" }).resolve(
+    { as: "scoped" },
+    async ({ request }): Promise<{ actor: Actor }> => {
+      const session = await opts.resolveSession(request.headers);
+      if (!session) {
+        // Gate fails BEFORE the handler — handler is never reached.
+        throw new UnauthenticatedError();
+      }
+      return { actor: session };
+    },
+  );
+}
+
+/**
+ * Throw `ForbiddenError` (→403) when the actor's server-resolved role lacks the
+ * capability for `action`; otherwise return (no-op). Uses `can(role, action)`
+ * from sharing/roles with the SERVER role (AS-009). A roleless session is
+ * checked as `viewer`, so it can never satisfy more than view.
+ */
+export function requireCapability(actor: Actor, action: Action): void {
+  if (!can(actorRole(actor), action)) {
+    throw new ForbiddenError();
+  }
+}
+
+/**
+ * Concrete `SessionResolver` wrapping better-auth's server-side session getter.
+ *
+ * `auth.api.getSession({ headers })` resolves the DB-backed session from the
+ * request cookie and yields its user; we project that to `{ userId, role? }`.
+ * The role mapping (doc-scoped role vs the session user) is resolved by the
+ * route's authz, not here — this resolver only proves WHO the caller is.
+ *
+ * Live behaviour over real HTTP/cookie is integration-verified-later ([→E2E]);
+ * the gate logic above is unit-tested with an injected fake.
+ */
+export function betterAuthSessionResolver(auth: {
+  api: { getSession: (args: { headers: Headers }) => Promise<{ user: { id: string } } | null> };
+}): SessionResolver {
+  return async (headers) => {
+    const session = await auth.api.getSession({ headers });
+    if (!session?.user) return null;
+    return { userId: session.user.id };
+  };
+}
