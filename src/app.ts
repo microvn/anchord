@@ -5,6 +5,7 @@ import { renderMarkdown } from "./render/markdown";
 import { docsRoutes } from "./routes/docs";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
+import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -54,6 +55,14 @@ export type AppDeps = {
    * toggle resolver (sharing seam). Omit to leave these routes unmounted.
    */
   annotations?: AnnotationsRoutesDeps;
+  /**
+   * sharing-permissions S-001/S-003/S-004: enables the enveloped, session-gated,
+   * OWNER-only PUT /api/docs/:slug/access, POST /api/docs/:slug/invites, and PUT
+   * /api/docs/:slug/link routes. Provide a Drizzle handle (production) or pre-built
+   * repos (tests), plus the session resolver, the doc-scoped role resolver (the owner
+   * gate reads it), and access deps. Omit to leave these routes unmounted.
+   */
+  sharing?: SharingRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -119,6 +128,12 @@ export function createApp(deps: AppDeps) {
   // comment route is guest-capable (no requireSession), so the plugin gates per-route.
   if (deps.annotations) {
     app.use(annotationsRoutes(deps.annotations));
+  }
+
+  // /api/docs/:slug/{access,invites,link} — sharing-permissions S-001/S-003/S-004.
+  // Self-enveloped + session-gated + owner-only, mounted outside /api/auth/*.
+  if (deps.sharing) {
+    app.use(sharingRoutes(deps.sharing));
   }
 
   // /d/:slug — viewer shell (trusted app origin)

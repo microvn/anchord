@@ -8,7 +8,71 @@
 
 import { sql } from "drizzle-orm";
 import type { DB } from "../db/client";
+import { shareLinks } from "../db/schema";
 import { decideConsumeView, type ConsumeViewResult } from "./link-controls";
+
+/**
+ * The persisted link controls an owner set (sharing S-004): the hashed password, the
+ * expiry instant, and the total-opens limit. Each is independently clearable (null
+ * removes that control); `passwordHash` is already argon2id-hashed by the caller
+ * (setPassword) — this glue never sees the plaintext.
+ */
+export interface LinkControlsUpdate {
+  passwordHash: string | null;
+  expiresAt: Date | null;
+  viewLimit: number | null;
+}
+
+/** What the row stores back after the update (echoed to the API response). */
+export interface PersistedLinkControls {
+  passwordSet: boolean;
+  expiresAt: Date | null;
+  viewLimit: number | null;
+  viewCount: number;
+}
+
+/**
+ * Persist a doc's share-link controls onto its single share_links row (C-001). The
+ * row is upserted on the unique docId so setting controls before any general-access
+ * config exists still works (a bare link row, role defaulting to viewer). The
+ * general-access role + guest toggle (S-001) are NOT touched here — these columns are
+ * independent of that setting (C-001). Returns the persisted controls (password as a
+ * boolean — the hash never leaves the server).
+ */
+export async function setLinkControls(
+  db: DB,
+  docId: string,
+  update: LinkControlsUpdate,
+): Promise<PersistedLinkControls> {
+  const [row] = await db
+    .insert(shareLinks)
+    .values({
+      docId,
+      passwordHash: update.passwordHash,
+      expiresAt: update.expiresAt,
+      viewLimit: update.viewLimit,
+    })
+    .onConflictDoUpdate({
+      target: shareLinks.docId,
+      set: {
+        passwordHash: update.passwordHash,
+        expiresAt: update.expiresAt,
+        viewLimit: update.viewLimit,
+      },
+    })
+    .returning({
+      passwordHash: shareLinks.passwordHash,
+      expiresAt: shareLinks.expiresAt,
+      viewLimit: shareLinks.viewLimit,
+      viewCount: shareLinks.viewCount,
+    });
+  return {
+    passwordSet: row?.passwordHash != null,
+    expiresAt: row?.expiresAt ?? null,
+    viewLimit: row?.viewLimit ?? null,
+    viewCount: row?.viewCount ?? 0,
+  };
+}
 
 /**
  * Atomically consume one view for a doc's share link (C-011).

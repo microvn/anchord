@@ -3,6 +3,10 @@ import { createDb } from "./db/client";
 import { createApp } from "./app";
 import { createAuth } from "./auth/auth";
 import { betterAuthSessionResolver } from "./http/auth-gate";
+import {
+  createResolveDocRole,
+  createLoadShareConfig,
+} from "./sharing/resolve-doc-role-repo";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -17,32 +21,36 @@ const auth = createAuth(db, {
 
 const resolveSession = betterAuthSessionResolver(auth);
 
-// SHARING SEAM (sharing-permissions cluster, built next): the doc-scoped effective
-// role (owner/invite/link general-access precedence) and the invite/workspace
-// membership lookups for canViewDoc are owned by that cluster's concrete repo. Until
-// its routes are mounted, wire interim impls here:
-//   - resolveDocRole: any authenticated user is treated as `editor` for now, so the
-//     publish→edit/restore flow works in the running app. This OPENS writes more than
-//     v0's final model (owner/editor only) and is REPLACED when sharing routes land.
-//   - accessDeps: treat authenticated users as invited/members so visible docs read.
-// Both are honest placeholders, not the final authz — flagged here so the swap is
-// obvious when sharing-permissions wires its concrete repo.
+// canViewDoc deps (existence-hiding). The invite/workspace-membership lookups stay
+// permissive in this v0 wiring (treat authenticated users as invited/members so a
+// visible doc reads); tightening these to the concrete doc_members / workspace reads
+// is a follow-up. The accessDeps shape is what canViewDoc consumes.
 const sharedAccessDeps = {
   isInvited: () => true,
   isWorkspaceMember: () => true,
 };
 
-// Shared interim doc-scoped role resolver (the sharing seam). Until sharing routes
-// land, any authenticated user is treated as `owner` for now so the full annotation
-// flow (comment/resolve/suggest + owner-only suggestion decide) works in the running
-// app. This OPENS writes more than v0's final model and is REPLACED when the sharing
-// cluster wires its concrete repo. Honest placeholder, flagged for the swap.
-const sharedResolveDocRole = async (): Promise<"owner"> => "owner";
-
-// Guest-commenting toggle seam (sharing-permissions). The concrete resolver reads
-// share_links.guest_commenting; until those routes land, default OFF so the running
-// app never silently accepts anonymous comments. Swapped when sharing wires its repo.
-const interimLoadShareConfig = async () => ({ guestCommentingEnabled: false });
+// SHARING SEAMS CLOSED (sharing-permissions). The interim placeholders the earlier
+// route clusters used (resolveDocRole → "owner"/"editor"; loadShareConfig → OFF) are
+// replaced with the CONCRETE Drizzle resolvers:
+//   - resolveDocRole: real effective-role over invited (active doc_members) + link
+//     (share_links.role when general-access admits) roles. Highest wins (C-002).
+//   - loadShareConfig: reads share_links.guest_commenting.
+//
+// REMAINING OWNER-SOURCE SEAM (flagged, NOT faked): `docs` has no owner column and
+// doc_versions.published_by is written null (auth seam), so "is this user the owner"
+// is not resolvable yet. We wire `isOwner: () => false` — the honest answer until the
+// auth cluster adds the ownership column. We do NOT fake owner=true (that would make
+// every caller an owner). Consequence: with no invites/link role, a caller currently
+// resolves to `null` (no role) → least privilege. The owner-only sharing routes and
+// the owner-gated annotation actions therefore stay closed in prod until ownership
+// lands — by design, this is the one seam left open, flagged here.
+const isWorkspaceMember = () => true;
+const sharedResolveDocRole = createResolveDocRole(db, {
+  isOwner: async () => false, // ← the flagged owner-source seam (auth-routes seam)
+  isWorkspaceMember,
+});
+const concreteLoadShareConfig = createLoadShareConfig(db);
 
 const app = createApp({
   dbCheck,
@@ -54,7 +62,7 @@ const app = createApp({
   versions: {
     db,
     resolveSession,
-    resolveDocRole: async () => "editor",
+    resolveDocRole: sharedResolveDocRole,
     accessDeps: sharedAccessDeps,
   },
   // annotation-core S-001..S-007: annotation create/list, reply + guest comment,
@@ -65,7 +73,17 @@ const app = createApp({
     resolveSession,
     resolveDocRole: sharedResolveDocRole,
     accessDeps: sharedAccessDeps,
-    loadShareConfig: interimLoadShareConfig,
+    loadShareConfig: concreteLoadShareConfig,
+  },
+  // sharing-permissions S-001/S-003/S-004: owner-only access/invites/link controls.
+  // Owner gate reads the concrete resolver (owner source still seamed to false — see
+  // above). Mail wiring is omitted here; the prod enqueueInvite degrades to a no-op
+  // transport until the mail cluster wires the live transport selection.
+  sharing: {
+    db,
+    resolveSession,
+    resolveDocRole: sharedResolveDocRole,
+    accessDeps: sharedAccessDeps,
   },
 }).listen(cfg.PORT);
 
