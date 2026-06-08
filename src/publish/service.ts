@@ -12,6 +12,7 @@
 import { deriveTitle } from "./title";
 import { generateSlug } from "./slug";
 import { sniffKind, validateSize, PublishRejected, type DocKind } from "./sniff";
+import { extractText } from "../render/extract-text";
 
 export interface CreateDocInput {
   slug: string;
@@ -28,6 +29,14 @@ export interface CreateDocInput {
    * supplies it from the route's session actor.
    */
   ownerId?: string | null;
+  /**
+   * workspace-project S-005 (GAP-003 → publish-time extraction / C-006): the plain
+   * text extracted from this version's content, for the search index. Derived by the
+   * publish service via extractText(content, kind) and written to
+   * doc_versions.extracted_text. NULL only for a session-less seed that has no content
+   * worth indexing (the seed path can omit it).
+   */
+  extractedText?: string | null;
   /**
    * workspace-project S-003 (AS-005 / C-009): the project this doc belongs to.
    * Already RESOLVED by the time it reaches the repo — explicit projectId (validated
@@ -142,6 +151,11 @@ export async function publishDoc(
   const content =
     kind === "image" ? (filename ?? slug) : new TextDecoder("utf-8").decode(bytes);
 
+  // workspace-project S-005 (GAP-003 → publish-time extraction / C-006): derive the
+  // plain searchable text NOW and store it on the version, so the search index never
+  // re-renders content. Extraction reuses the viewer's render/sanitize path.
+  const extractedText = extractText(content, kind);
+
   // workspace-project S-003 (AS-005 / C-009): resolve the doc's project BEFORE the
   // write. An explicit-but-invalid projectId throws here (resolveProjectId rejects a
   // foreign/bogus id) so the doc is never silently dropped into the default; an
@@ -165,6 +179,8 @@ export async function publishDoc(
     // Defaults to null only for a session-less create (seed); set once, immutable.
     ownerId: ownerId ?? null,
     projectId: resolvedProjectId,
+    // S-005: the searchable text for this version (empty string for empty content).
+    extractedText,
   });
 
   return {

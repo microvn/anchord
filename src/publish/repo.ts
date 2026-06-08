@@ -34,6 +34,9 @@ export function createDocRepo(db: DB): DocRepo {
           version: 1, // C-004: a freshly created doc is always version 1
           content: input.content,
           contentHash: input.contentHash,
+          // workspace-project S-005 (GAP-003): the searchable plain text for this
+          // version, written at publish so the search index never re-renders content.
+          extractedText: input.extractedText ?? null,
           // C-007: version 1's publisher = the same authenticated user (text id).
           publishedBy: input.ownerId ?? null,
         });

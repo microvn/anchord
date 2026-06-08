@@ -8,6 +8,7 @@ import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotati
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
 import { setupRoutes, type SetupRoutesDeps } from "./routes/setup";
 import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
+import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -81,6 +82,14 @@ export type AppDeps = {
    * repos (tests), plus the session resolver. Omit to leave /api/projects unmounted.
    */
   projects?: ProjectsRoutesDeps;
+  /**
+   * workspace-project S-005: enables the enveloped, session-gated GET /api/search.
+   * Searches title + extracted content + comment bodies, access-filtered to docs the
+   * actor can see (C-003 existence-hiding), optionally scoped to a project (AS-010).
+   * Provide a Drizzle handle (production) or a pre-built SearchRepo (tests), plus the
+   * session resolver. Omit to leave /api/search unmounted.
+   */
+  search?: SearchRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -173,6 +182,14 @@ export function createApp(deps: AppDeps) {
   // browse of docs in a project (existence-hiding out-of-access docs — C-003/AS-006).
   if (deps.projects) {
     app.use(projectsRoutes(deps.projects));
+  }
+
+  // /api/search — workspace-project S-005. Self-enveloped + session-gated, mounted
+  // outside /api/auth/*. Full-text search across accessible docs (title + extracted
+  // content + comment bodies), access-filtered (existence-hiding out-of-access docs —
+  // C-003), optionally project-scoped (AS-010). FTS SQL is isolated in the search repo.
+  if (deps.search) {
+    app.use(searchRoutes(deps.search));
   }
 
   // /d/:slug — viewer shell (trusted app origin)

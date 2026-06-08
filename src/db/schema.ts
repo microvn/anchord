@@ -93,6 +93,16 @@ export const docVersions = pgTable(
     version: integer("version").notNull(),
     content: text("content").notNull(), // HTML/MD text; images live on the assets volume
     contentHash: text("content_hash").notNull(),
+    // extracted_text (workspace-project S-005, GAP-003 → publish-time extraction):
+    // the plain text derived from this version's content at PUBLISH time (HTML/MD
+    // stripped to text; image → its alt/filename). It feeds the full-text search
+    // index (C-006) so a search never has to re-render content at query time.
+    // NULLABLE: existing/seeded versions predate this column (null = not indexed);
+    // new publishes always populate it. PORTABILITY: this is a PLAIN `text` column
+    // (portable) — the Postgres-only FTS lives ONLY in the search repo's query +
+    // the GIN index DDL (see src/search/search-repo.ts), never in the column type,
+    // so a future SQLite build swaps the query for FTS5 with no schema change.
+    extractedText: text("extracted_text"),
     // Author who published this version (render-publish S-001). RETYPED uuid→text +
     // FK by auth-routes S-001 (C-007): better-auth user.id is TEXT, not uuid — a
     // uuid column would reject a better-auth id like "u_abc123". Nullable (a
