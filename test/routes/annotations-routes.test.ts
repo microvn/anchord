@@ -356,6 +356,53 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     expect(cr.calls.inserts[0]?.parentId).toBe("root");
   });
 
+  test("AS-007: a signed-in reply records the session actor as author (no guest name)", async () => {
+    // user A is signed in and may comment → the comment's author_id is A, guest_name null.
+    const userA: SessionResolver = async () => ({ userId: "u_A" });
+    const cr = fakeCommentRepo([
+      { id: "root", annotationId: "ann_1", parentId: null, authorId: "u_x", guestName: null, body: "root" },
+    ]);
+    const app = buildApp({ resolveSession: userA, resolveDocRole: asCommenter, commentRepo: cr });
+    const res = await app.handle(
+      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "my reply", parentId: "root" }) }),
+    );
+    expect(res.status).toBe(201);
+    expect(cr.calls.inserts[0]?.authorId).toBe("u_A");
+    expect(cr.calls.inserts[0]?.guestName).toBeNull();
+  });
+
+  test("C-005: a forged author in the body is ignored — author_id is the session actor", async () => {
+    // Body carries attacker-supplied identity; validation strips unknown keys and the
+    // route reads the author only from the resolved session actor → "u_A" wins.
+    const userA: SessionResolver = async () => ({ userId: "u_A" });
+    const cr = fakeCommentRepo([
+      { id: "root", annotationId: "ann_1", parentId: null, authorId: "u_x", guestName: null, body: "root" },
+    ]);
+    const app = buildApp({ resolveSession: userA, resolveDocRole: asCommenter, commentRepo: cr });
+    const res = await app.handle(
+      req("/api/annotations/ann_1/comments", {
+        method: "POST",
+        body: JSON.stringify({ body: "hi", parentId: "root", authorId: "attacker", userId: "attacker" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(cr.calls.inserts[0]?.authorId).toBe("u_A");
+    expect(cr.calls.inserts[0]?.authorId).not.toBe("attacker");
+    expect(cr.calls.inserts[0]?.guestName).toBeNull();
+  });
+
+  test("AS-008: a guest reply (no session) records the guest name and no account author", async () => {
+    // Anonymous guest "Lan" on a guest-commenting doc → guest_name set, author_id null.
+    const gr = fakeGuestCommentRepo();
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, loadShareConfig: guestOn });
+    const res = await app.handle(
+      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "guest note", guestName: "Lan" }) }),
+    );
+    expect(res.status).toBe(201);
+    expect(gr.calls.inserts[0]?.guestName).toBe("Lan");
+    expect(gr.calls.inserts[0]?.authorId).toBeNull();
+  });
+
   test("reply with empty body → 400", async () => {
     const app = buildApp({ resolveDocRole: asCommenter, commentRepo: fakeCommentRepo([{ id: "root", annotationId: "ann_1", parentId: null, authorId: "u", guestName: null, body: "x" }]) });
     const res = await app.handle(

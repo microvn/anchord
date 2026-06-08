@@ -12,7 +12,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { docVersions } from "../../src/db/schema";
+import { docVersions, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import type { SessionResolver } from "../../src/http/auth-gate";
@@ -28,6 +28,11 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
 
   beforeAll(async () => {
     h = await withMigratedDb();
+    // doc_versions.published_by FKs user.id (auth-routes S-001) — seed the session
+    // user so a signed-in append/restore records a real, FK-valid publisher (S-003).
+    await h.db
+      .insert(user)
+      .values({ id: "u_itest", name: "Itest User", email: `vroutes-${process.pid}@example.com`, emailVerified: true });
     // Seed a published doc (version 1) via the real publish repo, then expose the
     // versioning-diff routes over the SAME db. The doc is anyone_with_link so the
     // fake editor member can both view and write.
@@ -103,6 +108,17 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
     expect(rows.filter((r) => [1, 2, 3].includes(r.version)).length).toBe(3);
     const v3 = rows.find((r) => r.version === 3);
     expect(v3?.content).toBe("# v1\n"); // append-copy restored v1's content
+  });
+
+  test("AS-006: a signed-in append + restore record the session user as published_by", async () => {
+    // The member session is u_itest. v2 (append) and v3 (restore) were written through
+    // the route as that session → published_by == u_itest, recorded from the session,
+    // never the body. v1 was seeded without a session → null.
+    const all = await h.db.select().from(docVersions).orderBy(docVersions.version);
+    const v2 = all.find((r) => r.version === 2);
+    const v3 = all.find((r) => r.version === 3);
+    expect(v2?.publishedBy).toBe("u_itest");
+    expect(v3?.publishedBy).toBe("u_itest");
   });
 
   test("GET diff?from=1&to=2 → 200 text diff with changes", async () => {

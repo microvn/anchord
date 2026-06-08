@@ -210,11 +210,11 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
               content,
               contentHash ?? sha256Hex(content),
               versionRepo,
-              // AUTH SEAM: doc_versions.published_by is a uuid FK-to-be (users table
-              // lands with the auth cluster). better-auth ids aren't uuids, so we
-              // record null for now rather than write an invalid uuid; resolving
-              // actor.userId → the published_by uuid is wired when auth lands.
-              null,
+              // C-005 (auth-routes S-003): record the publisher from the SERVER-resolved
+              // session actor, never from the request body. published_by is now a
+              // text FK → user.id (auth-routes S-001 retyped it), so the real
+              // better-auth id persists.
+              actor.userId,
             );
             set.status = 201;
             return { version: result.version, previousVersion: result.previousVersion };
@@ -260,7 +260,7 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
           await requireEditor(doc.id, actor.userId); // 403 if not editor
           let result;
           try {
-            result = await restoreVersion(doc.id, target, versionRepo, null); // see AUTH SEAM above
+            result = await restoreVersion(doc.id, target, versionRepo, actor.userId); // C-005: publisher from session
           } catch {
             // restoreVersion throws when version n does not exist → 404 (doc visible,
             // but the specific version is missing).

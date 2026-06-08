@@ -125,8 +125,38 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
     // v1 is NOT overwritten — a new row was inserted
     expect(vr.calls.inserts).toHaveLength(1);
     expect(vr.calls.inserts[0]?.version).toBe(2);
-    // AUTH SEAM: published_by recorded null until the users table/FK lands.
-    expect(vr.calls.inserts[0]?.publishedBy).toBeNull();
+    // auth-routes S-003 / AS-006: published_by now records the session actor.
+    expect(vr.calls.inserts[0]?.publishedBy).toBe("u_member");
+  });
+
+  test("AS-006: signed-in version create records the session actor as publisher", async () => {
+    // user A is signed in and may edit → the appended version's published_by is A.
+    const userA: SessionResolver = async () => ({ userId: "u_A" });
+    const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
+    const app = buildApp({ resolveSession: userA, versionRepo: vr });
+    const res = await app.handle(
+      req("/api/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
+    );
+    expect(res.status).toBe(201);
+    // The recorded publisher is the SESSION user A, not null.
+    expect(vr.calls.inserts[0]?.publishedBy).toBe("u_A");
+  });
+
+  test("C-005: a forged publisher in the body is ignored — published_by is the session actor", async () => {
+    // Body carries an attacker-supplied id; withValidation strips unknown keys and
+    // the route reads identity only from the resolved actor → "u_A" wins.
+    const userA: SessionResolver = async () => ({ userId: "u_A" });
+    const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
+    const app = buildApp({ resolveSession: userA, versionRepo: vr });
+    const res = await app.handle(
+      req("/api/docs/doc-one/versions", {
+        method: "POST",
+        body: JSON.stringify({ content: "v2", publishedBy: "attacker", userId: "attacker" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(vr.calls.inserts[0]?.publishedBy).toBe("u_A");
+    expect(vr.calls.inserts[0]?.publishedBy).not.toBe("attacker");
   });
 
   test("no session → 401 UNAUTHENTICATED (handler never runs)", async () => {

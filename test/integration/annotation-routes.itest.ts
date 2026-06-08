@@ -131,6 +131,36 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
     expect(annRow.status).toBe("unresolved");
   });
 
+  test("AS-007: a signed-in reply records the session user as author_id (no guest name)", async () => {
+    // Create an annotation, seed a root comment, then reply via the route as the
+    // u_itest session → the persisted reply's author_id is u_itest, guest_name null.
+    const createRes = await app.handle(
+      req(`/api/docs/${slug}/annotations`, {
+        method: "POST",
+        body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 } }),
+      }),
+    );
+    const annId = ((await createRes.json()) as any).data.annotationId;
+    const [root] = await h.db
+      .insert(comments)
+      .values({ annotationId: annId, parentId: null, authorId: null, guestName: "Root", body: "root" })
+      .returning({ id: comments.id });
+
+    const replyRes = await app.handle(
+      req(`/api/annotations/${annId}/comments`, {
+        method: "POST",
+        // forged identity in the body must be ignored (C-005) — author comes from session.
+        body: JSON.stringify({ body: "session reply", parentId: root.id, authorId: "attacker" }),
+      }),
+    );
+    expect(replyRes.status).toBe(201);
+    const cid = ((await replyRes.json()) as any).data.commentId;
+
+    const [row] = await h.db.select().from(comments).where(eq(comments.id, cid));
+    expect(row.authorId).toBe("u_itest"); // AS-007 / C-005: recorded from the session
+    expect(row.guestName).toBeNull();
+  });
+
   test("guest comment with email → 201, persisted with author_id NULL", async () => {
     // Need an annotation to comment on
     const createRes = await app.handle(
