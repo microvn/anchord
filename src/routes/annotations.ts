@@ -54,6 +54,8 @@ import {
   createSuggestionRepo,
 } from "../annotation/repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
+import { notifyOnReply, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
+import { createNotifyRepo } from "../notify/repo";
 import { and, desc, eq } from "drizzle-orm";
 import { annotations as annotationsTable, docs as docsTable, docVersions } from "../db/schema";
 import type { DB } from "../db/client";
@@ -143,6 +145,19 @@ export interface AnnotationsRoutesDeps {
   accessDeps: AccessDeps;
   /** Guest-commenting toggle resolver (the sharing seam — see LoadShareConfig). */
   loadShareConfig: LoadShareConfig;
+  /**
+   * workspace-project S-006 (AS-011 / C-004): notify-on-reply wiring. After a
+   * SUCCESSFUL reply (session OR guest), the route dispatches a best-effort
+   * notification to (thread participants ∪ doc owner) − replier, over in-app + email.
+   * Provide a pre-built NotifyRepo (tests) — else one is built from `db` — plus a
+   * MailEnqueuer (the shared MailQueue in prod, a fake in tests). OMIT the whole block
+   * to leave notify off (a reply still succeeds; no notifications dispatched) — keeps
+   * existing annotation route tests that don't exercise notify unchanged.
+   */
+  notify?: {
+    repo?: NotifyRepo;
+    mail: MailEnqueuer;
+  };
 }
 
 // ── Zod request schemas ────────────────────────────────────────────────────
@@ -225,6 +240,27 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   const lookupRepo = deps.lookupRepo ?? (deps.db ? createDocLookupRepo(deps.db) : need("lookupRepo"));
   const annotationLookupRepo =
     deps.annotationLookupRepo ?? (deps.db ? createAnnotationLookupRepo(deps.db) : need("annotationLookupRepo"));
+
+  // S-006 notify-on-reply: built only when the `notify` block is provided. The repo is
+  // pre-built (tests) or built from `db`; the mail enqueuer is the shared MailQueue
+  // (prod) / a fake (tests). Absent → notify is a no-op (a reply still succeeds).
+  const notifyDeps =
+    deps.notify != null
+      ? {
+          repo: deps.notify.repo ?? (deps.db ? createNotifyRepo(deps.db) : need("notify.repo")),
+          mail: deps.notify.mail,
+        }
+      : null;
+
+  /**
+   * Best-effort post-commit notify dispatch (AS-011 / C-004). Runs AFTER a reply has
+   * persisted; never throws (notifyOnReply swallows + logs), so a notify failure can't
+   * turn a successful reply into a 500. No-op when the notify block is unwired.
+   */
+  async function dispatchReplyNotify(annotationId: string, replierUserId: string | null) {
+    if (!notifyDeps) return;
+    await notifyOnReply({ annotationId, replierUserId }, notifyDeps);
+  }
 
   /** Resolve a doc by slug to a visible doc or throw 404 (existence-hiding, C-006). */
   async function loadVisibleDocBySlug(slug: string, viewer: Viewer) {
@@ -366,6 +402,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         if (result.reason === "empty_body") throw new ValidationError("body must not be empty", { field: "body" });
         throw new NotFoundError("Parent comment not found"); // parent_not_found
       }
+      // S-006: reply persisted → notify others (best-effort, post-commit). The replier
+      // is the session actor; they never notify themselves (handled in notifyOnReply).
+      await dispatchReplyNotify(params.id, actor.userId);
       set.status = 201;
       return { commentId: result.id };
     }
@@ -389,6 +428,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       if (result.reason === "empty_name") throw new ValidationError("guestName is required", { field: "guestName" });
       throw new ValidationError("body must not be empty", { field: "body" });
     }
+    // S-006: a GUEST reply still notifies account-holder participants + owner; the guest
+    // has no account, so replierUserId is null → the guest is excluded automatically.
+    await dispatchReplyNotify(params.id, null);
     set.status = 201;
     return { commentId: result.id };
   }

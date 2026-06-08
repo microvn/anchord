@@ -300,6 +300,41 @@ export const comments = pgTable(
   (t) => [index("comments_annotation_idx").on(t.annotationId)],
 );
 
+// ── notifications (workspace-project S-006) ────────────────────────────────
+// The IN-APP channel for "you got a reply" (AS-011 / C-004). One row per recipient
+// per notify event: a thread participant or the doc owner gets a row when someone
+// ELSE replies (the replier never notifies themselves). The EMAIL channel rides the
+// shared MailQueue (src/auth/mail-queue.ts), not this table.
+//
+// user_id is the RECIPIENT — an account-holder only (a guest has no account, so a
+// guest is never an in-app recipient). FK → user.id (better-auth TEXT id), cascade
+// on user delete (their notifications go with them). `type` is a pgEnum seeded with
+// just 'reply' for now but extensible (mention/resolve/… later) without a code churn.
+// `ref_id` is the DEEP-LINK target: the ANNOTATION (thread) id — opening the
+// notification takes the user to the thread that got the reply (one ref per the
+// data-model note; we deep-link to the thread, not the individual comment). `read`
+// drives the unread badge; the (user_id, read) index backs the unread list.
+//
+// Portable on purpose (no Postgres-only features) so a future SQLite build stays open.
+export const notificationType = pgEnum("notification_type", ["reply"]);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: id(),
+    // The recipient (account-holder). Cascade: deleting the user removes their notifications.
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    type: notificationType("type").notNull(),
+    // Deep-link target — the annotation (thread) id that received the reply.
+    refId: uuid("ref_id").notNull(),
+    read: boolean("read").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [index("notifications_user_read_idx").on(t.userId, t.read)],
+);
+
 // ── workspace + membership (workspace-project S-001) ───────────────────────
 // v0 SINGLE workspace = the instance. First-run creates EXACTLY ONE workspaces
 // row + the installer as `admin` in workspace_members; everyone who signs up

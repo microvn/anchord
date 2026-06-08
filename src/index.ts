@@ -9,6 +9,8 @@ import {
   createIsDocOwner,
 } from "./sharing/resolve-doc-role-repo";
 import { createProjectsRouteRepo } from "./workspace/repo";
+import { MailQueue } from "./auth/mail-queue";
+import { createMailTransport } from "./auth/mail-transport";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -82,6 +84,26 @@ const sharingResolveDocRole = createResolveDocRole(db, {
   isWorkspaceMember,
 });
 
+// workspace-project S-006 notify-on-reply (AS-011 / C-004): the shared MailQueue +
+// the selected transport (resolved from cfg.email — the same provider auth uses). The
+// notify path only ENQUEUES one mail per recipient; we drive delivery to a terminal
+// state in the BACKGROUND (best-effort, post-commit) so a slow/failing transport never
+// blocks the HTTP reply. A failed send dead-letters in the queue (operator-visible),
+// never surfaced to the replier — matching notifyOnReply's best-effort contract.
+const mailQueue = new MailQueue();
+const mailTransport = createMailTransport(cfg.email);
+const notifyMail = {
+  enqueue(msg: { to: string; subject: string; body: string }): string {
+    const id = mailQueue.enqueue(msg);
+    // Fire-and-forget delivery; the queue handles retry/dead-letter. Swallow here so an
+    // unhandled rejection can't crash the process (the reply already returned).
+    void mailQueue.deliverWithRetry(id, mailTransport).catch((err) => {
+      console.error("notify mail delivery failed (dead-lettered)", err);
+    });
+    return id;
+  },
+};
+
 const app = createApp({
   dbCheck,
   corsOrigin: cfg.CORS_ORIGIN === "*" ? true : cfg.CORS_ORIGIN.split(","),
@@ -104,6 +126,9 @@ const app = createApp({
     resolveDocRole: sharedResolveDocRole,
     accessDeps: sharedAccessDeps,
     loadShareConfig: concreteLoadShareConfig,
+    // S-006: notify thread participants + doc owner on a reply (in-app row via the DB
+    // notify repo + one email per recipient through the shared queue). Best-effort.
+    notify: { mail: notifyMail },
   },
   // workspace-project S-001: first-run POST /api/setup over the real DB (create the
   // single workspace + claim admin; later signups become members via the auth hook).
