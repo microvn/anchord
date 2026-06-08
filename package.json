@@ -4,8 +4,11 @@
   "workspaces": ["apps/*"],
   "scripts": {
     "dev": "bun --filter backend dev",
+    "dev:web": "bun --filter web dev",
     "start": "bun --filter backend start",
     "test": "bun --filter backend test",
+    "test:web": "bun --filter web test",
+    "typecheck:web": "bun --filter web typecheck",
     "test:integration": "bun --filter backend test:integration",
     "typecheck": "bun --filter backend typecheck",
     "db:generate": "bun --filter backend db:generate",

@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+/* anchord design system — Tailwind 4 CSS-first @theme.
+   Dark is the canonical/default theme (operator-grade). Teal is the ONLY accent —
+   never purple/violet, never Claude-orange (#d97757). See DESIGN.md §Color/Typography. */
+@theme {
+  /* Dark (primary / canonical) */
+  --color-paper: #0c1012;
+  --color-surface: #11171a;
+  --color-elev: #161d21;
+  --color-elev-2: #1b2327;
+  --color-sunken: #0a0e10;
+
+  --color-ink: #e7edee;
+  --color-muted: #939fa3;
+  --color-subtle: #677074;
+  --color-faint: #444e52;
+
+  --color-line: #222a2e;
+  --color-line-soft: #1a2024;
+
+  /* Accent — teal (the single accent) */
+  --color-accent: #37b3bd;
+  --color-accent-strong: #56cdd6;
+  --color-accent-soft: #0e2e30;
+  --color-accent-ink: #7fdce1;
+
+  /* Semantic */
+  --color-amber: #d6a23e;
+  --color-error: #f1655d;
+  --color-success: #43b873;
+
+  /* Type — Geist (body/UI), Fraunces (headings/title), Geist Mono (code/data) */
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  /* Radius */
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+}
+
+/* Bunny Fonts (privacy-friendly) — Fraunces, Geist, Geist Mono. */
+@import url("https://fonts.bunny.net/css?family=fraunces:500|geist:400,500,600|geist-mono:400");
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}

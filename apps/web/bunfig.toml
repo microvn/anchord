@@ -1,0 +1,5 @@
+[test]
+# Register a global DOM (happy-dom) + jest-dom matchers before any test runs, so
+# @testing-library/react can render React components under `bun test`. Keeps the repo
+# on ONE test runner (bun test) instead of pulling in Vitest.
+preload = ["./test/setup.ts"]
