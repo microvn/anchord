@@ -89,6 +89,70 @@ export function createWorkspaceRepo(db: DB): WorkspaceRepo {
   };
 }
 
+/**
+ * Drizzle-backed WorkspaceMembersRepo (workspace-project S-002). THIN glue for the
+ * membership-management service (members.ts): the member directory (joined to the
+ * better-auth `user` table for name/email), role/email lookups, the admin count (for the
+ * sole-admin guard), and the row delete. All rules (idempotent invite, sole-admin guard,
+ * not-a-member 404) live in members.ts; this layer only reads/writes workspace_members.
+ *
+ * removeMember deletes ONLY the workspace_members row — the user row and their docs/
+ * projects stay (C-007: the doc belongs to the workspace; docs.owner_id is ON DELETE SET
+ * NULL but we never delete the user here, so even owner_id is untouched).
+ */
+export function createWorkspaceMembersRepo(db: DB): import("./members").WorkspaceMembersRepo {
+  return {
+    async listMembers(workspaceId) {
+      const rows = await db
+        .select({
+          userId: workspaceMembers.userId,
+          role: workspaceMembers.role,
+          name: user.name,
+          email: user.email,
+        })
+        .from(workspaceMembers)
+        .innerJoin(user, eq(user.id, workspaceMembers.userId))
+        .where(eq(workspaceMembers.workspaceId, workspaceId));
+      return rows.map((r) => ({ userId: r.userId, role: r.role, name: r.name, email: r.email }));
+    },
+    async findMemberRole(workspaceId, userId) {
+      const [row] = await db
+        .select({ role: workspaceMembers.role })
+        .from(workspaceMembers)
+        .where(
+          and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)),
+        );
+      return row?.role ?? null;
+    },
+    async findMemberByEmail(workspaceId, email) {
+      const [row] = await db
+        .select({ userId: workspaceMembers.userId, role: workspaceMembers.role })
+        .from(workspaceMembers)
+        .innerJoin(user, eq(user.id, workspaceMembers.userId))
+        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(user.email, email)));
+      return row ? { userId: row.userId, role: row.role } : null;
+    },
+    async countAdmins(workspaceId) {
+      const [row] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(workspaceMembers)
+        .where(
+          and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, "admin")),
+        );
+      return row?.n ?? 0;
+    },
+    async removeMember(workspaceId, userId) {
+      const deleted = await db
+        .delete(workspaceMembers)
+        .where(
+          and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)),
+        )
+        .returning({ id: workspaceMembers.id });
+      return deleted.length > 0;
+    },
+  };
+}
+
 /** Map a raw Drizzle projects row to the service's ProjectRow shape. */
 function rowToProject(row: typeof projects.$inferSelect): ProjectRow {
   return {

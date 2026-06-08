@@ -8,6 +8,7 @@ import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotati
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
 import { setupRoutes, type SetupRoutesDeps } from "./routes/setup";
 import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
+import { membersRoutes, type MembersRoutesDeps } from "./routes/members";
 import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
@@ -82,6 +83,14 @@ export type AppDeps = {
    * repos (tests), plus the session resolver. Omit to leave /api/projects unmounted.
    */
   projects?: ProjectsRoutesDeps;
+  /**
+   * workspace-project S-002: enables the enveloped, session-gated, ADMIN-gated member
+   * directory under /api/members (GET list, POST /invite, DELETE /:userId). Only admins
+   * manage membership (C-002/AS-004); removing a member deletes only the membership row,
+   * never their docs (C-007). Provide a Drizzle handle (production) or pre-built repos
+   * (tests), plus the session resolver. Omit to leave /api/members unmounted.
+   */
+  members?: MembersRoutesDeps;
   /**
    * workspace-project S-005: enables the enveloped, session-gated GET /api/search.
    * Searches title + extracted content + comment bodies, access-filtered to docs the
@@ -182,6 +191,13 @@ export function createApp(deps: AppDeps) {
   // browse of docs in a project (existence-hiding out-of-access docs — C-003/AS-006).
   if (deps.projects) {
     app.use(projectsRoutes(deps.projects));
+  }
+
+  // /api/members — workspace-project S-002. Self-enveloped + session-gated + ADMIN-gated,
+  // mounted outside /api/auth/*. Member directory + invite + remove (members cannot manage
+  // membership — AS-004/C-002; removing a member never deletes their docs — C-007).
+  if (deps.members) {
+    app.use(membersRoutes(deps.members));
   }
 
   // /api/search — workspace-project S-005. Self-enveloped + session-gated, mounted

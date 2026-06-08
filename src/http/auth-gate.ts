@@ -84,6 +84,30 @@ export function requireCapability(actor: Actor, action: Action): void {
 }
 
 /**
+ * Resolve whether `userId` is an admin of the single workspace — keyed on the SERVER's
+ * workspace_members.role read, NEVER a body-supplied role (anti-forgery). Injected so the
+ * member-management routes are testable without a DB; prod wires the real Drizzle read.
+ */
+export type IsWorkspaceAdmin = (userId: string) => Promise<boolean>;
+
+/**
+ * workspace-project S-002 (C-002, the admin-gate half): only admins manage
+ * settings/members. Throw `ForbiddenError` (→403) when the SESSION actor is not a
+ * workspace admin; otherwise return (no-op). The actor's adminness comes from the
+ * server-resolved workspace_members.role (via `isWorkspaceAdmin`), so a member sending
+ * `{role:"admin"}` in the body is ignored — they are still gated out (AS-004). Gate
+ * BEFORE the handler runs so a non-admin's call never reaches member-management logic.
+ */
+export async function requireWorkspaceAdmin(
+  actor: Actor,
+  isWorkspaceAdmin: IsWorkspaceAdmin,
+): Promise<void> {
+  if (!(await isWorkspaceAdmin(actor.userId))) {
+    throw new ForbiddenError();
+  }
+}
+
+/**
  * Concrete `SessionResolver` wrapping better-auth's server-side session getter.
  *
  * `auth.api.getSession({ headers })` resolves the DB-backed session from the

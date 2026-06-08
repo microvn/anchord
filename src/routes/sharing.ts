@@ -89,6 +89,15 @@ export interface SharingRoutesDeps {
   /** Doc-scoped effective-role resolver; the manage-sharing gate reads this (seam: owner source). */
   resolveDocRole: ResolveDocRole;
   /**
+   * workspace-project S-002 (AS-012/C-007): the workspace-admin override for the
+   * manage-sharing gate. When the doc's owner (M) is removed from the workspace, M can no
+   * longer manage its sharing — the workspace ADMIN becomes the fallback manager. This
+   * override lets an admin manage ANY doc's sharing in the workspace regardless of the
+   * doc-scoped role. Optional: omit (→ `() => false`) to keep the pure Google-Docs gate
+   * (no admin override) — every existing test/cluster behaves as before.
+   */
+  isWorkspaceAdmin?: (userId: string) => Promise<boolean>;
+  /**
    * Reads the doc's per-doc share toggles — the manage-sharing gate needs
    * `editorsCanShare` (C-007). Optional: built from `db` when omitted. Tests inject a
    * fake. (Same shape annotation-core's loadShareConfig returns — guestCommenting is
@@ -140,6 +149,13 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
    * the resolved role so the access route can apply the owner-only toggle guard (C-015).
    */
   async function requireManageSharing(docId: string, userId: string): Promise<Role> {
+    // AS-012/C-007: a workspace admin overrides the doc-scoped gate (the fallback
+    // manager when the doc's owner is removed). Resolve it first so an admin passes even
+    // when they hold no doc-scoped role at all. The admin acts AS the owner for sharing.
+    const isWsAdmin = deps.isWorkspaceAdmin ?? (async () => false);
+    if (await isWsAdmin(userId)) {
+      return "owner";
+    }
     const role: Role | null = await deps.resolveDocRole(docId, userId);
     const { editorsCanShare } = role
       ? await loadShareConfig(docId)
