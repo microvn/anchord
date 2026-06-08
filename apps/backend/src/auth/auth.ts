@@ -88,6 +88,14 @@ export type CreateAuthOptions = {
     github?: OAuthProviderCreds;
     google?: OAuthProviderCreds;
   };
+  /**
+   * Origins better-auth trusts for sign-in/out (CSRF origin check). Production is
+   * same-origin (the backend serves the built app), so the baseURL origin suffices;
+   * a dev frontend served from a different origin (Vite proxy) must be listed here or
+   * better-auth refuses the request as "Invalid origin". Omit → better-auth defaults to
+   * the baseURL origin only.
+   */
+  trustedOrigins?: string[];
 };
 
 /**
@@ -135,6 +143,7 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
   return betterAuth({
     secret: opts.secret,
     baseURL: opts.baseURL,
+    ...(opts.trustedOrigins ? { trustedOrigins: opts.trustedOrigins } : {}),
     database: drizzleAdapter(db, { provider: "pg", schema }),
     // workspace-project S-001 (AS-002/C-001): after better-auth creates a user, add
     // them to the single workspace as `member` (no-op until first-run created the

@@ -17,10 +17,21 @@ const { db, dbCheck } = createDb(cfg.DATABASE_URL);
 
 // S-001: better-auth bound to the real Postgres DB; APP_SECRET signs the session cookie.
 // S-002: pass through OAuth creds — each provider is configured only when env supplied both.
+// Origins better-auth trusts for the CSRF origin check: the backend's own origin, any
+// concrete CORS_ORIGIN entries (the deployed frontend), and — in development — the Vite
+// dev server so the proxy workflow (web :5173 → backend) signs in. Production same-origin
+// is covered by the baseURL origin.
+const trustedOrigins = [
+  `http://localhost:${cfg.PORT}`,
+  ...(cfg.CORS_ORIGIN === "*" ? [] : cfg.CORS_ORIGIN.split(",").map((o) => o.trim())),
+  ...(cfg.NODE_ENV === "development" ? ["http://localhost:5173"] : []),
+];
+
 const auth = createAuth(db, {
   secret: cfg.APP_SECRET,
   baseURL: `http://localhost:${cfg.PORT}`,
   oauth: cfg.oauth,
+  trustedOrigins,
 });
 
 const resolveSession = betterAuthSessionResolver(auth);
