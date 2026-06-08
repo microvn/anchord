@@ -25,7 +25,8 @@ import { MIN_PASSWORD_LENGTH } from "./password";
 import { activatePendingInvites, type PendingInviteRepo } from "./invite";
 import { oauthEmailVerified, type OAuthProvider } from "./oauth";
 import { addMemberOnSignup, type WorkspaceRepo } from "../workspace/setup";
-import { createWorkspaceRepo } from "../workspace/repo";
+import { createWorkspaceRepo, createProjectRepo } from "../workspace/repo";
+import type { ProjectRepo } from "../workspace/projects";
 
 // auth S-005 (AS-008/C-005): after a user's email is verified, activate any pending
 // invite issued to that exact email so they get the invited role. This is the thin
@@ -56,8 +57,17 @@ export const SIGNIN_RATE_LIMIT_WINDOW_SECONDS = 15 * 60; // 900s
 // workspace exists, member-not-admin once it does, idempotent) is unit-tested in
 // workspace/setup.test.ts against a fake repo. Wiring it into better-auth's create
 // callback is integration-verified in test/integration/workspace-setup.itest.ts.
-export async function onUserCreated(userId: string, repo: WorkspaceRepo) {
-  return addMemberOnSignup(userId, { repo });
+// workspace-project S-003 (AS-014/C-009): the member-on-signup hook ALSO ensures the
+// new account's default project ("<name>'s docs") exists. addMemberOnSignup does both
+// (add member + ensure default project) when a projectRepo is supplied — idempotent, so
+// a re-fired hook never makes a second membership or a second default project. The
+// projectRepo is optional so an S-001-era caller (no projects) keeps the old behavior.
+export async function onUserCreated(
+  userId: string,
+  repo: WorkspaceRepo,
+  projectRepo?: ProjectRepo,
+) {
+  return addMemberOnSignup(userId, { repo, projectRepo });
 }
 
 /** Per-provider OAuth credentials (auth S-002). Present only when the operator set both. */
@@ -121,6 +131,7 @@ function socialProvidersFrom(oauth: CreateAuthOptions["oauth"]) {
  */
 export function createAuth(db: DB, opts: CreateAuthOptions) {
   const workspaceRepo = createWorkspaceRepo(db);
+  const projectRepo = createProjectRepo(db);
   return betterAuth({
     secret: opts.secret,
     baseURL: opts.baseURL,
@@ -133,7 +144,7 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
       user: {
         create: {
           after: async (createdUser: { id: string }) => {
-            await onUserCreated(createdUser.id, workspaceRepo);
+            await onUserCreated(createdUser.id, workspaceRepo, projectRepo);
           },
         },
       },

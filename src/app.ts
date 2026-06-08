@@ -7,6 +7,7 @@ import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
 import { setupRoutes, type SetupRoutesDeps } from "./routes/setup";
+import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -73,6 +74,13 @@ export type AppDeps = {
    * resolver. Omit to leave /api/setup unmounted.
    */
   setup?: SetupRoutesDeps;
+  /**
+   * workspace-project S-003: enables the enveloped, session-gated project routes
+   * (create/list/rename/archive/unarchive/delete + access-filtered browse-docs-in-
+   * project) under /api/projects. Provide a Drizzle handle (production) or pre-built
+   * repos (tests), plus the session resolver. Omit to leave /api/projects unmounted.
+   */
+  projects?: ProjectsRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -158,6 +166,13 @@ export function createApp(deps: AppDeps) {
   // refused with 409 once a workspace exists.
   if (deps.setup) {
     app.use(setupRoutes(deps.setup));
+  }
+
+  // /api/projects — workspace-project S-003. Self-enveloped + session-gated, mounted
+  // outside /api/auth/*. Create/list/rename/archive/unarchive/delete + access-filtered
+  // browse of docs in a project (existence-hiding out-of-access docs — C-003/AS-006).
+  if (deps.projects) {
+    app.use(projectsRoutes(deps.projects));
   }
 
   // /d/:slug — viewer shell (trusted app origin)

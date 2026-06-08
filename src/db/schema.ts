@@ -33,13 +33,54 @@ export const docs = pgTable(
     // update-owner path exists — owner is written once at create.
     ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
     generalAccess: generalAccess("general_access").notNull().default("restricted"),
+    // project_id (workspace-project S-003): the project this doc belongs to. The spec
+    // said this is "defined in render-publish" but it was never added to the schema;
+    // S-003 adds it here. NULLABLE at the column level (a legacy/seeded doc may lack
+    // one), but the PUBLISH path always sets it — explicit projectId, else the
+    // publisher's default project (C-009 / the MCP-missing-projectId fallback). On a
+    // project delete the FK is set null (we block delete of a non-empty project, but
+    // set-null keeps the doc reachable if a project ever vanishes another way).
+    projectId: uuid("project_id").references((): any => projects.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()
       .$onUpdate(() => sql`now()`),
   },
-  (t) => [index("doc_slug_idx").on(t.slug)],
+  (t) => [index("doc_slug_idx").on(t.slug), index("doc_project_idx").on(t.projectId)],
+);
+
+// ── projects (workspace-project S-003) ─────────────────────────────────────
+// A Project groups docs inside the single workspace (Workspace → Project → Doc).
+// Any member may create one (C-002 — admin-only is for settings/members, not
+// projects). `archived_at` set = hidden from the default browse list (C-005); the
+// project's docs stay reachable by direct link. `is_default` marks the per-account
+// default project auto-created on join (C-009) — exactly one per account, and it can
+// never be archived or deleted (it is the MCP fallback target). `owner_id` is the
+// member who created it / whose default project this is (set null on user delete).
+//
+// Portable on purpose: the "find a user's default project" index is a PLAIN composite
+// on (workspace_id, owner_id) — NOT a Postgres partial index — so a future SQLite
+// build stays open; uniqueness of the default project is enforced in the service
+// (ensureDefaultProject is idempotent), not by a partial-unique DB trick.
+export const projects = pgTable(
+  "projects",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
+    isDefault: boolean("is_default").notNull().default(false),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("projects_workspace_idx").on(t.workspaceId),
+    // Find a user's default project (C-009) without a Postgres-only partial index.
+    index("projects_workspace_owner_idx").on(t.workspaceId, t.ownerId),
+  ],
 );
 
 export const docVersions = pgTable(

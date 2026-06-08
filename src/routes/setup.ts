@@ -28,7 +28,8 @@ import {
   SetupRejected,
   type WorkspaceRepo,
 } from "../workspace/setup";
-import { createWorkspaceRepo } from "../workspace/repo";
+import { createWorkspaceRepo, createProjectRepo } from "../workspace/repo";
+import type { ProjectRepo } from "../workspace/projects";
 import type { DB } from "../db/client";
 
 /**
@@ -61,6 +62,13 @@ export interface SetupRoutesDeps {
   db?: DB;
   /** Pre-built repo (injectable for tests that want no DB). Wins over `db`. */
   repo?: WorkspaceRepo;
+  /**
+   * workspace-project S-003 (AS-014/C-009): project persistence so the installer's
+   * default project is created at SETUP time (the installer joins via setup, not the
+   * member-on-signup hook). Pre-built for tests; defaults to the Drizzle repo when
+   * `db` is set. Omit to skip default-project creation (S-001-era).
+   */
+  projectRepo?: ProjectRepo;
   /** Resolves the better-auth session → actor; gates the route (401 if none). */
   resolveSession: SessionResolver;
 }
@@ -89,6 +97,10 @@ export function setupRoutes(deps: SetupRoutesDeps) {
       if (!deps.db) throw new Error("setupRoutes requires either `repo` or `db`");
       return createWorkspaceRepo(deps.db);
     })();
+  // AS-014/C-009: the project repo for the installer's default project. Concrete when
+  // a db is present; otherwise the injected one (tests) or undefined (skip).
+  const projectRepo: ProjectRepo | undefined =
+    deps.projectRepo ?? (deps.db ? createProjectRepo(deps.db) : undefined);
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
@@ -107,7 +119,7 @@ export function setupRoutes(deps: SetupRoutesDeps) {
             // C-001 / anti-forgery: admin = the SERVER session actor, never the body.
             adminUserId: actor.userId,
           },
-          { repo },
+          { repo, projectRepo },
         );
         set.status = 201;
         return { workspaceId: result.workspaceId, slug: result.slug, name: result.name };

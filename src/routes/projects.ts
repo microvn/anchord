@@ -1,0 +1,217 @@
+// HTTP route mount for the projects cluster (workspace-project S-003).
+//
+// This is INTEGRATION GLUE over the already-unit-tested project service
+// (src/workspace/projects.ts) + the browse access filter (canBrowseDoc). The same
+// api-core composition as docsRoutes/setupRoutes: apiEnvelope → requireSession →
+// withValidation. Identity (actor.userId) is SERVER-resolved (anti-forgery): the
+// owner of a created project, the manage-gate actor, and the browse viewer all come
+// from the session, never the body.
+//
+// Contract:
+//   POST   /api/projects                      → 201 { id, name }            (C-002: any member)
+//   GET    /api/projects?includeArchived=     → 200 { projects: [...] }     (active by default, C-005)
+//   PATCH  /api/projects/:id  { name }        → 200 { id, name }            (owner-or-admin)
+//   POST   /api/projects/:id/archive          → 200 { id, archivedAt }      (owner-or-admin; not default)
+//   POST   /api/projects/:id/unarchive        → 200 { id }                  (owner-or-admin)
+//   DELETE /api/projects/:id                  → 200 { id }                  (owner-or-admin; empty; not default)
+//   GET    /api/projects/:id/docs             → 200 { docs: [...] }         (access-filtered, C-003/AS-006)
+//
+// Errors: 400 VALIDATION_ERROR (bad name), 404 NOT_FOUND (no project / no workspace),
+//         403 FORBIDDEN (non-owner manage), 409 CONFLICT (non-empty / default-protected).
+
+import { Elysia } from "elysia";
+import { z } from "zod";
+import { apiEnvelope } from "../http/envelope";
+import { requireSession, type SessionResolver } from "../http/auth-gate";
+import { validateBody } from "../http/validate";
+import { ValidationError, NotFoundError, ForbiddenError, ConflictError } from "../http/errors";
+import {
+  createProject,
+  renameProject,
+  archiveProject,
+  unarchiveProject,
+  deleteProject,
+  listProjects,
+  filterBrowsableDocs,
+  ProjectRejected,
+  MAX_PROJECT_NAME_LENGTH,
+  type ProjectRepo,
+} from "../workspace/projects";
+import { createProjectRepo, createProjectsRouteRepo, type ProjectsRouteRepo } from "../workspace/repo";
+import type { DB } from "../db/client";
+
+export const createProjectBodySchema = z.object({
+  name: z.string().min(1, "project name is required").max(MAX_PROJECT_NAME_LENGTH),
+});
+export const renameProjectBodySchema = createProjectBodySchema;
+
+export interface ProjectsRoutesDeps {
+  db?: DB;
+  /** Pre-built service repo (tests). Wins over `db`. */
+  repo?: ProjectRepo;
+  /** Pre-built workspace-context repo (tests). Wins over `db`. */
+  ctx?: ProjectsRouteRepo;
+  resolveSession: SessionResolver;
+}
+
+/** Map a ProjectRejected onto the right HTTP DomainError. */
+function mapProjectRejected(
+  err: ProjectRejected,
+): ValidationError | NotFoundError | ForbiddenError | ConflictError {
+  switch (err.code) {
+    case "invalid_name":
+      return new ValidationError(err.message);
+    case "not_found":
+      return new NotFoundError(err.message);
+    case "forbidden":
+      return new ForbiddenError(err.message);
+    case "not_empty":
+    case "default_protected":
+      return new ConflictError(err.message);
+  }
+}
+
+export function projectsRoutes(deps: ProjectsRoutesDeps) {
+  const repo: ProjectRepo =
+    deps.repo ??
+    (() => {
+      if (!deps.db) throw new Error("projectsRoutes requires either `repo`/`ctx` or `db`");
+      return createProjectRepo(deps.db);
+    })();
+  const ctx: ProjectsRouteRepo =
+    deps.ctx ??
+    (() => {
+      if (!deps.db) throw new Error("projectsRoutes requires either `repo`/`ctx` or `db`");
+      return createProjectsRouteRepo(deps.db);
+    })();
+
+  /** Resolve the single workspace id or throw 404 (the instance must be set up). */
+  async function workspaceId(): Promise<string> {
+    const id = await ctx.currentWorkspaceId();
+    if (!id) throw new NotFoundError("instance is not set up");
+    return id;
+  }
+
+  // ONE enveloped + session-gated instance for the whole group. Body validation is
+  // done INLINE (validateBody) in the two body-bearing handlers rather than via the
+  // withValidation plugin: that plugin is name-deduped + scoped, so two of them on one
+  // instance collapse to one schema applied to EVERY route (which would 400 the no-body
+  // routes). Inline validation keeps a single envelope (no triple-nesting) and isolates
+  // the schema to its own handler — a thrown ValidationError is still enveloped as 400.
+  const app = apiEnvelope(new Elysia())
+    .use(requireSession({ resolveSession: deps.resolveSession }))
+    // POST /api/projects — any member creates a project (C-002).
+    .post("/api/projects", async ({ body, actor, set }) => {
+      const { name } = validateBody(createProjectBodySchema, body);
+      try {
+        const p = await createProject(
+          { workspaceId: await workspaceId(), name, ownerId: actor.userId },
+          { repo },
+        );
+        set.status = 201;
+        return { id: p.id, name: p.name };
+      } catch (err) {
+        if (err instanceof ProjectRejected) throw mapProjectRejected(err);
+        throw err;
+      }
+    })
+    // PATCH /api/projects/:id — rename (owner-or-admin).
+    .patch("/api/projects/:id", async ({ params, body, actor }) => {
+      const { name } = validateBody(renameProjectBodySchema, body);
+      const wsId = await workspaceId();
+      try {
+        const p = await renameProject(
+          {
+            workspaceId: wsId,
+            projectId: params.id,
+            actorId: actor.userId,
+            isAdmin: await ctx.isAdmin(wsId, actor.userId),
+            name,
+          },
+          { repo },
+        );
+        return { id: p.id, name: p.name };
+      } catch (err) {
+        if (err instanceof ProjectRejected) throw mapProjectRejected(err);
+        throw err;
+      }
+    })
+    // GET /api/projects — browse list (active by default; includeArchived=true shows all).
+    .get("/api/projects", async ({ query }) => {
+      const includeArchived = (query as Record<string, string>).includeArchived === "true";
+      const list = await listProjects({ workspaceId: await workspaceId(), includeArchived }, { repo });
+      return {
+        projects: list.map((p) => ({
+          id: p.id,
+          name: p.name,
+          isDefault: p.isDefault,
+          archived: p.archivedAt != null,
+        })),
+      };
+    })
+    // POST /api/projects/:id/archive — hide from browse (owner-or-admin; default protected).
+    .post("/api/projects/:id/archive", async ({ params, actor }) => {
+      const wsId = await workspaceId();
+      try {
+        const p = await archiveProject(
+          { workspaceId: wsId, projectId: params.id, actorId: actor.userId, isAdmin: await ctx.isAdmin(wsId, actor.userId) },
+          { repo },
+        );
+        return { id: p.id, archived: true, archivedAt: p.archivedAt };
+      } catch (err) {
+        if (err instanceof ProjectRejected) throw mapProjectRejected(err);
+        throw err;
+      }
+    })
+    // POST /api/projects/:id/unarchive — show again (owner-or-admin).
+    .post("/api/projects/:id/unarchive", async ({ params, actor }) => {
+      const wsId = await workspaceId();
+      try {
+        const p = await unarchiveProject(
+          { workspaceId: wsId, projectId: params.id, actorId: actor.userId, isAdmin: await ctx.isAdmin(wsId, actor.userId) },
+          { repo },
+        );
+        return { id: p.id, archived: false };
+      } catch (err) {
+        if (err instanceof ProjectRejected) throw mapProjectRejected(err);
+        throw err;
+      }
+    })
+    // DELETE /api/projects/:id — delete (owner-or-admin; blocked if non-empty or default).
+    .delete("/api/projects/:id", async ({ params, actor }) => {
+      const wsId = await workspaceId();
+      try {
+        await deleteProject(
+          { workspaceId: wsId, projectId: params.id, actorId: actor.userId, isAdmin: await ctx.isAdmin(wsId, actor.userId) },
+          { repo },
+        );
+        return { id: params.id, deleted: true };
+      } catch (err) {
+        if (err instanceof ProjectRejected) throw mapProjectRejected(err);
+        throw err;
+      }
+    })
+    // GET /api/projects/:id/docs — browse docs in a project, ACCESS-FILTERED (C-003/AS-006).
+    // An out-of-access doc is ABSENT (existence-hiding): no title/metadata leaked. The
+    // project must exist in the workspace (else 404); a viewer with no visible docs gets
+    // an empty list, never an error that would leak existence.
+    .get("/api/projects/:id/docs", async ({ params, actor }) => {
+      const wsId = await workspaceId();
+      const project = await repo.findById(wsId, params.id);
+      if (!project) throw new NotFoundError("project not found");
+      const projectDocs = await ctx.docsInProject(project.id);
+      const visible = await filterBrowsableDocs(actor.userId, projectDocs, {
+        isInvited: (docId, userId) => ctx.isInvited(docId, userId),
+        isWorkspaceMember: (userId) => ctx.isWorkspaceMember(userId),
+      });
+      const byId = new Map(projectDocs.map((d) => [d.id, d]));
+      return {
+        docs: visible.map((v) => {
+          const d = byId.get(v.id)!;
+          return { id: d.id, slug: d.slug, title: d.title, kind: d.kind };
+        }),
+      };
+    });
+
+  return app;
+}

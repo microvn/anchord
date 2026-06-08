@@ -22,6 +22,7 @@
 // logic the unit suite drives with a fake repo.
 
 import { generateSlug } from "../publish/slug";
+import { ensureDefaultProject, type ProjectRepo } from "./projects";
 
 /** Workspace `settings` payload — providers/branding/default-access (validated at the route boundary via Zod). */
 export interface WorkspaceSettings {
@@ -87,12 +88,39 @@ export interface WorkspaceRepo {
    * a re-run on an existing membership is a no-op, backed by the composite unique).
    */
   addMember(workspaceId: string, userId: string, role: "member"): Promise<void>;
+  /** The user's display name (for the "<name>'s docs" default project, C-009). */
+  userName(userId: string): Promise<string | null>;
 }
 
 export interface SetupDeps {
   repo: WorkspaceRepo;
   /** Slug generator (defaults to the publish slug helper) — injectable for deterministic tests. */
   slugGen?: (name: string) => string;
+  /**
+   * Project persistence — present when the caller wants the auto-created default
+   * project (C-009 / AS-014). The setup route and the member-on-signup hook both
+   * supply it so every account ends up with exactly one default project. Omitted in
+   * S-001-era tests that only assert membership.
+   */
+  projectRepo?: ProjectRepo;
+}
+
+/**
+ * C-009 / AS-014: ensure the just-joined user has a default project in the workspace.
+ * Idempotent (ensureDefaultProject is a no-op when one exists). A no-op when no
+ * projectRepo was supplied (S-001-era callers) so existing behavior is unchanged.
+ */
+async function ensureDefaultProjectFor(
+  workspaceId: string,
+  userId: string,
+  deps: SetupDeps,
+): Promise<void> {
+  if (!deps.projectRepo) return;
+  const name = (await deps.repo.userName(userId)) ?? "My";
+  await ensureDefaultProject(
+    { workspaceId, ownerId: userId, userName: name },
+    { repo: deps.projectRepo },
+  );
 }
 
 /**
@@ -119,12 +147,19 @@ export async function createWorkspaceWithAdmin(
     throw new SetupRejected("instance already set up", "already_set_up");
   }
 
-  return deps.repo.createWorkspaceWithAdmin({
+  const created = await deps.repo.createWorkspaceWithAdmin({
     name,
     slug: slugGen(name),
     settings: input.settings,
     adminUserId: input.adminUserId,
   });
+
+  // AS-014 / C-009: the installer (admin) joins via setup, NOT via the
+  // member-on-signup hook, so their default project must be created here too. Every
+  // account ends up with exactly one default project regardless of which path it took.
+  await ensureDefaultProjectFor(created.workspaceId, created.adminUserId, deps);
+
+  return created;
 }
 
 /**
@@ -143,5 +178,7 @@ export async function addMemberOnSignup(
     return { added: false };
   }
   await deps.repo.addMember(workspaceId, userId, "member");
+  // AS-014 / C-009: every account gets exactly one default project on joining.
+  await ensureDefaultProjectFor(workspaceId, userId, deps);
   return { added: true, role: "member" };
 }

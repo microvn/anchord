@@ -67,6 +67,22 @@ export function getOrCreateRequestId(headers: Headers): string {
 }
 
 /**
+ * True when `v` is already a SuccessEnvelope shape — used by onAfterHandle to avoid
+ * double-wrapping when multiple enveloped groups share one parent app (their scoped
+ * hooks otherwise compound). Checks the discriminant fields, not just `success`.
+ */
+function isSuccessEnvelope(v: unknown): v is SuccessEnvelope<unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    (v as { success?: unknown }).success === true &&
+    "data" in v &&
+    "requestId" in v &&
+    "statusCode" in v
+  );
+}
+
+/**
  * Apply the unified envelope to an Elysia route group/app.
  *
  * Usage:
@@ -87,6 +103,14 @@ export function apiEnvelope<T extends Elysia<any, any, any, any, any, any>>(app:
       // A handler that already produced a raw Response (e.g. a stream or file)
       // is left untouched — only plain JSON-able returns get wrapped.
       if (response instanceof Response) return response;
+
+      // Idempotency guard: when several enveloped route groups are `.use`d into one
+      // app, each group's `{as:"scoped"}` onAfterHandle propagates to the shared
+      // parent and would re-wrap a sibling group's already-enveloped return,
+      // producing nested {success,data:{success,data:...}}. A value that is already a
+      // SuccessEnvelope is passed through unchanged so the envelope is applied exactly
+      // once regardless of how many enveloped groups share the parent.
+      if (isSuccessEnvelope(response)) return response;
 
       const requestId = getOrCreateRequestId(request.headers);
       const statusCode = typeof set.status === "number" ? set.status : 200;

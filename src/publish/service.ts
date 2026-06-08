@@ -28,6 +28,13 @@ export interface CreateDocInput {
    * supplies it from the route's session actor.
    */
   ownerId?: string | null;
+  /**
+   * workspace-project S-003 (AS-005 / C-009): the project this doc belongs to.
+   * Already RESOLVED by the time it reaches the repo — explicit projectId (validated
+   * to belong to the workspace) or the publisher's default project (MCP fallback when
+   * omitted). NULL only for a session-less seed that has no project context.
+   */
+  projectId?: string | null;
 }
 
 /** Persistence port. The real implementation (repo.ts) is thin Drizzle glue. */
@@ -35,11 +42,30 @@ export interface DocRepo {
   createDocWithV1(input: CreateDocInput): Promise<{ id: string }>;
 }
 
+/**
+ * Resolve the project a doc should land in (workspace-project S-003). Given the
+ * publisher and the (optional) requested projectId, return the project id to write.
+ * Contract (the publish path enforces the "omitted → default, invalid → error" split):
+ *  - requested projectId present → validate it belongs to the publisher's workspace;
+ *    a bogus/foreign id MUST throw (never silently fall back to default).
+ *  - requested projectId omitted → the publisher's default project (C-009 / MCP fallback).
+ */
+export type ProjectResolver = (args: {
+  ownerId: string;
+  requestedProjectId?: string | null;
+}) => Promise<string>;
+
 export interface PublishDeps {
   repo: DocRepo;
   slugGen?: (title: string) => string;
   now?: () => Date;
   hash?: (content: Uint8Array) => string;
+  /**
+   * workspace-project S-003: resolves the doc's project. Optional so the S-001-era
+   * seed path (no workspace context) can omit it → the doc gets a null project_id.
+   * The route always supplies it so a published doc always lands in a project.
+   */
+  resolveProjectId?: ProjectResolver;
 }
 
 export interface PublishInput {
@@ -60,6 +86,13 @@ export interface PublishInput {
    * C-002).
    */
   ownerId?: string | null;
+  /**
+   * workspace-project S-003 (AS-005): the project the author chose to publish into.
+   * Omitted → the publisher's default project (C-009 / MCP fallback). A supplied id
+   * that does not belong to the workspace is rejected by resolveProjectId (not silently
+   * defaulted). Never read from anywhere but the validated request.
+   */
+  projectId?: string | null;
 }
 
 export interface PublishResult {
@@ -86,7 +119,7 @@ export async function publishDoc(
   input: PublishInput,
   deps: PublishDeps,
 ): Promise<PublishResult> {
-  const { bytes, filename, declaredKind, editedTitle, ownerId } = input;
+  const { bytes, filename, declaredKind, editedTitle, ownerId, projectId } = input;
   const slugGen = deps.slugGen ?? generateSlug;
   const hash = deps.hash ?? sha256Hex;
 
@@ -109,6 +142,19 @@ export async function publishDoc(
   const content =
     kind === "image" ? (filename ?? slug) : new TextDecoder("utf-8").decode(bytes);
 
+  // workspace-project S-003 (AS-005 / C-009): resolve the doc's project BEFORE the
+  // write. An explicit-but-invalid projectId throws here (resolveProjectId rejects a
+  // foreign/bogus id) so the doc is never silently dropped into the default; an
+  // omitted projectId resolves to the publisher's default project (MCP fallback). The
+  // seed path (no resolver, no owner) writes a null project_id.
+  let resolvedProjectId: string | null = null;
+  if (deps.resolveProjectId && ownerId) {
+    resolvedProjectId = await deps.resolveProjectId({
+      ownerId,
+      requestedProjectId: projectId,
+    });
+  }
+
   const { id } = await deps.repo.createDocWithV1({
     slug,
     title: finalTitle,
@@ -118,6 +164,7 @@ export async function publishDoc(
     // C-001/C-007: the session publisher becomes the doc owner + v1 publisher.
     // Defaults to null only for a session-less create (seed); set once, immutable.
     ownerId: ownerId ?? null,
+    projectId: resolvedProjectId,
   });
 
   return {

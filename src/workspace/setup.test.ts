@@ -54,6 +54,9 @@ function fakeRepo() {
       if (state.members.some((m) => m.workspaceId === workspaceId && m.userId === userId)) return;
       state.members.push({ workspaceId, userId, role });
     },
+    async userName() {
+      return null; // S-001 tests don't exercise the default-project name path.
+    },
   };
   return { repo, state };
 }

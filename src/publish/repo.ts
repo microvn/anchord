@@ -23,6 +23,9 @@ export function createDocRepo(db: DB): DocRepo {
             kind: input.kind,
             // auth-routes S-001 (C-001/C-007): record the publisher as owner.
             ownerId: input.ownerId ?? null,
+            // workspace-project S-003 (AS-005 / C-009): the resolved project (explicit
+            // or the publisher's default); null only for a session-less seed.
+            projectId: input.projectId ?? null,
           })
           .returning({ id: docs.id });
 

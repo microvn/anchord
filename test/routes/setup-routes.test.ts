@@ -54,6 +54,9 @@ function fakeRepo() {
       if (state.members.some((m) => m.userId === userId)) return;
       state.members.push({ userId, role: "member" });
     },
+    async userName() {
+      return null;
+    },
   };
   return { repo, state };
 }

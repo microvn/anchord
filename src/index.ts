@@ -76,7 +76,12 @@ const app = createApp({
   },
   // workspace-project S-001: first-run POST /api/setup over the real DB (create the
   // single workspace + claim admin; later signups become members via the auth hook).
+  // S-003 (AS-014/C-009): the installer's default project is created here too (db →
+  // concrete projectRepo inside setupRoutes).
   setup: { db, resolveSession },
+  // workspace-project S-003: project create/list/rename/archive/unarchive/delete +
+  // access-filtered browse of docs in a project over the real DB.
+  projects: { db, resolveSession },
   // sharing-permissions S-001/S-003/S-004: owner-only access/invites/link controls.
   // Owner gate reads the concrete resolver (owner source still seamed to false — see
   // above). Mail wiring is omitted here; the prod enqueueInvite degrades to a no-op

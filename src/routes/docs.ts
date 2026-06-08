@@ -20,8 +20,11 @@ import { apiEnvelope } from "../http/envelope";
 import { requireSession, type SessionResolver } from "../http/auth-gate";
 import { withValidation } from "../http/validate";
 import { ValidationError, PayloadTooLargeError } from "../http/errors";
-import { publishDoc, PublishRejected, type DocRepo } from "../publish/service";
+import { NotFoundError } from "../http/errors";
+import { publishDoc, PublishRejected, type DocRepo, type ProjectResolver } from "../publish/service";
 import { createDocRepo } from "../publish/repo";
+import { createPublishProjectResolver } from "../workspace/repo";
+import { ProjectRejected } from "../workspace/projects";
 import type { DB } from "../db/client";
 
 /**
@@ -39,6 +42,10 @@ export const publishBodySchema = z.object({
   content: z.string(),
   kind: z.enum(["html", "markdown", "image"]).optional(),
   title: z.string().optional(),
+  // workspace-project S-003 (AS-005): the project to publish into. Omitted → the
+  // publisher's default project (C-009 / MCP fallback). A supplied id is validated to
+  // belong to the workspace by the resolver (foreign/bogus → 404), never defaulted.
+  projectId: z.string().uuid().optional(),
 });
 
 export type PublishBody = z.infer<typeof publishBodySchema>;
@@ -66,6 +73,12 @@ export interface DocsRoutesDeps {
   repo?: DocRepo;
   /** Resolves the better-auth session → actor; gates the route (401 if none). */
   resolveSession: SessionResolver;
+  /**
+   * workspace-project S-003: resolves the doc's project (explicit → validated, omitted
+   * → default). Pre-built for tests; defaults to the Drizzle resolver when `db` is set.
+   * When neither is available the doc is published with a null project_id (seed path).
+   */
+  resolveProjectId?: ProjectResolver;
 }
 
 /**
@@ -87,11 +100,16 @@ export function docsRoutes(deps: DocsRoutesDeps) {
       return createDocRepo(deps.db);
     })();
 
+  // workspace-project S-003: the project resolver — injected for tests, the concrete
+  // Drizzle resolver when a db is present, else undefined (seed path → null project).
+  const resolveProjectId: ProjectResolver | undefined =
+    deps.resolveProjectId ?? (deps.db ? createPublishProjectResolver(deps.db) : undefined);
+
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
     .use(withValidation(publishBodySchema))
     .post("/api/docs", async ({ validBody, actor, set }) => {
-      const { content, kind, title } = validBody as PublishBody;
+      const { content, kind, title, projectId } = validBody as PublishBody;
       try {
         const result = await publishDoc(
           {
@@ -102,14 +120,21 @@ export function docsRoutes(deps: DocsRoutesDeps) {
             // session user (requireSession injected ctx.actor; 401 already fired
             // for AS-002/C-002 if there was no session). NEVER from the body.
             ownerId: actor.userId,
+            // workspace-project S-003 (AS-005 / C-009): the chosen project (validated)
+            // or — when omitted — the publisher's default project.
+            projectId,
           },
-          { repo },
+          { repo, resolveProjectId },
         );
         set.status = 201; // created → 201; the envelope echoes statusCode 201
         return { docId: result.docId, slug: result.slug, url: result.url };
       } catch (err) {
         if (err instanceof PublishRejected) {
           throw mapPublishRejected(err);
+        }
+        // A supplied-but-invalid projectId → 404 NOT_FOUND (never silent-default).
+        if (err instanceof ProjectRejected && err.code === "not_found") {
+          throw new NotFoundError(err.message);
         }
         throw err; // unexpected → envelope generalizes to 500 (no leak)
       }
