@@ -3,6 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { contentHeaders, sandboxIframe } from "./render/sandbox";
 import { renderMarkdown } from "./render/markdown";
 import { docsRoutes } from "./routes/docs";
+import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -35,6 +36,14 @@ export type AppDeps = {
     repo?: DocRepo;
     resolveSession: SessionResolver;
   };
+  /**
+   * versioning-diff S-001..S-004: enables the enveloped, session-gated version
+   * create/title-patch/history/restore/diff routes under /api/docs/:slug. Provide
+   * a Drizzle handle (production) or pre-built repos (tests), plus the session
+   * resolver, the doc-scoped role resolver (sharing seam), and access deps. Omit
+   * to leave these routes unmounted.
+   */
+  versions?: VersionsRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -86,6 +95,13 @@ export function createApp(deps: AppDeps) {
   // (better-auth owns its own protocol — api-core C-009).
   if (deps.docs) {
     app.use(docsRoutes(deps.docs));
+  }
+
+  // /api/docs/:slug/... — versioning-diff S-001..S-004. Self-enveloped + session-
+  // gated (versionsRoutes composes apiEnvelope + requireSession + withValidation),
+  // mounted outside the /api/auth/* better-auth catch-all, alongside docsRoutes.
+  if (deps.versions) {
+    app.use(versionsRoutes(deps.versions));
   }
 
   // /d/:slug — viewer shell (trusted app origin)

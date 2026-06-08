@@ -15,12 +15,36 @@ const auth = createAuth(db, {
   oauth: cfg.oauth,
 });
 
+const resolveSession = betterAuthSessionResolver(auth);
+
+// SHARING SEAM (sharing-permissions cluster, built next): the doc-scoped effective
+// role (owner/invite/link general-access precedence) and the invite/workspace
+// membership lookups for canViewDoc are owned by that cluster's concrete repo. Until
+// its routes are mounted, wire interim impls here:
+//   - resolveDocRole: any authenticated user is treated as `editor` for now, so the
+//     publish→edit/restore flow works in the running app. This OPENS writes more than
+//     v0's final model (owner/editor only) and is REPLACED when sharing routes land.
+//   - accessDeps: treat authenticated users as invited/members so visible docs read.
+// Both are honest placeholders, not the final authz — flagged here so the swap is
+// obvious when sharing-permissions wires its concrete repo.
+const versionsAccessDeps = {
+  isInvited: () => true,
+  isWorkspaceMember: () => true,
+};
+
 const app = createApp({
   dbCheck,
   corsOrigin: cfg.CORS_ORIGIN === "*" ? true : cfg.CORS_ORIGIN.split(","),
   authHandler: auth.handler,
   // render-publish S-001: enveloped, session-gated POST /api/docs over the real DB.
-  docs: { db, resolveSession: betterAuthSessionResolver(auth) },
+  docs: { db, resolveSession },
+  // versioning-diff S-001..S-004: version create/title/history/restore/diff over the real DB.
+  versions: {
+    db,
+    resolveSession,
+    resolveDocRole: async () => "editor",
+    accessDeps: versionsAccessDeps,
+  },
 }).listen(cfg.PORT);
 
 console.log(`anchord on http://localhost:${cfg.PORT} (${cfg.NODE_ENV})`);
