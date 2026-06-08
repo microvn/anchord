@@ -90,7 +90,7 @@ export function docsRoutes(deps: DocsRoutesDeps) {
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
     .use(withValidation(publishBodySchema))
-    .post("/api/docs", async ({ validBody, set }) => {
+    .post("/api/docs", async ({ validBody, actor, set }) => {
       const { content, kind, title } = validBody as PublishBody;
       try {
         const result = await publishDoc(
@@ -98,6 +98,10 @@ export function docsRoutes(deps: DocsRoutesDeps) {
             bytes: new TextEncoder().encode(content),
             declaredKind: kind,
             editedTitle: title,
+            // auth-routes S-001 (C-001/C-007): the publisher = the SERVER-resolved
+            // session user (requireSession injected ctx.actor; 401 already fired
+            // for AS-002/C-002 if there was no session). NEVER from the body.
+            ownerId: actor.userId,
           },
           { repo },
         );

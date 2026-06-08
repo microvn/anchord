@@ -64,6 +64,13 @@
       "when": 1780914079061,
       "tag": "0008_simple_earthquake",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780917459634,
+      "tag": "0009_charming_firebrand",
+      "breakpoints": true
     }
   ]
 }

@@ -19,6 +19,15 @@ export interface CreateDocInput {
   kind: DocKind;
   content: string; // HTML/MD text, or an asset key for images
   contentHash: string;
+  /**
+   * auth-routes S-001 (C-001/C-007): the authenticated publisher's user id (a
+   * better-auth TEXT id, e.g. "u_abc123"). Written to docs.owner_id AND
+   * doc_versions.published_by for version 1. NULL/omitted only for a doc created
+   * without a session (e.g. a seed) — owner is immutable once set (no transfer in
+   * v0). Optional so a session-less seed can omit it; the publish service always
+   * supplies it from the route's session actor.
+   */
+  ownerId?: string | null;
 }
 
 /** Persistence port. The real implementation (repo.ts) is thin Drizzle glue. */
@@ -42,6 +51,15 @@ export interface PublishInput {
   declaredKind?: DocKind;
   /** Author's final title (edited before publish). Overrides the auto-derived one. */
   editedTitle?: string;
+  /**
+   * auth-routes S-001 (C-001/C-007): the authenticated publisher's user id from
+   * the SERVER session (never from the request body). Threaded into
+   * createDocWithV1 so the doc records this user as owner and version 1 records it
+   * as published_by. Optional here only so a session-less seed path can omit it
+   * (→ null owner); the route always supplies it (publishing requires a session,
+   * C-002).
+   */
+  ownerId?: string | null;
 }
 
 export interface PublishResult {
@@ -68,7 +86,7 @@ export async function publishDoc(
   input: PublishInput,
   deps: PublishDeps,
 ): Promise<PublishResult> {
-  const { bytes, filename, declaredKind, editedTitle } = input;
+  const { bytes, filename, declaredKind, editedTitle, ownerId } = input;
   const slugGen = deps.slugGen ?? generateSlug;
   const hash = deps.hash ?? sha256Hex;
 
@@ -97,6 +115,9 @@ export async function publishDoc(
     kind,
     content,
     contentHash: hash(bytes),
+    // C-001/C-007: the session publisher becomes the doc owner + v1 publisher.
+    // Defaults to null only for a session-less create (seed); set once, immutable.
+    ownerId: ownerId ?? null,
   });
 
   return {

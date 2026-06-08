@@ -26,6 +26,12 @@ export const docs = pgTable(
     slug: text("slug").notNull().unique(), // immutable for the doc's lifetime
     title: text("title").notNull(),
     kind: docKind("kind").notNull(),
+    // owner_id (auth-routes S-001, C-001/C-007): the authenticated user who FIRST
+    // published this doc. references user.id, which is better-auth's TEXT id (NOT
+    // uuid) — C-007. NULLABLE: a doc seeded/published without a session has no owner
+    // (mirrors the published_by pattern). Immutable in v0 (transfer is v0.5): no
+    // update-owner path exists — owner is written once at create.
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
     generalAccess: generalAccess("general_access").notNull().default("restricted"),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -46,9 +52,13 @@ export const docVersions = pgTable(
     version: integer("version").notNull(),
     content: text("content").notNull(), // HTML/MD text; images live on the assets volume
     contentHash: text("content_hash").notNull(),
-    // Author who published this version (S-001). Nullable + no FK for now: the users
-    // table does not exist until the auth cluster; the FK is added there later.
-    publishedBy: uuid("published_by"),
+    // Author who published this version (render-publish S-001). RETYPED uuid→text +
+    // FK by auth-routes S-001 (C-007): better-auth user.id is TEXT, not uuid — a
+    // uuid column would reject a better-auth id like "u_abc123". Nullable (a
+    // version published without a session, or any pre-auth row, has no publisher),
+    // set null on user delete. The column is all-null in existing data, so the
+    // type change is safe.
+    publishedBy: text("published_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("doc_version_uq").on(t.docId, t.version)],

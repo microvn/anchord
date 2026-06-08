@@ -17,7 +17,13 @@ export function createDocRepo(db: DB): DocRepo {
       return db.transaction(async (tx) => {
         const [doc] = await tx
           .insert(docs)
-          .values({ slug: input.slug, title: input.title, kind: input.kind })
+          .values({
+            slug: input.slug,
+            title: input.title,
+            kind: input.kind,
+            // auth-routes S-001 (C-001/C-007): record the publisher as owner.
+            ownerId: input.ownerId ?? null,
+          })
           .returning({ id: docs.id });
 
         await tx.insert(docVersions).values({
@@ -25,6 +31,8 @@ export function createDocRepo(db: DB): DocRepo {
           version: 1, // C-004: a freshly created doc is always version 1
           content: input.content,
           contentHash: input.contentHash,
+          // C-007: version 1's publisher = the same authenticated user (text id).
+          publishedBy: input.ownerId ?? null,
         });
 
         return { id: doc.id };
