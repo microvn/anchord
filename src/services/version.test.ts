@@ -8,6 +8,7 @@ import {
   type AppendResult,
   type VersionHistoryRow,
 } from "./version";
+import { extractText } from "../render/extract-text";
 
 // Story S-001: appending a new immutable version on content update.
 //
@@ -29,6 +30,8 @@ interface VersionRow {
   content: string;
   contentHash: string;
   publishedBy: string | null;
+  // S-005 / C-006: the searchable text the append/restore path now writes per version.
+  extractedText?: string | null;
   createdAt: Date;
 }
 
@@ -325,4 +328,60 @@ test("AS-004.T1: restoring a non-existent version number rejects (no silent no-o
   await expect(restoreVersion("doc-1", 99, f.repo)).rejects.toThrow();
   // History unchanged — nothing appended on the error path.
   expect(f.rows).toHaveLength(2);
+});
+
+// workspace-project S-005 / C-006: every version that can BECOME current must carry
+// extracted_text so the search index (current-version content source) keeps matching
+// past v1. The publish path already does this for v1; these assert append + restore
+// thread extractText(content, kind) onto the NEW version row the same way.
+
+test("C-006: appendVersion writes extracted_text = extractText(content, kind) on the new row", async () => {
+  const f = fakeRepo({ docId: "doc-1", versions: [{ content: "# v1 alpha" }] });
+
+  await appendVersion("doc-1", "# v2 bravo body", sha("# v2 bravo body"), f.repo, null, "markdown");
+
+  const appended = f.rows.find((r) => r.version === 2)!;
+  // The appended (now current) version carries the SAME extracted text publish would
+  // compute — so content search covers the new current content, not just v1.
+  expect(appended.extractedText).toBe(extractText("# v2 bravo body", "markdown"));
+  expect(appended.extractedText).toContain("bravo");
+  // v1 row is untouched (no extracted_text retro-written, no mutation).
+  expect(f.rows.find((r) => r.version === 1)!.content).toBe("# v1 alpha");
+});
+
+test("C-006: restoreVersion carries the RESTORED content's extracted text on the new row", async () => {
+  // doc at v2; restore v1 → v3 must carry v1's content extracted text (v1 is now current).
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [{ content: "# original charlie" }, { content: "# edited delta" }],
+  });
+
+  await restoreVersion("doc-1", 1, f.repo, null, "markdown");
+
+  const restored = f.rows.find((r) => r.version === 3)!;
+  expect(restored.content).toBe("# original charlie"); // append-copy of v1
+  expect(restored.extractedText).toBe(extractText("# original charlie", "markdown"));
+  expect(restored.extractedText).toContain("charlie");
+});
+
+test("C-006: image kind append stores the alt/filename text (no crash on a non-text body)", async () => {
+  // image kind → extractText returns the alt/filename text the publish path stores as
+  // content; an image append still gets that, never a crash.
+  const f = fakeRepo({ docId: "img-doc", versions: [{ content: "diagram.png" }] });
+
+  await appendVersion("img-doc", "updated-diagram.png", sha("updated-diagram.png"), f.repo, null, "image");
+
+  const appended = f.rows.find((r) => r.version === 2)!;
+  expect(appended.extractedText).toBe(extractText("updated-diagram.png", "image"));
+  expect(appended.extractedText).toBe("updated-diagram.png");
+});
+
+test("C-006: no kind context (seed/legacy append) leaves extracted_text null — mirrors publish null handling", async () => {
+  const f = fakeRepo({ docId: "doc-1", versions: [{ content: "x" }] });
+
+  // kind omitted → no extraction attempted; the column stays null (no crash on empty kind).
+  await appendVersion("doc-1", "", sha(""), f.repo, null);
+
+  const appended = f.rows.find((r) => r.version === 2)!;
+  expect(appended.extractedText).toBeNull();
 });

@@ -215,6 +215,9 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
               // text FK → user.id (auth-routes S-001 retyped it), so the real
               // better-auth id persists.
               actor.userId,
+              // S-005 / C-006: the doc's kind drives extract-text so the appended
+              // (now current) version is searchable — closing the past-v1 content hole.
+              doc.kind,
             );
             set.status = 201;
             return { version: result.version, previousVersion: result.previousVersion };
@@ -260,7 +263,9 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
           await requireEditor(doc.id, actor.userId); // 403 if not editor
           let result;
           try {
-            result = await restoreVersion(doc.id, target, versionRepo, actor.userId); // C-005: publisher from session
+            // C-005: publisher from session. S-005 / C-006: pass kind so the restored
+            // (now current) content is re-indexed for search.
+            result = await restoreVersion(doc.id, target, versionRepo, actor.userId, doc.kind);
           } catch {
             // restoreVersion throws when version n does not exist → 404 (doc visible,
             // but the specific version is missing).

@@ -25,6 +25,8 @@ import { and, eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
 import { annotations, comments, docs, user as userTable } from "../../src/db/schema";
 import { createApp } from "../../src/app";
+import { appendVersion, restoreVersion } from "../../src/services/version";
+import { createVersionRepo } from "../../src/services/version-repo";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
 import { createWorkspaceRepo, createProjectRepo } from "../../src/workspace/repo";
@@ -244,5 +246,64 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
     const json = await searchAs(A.cookie, "reconsider");
     const titles = json.data.results.map((r: any) => r.title);
     expect(titles).toContain("Secret Memo");
+  });
+
+  // C-006 REGRESSION (the hole): before this fix, extractText ran ONLY on publish's v1.
+  // Appending/restoring a version inserted a doc_versions row with NULL extracted_text,
+  // so the NEW (current) content was not searchable. The search index covers the CURRENT
+  // (max) version's extracted_text — so once append writes it, the new content matches.
+  test("C-006: appended version content is searchable (current-version index covers v2)", async () => {
+    // Publish v1 with a unique content token; v1 content IS searchable (publish path).
+    const docId = await publish(A.cookie, {
+      content: "# Edit Saga\n\nThe word zephyralpha appears in version one only.",
+      title: "Edit Saga",
+    });
+    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, docId));
+
+    // Sanity: v1 token is findable while v1 is current.
+    let r = await searchAs(X.cookie, "zephyralpha");
+    expect(r.data.results.map((x: any) => x.title)).toContain("Edit Saga");
+
+    // Append v2 (the edit path) with a NEW token — this is the path that left
+    // extracted_text NULL before the fix.
+    const repo = createVersionRepo(h.db);
+    const v2 = "# Edit Saga\n\nNow the word zephyrbravo appears in version two.";
+    await appendVersion(docId, v2, "hash-v2-zephyr", repo, A.userId, "markdown");
+
+    // THE REGRESSION: searching the NEW current content must surface the doc.
+    r = await searchAs(X.cookie, "zephyrbravo");
+    expect(r.data.results.map((x: any) => x.title)).toContain("Edit Saga");
+
+    // Current-version semantics: the index covers ONLY the current (max) version's
+    // extracted_text, so the now-stale v1 token no longer matches on content.
+    r = await searchAs(X.cookie, "zephyralpha");
+    expect(r.data.results.map((x: any) => x.title)).not.toContain("Edit Saga");
+  });
+
+  test("C-006: restored version content is searchable (restore makes it current)", async () => {
+    const docId = await publish(A.cookie, {
+      content: "# Restore Saga\n\nThe token gammafox is in version one.",
+      title: "Restore Saga",
+    });
+    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, docId));
+
+    const repo = createVersionRepo(h.db);
+    // v2 replaces the content (gammafox no longer current).
+    await appendVersion(
+      docId,
+      "# Restore Saga\n\nThe token deltawolf is in version two.",
+      "hash-rs-v2",
+      repo,
+      A.userId,
+      "markdown",
+    );
+    // v1 token is now stale → not on content.
+    let r = await searchAs(X.cookie, "gammafox");
+    expect(r.data.results.map((x: any) => x.title)).not.toContain("Restore Saga");
+
+    // Restore v1 → appends v3 (copy of v1, now current) WITH extracted_text → searchable again.
+    await restoreVersion(docId, 1, repo, A.userId, "markdown");
+    r = await searchAs(X.cookie, "gammafox");
+    expect(r.data.results.map((x: any) => x.title)).toContain("Restore Saga");
   });
 });

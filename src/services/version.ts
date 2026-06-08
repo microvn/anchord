@@ -15,6 +15,11 @@
 // Drizzle glue computes max()+1 inside a transaction (Postgres row lock / MVCC) —
 // that transactional, multi-writer correctness is integration-verified-later.
 
+import { extractText, type ExtractKind } from "../render/extract-text";
+
+/** The doc kind that decides the extract-text render path (mirrors DocKind). */
+export type VersionKind = ExtractKind;
+
 export interface NewVersionRow {
   docId: string;
   version: number;
@@ -22,6 +27,15 @@ export interface NewVersionRow {
   contentHash: string;
   /** Author who published this version; nullable until the auth cluster lands. */
   publishedBy?: string | null;
+  /**
+   * workspace-project S-005 (GAP-003 → publish-time extraction / C-006): the plain
+   * searchable text for THIS version's content, written to doc_versions.extracted_text
+   * so the search index covers every version that can become current — not just v1
+   * from the publish path. Derived via extractText(content, kind). NULL/undefined when
+   * the caller has no kind context (a seed/legacy append) → the column stays null,
+   * mirroring publish's null handling for content-less rows.
+   */
+  extractedText?: string | null;
 }
 
 /**
@@ -79,11 +93,18 @@ export async function appendVersion(
   contentHash: string,
   repo: VersionRepo,
   publishedBy: string | null = null,
+  kind?: VersionKind,
 ): Promise<AppendResult> {
   const previousVersion = await repo.currentMaxVersion(docId);
   const version = (previousVersion ?? 0) + 1; // C-002: counter starts at 1, increments, no reuse
 
-  await repo.insertVersion({ docId, version, content, contentHash, publishedBy });
+  // S-005 / C-006: the appended content becomes the doc's CURRENT version, so it must
+  // carry extracted_text or content search silently breaks for any doc past v1. Derive
+  // it the SAME way publish does (extractText(content, kind)). No kind context (seed
+  // append) → leave it null, mirroring publish's null handling for content-less rows.
+  const extractedText = kind ? extractText(content, kind) : null;
+
+  await repo.insertVersion({ docId, version, content, contentHash, publishedBy, extractedText });
 
   return { docId, version, previousVersion };
 }
@@ -114,6 +135,7 @@ export async function restoreVersion(
   targetVersion: number,
   repo: VersionRepo,
   publishedBy: string | null = null,
+  kind?: VersionKind,
 ): Promise<AppendResult> {
   const target = await repo.getVersion(docId, targetVersion);
   if (!target) {
@@ -121,7 +143,9 @@ export async function restoreVersion(
   }
   // Reuse appendVersion so numbering (C-002) + the re-anchor seam are shared, and
   // the restored content is re-inserted verbatim (same content + contentHash).
-  return appendVersion(docId, target.content, target.contentHash, repo, publishedBy);
+  // S-005 / C-006: a restore makes the restored content CURRENT again, so extract from
+  // THAT content (via appendVersion's kind path) so the now-current doc stays searchable.
+  return appendVersion(docId, target.content, target.contentHash, repo, publishedBy, kind);
 }
 
 /** A history entry: a version row plus a current-version marker (S-002 / AS-003). */

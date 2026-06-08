@@ -11,7 +11,8 @@
 import { and, asc, eq, max, sql } from "drizzle-orm";
 import { docs, docVersions } from "../db/schema";
 import type { DB } from "../db/client";
-import type { VersionRepo, NewVersionRow, VersionListRow } from "./version";
+import type { VersionRepo, NewVersionRow, VersionListRow, VersionKind } from "./version";
+import { extractText } from "../render/extract-text";
 
 /** Construct a VersionRepo backed by a Drizzle DB handle. */
 export function createVersionRepo(db: DB): VersionRepo {
@@ -33,6 +34,9 @@ export function createVersionRepo(db: DB): VersionRepo {
           content: row.content,
           contentHash: row.contentHash,
           publishedBy: row.publishedBy ?? null,
+          // S-005 / C-006: persist the searchable text for this version so an appended/
+          // restored version (not just publish's v1) is covered by the search index.
+          extractedText: row.extractedText ?? null,
         })
         .returning({ version: docVersions.version });
       return { version: inserted.version };
@@ -91,7 +95,12 @@ export async function appendVersionTx(
   content: string,
   contentHash: string,
   publishedBy: string | null = null,
+  kind?: VersionKind,
 ): Promise<{ docId: string; version: number; previousVersion: number | null }> {
+  // S-005 / C-006: mirror the service-layer appendVersion — the appended content is the
+  // new current version, so it must carry extracted_text or content search breaks past
+  // v1. No kind context → null (matches publish's null handling for content-less rows).
+  const extractedText = kind ? extractText(content, kind) : null;
   return db.transaction(async (tx) => {
     // Per-doc advisory lock keyed on the doc id (hashed to the bigint the lock takes).
     // Held until this tx commits/rolls back; serializes concurrent appends for THIS doc.
@@ -106,7 +115,7 @@ export async function appendVersionTx(
 
     await tx
       .insert(docVersions)
-      .values({ docId, version, content, contentHash, publishedBy });
+      .values({ docId, version, content, contentHash, publishedBy, extractedText });
 
     return { docId, version, previousVersion };
   });
