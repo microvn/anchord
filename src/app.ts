@@ -105,9 +105,16 @@ export function createApp(deps: AppDeps) {
   // /api/auth/* — better-auth handles sign up / sign in / session / logout (S-001).
   // Mounted as a catch-all so better-auth owns the whole sub-tree (DB-backed,
   // httpOnly session cookie signed with APP_SECRET — C-001).
+  //
+  // auth-routes S-004: `parse: "none"` is LOAD-BEARING. better-auth reads the
+  // request body itself (`request.json()` for sign-up/sign-in). If Elysia parses
+  // the body first it drains the stream, and better-auth then sees an empty body
+  // → 500 "Unexpected end of JSON input" and sign-in never issues a cookie. We
+  // hand better-auth the untouched Request, so it owns the whole protocol incl.
+  // body reading (api-core C-009: better-auth owns its sub-tree).
   if (deps.authHandler) {
     const authHandler = deps.authHandler;
-    app.all("/api/auth/*", ({ request }) => authHandler(request));
+    app.all("/api/auth/*", ({ request }) => authHandler(request), { parse: "none" });
   }
 
   // /api/docs — render-publish S-001 publish endpoint. Self-enveloped + session-
