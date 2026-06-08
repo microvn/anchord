@@ -249,6 +249,49 @@ export const comments = pgTable(
   (t) => [index("comments_annotation_idx").on(t.annotationId)],
 );
 
+// ── workspace + membership (workspace-project S-001) ───────────────────────
+// v0 SINGLE workspace = the instance. First-run creates EXACTLY ONE workspaces
+// row + the installer as `admin` in workspace_members; everyone who signs up
+// afterward is auto-added as `member` (C-001). The "only one row" rule is an
+// APPLICATION-layer guard (check-count-in-tx before insert — see
+// src/workspace/setup.ts), NOT a Postgres-only partial-unique trick, so a future
+// SQLite build stays open. `settings` is jsonb (the one declared exception):
+// enabled auth providers + default access + branding.
+//
+// The membership role is a WORKSPACE role (admin|member) — distinct from the
+// per-doc share_role (viewer|commenter|editor) and from docs.owner_id.
+export const workspaceRole = pgEnum("workspace_role", ["admin", "member"]);
+
+export const workspaces = pgTable("workspaces", {
+  id: id(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  // jsonb (declared exception): { providers, defaultAccess, branding }.
+  settings: jsonb("settings").notNull(),
+  createdAt: createdAt(),
+});
+
+export const workspaceMembers = pgTable(
+  "workspace_members",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    // better-auth user.id is TEXT (not uuid) — C-007 of auth-routes applies here too.
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: workspaceRole("role").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // A user joins a workspace exactly once.
+    uniqueIndex("workspace_members_uq").on(t.workspaceId, t.userId),
+    index("workspace_members_user_idx").on(t.userId),
+  ],
+);
+
 // ── better-auth tables (auth S-001) ────────────────────────────────────────
 // Hand-added to match better-auth's expected schema (getAuthTables(options)):
 // user / session / account / verification. better-auth maps its model fields to

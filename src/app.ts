@@ -6,6 +6,7 @@ import { docsRoutes } from "./routes/docs";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
+import { setupRoutes, type SetupRoutesDeps } from "./routes/setup";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -65,6 +66,13 @@ export type AppDeps = {
    * leave these routes unmounted.
    */
   sharing?: SharingRoutesDeps;
+  /**
+   * workspace-project S-001: enables the enveloped, session-gated POST /api/setup
+   * first-run endpoint (create the single workspace + claim admin; C-001). Provide a
+   * Drizzle handle (production) or a pre-built WorkspaceRepo (tests), plus the session
+   * resolver. Omit to leave /api/setup unmounted.
+   */
+  setup?: SetupRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -143,6 +151,13 @@ export function createApp(deps: AppDeps) {
   // Self-enveloped + session-gated + owner-only, mounted outside /api/auth/*.
   if (deps.sharing) {
     app.use(sharingRoutes(deps.sharing));
+  }
+
+  // /api/setup — workspace-project S-001 first-run. Self-enveloped + session-gated,
+  // mounted outside /api/auth/*. Creates the single workspace + claims admin (C-001);
+  // refused with 409 once a workspace exists.
+  if (deps.setup) {
+    app.use(setupRoutes(deps.setup));
   }
 
   // /d/:slug — viewer shell (trusted app origin)

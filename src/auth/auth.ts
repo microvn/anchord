@@ -24,6 +24,8 @@ import * as schema from "../db/schema";
 import { MIN_PASSWORD_LENGTH } from "./password";
 import { activatePendingInvites, type PendingInviteRepo } from "./invite";
 import { oauthEmailVerified, type OAuthProvider } from "./oauth";
+import { addMemberOnSignup, type WorkspaceRepo } from "../workspace/setup";
+import { createWorkspaceRepo } from "../workspace/repo";
 
 // auth S-005 (AS-008/C-005): after a user's email is verified, activate any pending
 // invite issued to that exact email so they get the invited role. This is the thin
@@ -46,6 +48,17 @@ export async function onEmailVerified(
 // the C-007 test can assert against it rather than a magic number.
 export const SIGNIN_RATE_LIMIT_MAX = 5;
 export const SIGNIN_RATE_LIMIT_WINDOW_SECONDS = 15 * 60; // 900s
+
+// workspace-project S-001 (AS-002/C-001): when a user is created via better-auth AND
+// a workspace already exists, add them as a regular `member` (the installer who ran
+// first-run is the only admin; everyone after → member). This is the thin glue the
+// `databaseHooks.user.create.after` hook calls; the membership LOGIC (no-op before a
+// workspace exists, member-not-admin once it does, idempotent) is unit-tested in
+// workspace/setup.test.ts against a fake repo. Wiring it into better-auth's create
+// callback is integration-verified in test/integration/workspace-setup.itest.ts.
+export async function onUserCreated(userId: string, repo: WorkspaceRepo) {
+  return addMemberOnSignup(userId, { repo });
+}
 
 /** Per-provider OAuth credentials (auth S-002). Present only when the operator set both. */
 export type OAuthProviderCreds = { clientId: string; clientSecret: string };
@@ -107,10 +120,24 @@ function socialProvidersFrom(oauth: CreateAuthOptions["oauth"]) {
  * and `.options` (the config contract the unit tests assert).
  */
 export function createAuth(db: DB, opts: CreateAuthOptions) {
+  const workspaceRepo = createWorkspaceRepo(db);
   return betterAuth({
     secret: opts.secret,
     baseURL: opts.baseURL,
     database: drizzleAdapter(db, { provider: "pg", schema }),
+    // workspace-project S-001 (AS-002/C-001): after better-auth creates a user, add
+    // them to the single workspace as `member` (no-op until first-run created the
+    // workspace; the installer who ran setup is the only admin). onUserCreated holds
+    // the logic; this is the wiring point (mirrors the post-verify invite hook pattern).
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (createdUser: { id: string }) => {
+            await onUserCreated(createdUser.id, workspaceRepo);
+          },
+        },
+      },
+    },
     emailAndPassword: {
       enabled: true,
       // C-008 makes SMTP mandatory at boot, so email verification always works.

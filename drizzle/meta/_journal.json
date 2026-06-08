@@ -71,6 +71,13 @@
       "when": 1780917459634,
       "tag": "0009_charming_firebrand",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780922071530,
+      "tag": "0010_talented_screwball",
+      "breakpoints": true
     }
   ]
 }

@@ -74,6 +74,9 @@ const app = createApp({
     accessDeps: sharedAccessDeps,
     loadShareConfig: concreteLoadShareConfig,
   },
+  // workspace-project S-001: first-run POST /api/setup over the real DB (create the
+  // single workspace + claim admin; later signups become members via the auth hook).
+  setup: { db, resolveSession },
   // sharing-permissions S-001/S-003/S-004: owner-only access/invites/link controls.
   // Owner gate reads the concrete resolver (owner source still seamed to false — see
   // above). Mail wiring is omitted here; the prod enqueueInvite degrades to a no-op
