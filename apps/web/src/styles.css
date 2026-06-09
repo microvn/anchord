@@ -1,13 +1,93 @@
 @import "tailwindcss";
 /* Bunny Fonts (privacy-friendly) — Fraunces, Geist, Geist Mono.
    Must precede all non-@import statements (CSS spec) — hence here, not below @theme. */
-@import url("https://fonts.bunny.net/css?family=fraunces:500|geist:400,500,600|geist-mono:400");
+@import url("https://fonts.bunny.net/css?family=fraunces:400,500,600|geist:400,500,600,700|geist-mono:400,500,600");
+@import "tw-animate-css";
 
-/* anchord design system — Tailwind 4 CSS-first @theme.
-   Dark is the canonical/default theme (operator-grade). Teal is the ONLY accent —
-   never purple/violet, never Claude-orange (#d97757). See DESIGN.md §Color/Typography. */
+/* ============================================================
+   anchord — design tokens (ported from Anchord-Design/tokens.css)
+   Dark is the canonical/default theme (theme-provider stamps data-theme="dark"
+   on load). Light is the toggle. Teal is the ONLY accent — never purple/violet,
+   never Claude-orange (#d97757). See DESIGN.md §Color/Typography.
+
+   The raw palette lives on :root / [data-theme] selectors below so it can switch
+   at runtime; the @theme blocks expose those vars as Tailwind utilities + the
+   shadcn semantic contract.
+   ============================================================ */
+
+/* ---------- DARK (canonical default) ---------- */
+:root,
+:root[data-theme="dark"] {
+  --paper: #0c1012;
+  --surface: #11171a;
+  --elev: #161d21;
+  --elev2: #1b2327;
+  --sunken: #0a0e10;
+
+  --ink: #e7edee;
+  --muted: #939fa3;
+  --subtle: #677074;
+  --faint: #444e52;
+
+  --line: #222a2e;
+  --soft: #1a2024;
+
+  --accent: #37b3bd;
+  --accent-strong: #56cdd6;
+  --accent-soft: #0e2e30;
+  --accent-ink: #7fdce1;
+  --on-accent: #04181a; /* near-black ink on bright teal (dark) */
+
+  --amber: #d6a23e;
+  --amber-bg: #26200f;
+  --red: #f1655d;
+  --green: #43b873;
+
+  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  --shadow-modal: 0 2px 6px rgba(0, 0, 0, 0.5), 0 28px 64px -16px rgba(0, 0, 0, 0.7);
+  --scrim: rgba(4, 8, 10, 0.6);
+}
+
+/* ---------- LIGHT (toggle) ---------- */
+:root[data-theme="light"] {
+  --paper: #fbfbfa;
+  --surface: #ffffff;
+  --elev: #f5f6f6;
+  --elev2: #eef0f0;
+  --sunken: #eef0f0;
+
+  --ink: #14181a;
+  --muted: #5b6568;
+  --subtle: #8a9296;
+  --faint: #b3babc;
+
+  --line: #e3e6e6;
+  --soft: #eceeee;
+
+  --accent: #0b6b73;
+  --accent-strong: #085259;
+  --accent-soft: #e3f0f0;
+  --accent-ink: #0a4a50;
+  --on-accent: #ffffff; /* text on a flat teal button (light) */
+
+  --amber: #9a6700;
+  --amber-bg: #fdf3da;
+  --red: #b3251f;
+  --green: #1c7a4a;
+
+  --shadow-pop: 0 1px 2px rgba(20, 24, 26, 0.06), 0 8px 24px -8px rgba(20, 24, 26, 0.16);
+  --shadow-modal: 0 1px 3px rgba(20, 24, 26, 0.08), 0 24px 56px -16px rgba(20, 24, 26, 0.28);
+  --scrim: rgba(20, 24, 26, 0.34);
+}
+
+/* ============================================================
+   @theme — anchord palette as Tailwind utilities.
+   Literal dark values here so `bg-paper`/`text-ink`/`bg-accent` resolve and the
+   design-system guard finds `--color-accent: #37b3bd`. The runtime-switchable
+   surfaces use the var()-backed @theme inline block below.
+   ============================================================ */
 @theme {
-  /* Dark (primary / canonical) */
+  /* Dark (primary / canonical) literals */
   --color-paper: #0c1012;
   --color-surface: #11171a;
   --color-elev: #161d21;
@@ -27,6 +107,7 @@
   --color-accent-strong: #56cdd6;
   --color-accent-soft: #0e2e30;
   --color-accent-ink: #7fdce1;
+  --color-on-accent: #04181a;
 
   /* Semantic */
   --color-amber: #d6a23e;
@@ -38,14 +119,67 @@
   --font-serif: "Fraunces", ui-serif, Georgia, serif;
   --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
 
-  /* Radius */
-  --radius-sm: 5px;
+  /* Radius (Anchord-Design --r-*) */
+  --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 10px;
+  --radius-lg: 11px;
+  --radius-xl: 11px;
+}
+
+/* ============================================================
+   @theme inline — runtime-switchable anchord surfaces + the shadcn semantic
+   contract, ALL re-pointed at anchord tokens so no neutral/zinc default leaks.
+   `inline` keeps these as var() references, so flipping data-theme recolors
+   every shadcn primitive (Button, Input, Card, …) live.
+   ============================================================ */
+@theme inline {
+  /* anchord surfaces that must follow the active theme */
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-elev: var(--elev);
+  --color-elev-2: var(--elev2);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-soft: var(--soft);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-on-accent: var(--on-accent);
+  --color-amber: var(--amber);
+  --color-error: var(--red);
+  --color-success: var(--green);
+
+  /* shadcn/ui contract → anchord tokens (light + dark both, via the vars above) */
+  --radius: var(--radius-md);
+  --color-background: var(--paper);
+  --color-foreground: var(--ink);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
+  --color-secondary: var(--elev);
+  --color-secondary-foreground: var(--ink);
+  --color-muted-foreground: var(--muted);
+  --color-accent-foreground: var(--accent-ink);
+  --color-destructive: var(--red);
+  --color-destructive-foreground: var(--on-accent);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--accent);
 }
 
 :root {
   color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 html,
@@ -56,9 +190,21 @@ body,
 
 body {
   margin: 0;
-  background: var(--color-paper);
-  color: var(--color-ink);
+  background: var(--paper);
+  color: var(--ink);
   font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
+
+/* Headings use Fraunces by default (DESIGN.md). */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-serif);
+}
+
+/* Anchord-Design auth + shared primitive CSS (scoped to .anchord-* / .auth* classes
+   so it doesn't fight Tailwind utilities). */
+@import "./styles/auth.css";
