@@ -188,6 +188,7 @@ function buildApp(opts: {
       lookupRepo: fakeLookupRepo(opts.doc === undefined ? VISIBLE_DOC : opts.doc),
       annotationLookupRepo: opts.annotationLookupRepo ?? fakeAnnotationLookupRepo({}),
       resolveSession: opts.resolveSession ?? member,
+      resolveWorkspaceRole: async () => "member",
       resolveDocRole: opts.resolveDocRole ?? asOwner,
       accessDeps: opts.accessDeps ?? { isInvited: () => true, isWorkspaceMember: () => true },
       loadShareConfig: opts.loadShareConfig ?? guestOff,
@@ -207,7 +208,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     const ar = fakeAnnotationRepo();
     const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
     const res = await app.handle(
-      req("/api/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
+      req("/api/w/ws_1/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
     );
     expect(res.status).toBe(201);
     const json = (await res.json()) as any;
@@ -221,7 +222,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     const ar = fakeAnnotationRepo();
     const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
     const res = await app.handle(
-      req("/api/docs/doc-one/annotations", {
+      req("/api/w/ws_1/docs/doc-one/annotations", {
         method: "POST",
         body: JSON.stringify({ anchor: { blockId: "img-1", region: { kind: "point", x: 0.5, y: 0.5 } } }),
       }),
@@ -235,7 +236,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     const ar = fakeAnnotationRepo();
     const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
     const res = await app.handle(
-      req("/api/docs/doc-one/annotations", {
+      req("/api/w/ws_1/docs/doc-one/annotations", {
         method: "POST",
         body: JSON.stringify({ anchor: { blockId: "img-1", region: { kind: "box", x: 0.1, y: 0.1, w: 0.2, h: 0.2 } } }),
       }),
@@ -248,7 +249,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     const ar = fakeAnnotationRepo();
     const app = buildApp({ resolveSession: noSession, annotationRepo: ar });
     const res = await app.handle(
-      req("/api/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
+      req("/api/w/ws_1/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
     );
     expect(res.status).toBe(401);
     expect(ar.calls.inserts).toHaveLength(0);
@@ -258,7 +259,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     const ar = fakeAnnotationRepo();
     const app = buildApp({ resolveDocRole: asViewer, annotationRepo: ar });
     const res = await app.handle(
-      req("/api/docs/doc-one/annotations", {
+      req("/api/w/ws_1/docs/doc-one/annotations", {
         method: "POST",
         body: JSON.stringify({ anchor: TEXT_ANCHOR, role: "owner", authorized: true }),
       }),
@@ -278,7 +279,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
       annotationRepo: ar,
     });
     const res = await app.handle(
-      req("/api/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
+      req("/api/w/ws_1/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
     );
     expect(res.status).toBe(404);
     expect(ar.calls.inserts).toHaveLength(0);
@@ -287,7 +288,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
   test("missing doc → 404", async () => {
     const app = buildApp({ doc: null });
     const res = await app.handle(
-      req("/api/docs/nope/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
+      req("/api/w/ws_1/docs/nope/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
     );
     expect(res.status).toBe(404);
   });
@@ -295,7 +296,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
   test("bad body (missing anchor) → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({ resolveDocRole: asCommenter });
     const res = await app.handle(
-      req("/api/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ type: "range" }) }),
+      req("/api/w/ws_1/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ type: "range" }) }),
     );
     expect(res.status).toBe(400);
     const json = (await res.json()) as any;
@@ -310,7 +311,7 @@ describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
       { id: "a2", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved" },
     ]);
     const app = buildApp({ resolveDocRole: asViewer, annotationRepo: ar });
-    const res = await app.handle(req("/api/docs/doc-one/annotations"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.data.items).toHaveLength(2);
@@ -323,7 +324,7 @@ describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
       { id: "a2", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved" },
     ]);
     const app = buildApp({ resolveDocRole: asViewer, annotationRepo: ar });
-    const res = await app.handle(req("/api/docs/doc-one/annotations?limit=1&page=2"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations?limit=1&page=2"));
     const json = (await res.json()) as any;
     expect(json.data.items).toHaveLength(1);
     expect(json.data.items[0].id).toBe("a2");
@@ -334,7 +335,7 @@ describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
       doc: { ...VISIBLE_DOC, generalAccess: "restricted" },
       accessDeps: { isInvited: () => false, isWorkspaceMember: () => false },
     });
-    const res = await app.handle(req("/api/docs/doc-one/annotations"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations"));
     expect(res.status).toBe(404);
   });
 });
@@ -348,7 +349,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     const app = buildApp({ resolveDocRole: asCommenter, commentRepo: cr });
     // reply to a reply → flattened to root
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "me too", parentId: "reply1" }) }),
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "me too", parentId: "reply1" }) }),
     );
     expect(res.status).toBe(201);
     const json = (await res.json()) as any;
@@ -364,7 +365,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     ]);
     const app = buildApp({ resolveSession: userA, resolveDocRole: asCommenter, commentRepo: cr });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "my reply", parentId: "root" }) }),
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "my reply", parentId: "root" }) }),
     );
     expect(res.status).toBe(201);
     expect(cr.calls.inserts[0]?.authorId).toBe("u_A");
@@ -380,7 +381,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     ]);
     const app = buildApp({ resolveSession: userA, resolveDocRole: asCommenter, commentRepo: cr });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", {
+      req("/api/w/ws_1/annotations/ann_1/comments", {
         method: "POST",
         body: JSON.stringify({ body: "hi", parentId: "root", authorId: "attacker", userId: "attacker" }),
       }),
@@ -396,7 +397,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     const gr = fakeGuestCommentRepo();
     const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, loadShareConfig: guestOn });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "guest note", guestName: "Lan" }) }),
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "guest note", guestName: "Lan" }) }),
     );
     expect(res.status).toBe(201);
     expect(gr.calls.inserts[0]?.guestName).toBe("Lan");
@@ -406,7 +407,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
   test("reply with empty body → 400", async () => {
     const app = buildApp({ resolveDocRole: asCommenter, commentRepo: fakeCommentRepo([{ id: "root", annotationId: "ann_1", parentId: null, authorId: "u", guestName: null, body: "x" }]) });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "   ", parentId: "root" }) }),
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "   ", parentId: "root" }) }),
     );
     expect(res.status).toBe(400);
   });
@@ -414,7 +415,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
   test("reply by viewer → 403", async () => {
     const app = buildApp({ resolveDocRole: asViewer, commentRepo: fakeCommentRepo([{ id: "root", annotationId: "ann_1", parentId: null, authorId: "u", guestName: null, body: "x" }]) });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi", parentId: "root" }) }),
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi", parentId: "root" }) }),
     );
     expect(res.status).toBe(403);
   });
@@ -423,7 +424,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     const gr = fakeGuestCommentRepo();
     const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, loadShareConfig: guestOn });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", {
+      req("/api/w/ws_1/annotations/ann_1/comments", {
         method: "POST",
         body: JSON.stringify({ body: "guest here", guestName: "Anon Fox", guestEmail: "fox@example.com" }),
       }),
@@ -438,7 +439,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     const gr = fakeGuestCommentRepo();
     const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, loadShareConfig: guestOn });
     await app.handle(
-      req("/api/annotations/ann_1/comments", {
+      req("/api/w/ws_1/annotations/ann_1/comments", {
         method: "POST",
         body: JSON.stringify({ body: "<script>alert(1)</script>safe", guestName: "Fox" }),
       }),
@@ -450,7 +451,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
   test("guest comment missing name → 400", async () => {
     const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi" }) }),
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi" }) }),
     );
     expect(res.status).toBe(400);
   });
@@ -458,7 +459,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
   test("guest comment when guest commenting disabled → 401", async () => {
     const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOff });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi", guestName: "Fox" }) }),
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi", guestName: "Fox" }) }),
     );
     expect(res.status).toBe(401);
   });
@@ -470,7 +471,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
       accessDeps: { isInvited: () => false, isWorkspaceMember: () => false },
     });
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi", parentId: "root" }) }),
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi", parentId: "root" }) }),
     );
     expect(res.status).toBe(404);
   });
@@ -481,7 +482,7 @@ describe("PATCH /api/annotations/:id/resolution (S-004)", () => {
     const rr = fakeResolutionRepo();
     const app = buildApp({ resolveDocRole: asCommenter, resolutionRepo: rr });
     const res = await app.handle(
-      req("/api/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+      req("/api/w/ws_1/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
@@ -493,7 +494,7 @@ describe("PATCH /api/annotations/:id/resolution (S-004)", () => {
     const rr = fakeResolutionRepo();
     const app = buildApp({ resolveDocRole: asCommenter, resolutionRepo: rr });
     const res = await app.handle(
-      req("/api/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
+      req("/api/w/ws_1/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
     );
     const json = (await res.json()) as any;
     expect(json.data.status).toBe("unresolved");
@@ -502,7 +503,7 @@ describe("PATCH /api/annotations/:id/resolution (S-004)", () => {
   test("viewer → 403", async () => {
     const app = buildApp({ resolveDocRole: asViewer });
     const res = await app.handle(
-      req("/api/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+      req("/api/w/ws_1/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
     );
     expect(res.status).toBe(403);
   });
@@ -510,7 +511,7 @@ describe("PATCH /api/annotations/:id/resolution (S-004)", () => {
   test("bad body (resolved not boolean) → 400", async () => {
     const app = buildApp({ resolveDocRole: asCommenter });
     const res = await app.handle(
-      req("/api/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: "yes" }) }),
+      req("/api/w/ws_1/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: "yes" }) }),
     );
     expect(res.status).toBe(400);
   });
@@ -521,7 +522,7 @@ describe("POST /api/docs/:slug/suggestions (S-006)", () => {
     const sr = fakeSuggestionRepo();
     const app = buildApp({ resolveDocRole: asCommenter, suggestionRepo: sr });
     const res = await app.handle(
-      req("/api/docs/doc-one/suggestions", {
+      req("/api/w/ws_1/docs/doc-one/suggestions", {
         method: "POST",
         body: JSON.stringify({ anchor: TEXT_ANCHOR, from: "hello", to: "hi", againstVersion: 1 }),
       }),
@@ -535,7 +536,7 @@ describe("POST /api/docs/:slug/suggestions (S-006)", () => {
   test("viewer → 403", async () => {
     const app = buildApp({ resolveDocRole: asViewer });
     const res = await app.handle(
-      req("/api/docs/doc-one/suggestions", {
+      req("/api/w/ws_1/docs/doc-one/suggestions", {
         method: "POST",
         body: JSON.stringify({ anchor: TEXT_ANCHOR, from: "hello", againstVersion: 1 }),
       }),
@@ -546,7 +547,7 @@ describe("POST /api/docs/:slug/suggestions (S-006)", () => {
   test("bad body (missing from) → 400", async () => {
     const app = buildApp({ resolveDocRole: asCommenter });
     const res = await app.handle(
-      req("/api/docs/doc-one/suggestions", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR, againstVersion: 1 }) }),
+      req("/api/w/ws_1/docs/doc-one/suggestions", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR, againstVersion: 1 }) }),
     );
     expect(res.status).toBe(400);
   });
@@ -570,7 +571,7 @@ describe("PATCH /api/suggestions/:id (S-006)", () => {
       annotationLookupRepo: fakeAnnotationLookupRepo({ currentHtml: "<p>hello world</p>" }),
     });
     const res = await app.handle(
-      req("/api/suggestions/sug_1", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+      req("/api/w/ws_1/suggestions/sug_1", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
@@ -585,7 +586,7 @@ describe("PATCH /api/suggestions/:id (S-006)", () => {
       annotationLookupRepo: fakeAnnotationLookupRepo({ currentHtml: "<p>anything</p>" }),
     });
     const res = await app.handle(
-      req("/api/suggestions/sug_2", { method: "PATCH", body: JSON.stringify({ decision: "reject" }) }),
+      req("/api/w/ws_1/suggestions/sug_2", { method: "PATCH", body: JSON.stringify({ decision: "reject" }) }),
     );
     const json = (await res.json()) as any;
     expect(json.data.status).toBe("rejected");
@@ -599,7 +600,7 @@ describe("PATCH /api/suggestions/:id (S-006)", () => {
       annotationLookupRepo: fakeAnnotationLookupRepo({ currentHtml: "<p>totally different text</p>" }),
     });
     const res = await app.handle(
-      req("/api/suggestions/sug_3", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+      req("/api/w/ws_1/suggestions/sug_3", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
     );
     expect(res.status).toBe(409);
     const json = (await res.json()) as any;
@@ -610,7 +611,7 @@ describe("PATCH /api/suggestions/:id (S-006)", () => {
     const sr = fakeSuggestionRepo([{ ...SUG, id: "sug_4" }]);
     const app = buildApp({ resolveDocRole: asCommenter, suggestionRepo: sr });
     const res = await app.handle(
-      req("/api/suggestions/sug_4", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+      req("/api/w/ws_1/suggestions/sug_4", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
     );
     expect(res.status).toBe(403);
   });
@@ -618,7 +619,7 @@ describe("PATCH /api/suggestions/:id (S-006)", () => {
   test("no session → 401", async () => {
     const app = buildApp({ resolveSession: noSession });
     const res = await app.handle(
-      req("/api/suggestions/sug_1", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+      req("/api/w/ws_1/suggestions/sug_1", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
     );
     expect(res.status).toBe(401);
   });

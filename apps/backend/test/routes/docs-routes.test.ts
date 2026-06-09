@@ -15,9 +15,11 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
 import type { DocRepo } from "../../src/publish/service";
-import type { SessionResolver } from "../../src/http/auth-gate";
+import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
 import { MAX_TEXT_BYTES } from "../../src/publish/sniff";
 
+// Every signed-in actor is a member of the path workspace (the gate proves membership).
+const asMember: WorkspaceRoleResolver = async () => "member";
 const member: SessionResolver = async () => ({ userId: "u_member" });
 const noSession: SessionResolver = async () => null;
 // A better-auth-shaped TEXT id (NOT a uuid) — proves owner_id/published_by accept
@@ -38,12 +40,16 @@ function fakeRepo(): DocRepo & { last?: unknown } {
 function buildApp(opts: { resolveSession: SessionResolver; repo?: DocRepo }) {
   return createApp({
     dbCheck: async () => {},
-    docs: { repo: opts.repo ?? fakeRepo(), resolveSession: opts.resolveSession },
+    docs: {
+      repo: opts.repo ?? fakeRepo(),
+      resolveSession: opts.resolveSession,
+      resolveWorkspaceRole: asMember,
+    },
   });
 }
 
 function post(body: unknown, headers: Record<string, string> = {}) {
-  return new Request("http://localhost/api/docs", {
+  return new Request("http://localhost/api/w/ws_1/docs", {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),

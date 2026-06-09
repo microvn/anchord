@@ -1,6 +1,8 @@
 import { Elysia } from "elysia";
-import { UnauthenticatedError, ForbiddenError } from "./errors";
+import { UnauthenticatedError, ForbiddenError, NotFoundError } from "./errors";
 import { can, type Role, type Action } from "../sharing/roles";
+
+export type WorkspaceRole = "admin" | "member";
 
 /**
  * S-003: the session auth gate for protected `/api/*` routes.
@@ -105,6 +107,47 @@ export async function requireWorkspaceAdmin(
   if (!(await isWorkspaceAdmin(actor.userId))) {
     throw new ForbiddenError();
   }
+}
+
+/**
+ * Resolve the actor's WORKSPACE role for `workspaceId` (workspaces C-002): the role
+ * from the SERVER's workspace_members read, or null when the actor is not a member.
+ * Injected so the path-scoped gate is testable without a DB.
+ */
+export type WorkspaceRoleResolver = (
+  workspaceId: string,
+  userId: string,
+) => Promise<WorkspaceRole | null>;
+
+/** What requireWorkspaceMember injects: the resolved workspace scope + the caller's role. */
+export type WorkspaceScope = { workspaceId: string; role: WorkspaceRole };
+
+/**
+ * workspaces S-006 (C-002/C-005): the path-scoped tenancy gate for every data API under
+ * `/api/w/:workspaceId/…`. Runs AFTER requireSession (needs `actor`). Reads `:workspaceId`
+ * from the path, confirms the actor holds a workspace_members row there, and injects
+ * `ctx.ws = { workspaceId, role }`. A non-member is refused as 404 NOT_FOUND
+ * (existence-hiding: indistinguishable from "no such workspace" — AS-008/AS-018). The
+ * scope is keyed on the PATH + the SERVER membership read, never a body field.
+ */
+export function requireWorkspaceMember(opts: { resolveWorkspaceRole: WorkspaceRoleResolver }) {
+  return new Elysia({ name: "workspace-gate" }).resolve(
+    { as: "scoped" },
+    async (ctx): Promise<{ ws: WorkspaceScope }> => {
+      const { params } = ctx as { params: Record<string, string | undefined> };
+      // `actor` is injected by requireSession (mounted before this gate). It is not in the
+      // base Elysia context type here, so read it through the augmented shape.
+      const actor = (ctx as unknown as { actor: Actor }).actor;
+      const workspaceId = params.workspaceId;
+      if (!workspaceId) throw new NotFoundError();
+      const role = await opts.resolveWorkspaceRole(workspaceId, actor.userId);
+      if (!role) {
+        // Existence-hiding: a non-member sees the same 404 as a non-existent workspace.
+        throw new NotFoundError();
+      }
+      return { ws: { workspaceId, role } };
+    },
+  );
 }
 
 /**

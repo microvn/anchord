@@ -26,8 +26,9 @@ import { activatePendingInvites, type PendingInviteRepo } from "./invite";
 import { makeSendVerificationEmail } from "./mail-transport";
 import type { MailQueue, MailTransport } from "./mail-queue";
 import { oauthEmailVerified, type OAuthProvider } from "./oauth";
-import { addMemberOnSignup, type WorkspaceRepo } from "../workspace/setup";
-import { createWorkspaceRepo, createProjectRepo } from "../workspace/repo";
+import { createOwnWorkspaceOnSignup, type TenancyRepo } from "../workspace/tenancy";
+import { createTenancyRepo } from "../workspace/tenancy-repo";
+import { createProjectRepo } from "../workspace/repo";
 import type { ProjectRepo } from "../workspace/projects";
 
 // auth S-005 (AS-008/C-005): after a user's email is verified, activate any pending
@@ -52,24 +53,19 @@ export async function onEmailVerified(
 export const SIGNIN_RATE_LIMIT_MAX = 5;
 export const SIGNIN_RATE_LIMIT_WINDOW_SECONDS = 15 * 60; // 900s
 
-// workspace-project S-001 (AS-002/C-001): when a user is created via better-auth AND
-// a workspace already exists, add them as a regular `member` (the installer who ran
-// first-run is the only admin; everyone after → member). This is the thin glue the
-// `databaseHooks.user.create.after` hook calls; the membership LOGIC (no-op before a
-// workspace exists, member-not-admin once it does, idempotent) is unit-tested in
-// workspace/setup.test.ts against a fake repo. Wiring it into better-auth's create
-// callback is integration-verified in test/integration/workspace-setup.itest.ts.
-// workspace-project S-003 (AS-014/C-009): the member-on-signup hook ALSO ensures the
-// new account's default project ("<name>'s docs") exists. addMemberOnSignup does both
-// (add member + ensure default project) when a projectRepo is supplied — idempotent, so
-// a re-fired hook never makes a second membership or a second default project. The
-// projectRepo is optional so an S-001-era caller (no projects) keeps the old behavior.
+// workspaces S-001 (AS-001/AS-002/C-001): when a user is created via better-auth, create
+// their OWN workspace named "default" (creator = admin) + a default project. It NEVER
+// joins an existing workspace — each account is isolated and reaches others only by
+// invite. This is the thin glue the `databaseHooks.user.create.after` hook calls; the
+// logic (create-own-workspace, admin role, default project, idempotent) is unit-tested in
+// workspace/tenancy.test.ts against a fake repo. Wiring it into better-auth's create
+// callback is integration-verified in test/integration/workspaces-*.itest.ts.
 export async function onUserCreated(
   userId: string,
-  repo: WorkspaceRepo,
+  repo: TenancyRepo,
   projectRepo?: ProjectRepo,
 ) {
-  return addMemberOnSignup(userId, { repo, projectRepo });
+  return createOwnWorkspaceOnSignup(userId, { repo, projectRepo });
 }
 
 /** Per-provider OAuth credentials (auth S-002). Present only when the operator set both. */
@@ -168,7 +164,7 @@ function socialProvidersFrom(oauth: CreateAuthOptions["oauth"]) {
  * and `.options` (the config contract the unit tests assert).
  */
 export function createAuth(db: DB, opts: CreateAuthOptions) {
-  const workspaceRepo = createWorkspaceRepo(db);
+  const tenancyRepo = createTenancyRepo(db);
   const projectRepo = createProjectRepo(db);
 
   // AS-001/AS-012 + AS-008: when mail deps are supplied, build the emailVerification
@@ -207,7 +203,7 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
       user: {
         create: {
           after: async (createdUser: { id: string }) => {
-            await onUserCreated(createdUser.id, workspaceRepo, projectRepo);
+            await onUserCreated(createdUser.id, tenancyRepo, projectRepo);
           },
         },
       },
@@ -241,6 +237,14 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
         enabled: true,
         trustedProviders: [],
         allowDifferentEmails: false,
+      },
+    },
+    // workspaces S-003 (C-005): the login-default landing workspace. Maps the
+    // session.activeWorkspaceId column so better-auth carries it on the session. NOT the
+    // request scope — that is the /api/w/:workspaceId path.
+    session: {
+      additionalFields: {
+        activeWorkspaceId: { type: "string", required: false, input: false },
       },
     },
     // No JWT plugin + DB storage left on => sessions are DB-backed and revocable (C-001).

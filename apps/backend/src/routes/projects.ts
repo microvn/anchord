@@ -22,7 +22,12 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { apiEnvelope } from "../http/envelope";
-import { requireSession, type SessionResolver } from "../http/auth-gate";
+import {
+  requireSession,
+  requireWorkspaceMember,
+  type SessionResolver,
+  type WorkspaceRoleResolver,
+} from "../http/auth-gate";
 import { validateBody } from "../http/validate";
 import { ValidationError, NotFoundError, ForbiddenError, ConflictError } from "../http/errors";
 import {
@@ -52,6 +57,8 @@ export interface ProjectsRoutesDeps {
   /** Pre-built workspace-context repo (tests). Wins over `db`. */
   ctx?: ProjectsRouteRepo;
   resolveSession: SessionResolver;
+  /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
+  resolveWorkspaceRole: WorkspaceRoleResolver;
 }
 
 /** Map a ProjectRejected onto the right HTTP DomainError. */
@@ -85,27 +92,20 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       return createProjectsRouteRepo(deps.db);
     })();
 
-  /** Resolve the single workspace id or throw 404 (the instance must be set up). */
-  async function workspaceId(): Promise<string> {
-    const id = await ctx.currentWorkspaceId();
-    if (!id) throw new NotFoundError("instance is not set up");
-    return id;
-  }
-
-  // ONE enveloped + session-gated instance for the whole group. Body validation is
-  // done INLINE (validateBody) in the two body-bearing handlers rather than via the
-  // withValidation plugin: that plugin is name-deduped + scoped, so two of them on one
-  // instance collapse to one schema applied to EVERY route (which would 400 the no-body
-  // routes). Inline validation keeps a single envelope (no triple-nesting) and isolates
-  // the schema to its own handler — a thrown ValidationError is still enveloped as 400.
+  // ONE enveloped + session-gated + workspace-scoped instance for the whole group. The
+  // workspace gate (requireWorkspaceMember) injects ctx.ws = { workspaceId, role } from
+  // the :workspaceId path — a non-member is 404 (existence-hiding) BEFORE any handler.
+  // Body validation is INLINE (validateBody) per handler (the withValidation plugin is
+  // name-deduped, so two on one instance collapse). All paths live under /api/w/:workspaceId.
   const app = apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
-    // POST /api/projects — any member creates a project (C-002).
-    .post("/api/projects", async ({ body, actor, set }) => {
+    .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
+    // POST — any member creates a project (C-002).
+    .post("/api/w/:workspaceId/projects", async ({ body, actor, ws, set }) => {
       const { name } = validateBody(createProjectBodySchema, body);
       try {
         const p = await createProject(
-          { workspaceId: await workspaceId(), name, ownerId: actor.userId },
+          { workspaceId: ws.workspaceId, name, ownerId: actor.userId },
           { repo },
         );
         set.status = 201;
@@ -115,17 +115,16 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         throw err;
       }
     })
-    // PATCH /api/projects/:id — rename (owner-or-admin).
-    .patch("/api/projects/:id", async ({ params, body, actor }) => {
+    // PATCH — rename (owner-or-admin).
+    .patch("/api/w/:workspaceId/projects/:id", async ({ params, body, actor, ws }) => {
       const { name } = validateBody(renameProjectBodySchema, body);
-      const wsId = await workspaceId();
       try {
         const p = await renameProject(
           {
-            workspaceId: wsId,
+            workspaceId: ws.workspaceId,
             projectId: params.id,
             actorId: actor.userId,
-            isAdmin: await ctx.isAdmin(wsId, actor.userId),
+            isAdmin: ws.role === "admin",
             name,
           },
           { repo },
@@ -136,10 +135,10 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         throw err;
       }
     })
-    // GET /api/projects — browse list (active by default; includeArchived=true shows all).
-    .get("/api/projects", async ({ query }) => {
+    // GET — browse list (active by default; includeArchived=true shows all).
+    .get("/api/w/:workspaceId/projects", async ({ query, ws }) => {
       const includeArchived = (query as Record<string, string>).includeArchived === "true";
-      const list = await listProjects({ workspaceId: await workspaceId(), includeArchived }, { repo });
+      const list = await listProjects({ workspaceId: ws.workspaceId, includeArchived }, { repo });
       return {
         projects: list.map((p) => ({
           id: p.id,
@@ -149,12 +148,11 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         })),
       };
     })
-    // POST /api/projects/:id/archive — hide from browse (owner-or-admin; default protected).
-    .post("/api/projects/:id/archive", async ({ params, actor }) => {
-      const wsId = await workspaceId();
+    // POST archive — hide from browse (owner-or-admin; default protected).
+    .post("/api/w/:workspaceId/projects/:id/archive", async ({ params, actor, ws }) => {
       try {
         const p = await archiveProject(
-          { workspaceId: wsId, projectId: params.id, actorId: actor.userId, isAdmin: await ctx.isAdmin(wsId, actor.userId) },
+          { workspaceId: ws.workspaceId, projectId: params.id, actorId: actor.userId, isAdmin: ws.role === "admin" },
           { repo },
         );
         return { id: p.id, archived: true, archivedAt: p.archivedAt };
@@ -163,12 +161,11 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         throw err;
       }
     })
-    // POST /api/projects/:id/unarchive — show again (owner-or-admin).
-    .post("/api/projects/:id/unarchive", async ({ params, actor }) => {
-      const wsId = await workspaceId();
+    // POST unarchive — show again (owner-or-admin).
+    .post("/api/w/:workspaceId/projects/:id/unarchive", async ({ params, actor, ws }) => {
       try {
         const p = await unarchiveProject(
-          { workspaceId: wsId, projectId: params.id, actorId: actor.userId, isAdmin: await ctx.isAdmin(wsId, actor.userId) },
+          { workspaceId: ws.workspaceId, projectId: params.id, actorId: actor.userId, isAdmin: ws.role === "admin" },
           { repo },
         );
         return { id: p.id, archived: false };
@@ -177,12 +174,11 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         throw err;
       }
     })
-    // DELETE /api/projects/:id — delete (owner-or-admin; blocked if non-empty or default).
-    .delete("/api/projects/:id", async ({ params, actor }) => {
-      const wsId = await workspaceId();
+    // DELETE — delete (owner-or-admin; blocked if non-empty or default).
+    .delete("/api/w/:workspaceId/projects/:id", async ({ params, actor, ws }) => {
       try {
         await deleteProject(
-          { workspaceId: wsId, projectId: params.id, actorId: actor.userId, isAdmin: await ctx.isAdmin(wsId, actor.userId) },
+          { workspaceId: ws.workspaceId, projectId: params.id, actorId: actor.userId, isAdmin: ws.role === "admin" },
           { repo },
         );
         return { id: params.id, deleted: true };
@@ -191,18 +187,19 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         throw err;
       }
     })
-    // GET /api/projects/:id/docs — browse docs in a project, ACCESS-FILTERED (C-003/AS-006).
-    // An out-of-access doc is ABSENT (existence-hiding): no title/metadata leaked. The
-    // project must exist in the workspace (else 404); a viewer with no visible docs gets
-    // an empty list, never an error that would leak existence.
-    .get("/api/projects/:id/docs", async ({ params, actor }) => {
-      const wsId = await workspaceId();
-      const project = await repo.findById(wsId, params.id);
+    // GET docs — browse docs in a project, ACCESS-FILTERED (C-003/AS-006). An out-of-access
+    // doc is ABSENT (existence-hiding). The project must exist in the workspace (else 404).
+    // anyone_in_workspace resolves against THIS workspace (the caller is already a member,
+    // proven by the gate) — AS-019/AS-020.
+    .get("/api/w/:workspaceId/projects/:id/docs", async ({ params, actor, ws }) => {
+      const project = await repo.findById(ws.workspaceId, params.id);
       if (!project) throw new NotFoundError("project not found");
       const projectDocs = await ctx.docsInProject(project.id);
       const visible = await filterBrowsableDocs(actor.userId, projectDocs, {
         isInvited: (docId, userId) => ctx.isInvited(docId, userId),
-        isWorkspaceMember: (userId) => ctx.isWorkspaceMember(userId),
+        // The caller is a member of ws.workspaceId (gate proved it) and these docs are
+        // in that workspace, so anyone_in_workspace resolves true for them here.
+        isWorkspaceMember: () => Promise.resolve(true),
       });
       const byId = new Map(projectDocs.map((d) => [d.id, d]));
       return {

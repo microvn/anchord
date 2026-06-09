@@ -27,7 +27,13 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { apiEnvelope } from "../http/envelope";
-import { requireSession, type SessionResolver, type Actor } from "../http/auth-gate";
+import {
+  requireSession,
+  requireWorkspaceMember,
+  type SessionResolver,
+  type WorkspaceRoleResolver,
+  type Actor,
+} from "../http/auth-gate";
 import { withValidation } from "../http/validate";
 import { ValidationError, ForbiddenError, NotFoundError, ConflictError, UnauthenticatedError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
@@ -139,6 +145,8 @@ export interface AnnotationsRoutesDeps {
   annotationLookupRepo?: AnnotationLookupRepo;
   /** Resolves the better-auth session → actor; gates session-only routes (401 if none). */
   resolveSession: SessionResolver;
+  /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
+  resolveWorkspaceRole: WorkspaceRoleResolver;
   /** Doc-scoped effective-role resolver (the sharing seam — see ResolveDocRole). */
   resolveDocRole: ResolveDocRole;
   /** Access deps for `canViewDoc` (invite / workspace-membership ports). */
@@ -443,11 +451,12 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     .group("", (g) =>
       g
         .use(requireSession({ resolveSession: deps.resolveSession }))
-        .group("", (a) => a.use(withValidation(createAnnotationSchema)).post("/api/docs/:slug/annotations", createAnnotationHandler))
-        .get("/api/docs/:slug/annotations", listAnnotationsHandler)
-        .group("", (a) => a.use(withValidation(resolutionSchema)).patch("/api/annotations/:id/resolution", resolutionHandler))
-        .group("", (a) => a.use(withValidation(createSuggestionSchema)).post("/api/docs/:slug/suggestions", createSuggestionHandler))
-        .group("", (a) => a.use(withValidation(decideSuggestionSchema)).patch("/api/suggestions/:id", decideSuggestionHandler)),
+        .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
+        .group("", (a) => a.use(withValidation(createAnnotationSchema)).post("/api/w/:workspaceId/docs/:slug/annotations", createAnnotationHandler))
+        .get("/api/w/:workspaceId/docs/:slug/annotations", listAnnotationsHandler)
+        .group("", (a) => a.use(withValidation(resolutionSchema)).patch("/api/w/:workspaceId/annotations/:id/resolution", resolutionHandler))
+        .group("", (a) => a.use(withValidation(createSuggestionSchema)).post("/api/w/:workspaceId/docs/:slug/suggestions", createSuggestionHandler))
+        .group("", (a) => a.use(withValidation(decideSuggestionSchema)).patch("/api/w/:workspaceId/suggestions/:id", decideSuggestionHandler)),
     )
-    .group("", (g) => g.use(withValidation(replySchema)).post("/api/annotations/:id/comments", commentHandler));
+    .group("", (g) => g.use(withValidation(replySchema)).post("/api/w/:workspaceId/annotations/:id/comments", commentHandler));
 }

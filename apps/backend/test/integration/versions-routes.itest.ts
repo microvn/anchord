@@ -15,11 +15,13 @@ import { eq } from "drizzle-orm";
 import { docVersions, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
-import type { SessionResolver } from "../../src/http/auth-gate";
-import { withMigratedDb, type MigratedDb } from "./harness";
+import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
+import { withMigratedDb, seedWorkspace, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
 const member: SessionResolver = async () => ({ userId: "u_itest" });
+const asMember: WorkspaceRoleResolver = async () => "member";
+let WS = "";
 
 describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
   let h: MigratedDb;
@@ -33,6 +35,7 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
     await h.db
       .insert(user)
       .values({ id: "u_itest", name: "Itest User", email: `vroutes-${process.pid}@example.com`, emailVerified: true });
+    ({ workspaceId: WS } = await seedWorkspace(h.db, { userId: "u_itest" }));
     // Seed a published doc (version 1) via the real publish repo, then expose the
     // versioning-diff routes over the SAME db. The doc is anyone_with_link so the
     // fake editor member can both view and write.
@@ -53,6 +56,7 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
       versions: {
         db: h.db,
         resolveSession: member,
+        resolveWorkspaceRole: asMember,
         resolveDocRole: async () => "editor",
         accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
       },
@@ -76,7 +80,7 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
   test("POST version → v2 persisted; GET history → 2 items; restore v1 → v3; all on real DB", async () => {
     // POST a new version → v2
     const postRes = await app.handle(
-      req(`/api/docs/${slug}/versions`, {
+      req(`/api/w/${WS}/docs/${slug}/versions`, {
         method: "POST",
         body: JSON.stringify({ content: "# v2 updated\n" }),
       }),
@@ -87,7 +91,7 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
     expect(postJson.data.previousVersion).toBe(1);
 
     // GET history → 2 items, paginated, v2 current
-    const histRes = await app.handle(req(`/api/docs/${slug}/versions`));
+    const histRes = await app.handle(req(`/api/w/${WS}/docs/${slug}/versions`));
     expect(histRes.status).toBe(200);
     const histJson = (await histRes.json()) as any;
     expect(histJson.data.items).toHaveLength(2);
@@ -96,7 +100,7 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
 
     // Restore v1 → appends v3 (append-copy of v1's content)
     const restoreRes = await app.handle(
-      req(`/api/docs/${slug}/versions/1/restore`, { method: "POST" }),
+      req(`/api/w/${WS}/docs/${slug}/versions/1/restore`, { method: "POST" }),
     );
     expect(restoreRes.status).toBe(201);
     const restoreJson = (await restoreRes.json()) as any;
@@ -122,7 +126,7 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
   });
 
   test("GET diff?from=1&to=2 → 200 text diff with changes", async () => {
-    const res = await app.handle(req(`/api/docs/${slug}/diff?from=1&to=2`));
+    const res = await app.handle(req(`/api/w/${WS}/docs/${slug}/diff?from=1&to=2`));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.data.mode).toBe("text");
@@ -133,7 +137,7 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
   test("PATCH title → 200 and creates NO new version (AS-002)", async () => {
     const before = await h.db.select().from(docVersions);
     const res = await app.handle(
-      req(`/api/docs/${slug}`, { method: "PATCH", body: JSON.stringify({ title: "Renamed" }) }),
+      req(`/api/w/${WS}/docs/${slug}`, { method: "PATCH", body: JSON.stringify({ title: "Renamed" }) }),
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
@@ -143,7 +147,7 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
   });
 
   test("missing doc → 404 (existence-hiding)", async () => {
-    const res = await app.handle(req(`/api/docs/does-not-exist/versions`));
+    const res = await app.handle(req(`/api/w/${WS}/docs/does-not-exist/versions`));
     expect(res.status).toBe(404);
   });
 });

@@ -1,157 +1,14 @@
-// Drizzle-backed WorkspaceRepo (workspace-project S-001). THIN glue between the
-// bootstrap service (setup.ts) and Postgres. No business logic lives here; the
-// single-workspace rule, name validation, and slug derivation run in the service.
-//
-// The ONE thing this layer owns is the RACE-SAFE single-workspace guard (C-001):
-// createWorkspaceWithAdmin re-counts inside the transaction and refuses if a
-// workspace already exists, so two concurrent setup calls cannot both insert — the
-// loser sees the winner's row and throws SetupRejected("already_set_up"). This is
-// portable (a count-then-insert in a tx), NOT a Postgres-only partial-unique trick,
-// so a future SQLite build stays open. The unique slug is a second backstop.
-//
-// Integration-verified against real Postgres in test/integration/workspace-setup.itest.ts.
+// Drizzle-backed project + browse glue (workspace-project S-003, workspaces S-006). The
+// single-workspace bootstrap repo (createWorkspaceRepo) and the old member-management repo
+// (createWorkspaceMembersRepo) are GONE — multi-workspace tenancy lives in tenancy-repo.ts.
+// What stays here: the ProjectRepo (per-workspace projects), the publish project resolver
+// (now workspace-scoped), and the browse-context repo (isInvited + docsInProject).
 
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { docs, projects, user, workspaces, workspaceMembers } from "../db/schema";
+import { docs, projects, user } from "../db/schema";
 import type { DB } from "../db/client";
-import {
-  SetupRejected,
-  type WorkspaceRepo,
-  type CreatedWorkspace,
-} from "./setup";
 import { ensureDefaultProject, ProjectRejected, type ProjectRepo, type ProjectRow } from "./projects";
 import { activeRolesFor } from "../sharing/doc-member-repo";
-
-/** Construct a WorkspaceRepo backed by a Drizzle DB handle. */
-export function createWorkspaceRepo(db: DB): WorkspaceRepo {
-  return {
-    async countWorkspaces(): Promise<number> {
-      const [row] = await db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(workspaces);
-      return row?.n ?? 0;
-    },
-
-    async createWorkspaceWithAdmin(input): Promise<CreatedWorkspace> {
-      return db.transaction(async (tx) => {
-        // C-001 in-tx guard: re-check zero workspaces under the transaction so a
-        // concurrent setup loser refuses instead of inserting a second workspace.
-        const [{ n }] = await tx
-          .select({ n: sql<number>`count(*)::int` })
-          .from(workspaces);
-        if ((n ?? 0) > 0) {
-          throw new SetupRejected("instance already set up", "already_set_up");
-        }
-
-        const [ws] = await tx
-          .insert(workspaces)
-          .values({ name: input.name, slug: input.slug, settings: input.settings })
-          .returning({ id: workspaces.id, slug: workspaces.slug, name: workspaces.name });
-
-        await tx.insert(workspaceMembers).values({
-          workspaceId: ws.id,
-          userId: input.adminUserId,
-          role: "admin",
-        });
-
-        return {
-          workspaceId: ws.id,
-          slug: ws.slug,
-          name: ws.name,
-          adminUserId: input.adminUserId,
-        };
-      });
-    },
-
-    async currentWorkspaceId(): Promise<string | null> {
-      const [row] = await db.select({ id: workspaces.id }).from(workspaces).limit(1);
-      return row?.id ?? null;
-    },
-
-    async addMember(workspaceId, userId, role): Promise<void> {
-      // Idempotent on (workspace_id, user_id) via the composite unique index: a
-      // re-run (e.g. a retried signup hook) is a no-op, never a duplicate row.
-      await db
-        .insert(workspaceMembers)
-        .values({ workspaceId, userId, role })
-        .onConflictDoNothing({
-          target: [workspaceMembers.workspaceId, workspaceMembers.userId],
-        });
-    },
-
-    async userName(userId): Promise<string | null> {
-      const [row] = await db
-        .select({ name: user.name })
-        .from(user)
-        .where(eq(user.id, userId));
-      return row?.name ?? null;
-    },
-  };
-}
-
-/**
- * Drizzle-backed WorkspaceMembersRepo (workspace-project S-002). THIN glue for the
- * membership-management service (members.ts): the member directory (joined to the
- * better-auth `user` table for name/email), role/email lookups, the admin count (for the
- * sole-admin guard), and the row delete. All rules (idempotent invite, sole-admin guard,
- * not-a-member 404) live in members.ts; this layer only reads/writes workspace_members.
- *
- * removeMember deletes ONLY the workspace_members row — the user row and their docs/
- * projects stay (C-007: the doc belongs to the workspace; docs.owner_id is ON DELETE SET
- * NULL but we never delete the user here, so even owner_id is untouched).
- */
-export function createWorkspaceMembersRepo(db: DB): import("./members").WorkspaceMembersRepo {
-  return {
-    async listMembers(workspaceId) {
-      const rows = await db
-        .select({
-          userId: workspaceMembers.userId,
-          role: workspaceMembers.role,
-          name: user.name,
-          email: user.email,
-        })
-        .from(workspaceMembers)
-        .innerJoin(user, eq(user.id, workspaceMembers.userId))
-        .where(eq(workspaceMembers.workspaceId, workspaceId));
-      return rows.map((r) => ({ userId: r.userId, role: r.role, name: r.name, email: r.email }));
-    },
-    async findMemberRole(workspaceId, userId) {
-      const [row] = await db
-        .select({ role: workspaceMembers.role })
-        .from(workspaceMembers)
-        .where(
-          and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)),
-        );
-      return row?.role ?? null;
-    },
-    async findMemberByEmail(workspaceId, email) {
-      const [row] = await db
-        .select({ userId: workspaceMembers.userId, role: workspaceMembers.role })
-        .from(workspaceMembers)
-        .innerJoin(user, eq(user.id, workspaceMembers.userId))
-        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(user.email, email)));
-      return row ? { userId: row.userId, role: row.role } : null;
-    },
-    async countAdmins(workspaceId) {
-      const [row] = await db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(workspaceMembers)
-        .where(
-          and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, "admin")),
-        );
-      return row?.n ?? 0;
-    },
-    async removeMember(workspaceId, userId) {
-      const deleted = await db
-        .delete(workspaceMembers)
-        .where(
-          and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)),
-        )
-        .returning({ id: workspaceMembers.id });
-      return deleted.length > 0;
-    },
-  };
-}
 
 /** Map a raw Drizzle projects row to the service's ProjectRow shape. */
 function rowToProject(row: typeof projects.$inferSelect): ProjectRow {
@@ -257,44 +114,19 @@ export interface ProjectDocRow {
 }
 
 /**
- * Workspace-context reads the projects route group needs (workspace-project S-003):
- * the single workspace id, the actor's admin flag, workspace membership, individual
- * invite (active doc_members), and the docs in a project. Thin Drizzle glue.
+ * Workspace-context reads the projects route group still needs after the multi-workspace
+ * conversion (workspaces S-006): the per-doc individual invite (active doc_members) and
+ * the docs in a project. The workspace id + the caller's admin flag now come from the
+ * path-scoped requireWorkspaceMember gate (ctx.ws), so currentWorkspaceId() (LIMIT-1) and
+ * the one-arg isWorkspaceMember (a cross-tenant leak) are GONE.
  */
 export interface ProjectsRouteRepo {
-  currentWorkspaceId(): Promise<string | null>;
-  isAdmin(workspaceId: string, userId: string): Promise<boolean>;
-  isWorkspaceMember(userId: string): Promise<boolean>;
   isInvited(docId: string, userId: string): Promise<boolean>;
   docsInProject(projectId: string): Promise<ProjectDocRow[]>;
 }
 
 export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
   return {
-    async currentWorkspaceId(): Promise<string | null> {
-      const [row] = await db.select({ id: workspaces.id }).from(workspaces).limit(1);
-      return row?.id ?? null;
-    },
-    async isAdmin(workspaceId, userId): Promise<boolean> {
-      const [row] = await db
-        .select({ role: workspaceMembers.role })
-        .from(workspaceMembers)
-        .where(
-          and(
-            eq(workspaceMembers.workspaceId, workspaceId),
-            eq(workspaceMembers.userId, userId),
-          ),
-        );
-      return row?.role === "admin";
-    },
-    async isWorkspaceMember(userId): Promise<boolean> {
-      const [row] = await db
-        .select({ id: workspaceMembers.id })
-        .from(workspaceMembers)
-        .where(eq(workspaceMembers.userId, userId))
-        .limit(1);
-      return !!row;
-    },
     async isInvited(docId, userId): Promise<boolean> {
       const roles = await activeRolesFor(db, docId, userId);
       return roles.length > 0;
@@ -317,25 +149,25 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
 }
 
 /**
- * Concrete ProjectResolver for the publish path (workspace-project S-003,
- * AS-005 / C-009 / the MCP-missing-projectId fallback).
+ * Concrete ProjectResolver for the publish path (workspace-project S-003, AS-005 / C-009 /
+ * the MCP-missing-projectId fallback), now WORKSPACE-SCOPED (workspaces S-006). The
+ * publish route lives under /api/w/:workspaceId/docs, so the workspace comes from the
+ * PATH (the requireWorkspaceMember gate proved membership), never a LIMIT-1 lookup.
  *
- *  - requested projectId present → it must exist in the SINGLE workspace; a bogus or
- *    foreign id throws ProjectRejected("not_found") (the route → 404). NEVER silently
- *    falls back to default for a supplied-but-invalid id (anti-forgery / edge contract).
- *  - requested projectId omitted → the publisher's default project, creating it on the
- *    fly if somehow absent (ensureDefaultProject is idempotent), so a publish always
- *    lands in a real project even for an MCP call with no projectId.
+ *  - requested projectId present → it must exist IN THAT WORKSPACE; a bogus or foreign id
+ *    throws ProjectRejected("not_found") (the route → 404). NEVER silently defaults.
+ *  - requested projectId omitted → the publisher's default project in that workspace,
+ *    creating it on the fly if absent (ensureDefaultProject is idempotent).
  */
 export function createPublishProjectResolver(db: DB) {
   const projectRepo = createProjectRepo(db);
-  return async (args: { ownerId: string; requestedProjectId?: string | null }): Promise<string> => {
-    const [ws] = await db.select({ id: workspaces.id }).from(workspaces).limit(1);
-    if (!ws) {
-      throw new ProjectRejected("instance is not set up", "not_found");
-    }
+  return async (args: {
+    workspaceId: string;
+    ownerId: string;
+    requestedProjectId?: string | null;
+  }): Promise<string> => {
     if (args.requestedProjectId != null) {
-      const project = await projectRepo.findById(ws.id, args.requestedProjectId);
+      const project = await projectRepo.findById(args.workspaceId, args.requestedProjectId);
       if (!project) {
         // Supplied-but-invalid: reject, do NOT default (distinguishes from "omitted").
         throw new ProjectRejected("project not found in this workspace", "not_found");
@@ -344,7 +176,7 @@ export function createPublishProjectResolver(db: DB) {
     }
     const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, args.ownerId));
     const def = await ensureDefaultProject(
-      { workspaceId: ws.id, ownerId: args.ownerId, userName: u?.name ?? "My" },
+      { workspaceId: args.workspaceId, ownerId: args.ownerId, userName: u?.name ?? "My" },
       { repo: projectRepo },
     );
     return def.id;

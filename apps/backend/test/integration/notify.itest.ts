@@ -13,12 +13,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { annotations, comments, docs, notifications, user } from "../../src/db/schema";
+import * as schema from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import { MailQueue } from "../../src/auth/mail-queue";
-import type { SessionResolver } from "../../src/http/auth-gate";
+import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
 import type { LoadShareConfig } from "../../src/routes/annotations";
-import { withMigratedDb, type MigratedDb } from "./harness";
+import { withMigratedDb, seedWorkspace, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
 const guestOn: LoadShareConfig = async () => ({ guestCommentingEnabled: true });
@@ -27,6 +28,8 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
   let h: MigratedDb;
   let slug: string;
   let docId: string;
+  let WS = "";
+  const asMember: WorkspaceRoleResolver = async () => "member";
   // Unique user ids per process so parallel files don't collide.
   const A = `u_A_${process.pid}`;
   const B = `u_B_${process.pid}`;
@@ -39,6 +42,12 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
       { id: A, name: "Alice", email: `alice-${process.pid}@example.com`, emailVerified: true },
       { id: B, name: "Bob", email: `bob-${process.pid}@example.com`, emailVerified: true },
       { id: C, name: "Cara", email: `cara-${process.pid}@example.com`, emailVerified: true },
+    ]);
+
+    ({ workspaceId: WS } = await seedWorkspace(h.db, { userId: C }));
+    await h.db.insert(schema.workspaceMembers).values([
+      { workspaceId: WS, userId: A, role: "member" },
+      { workspaceId: WS, userId: B, role: "member" },
     ]);
 
     slug = `notify-${process.pid}`;
@@ -80,6 +89,7 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
       annotations: {
         db: h.db,
         resolveSession,
+        resolveWorkspaceRole: asMember,
         resolveDocRole: async () => "owner" as const,
         accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
         loadShareConfig: guestOn,
@@ -93,7 +103,7 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
     // are thread participants.
     const mailSetup = new MailQueue();
     const createRes = await appAs(A, mailSetup).handle(
-      req(`/api/docs/${slug}/annotations`, {
+      req(`/api/w/${WS}/docs/${slug}/annotations`, {
         method: "POST",
         body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 } }),
       }),
@@ -115,7 +125,7 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
     // A replies → notify B and C (owner), NOT A.
     const mail = new MailQueue();
     const replyRes = await appAs(A, mail).handle(
-      req(`/api/annotations/${annId}/comments`, {
+      req(`/api/w/${WS}/annotations/${annId}/comments`, {
         method: "POST",
         body: JSON.stringify({ body: "A's reply", parentId: rootId }),
       }),
@@ -137,7 +147,7 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
   test("C-004: owner C is also a participant → C deduped to exactly ONE notification", async () => {
     const mailSetup = new MailQueue();
     const createRes = await appAs(A, mailSetup).handle(
-      req(`/api/docs/${slug}/annotations`, {
+      req(`/api/w/${WS}/docs/${slug}/annotations`, {
         method: "POST",
         body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "world", offset: 6, length: 5 } }),
       }),
@@ -156,7 +166,7 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
 
     const mail = new MailQueue();
     const replyRes = await appAs(A, mail).handle(
-      req(`/api/annotations/${annId}/comments`, {
+      req(`/api/w/${WS}/annotations/${annId}/comments`, {
         method: "POST",
         body: JSON.stringify({ body: "A's reply", parentId: rootId }),
       }),

@@ -60,6 +60,7 @@ export interface DocRepo {
  *  - requested projectId omitted → the publisher's default project (C-009 / MCP fallback).
  */
 export type ProjectResolver = (args: {
+  workspaceId: string;
   ownerId: string;
   requestedProjectId?: string | null;
 }) => Promise<string>;
@@ -96,6 +97,12 @@ export interface PublishInput {
    */
   ownerId?: string | null;
   /**
+   * workspaces S-006: the workspace the publish is scoped to (from the /api/w/:workspaceId
+   * path; the gate proved the publisher is a member). The project resolver validates the
+   * chosen project belongs to THIS workspace. Omitted on the session-less seed path.
+   */
+  workspaceId?: string | null;
+  /**
    * workspace-project S-003 (AS-005): the project the author chose to publish into.
    * Omitted → the publisher's default project (C-009 / MCP fallback). A supplied id
    * that does not belong to the workspace is rejected by resolveProjectId (not silently
@@ -128,7 +135,7 @@ export async function publishDoc(
   input: PublishInput,
   deps: PublishDeps,
 ): Promise<PublishResult> {
-  const { bytes, filename, declaredKind, editedTitle, ownerId, projectId } = input;
+  const { bytes, filename, declaredKind, editedTitle, ownerId, projectId, workspaceId } = input;
   const slugGen = deps.slugGen ?? generateSlug;
   const hash = deps.hash ?? sha256Hex;
 
@@ -162,8 +169,9 @@ export async function publishDoc(
   // omitted projectId resolves to the publisher's default project (MCP fallback). The
   // seed path (no resolver, no owner) writes a null project_id.
   let resolvedProjectId: string | null = null;
-  if (deps.resolveProjectId && ownerId) {
+  if (deps.resolveProjectId && ownerId && workspaceId) {
     resolvedProjectId = await deps.resolveProjectId({
+      workspaceId,
       ownerId,
       requestedProjectId: projectId,
     });

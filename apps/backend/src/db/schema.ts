@@ -378,6 +378,46 @@ export const workspaceMembers = pgTable(
   ],
 );
 
+// ── workspace_invitations (workspaces S-004) ───────────────────────────────
+// A pending invite to join a workspace by EMAIL. An admin invites an email + role;
+// the invitee opens an accept-link and accepts (→ a workspace_members row + status
+// accepted) or rejects (status rejected, no membership). The accepting session's
+// email MUST match the invited email (C-004). Distinct from doc_members (per-doc
+// sharing) — this is workspace-level tenancy membership.
+//
+// `token` is the accept-link secret (random, stored). `status` tracks lifecycle.
+// `expires_at` bounds the invite. Portable (no Postgres-only features) so a future
+// SQLite build stays open.
+export const invitationStatus = pgEnum("invitation_status", [
+  "pending",
+  "accepted",
+  "rejected",
+  "revoked",
+]);
+
+export const workspaceInvitations = pgTable(
+  "workspace_invitations",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: workspaceRole("role").notNull(),
+    token: text("token").notNull().unique(),
+    status: invitationStatus("status").notNull().default("pending"),
+    invitedBy: text("invited_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("workspace_invitations_ws_idx").on(t.workspaceId),
+    index("workspace_invitations_email_idx").on(t.email),
+  ],
+);
+
 // ── better-auth tables (auth S-001) ────────────────────────────────────────
 // Hand-added to match better-auth's expected schema (getAuthTables(options)):
 // user / session / account / verification. better-auth maps its model fields to
@@ -408,6 +448,11 @@ export const session = pgTable(
     userId: text("userId")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // workspaces S-003 (C-005): the login-default workspace to land in. NOT the request
+    // scope (that is the URL path /api/w/:workspaceId). Nullable: set to the user's own
+    // workspace at signup; updated by the switch endpoint. better-auth additionalFields
+    // maps this column.
+    activeWorkspaceId: text("activeWorkspaceId"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow(),
   },

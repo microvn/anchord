@@ -20,7 +20,12 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { apiEnvelope } from "../http/envelope";
-import { requireSession, type SessionResolver } from "../http/auth-gate";
+import {
+  requireSession,
+  requireWorkspaceMember,
+  type SessionResolver,
+  type WorkspaceRoleResolver,
+} from "../http/auth-gate";
 import { validateBody } from "../http/validate";
 import { NotFoundError, ForbiddenError } from "../http/errors";
 import {
@@ -44,10 +49,15 @@ export interface DocMoveRoutesDeps {
   /** Pre-built move/copy repo (tests). Wins over `db`. */
   repo?: DocMoveRepo;
   resolveSession: SessionResolver;
+  /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
+  resolveWorkspaceRole: WorkspaceRoleResolver;
   /** The actor's effective role on the SOURCE doc (sharing seam). */
   resolveDocRole: (docId: string, userId: string) => Promise<Role | null>;
-  /** Whether the actor is a workspace admin (admin may move regardless of doc role). */
-  isWorkspaceAdmin?: (userId: string) => boolean | Promise<boolean>;
+  /**
+   * Whether the actor is an admin of THE DOC'S workspace (admin may move regardless of
+   * doc role). workspaces S-006/C-002: scoped to (workspaceId, userId), never "any".
+   */
+  isWorkspaceAdmin?: (workspaceId: string, userId: string) => boolean | Promise<boolean>;
 }
 
 /** Map a DocMoveRejected onto the right HTTP DomainError. */
@@ -65,21 +75,23 @@ export function docMoveRoutes(deps: DocMoveRoutesDeps) {
       return createDocMoveRepo(deps.db);
     })();
 
-  // The doc-scoped role resolver is the sharing seam — injected (tests) or the concrete
-  // Drizzle resolver wired in index.ts (prod). extractText = the publish-time extractor,
-  // so the copy's v1 is searchable the same way a fresh publish is.
-  const serviceDeps = {
-    repo,
-    resolveDocRole: deps.resolveDocRole,
-    isWorkspaceAdmin: deps.isWorkspaceAdmin,
-    extractText,
-  };
+  // extractText = the publish-time extractor, so the copy's v1 is searchable like a fresh
+  // publish. The doc-scoped role resolver is the sharing seam. isWorkspaceAdmin is bound
+  // PER-REQUEST to ws.workspaceId (C-002 scoping) below.
+  const baseDeps = { repo, resolveDocRole: deps.resolveDocRole, extractText };
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
+    .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
     // POST /api/docs/:slug/move — relocate the doc as-is (editor/owner/admin).
-    .post("/api/docs/:slug/move", async ({ params, body, actor }) => {
+    .post("/api/w/:workspaceId/docs/:slug/move", async ({ params, body, actor, ws }) => {
       const { projectId } = validateBody(docMoveBodySchema, body);
+      const serviceDeps = {
+        ...baseDeps,
+        isWorkspaceAdmin: deps.isWorkspaceAdmin
+          ? (uid: string) => deps.isWorkspaceAdmin!(ws.workspaceId, uid)
+          : undefined,
+      };
       try {
         const res = await moveDoc(
           { slug: params.slug, targetProjectId: projectId, actorId: actor.userId },
@@ -92,8 +104,14 @@ export function docMoveRoutes(deps: DocMoveRoutesDeps) {
       }
     })
     // POST /api/docs/:slug/copy — duplicate into another project (any reader).
-    .post("/api/docs/:slug/copy", async ({ params, body, actor, set }) => {
+    .post("/api/w/:workspaceId/docs/:slug/copy", async ({ params, body, actor, ws, set }) => {
       const { projectId } = validateBody(docMoveBodySchema, body);
+      const serviceDeps = {
+        ...baseDeps,
+        isWorkspaceAdmin: deps.isWorkspaceAdmin
+          ? (uid: string) => deps.isWorkspaceAdmin!(ws.workspaceId, uid)
+          : undefined,
+      };
       try {
         const res = await copyDoc(
           { slug: params.slug, targetProjectId: projectId, actorId: actor.userId },

@@ -14,13 +14,14 @@ import { eq } from "drizzle-orm";
 import { annotations, comments, docs, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
-import type { SessionResolver } from "../../src/http/auth-gate";
+import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
 import type { LoadShareConfig } from "../../src/routes/annotations";
-import { withMigratedDb, type MigratedDb } from "./harness";
+import { withMigratedDb, seedWorkspace, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
 const member: SessionResolver = async () => ({ userId: "u_itest" });
 const noSession: SessionResolver = async () => null;
+const asMember: WorkspaceRoleResolver = async () => "member";
 const guestOn: LoadShareConfig = async () => ({ guestCommentingEnabled: true });
 
 describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
@@ -29,6 +30,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
   let guestApp: ReturnType<typeof createApp>;
   let slug: string;
   let docId: string;
+  let WS = "";
 
   beforeAll(async () => {
     h = await withMigratedDb();
@@ -36,6 +38,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
     await h.db
       .insert(user)
       .values({ id: "u_itest", name: "Itest User", email: `itest-${process.pid}@example.com`, emailVerified: true });
+    ({ workspaceId: WS } = await seedWorkspace(h.db, { userId: "u_itest" }));
     slug = `annroutes-${process.pid}`;
     const created = await createDocRepo(h.db).createDocWithV1({
       slug,
@@ -50,6 +53,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
     const base = {
       db: h.db,
       resolveSession: member,
+      resolveWorkspaceRole: asMember,
       resolveDocRole: async () => "owner" as const,
       accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
       loadShareConfig: guestOn,
@@ -79,7 +83,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
   test("create annotation → 201 + listable; reply → flat; resolve → reopen; on real DB", async () => {
     // Create a text annotation
     const createRes = await app.handle(
-      req(`/api/docs/${slug}/annotations`, {
+      req(`/api/w/${WS}/docs/${slug}/annotations`, {
         method: "POST",
         body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 } }),
       }),
@@ -89,7 +93,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
     expect(annId).toBeString();
 
     // It is listable
-    const listRes = await app.handle(req(`/api/docs/${slug}/annotations`));
+    const listRes = await app.handle(req(`/api/w/${WS}/docs/${slug}/annotations`));
     expect(listRes.status).toBe(200);
     const list = (await listRes.json()) as any;
     expect(list.data.items.some((a: any) => a.id === annId)).toBe(true);
@@ -101,7 +105,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
       .returning({ id: comments.id });
 
     const replyRes = await app.handle(
-      req(`/api/annotations/${annId}/comments`, {
+      req(`/api/w/${WS}/annotations/${annId}/comments`, {
         method: "POST",
         body: JSON.stringify({ body: "a reply", parentId: root.id }),
       }),
@@ -115,7 +119,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
 
     // Resolve → status resolved on the real row
     const resolveRes = await app.handle(
-      req(`/api/annotations/${annId}/resolution`, { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+      req(`/api/w/${WS}/annotations/${annId}/resolution`, { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
     );
     expect(resolveRes.status).toBe(200);
     expect(((await resolveRes.json()) as any).data.status).toBe("resolved");
@@ -124,7 +128,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
 
     // Reopen → unresolved
     const reopenRes = await app.handle(
-      req(`/api/annotations/${annId}/resolution`, { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
+      req(`/api/w/${WS}/annotations/${annId}/resolution`, { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
     );
     expect(((await reopenRes.json()) as any).data.status).toBe("unresolved");
     [annRow] = await h.db.select().from(annotations).where(eq(annotations.id, annId));
@@ -135,7 +139,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
     // Create an annotation, seed a root comment, then reply via the route as the
     // u_itest session → the persisted reply's author_id is u_itest, guest_name null.
     const createRes = await app.handle(
-      req(`/api/docs/${slug}/annotations`, {
+      req(`/api/w/${WS}/docs/${slug}/annotations`, {
         method: "POST",
         body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 } }),
       }),
@@ -147,7 +151,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
       .returning({ id: comments.id });
 
     const replyRes = await app.handle(
-      req(`/api/annotations/${annId}/comments`, {
+      req(`/api/w/${WS}/annotations/${annId}/comments`, {
         method: "POST",
         // forged identity in the body must be ignored (C-005) — author comes from session.
         body: JSON.stringify({ body: "session reply", parentId: root.id, authorId: "attacker" }),
@@ -164,7 +168,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
   test("guest comment with email → 201, persisted with author_id NULL", async () => {
     // Need an annotation to comment on
     const createRes = await app.handle(
-      req(`/api/docs/${slug}/annotations`, {
+      req(`/api/w/${WS}/docs/${slug}/annotations`, {
         method: "POST",
         body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "world", offset: 6, length: 5 } }),
       }),
@@ -172,7 +176,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
     const annId = ((await createRes.json()) as any).data.annotationId;
 
     const guestRes = await guestApp.handle(
-      req(`/api/annotations/${annId}/comments`, {
+      req(`/api/w/${WS}/annotations/${annId}/comments`, {
         method: "POST",
         body: JSON.stringify({ body: "guest feedback", guestName: "Anon Otter", guestEmail: "otter@example.com" }),
       }),
@@ -189,7 +193,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
 
   test("suggestion create + accept (from still matches) → accepted on real DB", async () => {
     const createRes = await app.handle(
-      req(`/api/docs/${slug}/suggestions`, {
+      req(`/api/w/${WS}/docs/${slug}/suggestions`, {
         method: "POST",
         body: JSON.stringify({
           anchor: { blockId: "block-p-1", textSnippet: "hello world", offset: 0, length: 11 },
@@ -204,7 +208,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
 
     // Accept — current version content still contains "hello" → accepted
     const acceptRes = await app.handle(
-      req(`/api/suggestions/${sugId}`, { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+      req(`/api/w/${WS}/suggestions/${sugId}`, { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
     );
     expect(acceptRes.status).toBe(200);
     expect(((await acceptRes.json()) as any).data.status).toBe("accepted");

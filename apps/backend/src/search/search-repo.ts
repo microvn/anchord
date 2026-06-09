@@ -38,6 +38,12 @@ export interface SearchQuery {
   userId: string;
   /** Optional project scope (AS-010). Omitted/undefined → whole workspace. */
   projectId?: string;
+  /**
+   * workspaces S-006/C-002: the workspace the search is scoped to (the /api/w/:workspaceId
+   * path). Only docs whose project belongs to THIS workspace are considered, and
+   * anyone_in_workspace resolves against membership of THIS workspace, never "any".
+   */
+  workspaceId: string;
   /** Hard cap on rows returned (the service supplies SEARCH_RESULT_CAP). */
   limit: number;
 }
@@ -81,12 +87,16 @@ export function createSearchRepo(db: DB): SearchRepo {
         with accessible as (
           select d.id, d.slug, d.title, d.kind, d.project_id, d.owner_id, d.general_access
           from docs d
-          where (
+          join projects p on p.id = d.project_id
+          where p.workspace_id = ${q.workspaceId}
+            and (
               d.owner_id = ${q.userId}
               or (
                 d.general_access = 'anyone_in_workspace'
                 and exists (
-                  select 1 from workspace_members wm where wm.user_id = ${q.userId}
+                  select 1 from workspace_members wm
+                  where wm.user_id = ${q.userId}
+                    and wm.workspace_id = ${q.workspaceId}
                 )
               )
               or exists (

@@ -23,12 +23,16 @@ import {
   createLoadShareConfig,
   createIsDocOwner,
 } from "../../src/sharing/resolve-doc-role-repo";
-import type { SessionResolver } from "../../src/http/auth-gate";
+import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
+import * as schema2 from "../../src/db/schema";
 import type { Role } from "../../src/sharing/roles";
-import { withMigratedDb, type MigratedDb } from "./harness";
+import { withMigratedDb, seedWorkspace, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
 const owner: SessionResolver = async () => ({ userId: "u_owner_itest" });
+const asMember: WorkspaceRoleResolver = async () => "member";
+let WS = "";
+let WS2 = "";
 const asOwner = async (): Promise<Role | null> => "owner";
 
 describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
@@ -56,12 +60,14 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     docId = created.id;
     // anyone_with_link so the fake owner member can view (existence-hiding passes).
     await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.id, docId));
+    ({ workspaceId: WS } = await seedWorkspace(h.db, { userId: "u_owner_itest" }));
 
     app = createApp({
       dbCheck: async () => {},
       sharing: {
         db: h.db,
         resolveSession: owner,
+        resolveWorkspaceRole: asMember,
         resolveDocRole: asOwner, // owner gate; the owner SOURCE is the auth seam.
         accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
       },
@@ -84,7 +90,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
 
   test("PUT access → docs.general_access updated + share_links row persisted (role + guest)", async () => {
     const res = await app.handle(
-      req(`/api/docs/${slug}/access`, {
+      req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter", guestCommenting: true }),
       }),
@@ -108,7 +114,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
 
   test("AS-022 / C-015: owner sets editors_can_share=false → persisted; loadShareConfig reads it back", async () => {
     const res = await app.handle(
-      req(`/api/docs/${slug}/access`, {
+      req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: false }),
       }),
@@ -127,7 +133,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
 
     // Reset to on so later tests (editor-can-share) see the default again.
     await app.handle(
-      req(`/api/docs/${slug}/access`, {
+      req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: true }),
       }),
@@ -136,7 +142,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
 
   test("POST invite (no account) → a PENDING doc_members row", async () => {
     const res = await app.handle(
-      req(`/api/docs/${slug}/invites`, {
+      req(`/api/w/${WS}/docs/${slug}/invites`, {
         method: "POST",
         body: JSON.stringify({ email: "Pending@Invitee.com", role: "editor" }),
       }),
@@ -157,7 +163,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
 
   test("PUT link (password) → an argon2id hash stored in share_links.password_hash", async () => {
     const res = await app.handle(
-      req(`/api/docs/${slug}/link`, {
+      req(`/api/w/${WS}/docs/${slug}/link`, {
         method: "PUT",
         body: JSON.stringify({ password: "s3cret-link-pw", viewLimit: 10 }),
       }),
@@ -181,6 +187,9 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
       name: "Invited Editor",
       email: "editor@itest.local",
     });
+    await h.db
+      .insert(schema2.workspaceMembers)
+      .values({ workspaceId: WS, userId: "u_invited_editor", role: "member" });
     await h.db.insert(docMembers).values({
       docId,
       userId: "u_invited_editor",
@@ -208,7 +217,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
   test("AS-014: an invited editor (real resolution) CAN PUT access when editors_can_share is on", async () => {
     // Ensure the toggle is ON for this doc.
     await app.handle(
-      req(`/api/docs/${slug}/access`, {
+      req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: true }),
       }),
@@ -225,6 +234,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
       sharing: {
         db: h.db,
         resolveSession: async () => ({ userId: "u_invited_editor" }),
+        resolveWorkspaceRole: asMember,
         resolveDocRole: realResolve,
         loadShareConfig: createLoadShareConfig(h.db),
         accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
@@ -232,7 +242,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     });
 
     const res = await editorApp.handle(
-      req(`/api/docs/${slug}/access`, {
+      req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "editor" }),
       }),
@@ -241,7 +251,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
 
     // C-015: the same editor may NOT flip editors_can_share → 403.
     const toggleRes = await editorApp.handle(
-      req(`/api/docs/${slug}/access`, {
+      req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "editor", editorsCanShare: false }),
       }),
@@ -279,6 +289,10 @@ describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner
     ownerDocId = created.id;
     // restricted: no link role → A's role comes purely from the owner source.
     await h.db.update(docs).set({ generalAccess: "restricted" }).where(eq(docs.id, ownerDocId));
+    ({ workspaceId: WS2 } = await seedWorkspace(h.db, { userId: "u_A_owner" }));
+    await h.db
+      .insert(schema2.workspaceMembers)
+      .values({ workspaceId: WS2, userId: "u_B_viewer", role: "member" });
   });
 
   afterAll(async () => {
@@ -333,6 +347,7 @@ describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner
       sharing: {
         db: h.db,
         resolveSession: async () => ({ userId: "u_A_owner" }),
+        resolveWorkspaceRole: asMember,
         resolveDocRole: createResolveDocRole(h.db, {
           isOwner: createIsDocOwner(h.db),
           isWorkspaceMember: () => true,
@@ -342,7 +357,7 @@ describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner
       },
     });
     const res = await ownerApp.handle(
-      req(`/api/docs/${ownerSlug}/access`, {
+      req(`/api/w/${WS2}/docs/${ownerSlug}/access`, {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
       }),
@@ -369,6 +384,7 @@ describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner
       sharing: {
         db: h.db,
         resolveSession: async () => ({ userId: "u_B_viewer" }),
+        resolveWorkspaceRole: asMember,
         resolveDocRole: createResolveDocRole(h.db, {
           isOwner: createIsDocOwner(h.db),
           isWorkspaceMember: () => true,
@@ -378,7 +394,7 @@ describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner
       },
     });
     const res = await viewerApp.handle(
-      req(`/api/docs/${ownerSlug}/access`, {
+      req(`/api/w/${WS2}/docs/${ownerSlug}/access`, {
         method: "PUT",
         body: JSON.stringify({ level: "restricted", role: "viewer" }),
       }),

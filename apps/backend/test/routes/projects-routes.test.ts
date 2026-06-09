@@ -19,7 +19,7 @@ import {
   type ProjectRow,
 } from "../../src/workspace/projects";
 import type { ProjectsRouteRepo, ProjectDocRow } from "../../src/workspace/repo";
-import type { SessionResolver } from "../../src/http/auth-gate";
+import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
 
 const WS = "ws_1";
 const asUser = (userId: string): SessionResolver => async () => ({ userId });
@@ -74,22 +74,14 @@ function fakeRepo(seed: ProjectRow[] = []) {
   return { repo, state };
 }
 
+// workspaces S-006: the ctx now only supplies the per-doc invite check + docs-in-project.
+// The workspace id + the actor's admin flag come from the path-scoped gate, so the test
+// fixture's `admins` drives resolveWorkspaceRole ("admin" vs "member") instead.
 function fakeCtx(opts: {
-  admins?: Set<string>;
-  members?: Set<string>;
   invited?: Set<string>;
   docs?: Map<string, ProjectDocRow[]>;
 }): ProjectsRouteRepo {
   return {
-    async currentWorkspaceId() {
-      return WS;
-    },
-    async isAdmin(_ws, userId) {
-      return !!opts.admins?.has(userId);
-    },
-    async isWorkspaceMember(userId) {
-      return !!opts.members?.has(userId);
-    },
     async isInvited(docId, userId) {
       return !!opts.invited?.has(`${docId}:${userId}`);
     },
@@ -99,10 +91,17 @@ function fakeCtx(opts: {
   };
 }
 
-function buildApp(resolveSession: SessionResolver, repo: ProjectRepo, ctx: ProjectsRouteRepo) {
+function buildApp(
+  resolveSession: SessionResolver,
+  repo: ProjectRepo,
+  ctx: ProjectsRouteRepo,
+  opts: { admins?: Set<string> } = {},
+) {
+  const resolveWorkspaceRole: WorkspaceRoleResolver = async (_ws, userId) =>
+    opts.admins?.has(userId) ? "admin" : "member";
   return createApp({
     dbCheck: async () => {},
-    projects: { repo, ctx, resolveSession },
+    projects: { repo, ctx, resolveSession, resolveWorkspaceRole },
   });
 }
 
@@ -117,8 +116,8 @@ function req(method: string, path: string, body?: unknown) {
 describe("/api/projects route glue (workspace-project S-003)", () => {
   test("AS-005: a member creates a project → 201 { id, name }; owner = session actor", async () => {
     const f = fakeRepo();
-    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({ members: new Set(["u_a"]) }));
-    const res = await app.handle(req("POST", "/api/projects", { name: "Billing" }));
+    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({}));
+    const res = await app.handle(req("POST", "/api/w/ws_1/projects", { name: "Billing" }));
     expect(res.status).toBe(201);
     const json = (await res.json()) as any;
     expect(json.success).toBe(true);
@@ -128,15 +127,15 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
 
   test("C-002: a plain member (not admin) may create a project", async () => {
     const f = fakeRepo();
-    const app = buildApp(asUser("u_member"), f.repo, fakeCtx({ members: new Set(["u_member"]) }));
-    const res = await app.handle(req("POST", "/api/projects", { name: "Payments" }));
+    const app = buildApp(asUser("u_member"), f.repo, fakeCtx({}));
+    const res = await app.handle(req("POST", "/api/w/ws_1/projects", { name: "Payments" }));
     expect(res.status).toBe(201);
   });
 
   test("AS-005: empty name → 400 VALIDATION_ERROR", async () => {
     const f = fakeRepo();
     const app = buildApp(asUser("u_a"), f.repo, fakeCtx({}));
-    const res = await app.handle(req("POST", "/api/projects", { name: "" }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/projects", { name: "" }));
     expect(res.status).toBe(400);
     const json = (await res.json()) as any;
     expect(json.error.code).toBe("VALIDATION_ERROR");
@@ -145,7 +144,7 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
   test("no session → 401 (handler never runs, nothing created)", async () => {
     const f = fakeRepo();
     const app = buildApp(noSession, f.repo, fakeCtx({}));
-    const res = await app.handle(req("POST", "/api/projects", { name: "X" }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/projects", { name: "X" }));
     expect(res.status).toBe(401);
     expect(f.state.projects).toHaveLength(0);
   });
@@ -163,11 +162,10 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
       ownerId: "u_a", generalAccess: "anyone_in_workspace",
     };
     const ctx = fakeCtx({
-      members: new Set(["u_x"]),
       docs: new Map([["p_1", [docA, docB]]]),
     });
     const app = buildApp(asUser("u_x"), f.repo, ctx);
-    const res = await app.handle(req("GET", "/api/projects/p_1/docs"));
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     const ids = json.data.docs.map((d: any) => d.id);
@@ -184,7 +182,7 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
       { id: "p_1", workspaceId: WS, name: "Empty", ownerId: "u_a", isDefault: false, archivedAt: null },
     ]);
     const app = buildApp(asUser("u_a"), f.repo, fakeCtx({ docs: new Map([["p_1", []]]) }));
-    const res = await app.handle(req("GET", "/api/projects/p_1/docs"));
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs"));
     expect(res.status).toBe(200);
     expect(((await res.json()) as any).data.docs).toEqual([]);
   });
@@ -195,18 +193,18 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     ]);
     const app = buildApp(asUser("u_a"), f.repo, fakeCtx({}));
 
-    const arch = await app.handle(req("POST", "/api/projects/p_1/archive"));
+    const arch = await app.handle(req("POST", "/api/w/ws_1/projects/p_1/archive"));
     expect(arch.status).toBe(200);
 
-    const listed = await app.handle(req("GET", "/api/projects"));
+    const listed = await app.handle(req("GET", "/api/w/ws_1/projects"));
     expect(((await listed.json()) as any).data.projects).toEqual([]);
 
     // includeArchived shows it.
-    const all = await app.handle(req("GET", "/api/projects?includeArchived=true"));
+    const all = await app.handle(req("GET", "/api/w/ws_1/projects?includeArchived=true"));
     expect(((await all.json()) as any).data.projects).toHaveLength(1);
 
-    await app.handle(req("POST", "/api/projects/p_1/unarchive"));
-    const back = await app.handle(req("GET", "/api/projects"));
+    await app.handle(req("POST", "/api/w/ws_1/projects/p_1/unarchive"));
+    const back = await app.handle(req("GET", "/api/w/ws_1/projects"));
     expect(((await back.json()) as any).data.projects).toHaveLength(1);
   });
 
@@ -214,8 +212,8 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     const f = fakeRepo([
       { id: "p_1", workspaceId: WS, name: "Billing", ownerId: "u_a", isDefault: false, archivedAt: null },
     ]);
-    const app = buildApp(asUser("u_other"), f.repo, fakeCtx({ members: new Set(["u_other"]) }));
-    const res = await app.handle(req("POST", "/api/projects/p_1/archive"));
+    const app = buildApp(asUser("u_other"), f.repo, fakeCtx({}));
+    const res = await app.handle(req("POST", "/api/w/ws_1/projects/p_1/archive"));
     expect(res.status).toBe(403);
     expect(((await res.json()) as any).error.code).toBe("FORBIDDEN");
   });
@@ -226,15 +224,15 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     ]);
     f.state.docCounts.set("p_1", 1);
     const app = buildApp(asUser("u_a"), f.repo, fakeCtx({}));
-    const res = await app.handle(req("DELETE", "/api/projects/p_1"));
+    const res = await app.handle(req("DELETE", "/api/w/ws_1/projects/p_1"));
     expect(res.status).toBe(409);
     expect(((await res.json()) as any).error.code).toBe("CONFLICT");
   });
 
   test("manage a missing project → 404", async () => {
     const f = fakeRepo();
-    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({ admins: new Set(["u_a"]) }));
-    const res = await app.handle(req("PATCH", "/api/projects/nope", { name: "X" }));
+    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({}), { admins: new Set(["u_a"]) });
+    const res = await app.handle(req("PATCH", "/api/w/ws_1/projects/nope", { name: "X" }));
     expect(res.status).toBe(404);
   });
 });

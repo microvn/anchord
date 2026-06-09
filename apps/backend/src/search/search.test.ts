@@ -71,7 +71,7 @@ describe("search service (S-005)", () => {
       invited: new Set(["d3:u_x"]),
     });
     const deps: SearchDeps = { repo: fakeRepo(hits), access };
-    const out = await search({ q: "refund", userId: "u_x" }, deps);
+    const out = await search({ q: "refund", userId: "u_x", workspaceId: "ws_1" }, deps);
     expect(out.map((r) => r.docId).sort()).toEqual(["d1", "d2", "d3"]);
     // all three match sources are preserved in the shape
     expect(new Set(out.map((r) => r.matchSource))).toEqual(new Set(["content", "title", "comment"]));
@@ -88,7 +88,7 @@ describe("search service (S-005)", () => {
       },
       // u_x not invited to d_secret, not relevant member grant for it.
     });
-    const out = await search({ q: "refund", userId: "u_x" }, { repo: fakeRepo(hits), access });
+    const out = await search({ q: "refund", userId: "u_x", workspaceId: "ws_1" }, { repo: fakeRepo(hits), access });
     expect(out.map((r) => r.docId)).toEqual(["d_ok"]);
     const raw = JSON.stringify(out);
     expect(raw).not.toContain("d_secret");
@@ -98,7 +98,7 @@ describe("search service (S-005)", () => {
   test("AS-010: projectId is threaded to the repo query (scope)", async () => {
     let seen: SearchQuery | undefined;
     const deps: SearchDeps = { repo: fakeRepo([], (q) => (seen = q)) };
-    await search({ q: "invoice", userId: "u_x", projectId: "p_billing" }, deps);
+    await search({ q: "invoice", userId: "u_x", projectId: "p_billing", workspaceId: "ws_1" }, deps);
     expect(seen?.projectId).toBe("p_billing");
     expect(seen?.userId).toBe("u_x");
   });
@@ -106,7 +106,7 @@ describe("search service (S-005)", () => {
   test("empty query → SearchRejected before the repo is touched", async () => {
     let touched = false;
     const deps: SearchDeps = { repo: fakeRepo([], () => (touched = true)) };
-    await expect(search({ q: "   ", userId: "u_x" }, deps)).rejects.toThrow(SearchRejected);
+    await expect(search({ q: "   ", userId: "u_x", workspaceId: "ws_1" }, deps)).rejects.toThrow(SearchRejected);
     expect(touched).toBe(false);
   });
 
@@ -114,7 +114,7 @@ describe("search service (S-005)", () => {
     const many = Array.from({ length: 5 }, (_, i) => hit(`d${i}`, "title"));
     const logs: string[] = [];
     const out = await search(
-      { q: "x", userId: "u_x" },
+      { q: "x", userId: "u_x", workspaceId: "ws_1" },
       { repo: fakeRepo(many), cap: 3, log: (m) => logs.push(m) },
     );
     expect(out).toHaveLength(3);

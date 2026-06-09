@@ -49,8 +49,13 @@ export function createIsDocOwner(db: DB): IsOwner {
   };
 }
 
-/** Workspace-membership read for the link-role source on `anyone_in_workspace`. */
-export type IsWorkspaceMember = (userId: string) => boolean | Promise<boolean>;
+/**
+ * Workspace-membership read for the link-role source on `anyone_in_workspace`.
+ * workspaces S-006/C-002 (AS-019/AS-020): SCOPED to the DOC — the concrete impl resolves
+ * the doc's OWN workspace (docs.project_id → projects.workspace_id) and checks membership
+ * THERE, so a member of workspace B never gets anyone_in_workspace access to a doc in A.
+ */
+export type IsWorkspaceMember = (docId: string, userId: string) => boolean | Promise<boolean>;
 
 export interface ResolveDocRoleDeps {
   /** Owner-source sub-port — the flagged seam. Prod: `() => false` until auth lands. */
@@ -83,7 +88,7 @@ export function createResolveDocRole(
       .from(docs)
       .where(eq(docs.id, docId));
     if (doc) {
-      const linkAdmits = await generalAccessAdmits(doc.generalAccess, userId, isWorkspaceMember);
+      const linkAdmits = await generalAccessAdmits(doc.generalAccess, docId, userId, isWorkspaceMember);
       if (linkAdmits) {
         const [link] = await db
           .select({ role: shareLinks.role })
@@ -103,6 +108,7 @@ export function createResolveDocRole(
 /** Whether the doc's general-access level admits this user via the link role source. */
 async function generalAccessAdmits(
   level: GeneralAccessLevel,
+  docId: string,
   userId: string,
   isWorkspaceMember: IsWorkspaceMember,
 ): Promise<boolean> {
@@ -110,7 +116,8 @@ async function generalAccessAdmits(
     case "anyone_with_link":
       return true; // the link grants its role to anyone holding it.
     case "anyone_in_workspace":
-      return await isWorkspaceMember(userId);
+      // C-002/AS-019: membership of THIS DOC's workspace, never "any workspace".
+      return await isWorkspaceMember(docId, userId);
     case "restricted":
       return false; // a restricted doc grants nothing via the link.
   }

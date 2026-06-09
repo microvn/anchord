@@ -26,7 +26,8 @@ import { docs, projects, user as userTable } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
-import { createWorkspaceRepo, createProjectRepo } from "../../src/workspace/repo";
+import { createProjectRepo } from "../../src/workspace/repo";
+import { createTenancyRepo, createWorkspaceAccess } from "../../src/workspace/tenancy-repo";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
@@ -34,7 +35,7 @@ const SECRET = "x".repeat(32);
 const BASE_URL = "http://localhost";
 
 function makeAuth(db: MigratedDb["db"]) {
-  const workspaceRepo = createWorkspaceRepo(db);
+  const tenancyRepo = createTenancyRepo(db);
   const projectRepo = createProjectRepo(db);
   return betterAuth({
     secret: SECRET,
@@ -45,7 +46,8 @@ function makeAuth(db: MigratedDb["db"]) {
       user: {
         create: {
           after: async (createdUser: { id: string }) => {
-            await onUserCreated(createdUser.id, workspaceRepo, projectRepo);
+            // workspaces S-001: each signup auto-creates its OWN workspace + default project.
+            await onUserCreated(createdUser.id, tenancyRepo, projectRepo);
           },
         },
       },
@@ -81,6 +83,7 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
   let app: ReturnType<typeof createApp>;
   let A: { userId: string; cookie: string };
   let X: { userId: string; cookie: string };
+  let WA = ""; // A's auto-created workspace
   let billingId: string;
   let billingDefaultDocSlug: string;
 
@@ -98,12 +101,13 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
   beforeAll(async () => {
     h = await withMigratedDb();
     const auth = makeAuth(h.db);
+    const wsAccess = createWorkspaceAccess(h.db);
+    const resolveWorkspaceRole = (wsId: string, userId: string) => wsAccess.workspaceRoleOf(wsId, userId);
     app = createApp({
       dbCheck: async () => {},
       authHandler: auth.handler,
-      setup: { db: h.db, resolveSession: betterAuthSessionResolver(auth) },
-      projects: { db: h.db, resolveSession: betterAuthSessionResolver(auth) },
-      docs: { db: h.db, resolveSession: betterAuthSessionResolver(auth) },
+      projects: { db: h.db, resolveSession: betterAuthSessionResolver(auth), resolveWorkspaceRole },
+      docs: { db: h.db, resolveSession: betterAuthSessionResolver(auth), resolveWorkspaceRole },
       loadViewer: async (slug) => {
         const [d] = await h.db.select().from(docs).where(eq(docs.slug, slug));
         if (!d) return null;
@@ -111,17 +115,20 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
       },
     });
 
+    // workspaces S-001: A signs up → A auto-gets its OWN workspace WA (admin) + default project.
     A = await signUpAndIn(`s3a-${process.pid}@itest.local`, "Alice");
-    // A runs first-run setup → becomes admin; the installer's default project is created here.
-    const setup = await app.handle(
-      withCookie("/api/setup", A.cookie, "POST", {
-        name: "Acme",
-        settings: { providers: { github: false, google: false } },
-      }),
-    );
-    expect(setup.status).toBe(201);
+    const [waRow] = await h.db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(eq(schema.workspaceMembers.userId, A.userId));
+    WA = waRow!.workspaceId;
 
+    // X signs up (gets its OWN workspace too) and is then invited into WA as a member, so the
+    // cross-member browse test (AS-006/C-003) runs inside A's workspace.
     X = await signUpAndIn(`s3x-${process.pid}@itest.local`, "Xavier");
+    await h.db
+      .insert(schema.workspaceMembers)
+      .values({ workspaceId: WA, userId: X.userId, role: "member" });
   });
 
   afterAll(async () => {
@@ -151,14 +158,14 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
 
   test("AS-005: A creates 'Billing' and publishes a doc into it; A is the doc owner", async () => {
     const create = await app.handle(
-      withCookie("/api/projects", A.cookie, "POST", { name: "Billing" }),
+      withCookie(`/api/w/${WA}/projects`, A.cookie, "POST", { name: "Billing" }),
     );
     expect(create.status).toBe(201);
     billingId = ((await create.json()) as any).data.id;
 
     // Doc B: anyone_in_workspace, published INTO Billing.
     const pub = await app.handle(
-      withCookie("/api/docs", A.cookie, "POST", {
+      withCookie(`/api/w/${WA}/docs`, A.cookie, "POST", {
         content: "# Shared B\nrefund policy",
         title: "Shared B",
         projectId: billingId,
@@ -176,7 +183,7 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
   test("AS-006/C-003: X browses 'Billing' → sees doc B (anyone_in_workspace), NOT doc A (restricted)", async () => {
     // Doc A: restricted, published into Billing by A; X is NOT invited.
     const pubA = await app.handle(
-      withCookie("/api/docs", A.cookie, "POST", {
+      withCookie(`/api/w/${WA}/docs`, A.cookie, "POST", {
         content: "# Secret A",
         title: "Secret A",
         projectId: billingId,
@@ -185,7 +192,7 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     const docAId = ((await pubA.json()) as any).data.docId;
     // restricted is the default general_access, so no change needed.
 
-    const browse = await app.handle(withCookie(`/api/projects/${billingId}/docs`, X.cookie));
+    const browse = await app.handle(withCookie(`/api/w/${WA}/projects/${billingId}/docs`, X.cookie));
     expect(browse.status).toBe(200);
     const body = await browse.json();
     const titles = (body as any).data.docs.map((d: any) => d.title);
@@ -199,7 +206,7 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
 
   test("C-009 (MCP fallback): A publishes with NO projectId → lands in A's default project", async () => {
     const pub = await app.handle(
-      withCookie("/api/docs", A.cookie, "POST", { content: "# No project", title: "Orphan" }),
+      withCookie(`/api/w/${WA}/docs`, A.cookie, "POST", { content: "# No project", title: "Orphan" }),
     );
     expect(pub.status).toBe(201);
     billingDefaultDocSlug = ((await pub.json()) as any).data.slug;
@@ -214,7 +221,7 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
   test("publish with a supplied-but-invalid projectId → 404 (never silent-default)", async () => {
     const bogus = "00000000-0000-0000-0000-000000000000";
     const pub = await app.handle(
-      withCookie("/api/docs", A.cookie, "POST", {
+      withCookie(`/api/w/${WA}/docs`, A.cookie, "POST", {
         content: "# Bad project",
         title: "Bad",
         projectId: bogus,
@@ -232,11 +239,11 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     expect(sharedDoc).toBeTruthy();
 
     const archive = await app.handle(
-      withCookie(`/api/projects/${billingId}/archive`, A.cookie, "POST"),
+      withCookie(`/api/w/${WA}/projects/${billingId}/archive`, A.cookie, "POST"),
     );
     expect(archive.status).toBe(200);
 
-    const list = await app.handle(withCookie("/api/projects", A.cookie));
+    const list = await app.handle(withCookie(`/api/w/${WA}/projects`, A.cookie));
     const ids = ((await list.json()) as any).data.projects.map((p: any) => p.id);
     expect(ids).not.toContain(billingId); // hidden from the default list
 
@@ -246,10 +253,10 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
 
     // Unarchive → it reappears.
     const unarchive = await app.handle(
-      withCookie(`/api/projects/${billingId}/unarchive`, A.cookie, "POST"),
+      withCookie(`/api/w/${WA}/projects/${billingId}/unarchive`, A.cookie, "POST"),
     );
     expect(unarchive.status).toBe(200);
-    const list2 = await app.handle(withCookie("/api/projects", A.cookie));
+    const list2 = await app.handle(withCookie(`/api/w/${WA}/projects`, A.cookie));
     const ids2 = ((await list2.json()) as any).data.projects.map((p: any) => p.id);
     expect(ids2).toContain(billingId);
   });

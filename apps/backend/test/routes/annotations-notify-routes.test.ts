@@ -127,6 +127,7 @@ function buildApp(opts: {
       lookupRepo: fakeLookupRepo(VISIBLE_DOC),
       annotationLookupRepo: fakeAnnotationLookupRepo(),
       resolveSession: opts.resolveSession,
+      resolveWorkspaceRole: async () => "member",
       resolveDocRole: asCommenter,
       accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
       loadShareConfig: async () => ({ guestCommentingEnabled: true }),
@@ -155,7 +156,7 @@ describe("POST /api/annotations/:id/comments dispatches notify (S-006)", () => {
     const app = buildApp({ resolveSession: replierA, commentSeed: seed, notifyRepo, mail });
 
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", {
+      req("/api/w/ws_1/annotations/ann_1/comments", {
         method: "POST",
         body: JSON.stringify({ body: "A's reply", parentId: "root" }),
       }),
@@ -177,7 +178,7 @@ describe("POST /api/annotations/:id/comments dispatches notify (S-006)", () => {
     const app = buildApp({ resolveSession: replierA, commentSeed: seed, notifyRepo, mail });
 
     const res = await app.handle(
-      req("/api/annotations/ann_1/comments", {
+      req("/api/w/ws_1/annotations/ann_1/comments", {
         method: "POST",
         body: JSON.stringify({ body: "A's reply", parentId: "root" }),
       }),

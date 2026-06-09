@@ -62,7 +62,7 @@ function buildApp(opts: {
   resolveSession?: SessionResolver;
   resolveDocRole?: (docId: string, userId: string) => Promise<Role | null>;
   repo?: DocMoveRepo;
-  isWorkspaceAdmin?: (userId: string) => boolean | Promise<boolean>;
+  isWorkspaceAdmin?: (workspaceId: string, userId: string) => boolean | Promise<boolean>;
 }) {
   const { repo } = opts.repo ? { repo: opts.repo } : fakeRepo();
   return createApp({
@@ -70,6 +70,7 @@ function buildApp(opts: {
     docMove: {
       repo,
       resolveSession: opts.resolveSession ?? asUser("u_a"),
+      resolveWorkspaceRole: async () => "member",
       resolveDocRole: opts.resolveDocRole ?? asRole("editor"),
       isWorkspaceAdmin: opts.isWorkspaceAdmin,
     },
@@ -84,11 +85,11 @@ function req(method: string, path: string, body?: unknown) {
   });
 }
 
-describe("/api/docs/:slug/move|copy route glue (workspace-project S-004)", () => {
+describe("/api/w/ws_1/docs/:slug/move|copy route glue (workspace-project S-004)", () => {
   test("AS-008: an editor moves the doc → 200 { docId, slug, projectId }", async () => {
     const f = fakeRepo();
     const app = buildApp({ repo: f.repo, resolveDocRole: asRole("editor") });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/move", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: PROJECT }));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.success).toBe(true);
@@ -101,20 +102,20 @@ describe("/api/docs/:slug/move|copy route glue (workspace-project S-004)", () =>
 
   test("AS-008: an owner may move", async () => {
     const app = buildApp({ resolveDocRole: asRole("owner") });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/move", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: PROJECT }));
     expect(res.status).toBe(200);
   });
 
   test("AS-008: a workspace admin may move with no doc role", async () => {
     const app = buildApp({ resolveDocRole: asRole(null), isWorkspaceAdmin: () => true });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/move", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: PROJECT }));
     expect(res.status).toBe(200);
   });
 
   test("a viewer attempting MOVE → 403 (move mutates), nothing moved", async () => {
     const f = fakeRepo();
     const app = buildApp({ repo: f.repo, resolveDocRole: asRole("viewer") });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/move", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: PROJECT }));
     expect(res.status).toBe(403);
     expect(((await res.json()) as any).error.code).toBe("FORBIDDEN");
     expect(f.state.movedTo).toBeNull();
@@ -122,20 +123,20 @@ describe("/api/docs/:slug/move|copy route glue (workspace-project S-004)", () =>
 
   test("no-access source → 404 MOVE (existence-hiding, not 403)", async () => {
     const app = buildApp({ resolveDocRole: asRole(null) });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/move", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: PROJECT }));
     expect(res.status).toBe(404);
   });
 
   test("MOVE to a bad/cross-workspace target → 404", async () => {
     const { repo } = fakeRepo({ workspaceProjects: new Set(["p_billing"]) });
     const app = buildApp({ repo, resolveDocRole: asRole("editor") });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/move", { projectId: FOREIGN }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: FOREIGN }));
     expect(res.status).toBe(404);
   });
 
   test("MOVE bad projectId (not a uuid) → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({ resolveDocRole: asRole("editor") });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/move", { projectId: "not-a-uuid" }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: "not-a-uuid" }));
     expect(res.status).toBe(400);
     expect(((await res.json()) as any).error.code).toBe("VALIDATION_ERROR");
   });
@@ -143,7 +144,7 @@ describe("/api/docs/:slug/move|copy route glue (workspace-project S-004)", () =>
   test("no session → 401 MOVE (handler never runs)", async () => {
     const f = fakeRepo();
     const app = buildApp({ repo: f.repo, resolveSession: noSession });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/move", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: PROJECT }));
     expect(res.status).toBe(401);
     expect(f.state.movedTo).toBeNull();
   });
@@ -151,7 +152,7 @@ describe("/api/docs/:slug/move|copy route glue (workspace-project S-004)", () =>
   test("AS-013: a reader copies the doc → 201 { new docId, new slug, projectId }", async () => {
     const f = fakeRepo();
     const app = buildApp({ repo: f.repo, resolveDocRole: asRole("viewer") });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/copy", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/copy", { projectId: PROJECT }));
     expect(res.status).toBe(201);
     const json = (await res.json()) as any;
     expect(json.data.docId).toBe("doc_copy"); // a NEW doc
@@ -164,7 +165,7 @@ describe("/api/docs/:slug/move|copy route glue (workspace-project S-004)", () =>
   test("AS-013: no-access source → 404 COPY (existence-hiding)", async () => {
     const f = fakeRepo();
     const app = buildApp({ repo: f.repo, resolveDocRole: asRole(null) });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/copy", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/copy", { projectId: PROJECT }));
     expect(res.status).toBe(404);
     expect(f.state.copies).toBe(0);
   });
@@ -172,14 +173,14 @@ describe("/api/docs/:slug/move|copy route glue (workspace-project S-004)", () =>
   test("COPY to a bad target → 404, no copy made", async () => {
     const { repo, state } = fakeRepo({ workspaceProjects: new Set(["p_billing"]) });
     const app = buildApp({ repo, resolveDocRole: asRole("viewer") });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/copy", { projectId: FOREIGN }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/copy", { projectId: FOREIGN }));
     expect(res.status).toBe(404);
     expect(state.copies).toBe(0);
   });
 
   test("no session → 401 COPY", async () => {
     const app = buildApp({ resolveSession: noSession });
-    const res = await app.handle(req("POST", "/api/docs/billing-doc/copy", { projectId: PROJECT }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/copy", { projectId: PROJECT }));
     expect(res.status).toBe(401);
   });
 });

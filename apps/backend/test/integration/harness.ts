@@ -188,6 +188,33 @@ export async function withMigratedDb(): Promise<MigratedDb> {
   };
 }
 
+/**
+ * Seed a workspace + a member (and optionally a default project) for the multi-workspace
+ * integration tests (workspaces S-006). Returns the workspace id. The user row must already
+ * exist (FK). Mirrors the auto-create-on-signup shape without driving better-auth.
+ */
+export async function seedWorkspace(
+  db: MigratedDb["db"],
+  opts: { userId: string; role?: "admin" | "member"; name?: string; withProject?: boolean },
+): Promise<{ workspaceId: string; projectId?: string }> {
+  const [ws] = await db
+    .insert(schema.workspaces)
+    .values({ name: opts.name ?? "default", slug: `ws-${crypto.randomUUID()}`, settings: {} })
+    .returning({ id: schema.workspaces.id });
+  await db
+    .insert(schema.workspaceMembers)
+    .values({ workspaceId: ws!.id, userId: opts.userId, role: opts.role ?? "admin" });
+  let projectId: string | undefined;
+  if (opts.withProject) {
+    const [p] = await db
+      .insert(schema.projects)
+      .values({ workspaceId: ws!.id, name: "Default", ownerId: opts.userId, isDefault: true })
+      .returning({ id: schema.projects.id });
+    projectId = p!.id;
+  }
+  return { workspaceId: ws!.id, projectId };
+}
+
 /** Run the runtime migrator against an arbitrary database URL (for idempotency tests). */
 export async function runMigrator(databaseUrl: string): Promise<void> {
   const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });

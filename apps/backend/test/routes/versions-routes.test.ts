@@ -97,6 +97,7 @@ function buildApp(opts: {
       versionRepo: vr.repo,
       lookupRepo: lookup,
       resolveSession: opts.resolveSession ?? member,
+      resolveWorkspaceRole: async () => "member",
       resolveDocRole: opts.resolveDocRole ?? asEditor,
       accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
     },
@@ -115,7 +116,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
     const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
     const app = buildApp({ versionRepo: vr });
     const res = await app.handle(
-      req("/api/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
+      req("/api/w/ws_1/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
     );
     expect(res.status).toBe(201);
     const json = (await res.json()) as any;
@@ -135,7 +136,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
     const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
     const app = buildApp({ resolveSession: userA, versionRepo: vr });
     const res = await app.handle(
-      req("/api/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
+      req("/api/w/ws_1/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
     );
     expect(res.status).toBe(201);
     // The recorded publisher is the SESSION user A, not null.
@@ -149,7 +150,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
     const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
     const app = buildApp({ resolveSession: userA, versionRepo: vr });
     const res = await app.handle(
-      req("/api/docs/doc-one/versions", {
+      req("/api/w/ws_1/docs/doc-one/versions", {
         method: "POST",
         body: JSON.stringify({ content: "v2", publishedBy: "attacker", userId: "attacker" }),
       }),
@@ -163,7 +164,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
     const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
     const app = buildApp({ resolveSession: noSession, versionRepo: vr });
     const res = await app.handle(
-      req("/api/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
+      req("/api/w/ws_1/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
     );
     expect(res.status).toBe(401);
     expect(vr.calls.inserts).toHaveLength(0);
@@ -173,7 +174,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
     const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
     const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
     const res = await app.handle(
-      req("/api/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
+      req("/api/w/ws_1/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
     );
     expect(res.status).toBe(403);
     const json = (await res.json()) as any;
@@ -184,7 +185,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
   test("missing doc → 404 NOT_FOUND (existence-hiding, write to invisible doc is 404 not 403)", async () => {
     const app = buildApp({ doc: null });
     const res = await app.handle(
-      req("/api/docs/nope/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
+      req("/api/w/ws_1/docs/nope/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
     );
     expect(res.status).toBe(404);
     const json = (await res.json()) as any;
@@ -200,12 +201,13 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
         versionRepo: vr.repo,
         lookupRepo: fakeLookupRepo({ ...VISIBLE_DOC, generalAccess: "restricted" }, vr),
         resolveSession: member,
+        resolveWorkspaceRole: async () => "member",
         resolveDocRole: asEditor,
         accessDeps: { isInvited: () => false, isWorkspaceMember: () => false },
       },
     });
     const res = await app.handle(
-      req("/api/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
+      req("/api/w/ws_1/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2" }) }),
     );
     expect(res.status).toBe(404);
     expect(vr.calls.inserts).toHaveLength(0);
@@ -214,7 +216,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
   test("bad body (missing content) → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({});
     const res = await app.handle(
-      req("/api/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ nope: 1 }) }),
+      req("/api/w/ws_1/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ nope: 1 }) }),
     );
     expect(res.status).toBe(400);
     const json = (await res.json()) as any;
@@ -227,7 +229,7 @@ describe("PATCH /api/docs/:slug (AS-002 title-only, NO version)", () => {
     const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
     const app = buildApp({ versionRepo: vr });
     const res = await app.handle(
-      req("/api/docs/doc-one", { method: "PATCH", body: JSON.stringify({ title: "New Title" }) }),
+      req("/api/w/ws_1/docs/doc-one", { method: "PATCH", body: JSON.stringify({ title: "New Title" }) }),
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
@@ -240,7 +242,7 @@ describe("PATCH /api/docs/:slug (AS-002 title-only, NO version)", () => {
   test("not editor → 403", async () => {
     const app = buildApp({ resolveDocRole: asViewer });
     const res = await app.handle(
-      req("/api/docs/doc-one", { method: "PATCH", body: JSON.stringify({ title: "X" }) }),
+      req("/api/w/ws_1/docs/doc-one", { method: "PATCH", body: JSON.stringify({ title: "X" }) }),
     );
     expect(res.status).toBe(403);
   });
@@ -248,7 +250,7 @@ describe("PATCH /api/docs/:slug (AS-002 title-only, NO version)", () => {
   test("missing doc → 404", async () => {
     const app = buildApp({ doc: null });
     const res = await app.handle(
-      req("/api/docs/nope", { method: "PATCH", body: JSON.stringify({ title: "X" }) }),
+      req("/api/w/ws_1/docs/nope", { method: "PATCH", body: JSON.stringify({ title: "X" }) }),
     );
     expect(res.status).toBe(404);
   });
@@ -261,7 +263,7 @@ describe("GET /api/docs/:slug/versions (AS-003 history)", () => {
       { version: 2, content: "v2", contentHash: "h2" },
     ]);
     const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/versions"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/versions"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.data.items).toHaveLength(2);
@@ -276,7 +278,7 @@ describe("GET /api/docs/:slug/versions (AS-003 history)", () => {
       { version: 2, content: "v2", contentHash: "h2" },
     ]);
     const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/versions?limit=1&page=2"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/versions?limit=1&page=2"));
     const json = (await res.json()) as any;
     expect(json.data.items).toHaveLength(1);
     expect(json.data.items[0].version).toBe(2);
@@ -285,7 +287,7 @@ describe("GET /api/docs/:slug/versions (AS-003 history)", () => {
 
   test("missing doc → 404", async () => {
     const app = buildApp({ doc: null });
-    const res = await app.handle(req("/api/docs/nope/versions"));
+    const res = await app.handle(req("/api/w/ws_1/docs/nope/versions"));
     expect(res.status).toBe(404);
   });
 });
@@ -297,7 +299,7 @@ describe("POST /api/docs/:slug/versions/:n/restore (AS-004)", () => {
       { version: 2, content: "new", contentHash: "h2" },
     ]);
     const app = buildApp({ versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/versions/1/restore", { method: "POST" }));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/versions/1/restore", { method: "POST" }));
     expect(res.status).toBe(201);
     const json = (await res.json()) as any;
     expect(json.data.version).toBe(3);
@@ -310,20 +312,20 @@ describe("POST /api/docs/:slug/versions/:n/restore (AS-004)", () => {
   test("restore of a missing version of a VISIBLE doc → 404", async () => {
     const vr = fakeVersionRepo([{ version: 1, content: "old", contentHash: "h1" }]);
     const app = buildApp({ versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/versions/99/restore", { method: "POST" }));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/versions/99/restore", { method: "POST" }));
     expect(res.status).toBe(404);
   });
 
   test("not editor → 403", async () => {
     const vr = fakeVersionRepo([{ version: 1, content: "old", contentHash: "h1" }]);
     const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/versions/1/restore", { method: "POST" }));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/versions/1/restore", { method: "POST" }));
     expect(res.status).toBe(403);
   });
 
   test("malformed :n (0) → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({});
-    const res = await app.handle(req("/api/docs/doc-one/versions/0/restore", { method: "POST" }));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/versions/0/restore", { method: "POST" }));
     expect(res.status).toBe(400);
   });
 });
@@ -335,7 +337,7 @@ describe("GET /api/docs/:slug/diff?from=&to= (AS-006/007/008)", () => {
       { version: 2, content: "line b", contentHash: "h2" },
     ]);
     const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/diff?from=1&to=2"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/diff?from=1&to=2"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.data.mode).toBe("text");
@@ -349,7 +351,7 @@ describe("GET /api/docs/:slug/diff?from=&to= (AS-006/007/008)", () => {
       { version: 2, content: "same", contentHash: "h1" },
     ]);
     const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/diff?from=1&to=2"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/diff?from=1&to=2"));
     const json = (await res.json()) as any;
     expect(json.data.identical).toBe(true);
     expect(json.data.changeCount).toBe(0);
@@ -359,14 +361,14 @@ describe("GET /api/docs/:slug/diff?from=&to= (AS-006/007/008)", () => {
   test("missing version ref of a visible doc → 404", async () => {
     const vr = fakeVersionRepo([{ version: 1, content: "x", contentHash: "h1" }]);
     const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/diff?from=1&to=99"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/diff?from=1&to=99"));
     expect(res.status).toBe(404);
   });
 
   test("malformed query (from=abc) → 400 VALIDATION_ERROR", async () => {
     const vr = fakeVersionRepo([{ version: 1, content: "x", contentHash: "h1" }]);
     const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
-    const res = await app.handle(req("/api/docs/doc-one/diff?from=abc&to=2"));
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/diff?from=abc&to=2"));
     expect(res.status).toBe(400);
     const json = (await res.json()) as any;
     expect(json.error.code).toBe("VALIDATION_ERROR");
@@ -374,7 +376,7 @@ describe("GET /api/docs/:slug/diff?from=&to= (AS-006/007/008)", () => {
 
   test("missing doc → 404", async () => {
     const app = buildApp({ doc: null });
-    const res = await app.handle(req("/api/docs/nope/diff?from=1&to=2"));
+    const res = await app.handle(req("/api/w/ws_1/docs/nope/diff?from=1&to=2"));
     expect(res.status).toBe(404);
   });
 });

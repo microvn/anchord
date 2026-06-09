@@ -45,7 +45,7 @@ function fakeRepo(
 }
 
 function buildApp(resolveSession: SessionResolver, repo: SearchRepo) {
-  return createApp({ dbCheck: async () => {}, search: { repo, resolveSession } });
+  return createApp({ dbCheck: async () => {}, search: { repo, resolveSession, resolveWorkspaceRole: async () => "member" } });
 }
 
 function req(path: string) {
@@ -79,7 +79,7 @@ describe("/api/search route glue (workspace-project S-005)", () => {
       },
     ]);
     const app = buildApp(asUser("u_x"), repo);
-    const res = await app.handle(req("/api/search?q=refund"));
+    const res = await app.handle(req("/api/w/ws_1/search?q=refund"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.success).toBe(true);
@@ -107,27 +107,27 @@ describe("/api/search route glue (workspace-project S-005)", () => {
       },
     ]);
     const app = buildApp(asUser("u_x"), repo);
-    const res = await app.handle(req(`/api/search?q=invoice&projectId=${PID}`));
+    const res = await app.handle(req(`/api/w/ws_1/search?q=invoice&projectId=${PID}`));
     const json = (await res.json()) as any;
     expect(json.data.results.map((r: any) => r.docId)).toEqual(["d_bill"]);
   });
 
   test("empty q → 400 VALIDATION_ERROR", async () => {
     const app = buildApp(asUser("u_x"), fakeRepo([]));
-    const res = await app.handle(req("/api/search?q="));
+    const res = await app.handle(req("/api/w/ws_1/search?q="));
     expect(res.status).toBe(400);
     expect(((await res.json()) as any).error.code).toBe("VALIDATION_ERROR");
   });
 
   test("whitespace-only q → 400 (service parseQuery rejects)", async () => {
     const app = buildApp(asUser("u_x"), fakeRepo([]));
-    const res = await app.handle(req("/api/search?q=%20%20"));
+    const res = await app.handle(req("/api/w/ws_1/search?q=%20%20"));
     expect(res.status).toBe(400);
   });
 
   test("invalid projectId (not a uuid) → 400 VALIDATION_ERROR", async () => {
     const app = buildApp(asUser("u_x"), fakeRepo([]));
-    const res = await app.handle(req("/api/search?q=x&projectId=not-a-uuid"));
+    const res = await app.handle(req("/api/w/ws_1/search?q=x&projectId=not-a-uuid"));
     expect(res.status).toBe(400);
   });
 
@@ -140,7 +140,7 @@ describe("/api/search route glue (workspace-project S-005)", () => {
       },
     };
     const app = buildApp(noSession, repo);
-    const res = await app.handle(req("/api/search?q=refund"));
+    const res = await app.handle(req("/api/w/ws_1/search?q=refund"));
     expect(res.status).toBe(401);
     expect(touched).toBe(false);
   });
@@ -155,7 +155,7 @@ describe("/api/search route glue (workspace-project S-005)", () => {
     };
     const app = buildApp(asUser("u_real"), repo);
     // a forged userId in the query must be ignored.
-    await app.handle(req("/api/search?q=x&userId=u_attacker"));
+    await app.handle(req("/api/w/ws_1/search?q=x&userId=u_attacker"));
     expect(seenUser).toBe("u_real");
   });
 });

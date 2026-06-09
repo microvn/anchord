@@ -8,7 +8,9 @@ import {
   createLoadShareConfig,
   createIsDocOwner,
 } from "./sharing/resolve-doc-role-repo";
-import { createProjectsRouteRepo } from "./workspace/repo";
+import { createWorkspaceAccess } from "./workspace/tenancy-repo";
+import { eq } from "drizzle-orm";
+import { session as sessionTable } from "./db/schema";
 import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport } from "./auth/mail-transport";
 import { createDocMemberRepo, findUserById } from "./sharing/doc-member-repo";
@@ -52,19 +54,29 @@ const auth = createAuth(db, {
 
 const resolveSession = betterAuthSessionResolver(auth);
 
-// workspace-project S-002 closes the membership seam. `workspaceCtx` reads the single
-// workspace + real workspace_members, so:
-//   - `isWorkspaceMember` (was `() => true`) resolves only for an actual member — correct
-//     for anyone_in_workspace access (S-003/S-005 too).
-//   - `isWorkspaceAdmin` resolves the single workspace then checks role === "admin"; it
-//     drives /api/members' admin-gate (C-002/AS-004) AND the sharing admin-override
-//     (AS-012: when a doc's owner is removed, the admin is the fallback share manager).
-const workspaceCtx = createProjectsRouteRepo(db);
-const isWorkspaceMember = (userId: string) => workspaceCtx.isWorkspaceMember(userId);
-const isWorkspaceAdmin = async (userId: string): Promise<boolean> => {
-  const wsId = await workspaceCtx.currentWorkspaceId();
-  return wsId ? workspaceCtx.isAdmin(wsId, userId) : false;
+// workspaces S-006 (C-002): scoped tenancy reads. Everything is keyed on a CONCRETE
+// workspace id (from the /api/w/:workspaceId path the gate proved membership for), never
+// "member of any workspace".
+//   - resolveWorkspaceRole(workspaceId, userId): the path-scoped gate's membership read.
+//   - isWorkspaceMemberOfDoc(docId, userId): membership of the DOC's OWN workspace — drives
+//     anyone_in_workspace (AS-019/AS-020), so a member of B never reaches A's doc.
+//   - isWorkspaceAdminForDoc(docId, userId): admin of the DOC's workspace — the sharing /
+//     doc-move admin override, scoped to that workspace.
+const wsAccess = createWorkspaceAccess(db);
+const resolveWorkspaceRole = (workspaceId: string, userId: string) =>
+  wsAccess.workspaceRoleOf(workspaceId, userId);
+const isWorkspaceMemberOfDoc = async (docId: string, userId: string): Promise<boolean> => {
+  const wsId = await wsAccess.workspaceOfDoc(docId);
+  return wsId ? wsAccess.isWorkspaceMember(wsId, userId) : false;
 };
+const isWorkspaceAdminForDoc = async (docId: string, userId: string): Promise<boolean> => {
+  const wsId = await wsAccess.workspaceOfDoc(docId);
+  return wsId ? wsAccess.isWorkspaceAdminFor(wsId, userId) : false;
+};
+// The sharing/doc-move route override is keyed by (workspaceId, userId) directly (the
+// path workspace), so it does not need to re-resolve the doc's workspace.
+const isWorkspaceAdmin = (workspaceId: string, userId: string) =>
+  wsAccess.isWorkspaceAdminFor(workspaceId, userId);
 
 // canViewDoc deps (existence-hiding). These ports are SYNC (canViewDoc is synchronous),
 // so they stay permissive in this v0 wiring (treat authenticated users as invited/
@@ -92,7 +104,8 @@ const sharedAccessDeps = {
 // still resolves to their lesser role → denied (AS-004/C-004).
 const sharedResolveDocRole = createResolveDocRole(db, {
   isOwner: createIsDocOwner(db), // ← concrete owner read (auth-routes S-002 closes the seam)
-  isWorkspaceMember,
+  // workspaces C-002/AS-019: anyone_in_workspace resolves against the DOC's OWN workspace.
+  isWorkspaceMember: isWorkspaceMemberOfDoc,
 });
 const concreteLoadShareConfig = createLoadShareConfig(db);
 
@@ -107,8 +120,8 @@ const concreteLoadShareConfig = createLoadShareConfig(db);
 const docOwner = createIsDocOwner(db);
 const sharingResolveDocRole = createResolveDocRole(db, {
   isOwner: async (docId: string, userId: string) =>
-    (await docOwner(docId, userId)) && (await isWorkspaceMember(userId)),
-  isWorkspaceMember,
+    (await docOwner(docId, userId)) && (await isWorkspaceMemberOfDoc(docId, userId)),
+  isWorkspaceMember: isWorkspaceMemberOfDoc,
 });
 
 // workspace-project S-006 notify-on-reply (AS-011 / C-004): reuse the shared MailQueue +
@@ -133,21 +146,25 @@ const app = createApp({
   dbCheck,
   corsOrigin: cfg.CORS_ORIGIN === "*" ? true : cfg.CORS_ORIGIN.split(","),
   authHandler: auth.handler,
-  // render-publish S-001: enveloped, session-gated POST /api/docs over the real DB.
-  docs: { db, resolveSession },
-  // versioning-diff S-001..S-004: version create/title/history/restore/diff over the real DB.
+  // All data APIs are now path-scoped under /api/w/:workspaceId (workspaces S-006). Each
+  // group gets resolveWorkspaceRole so the requireWorkspaceMember gate refuses a non-member
+  // (404, existence-hiding) before any handler.
+  // render-publish S-001: enveloped, session-gated POST /api/w/:workspaceId/docs.
+  docs: { db, resolveSession, resolveWorkspaceRole },
+  // versioning-diff S-001..S-004: version create/title/history/restore/diff.
   versions: {
     db,
     resolveSession,
+    resolveWorkspaceRole,
     resolveDocRole: sharedResolveDocRole,
     accessDeps: sharedAccessDeps,
   },
   // annotation-core S-001..S-007: annotation create/list, reply + guest comment,
-  // resolve/reopen, suggestion create/decide over the real DB. Shares the interim
-  // role/access seams; guest commenting defaults OFF until the sharing cluster lands.
+  // resolve/reopen, suggestion create/decide.
   annotations: {
     db,
     resolveSession,
+    resolveWorkspaceRole,
     resolveDocRole: sharedResolveDocRole,
     accessDeps: sharedAccessDeps,
     loadShareConfig: concreteLoadShareConfig,
@@ -155,32 +172,45 @@ const app = createApp({
     // notify repo + one email per recipient through the shared queue). Best-effort.
     notify: { mail: notifyMail },
   },
-  // workspace-project S-001: first-run POST /api/setup over the real DB (create the
-  // single workspace + claim admin; later signups become members via the auth hook).
-  // S-003 (AS-014/C-009): the installer's default project is created here too (db →
-  // concrete projectRepo inside setupRoutes).
-  setup: { db, resolveSession },
-  // workspace-project S-003: project create/list/rename/archive/unarchive/delete +
-  // access-filtered browse of docs in a project over the real DB.
-  projects: { db, resolveSession },
-  // workspace-project S-002: ADMIN-gated member directory (GET /api/members, POST
-  // /api/members/invite, DELETE /api/members/:userId). Members cannot manage membership
-  // (C-002/AS-004); removing a member deletes only the membership row, never their docs
-  // (C-007). Invite enqueue degrades to a no-op here (membership materializes on the
-  // invitee's signup via the onUserCreated hook); the mail cluster owns live transport.
-  members: { db, resolveSession },
-  // workspace-project S-005: GET /api/search over the real DB. Full-text search across
-  // accessible docs (title + extracted content + comment bodies), access-filtered
-  // (existence-hiding) and optionally project-scoped. FTS SQL isolated in the search repo.
-  search: { db, resolveSession },
-  // workspace-project S-004: move/copy a doc between projects over the real DB. Move
-  // (relocate as-is) needs editor-or-owner on the source — uses the shared concrete
-  // resolveDocRole (owner folds in via createIsDocOwner) — or a workspace admin
-  // (isWorkspaceAdmin override). Copy (clean duplicate, no annotations — C-008) needs
-  // only read access. The move/copy repo + extract-text are built inside the route.
+  // workspaces S-002/S-004: top-level workspace lifecycle + invitations.
+  workspaces: {
+    db,
+    resolveSession,
+    resolveActorEmail: (userId: string) => findUserById(db, userId),
+  },
+  // workspaces S-003: top-level bootstrap (/api/me) + switch. The active workspace is the
+  // login-default landing (C-005); read/written on the session row.
+  me: {
+    db,
+    resolveSession,
+    getActiveWorkspaceId: async (userId: string) => {
+      const [row] = await db
+        .select({ id: sessionTable.activeWorkspaceId })
+        .from(sessionTable)
+        .where(eq(sessionTable.userId, userId))
+        .limit(1);
+      return row?.id ?? null;
+    },
+    setActiveWorkspaceId: async (userId: string, workspaceId: string) => {
+      await db
+        .update(sessionTable)
+        .set({ activeWorkspaceId: workspaceId })
+        .where(eq(sessionTable.userId, userId));
+    },
+  },
+  // workspace-project S-003: project routes under /api/w/:workspaceId/projects.
+  projects: { db, resolveSession, resolveWorkspaceRole },
+  // workspaces S-005: per-workspace member directory + role management under
+  // /api/w/:workspaceId/members (admin-gated; ≥1-admin invariant).
+  members: { db, resolveSession, resolveWorkspaceRole },
+  // workspace-project S-005: GET /api/w/:workspaceId/search, scoped to the workspace.
+  search: { db, resolveSession, resolveWorkspaceRole },
+  // workspace-project S-004: move/copy under /api/w/:workspaceId/docs/:slug. The admin
+  // override is scoped to the doc's workspace (C-002).
   docMove: {
     db,
     resolveSession,
+    resolveWorkspaceRole,
     resolveDocRole: sharedResolveDocRole,
     isWorkspaceAdmin,
   },
@@ -191,6 +221,7 @@ const app = createApp({
   sharing: {
     db,
     resolveSession,
+    resolveWorkspaceRole,
     // S-002: the membership-gated owner source — a removed owner loses manage-sharing.
     resolveDocRole: sharingResolveDocRole,
     // Manage-sharing gate (C-007) reads editors_can_share from here (reuses the same

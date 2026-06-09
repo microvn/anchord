@@ -6,7 +6,8 @@ import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
-import { setupRoutes, type SetupRoutesDeps } from "./routes/setup";
+import { workspacesRoutes, type WorkspacesRoutesDeps } from "./routes/workspaces";
+import { meRoutes, type MeRoutesDeps } from "./routes/me";
 import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
 import { membersRoutes, type MembersRoutesDeps } from "./routes/members";
 import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
@@ -68,12 +69,16 @@ export type AppDeps = {
    */
   sharing?: SharingRoutesDeps;
   /**
-   * workspace-project S-001: enables the enveloped, session-gated POST /api/setup
-   * first-run endpoint (create the single workspace + claim admin; C-001). Provide a
-   * Drizzle handle (production) or a pre-built WorkspaceRepo (tests), plus the session
-   * resolver. Omit to leave /api/setup unmounted.
+   * workspaces S-002/S-004: workspace lifecycle (create/rename) + invitations
+   * (invite/accept/reject) at the TOP level (/api/workspaces, /api/invitations). Omit to
+   * leave them unmounted.
    */
-  setup?: SetupRoutesDeps;
+  workspaces?: WorkspacesRoutesDeps;
+  /**
+   * workspaces S-003: the bootstrap surface (GET /api/me lists my workspaces + role +
+   * active; POST /api/me/active-workspace switches). Top-level. Omit to leave unmounted.
+   */
+  me?: MeRoutesDeps;
   /**
    * workspace-project S-003: enables the enveloped, session-gated project routes
    * (create/list/rename/archive/unarchive/delete + access-filtered browse-docs-in-
@@ -196,11 +201,15 @@ export function createApp(deps: AppDeps) {
     app.use(sharingRoutes(deps.sharing));
   }
 
-  // /api/setup — workspace-project S-001 first-run. Self-enveloped + session-gated,
-  // mounted outside /api/auth/*. Creates the single workspace + claims admin (C-001);
-  // refused with 409 once a workspace exists.
-  if (deps.setup) {
-    app.use(setupRoutes(deps.setup));
+  // /api/workspaces + /api/invitations — workspaces S-002/S-004. Top-level (not scoped to
+  // an existing workspace). Create/rename a workspace; invite by email; accept/reject.
+  if (deps.workspaces) {
+    app.use(workspacesRoutes(deps.workspaces));
+  }
+
+  // /api/me — workspaces S-003 bootstrap. Lists my workspaces + role + active; switch.
+  if (deps.me) {
+    app.use(meRoutes(deps.me));
   }
 
   // /api/projects — workspace-project S-003. Self-enveloped + session-gated, mounted

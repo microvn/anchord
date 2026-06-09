@@ -86,6 +86,40 @@ describe("createResolveDocRole owner source (auth-routes S-002)", () => {
     });
     expect(await resolve("doc_1", "u_A")).toBe("owner");
   });
+
+  // ── workspaces S-006 (C-002): anyone_in_workspace is scoped to the DOC's workspace ──
+
+  test("AS-020: a member of the DOC's workspace gets the link role on an anyone_in_workspace doc", async () => {
+    // The doc is anyone_in_workspace with a viewer link role; Carol is a member of the
+    // doc's OWN workspace → the link admits her, so she resolves to the link's viewer role.
+    const db = fakeDb({
+      docRows: [{ generalAccess: "anyone_in_workspace" }],
+      memberRows: [],
+      linkRows: [{ role: "viewer" }],
+    });
+    const resolve = createResolveDocRole(db, {
+      isOwner: async () => false,
+      // The resolver passes (docId, userId); membership of THIS doc's workspace is true.
+      isWorkspaceMember: (docId, _userId) => docId === "doc_1",
+    });
+    expect(await resolve("doc_1", "u_carol")).toBe("viewer");
+  });
+
+  test("AS-019: a member of ANOTHER workspace does NOT get anyone_in_workspace access to this doc", async () => {
+    // Bob is a member of a DIFFERENT workspace, so isWorkspaceMember for THIS doc is false
+    // → the anyone_in_workspace link does not admit him → no role (null).
+    const db = fakeDb({
+      docRows: [{ generalAccess: "anyone_in_workspace" }],
+      memberRows: [],
+      linkRows: [{ role: "viewer" }],
+    });
+    const resolve = createResolveDocRole(db, {
+      isOwner: async () => false,
+      // Bob is NOT a member of this doc's workspace → false (the cross-tenant guard, C-002).
+      isWorkspaceMember: () => false,
+    });
+    expect(await resolve("doc_1", "u_bob")).toBeNull();
+  });
 });
 
 describe("createIsDocOwner (auth-routes S-002, C-003)", () => {

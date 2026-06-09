@@ -99,6 +99,7 @@ function buildApp(opts: { isOwner: boolean; memberRows?: Array<{ role: string }>
       findUserByEmail: () => null,
       enqueueInvite: () => {},
       resolveSession: session,
+      resolveWorkspaceRole: async () => "member",
       resolveDocRole,
       loadShareConfig: async () => ({ editorsCanShare: false }), // toggle OFF → only owner can manage
       accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
@@ -111,7 +112,7 @@ describe("PUT /api/docs/:slug/access — owner source resolved for real (auth-ro
   test("AS-003: the owner can manage sharing (isOwner true → resolves owner → 200, saved)", async () => {
     const { app, share } = buildApp({ isOwner: true });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
       }),
@@ -124,7 +125,7 @@ describe("PUT /api/docs/:slug/access — owner source resolved for real (auth-ro
   test("AS-004: a viewer (not owner, invited viewer) cannot manage sharing → 403 (no persist)", async () => {
     const { app, share } = buildApp({ isOwner: false, memberRows: [{ role: "viewer" }] });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
       }),
@@ -138,7 +139,7 @@ describe("PUT /api/docs/:slug/access — owner source resolved for real (auth-ro
   test("C-004: a commenter (not owner, invited commenter) can never manage sharing → 403", async () => {
     const { app, share } = buildApp({ isOwner: false, memberRows: [{ role: "commenter" }] });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
       }),

@@ -38,7 +38,10 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { docs, user as userTable } from "../../src/db/schema";
+import { docs, user as userTable, workspaceMembers } from "../../src/db/schema";
+import { onUserCreated } from "../../src/auth/auth";
+import { createTenancyRepo, createWorkspaceAccess } from "../../src/workspace/tenancy-repo";
+import { createProjectRepo } from "../../src/workspace/repo";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
@@ -56,6 +59,8 @@ const BASE_URL = "http://localhost";
  * mints is the cookie betterAuthSessionResolver verifies.
  */
 function makeAuth(db: MigratedDb["db"]) {
+  const tenancyRepo = createTenancyRepo(db);
+  const projectRepo = createProjectRepo(db);
   return betterAuth({
     secret: SECRET,
     baseURL: BASE_URL,
@@ -64,6 +69,17 @@ function makeAuth(db: MigratedDb["db"]) {
       enabled: true,
       requireEmailVerification: false, // diverges from prod ONLY here — see header
       minPasswordLength: 8,
+    },
+    // workspaces S-001: each signup auto-creates its OWN workspace + default project, so
+    // the signed-in user is a member of a real workspace the publish path can scope to.
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (createdUser: { id: string }) => {
+            await onUserCreated(createdUser.id, tenancyRepo, projectRepo);
+          },
+        },
+      },
     },
   });
 }
@@ -85,11 +101,11 @@ function setCookieToCookie(setCookie: string): string {
     .join("; ");
 }
 
-/** Build the protected-route request (POST /api/docs); optionally with a cookie + body. */
-function publishReq(opts: { cookie?: string; body: unknown }): Request {
+/** Build the protected-route request (POST /api/w/:ws/docs); optionally with a cookie. */
+function publishReq(opts: { cookie?: string; body: unknown; ws?: string }): Request {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (opts.cookie) headers.cookie = opts.cookie;
-  return new Request(`${BASE_URL}/api/docs`, {
+  return new Request(`${BASE_URL}/api/w/${opts.ws ?? "ws_placeholder"}/docs`, {
     method: "POST",
     headers,
     body: JSON.stringify(opts.body),
@@ -121,6 +137,8 @@ describe.skipIf(!RUN)("auth-routes S-004: live session cookie resolves the /api 
         // default-project assignment is workspace-project's concern (projects.itest.ts).
         repo: createDocRepo(h.db),
         resolveSession: betterAuthSessionResolver(auth),
+        // workspaces S-006: the actor is admin of their auto-created workspace.
+        resolveWorkspaceRole: (wsId, userId) => createWorkspaceAccess(h.db).workspaceRoleOf(wsId, userId),
       },
     });
   });
@@ -157,12 +175,19 @@ describe.skipIf(!RUN)("auth-routes S-004: live session cookie resolves the /api 
 
   test("AS-009: a valid session cookie resolves the calling user; the handler runs as them (C-006)", async () => {
     const { userId, cookie } = await signUpAndIn(`as009-${process.pid}@itest.local`);
+    // The signup auto-created the user's OWN workspace; scope the publish to it.
+    const [wm] = await h.db
+      .select()
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, userId));
+    const ws = wm!.workspaceId;
 
     // Call the protected route WITH the live cookie. The body carries a FORGED
     // userId — C-006 says it must be ignored; the actor comes from the cookie.
     const res = await app.handle(
       publishReq({
         cookie,
+        ws,
         body: { content: "# Owned by cookie user", title: "Cookie Doc", userId: "u_forged_attacker" },
       }),
     );

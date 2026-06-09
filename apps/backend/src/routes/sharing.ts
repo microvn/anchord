@@ -31,7 +31,12 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { apiEnvelope } from "../http/envelope";
-import { requireSession, type SessionResolver } from "../http/auth-gate";
+import {
+  requireSession,
+  requireWorkspaceMember,
+  type SessionResolver,
+  type WorkspaceRoleResolver,
+} from "../http/auth-gate";
 import { withValidation } from "../http/validate";
 import { ValidationError, ForbiddenError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
@@ -86,6 +91,8 @@ export interface SharingRoutesDeps {
   enqueueInvite?: (msg: EnqueuedInvite) => void;
   /** Resolves the better-auth session → actor; gates every route (401 if none). */
   resolveSession: SessionResolver;
+  /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
+  resolveWorkspaceRole: WorkspaceRoleResolver;
   /** Doc-scoped effective-role resolver; the manage-sharing gate reads this (seam: owner source). */
   resolveDocRole: ResolveDocRole;
   /**
@@ -95,8 +102,11 @@ export interface SharingRoutesDeps {
    * override lets an admin manage ANY doc's sharing in the workspace regardless of the
    * doc-scoped role. Optional: omit (→ `() => false`) to keep the pure Google-Docs gate
    * (no admin override) — every existing test/cluster behaves as before.
+   *
+   * workspaces S-006/C-002: now SCOPED to the doc's workspace (the :workspaceId path the
+   * gate proved membership for) — `(workspaceId, userId)`, never "admin of any workspace".
    */
-  isWorkspaceAdmin?: (userId: string) => Promise<boolean>;
+  isWorkspaceAdmin?: (workspaceId: string, userId: string) => Promise<boolean>;
   /**
    * Reads the doc's per-doc share toggles — the manage-sharing gate needs
    * `editorsCanShare` (C-007). Optional: built from `db` when omitted. Tests inject a
@@ -156,12 +166,17 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
    * editors_can_share is on (AS-014/AS-023); viewer/commenter never (AS-024). Returns
    * the resolved role so the access route can apply the owner-only toggle guard (C-015).
    */
-  async function requireManageSharing(docId: string, userId: string): Promise<Role> {
+  async function requireManageSharing(
+    workspaceId: string,
+    docId: string,
+    userId: string,
+  ): Promise<Role> {
     // AS-012/C-007: a workspace admin overrides the doc-scoped gate (the fallback
     // manager when the doc's owner is removed). Resolve it first so an admin passes even
     // when they hold no doc-scoped role at all. The admin acts AS the owner for sharing.
+    // workspaces C-002: the admin check is scoped to THIS workspace, never "any".
     const isWsAdmin = deps.isWorkspaceAdmin ?? (async () => false);
-    if (await isWsAdmin(userId)) {
+    if (await isWsAdmin(workspaceId, userId)) {
       return "owner";
     }
     const role: Role | null = await deps.resolveDocRole(docId, userId);
@@ -177,16 +192,17 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
   return (
     apiEnvelope(new Elysia())
       .use(requireSession({ resolveSession: deps.resolveSession }))
+      .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
 
       // ── PUT /api/docs/:slug/access — S-001 (general access + link role + guest) ──
       .group("", (app) =>
         app
           .use(withValidation(accessBodySchema))
-          .put("/api/docs/:slug/access", async ({ params, actor, validBody }) => {
+          .put("/api/w/:workspaceId/docs/:slug/access", async ({ params, actor, ws, validBody }) => {
             const body = validBody as z.infer<typeof accessBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
             // 403 if the caller may not manage sharing (AS-014/AS-023/AS-024).
-            const role = await requireManageSharing(doc.id, actor.userId);
+            const role = await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
             const actorIsOwner = role === "owner";
             // C-015/AS-022: a non-owner carrying editorsCanShare → 403 (owner-only toggle),
             // before the service write. (The service guards this too — belt + braces.)
@@ -224,10 +240,10 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
       .group("", (app) =>
         app
           .use(withValidation(inviteBodySchema))
-          .post("/api/docs/:slug/invites", async ({ params, actor, validBody, set }) => {
+          .post("/api/w/:workspaceId/docs/:slug/invites", async ({ params, actor, ws, validBody, set }) => {
             const body = validBody as z.infer<typeof inviteBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId);
-            await requireManageSharing(doc.id, actor.userId);
+            await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
             // findUserByEmail: sync port for the service. Resolve over Drizzle here if no
             // fake was injected, then hand the service a resolved closure.
             const account =
@@ -260,10 +276,10 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
       .group("", (app) =>
         app
           .use(withValidation(linkBodySchema))
-          .put("/api/docs/:slug/link", async ({ params, actor, validBody }) => {
+          .put("/api/w/:workspaceId/docs/:slug/link", async ({ params, actor, ws, validBody }) => {
             const body = validBody as z.infer<typeof linkBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId);
-            await requireManageSharing(doc.id, actor.userId);
+            await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
             // Hash the password (argon2id, C-010) before it ever touches the DB; an
             // empty/omitted password clears it (null).
             const passwordHash =

@@ -17,7 +17,12 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { apiEnvelope } from "../http/envelope";
-import { requireSession, type SessionResolver } from "../http/auth-gate";
+import {
+  requireSession,
+  requireWorkspaceMember,
+  type SessionResolver,
+  type WorkspaceRoleResolver,
+} from "../http/auth-gate";
 import { withValidation } from "../http/validate";
 import { ValidationError, PayloadTooLargeError } from "../http/errors";
 import { NotFoundError } from "../http/errors";
@@ -73,6 +78,8 @@ export interface DocsRoutesDeps {
   repo?: DocRepo;
   /** Resolves the better-auth session → actor; gates the route (401 if none). */
   resolveSession: SessionResolver;
+  /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
+  resolveWorkspaceRole: WorkspaceRoleResolver;
   /**
    * workspace-project S-003: resolves the doc's project (explicit → validated, omitted
    * → default). Pre-built for tests; defaults to the Drizzle resolver when `db` is set.
@@ -107,8 +114,9 @@ export function docsRoutes(deps: DocsRoutesDeps) {
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
+    .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
     .use(withValidation(publishBodySchema))
-    .post("/api/docs", async ({ validBody, actor, set }) => {
+    .post("/api/w/:workspaceId/docs", async ({ validBody, actor, ws, set }) => {
       const { content, kind, title, projectId } = validBody as PublishBody;
       try {
         const result = await publishDoc(
@@ -120,6 +128,8 @@ export function docsRoutes(deps: DocsRoutesDeps) {
             // session user (requireSession injected ctx.actor; 401 already fired
             // for AS-002/C-002 if there was no session). NEVER from the body.
             ownerId: actor.userId,
+            // workspaces S-006: the publish workspace from the path (gate proved member).
+            workspaceId: ws.workspaceId,
             // workspace-project S-003 (AS-005 / C-009): the chosen project (validated)
             // or — when omitted — the publisher's default project.
             projectId,

@@ -25,11 +25,8 @@ import { docs, docVersions, annotations, comments, shareLinks, user as userTable
 import { createApp } from "../../src/app";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
-import {
-  createWorkspaceRepo,
-  createProjectRepo,
-  createProjectsRouteRepo,
-} from "../../src/workspace/repo";
+import { createProjectRepo } from "../../src/workspace/repo";
+import { createTenancyRepo, createWorkspaceAccess } from "../../src/workspace/tenancy-repo";
 import {
   createResolveDocRole,
   createIsDocOwner,
@@ -41,7 +38,7 @@ const SECRET = "x".repeat(32);
 const BASE_URL = "http://localhost";
 
 function makeAuth(db: MigratedDb["db"]) {
-  const workspaceRepo = createWorkspaceRepo(db);
+  const tenancyRepo = createTenancyRepo(db);
   const projectRepo = createProjectRepo(db);
   return betterAuth({
     secret: SECRET,
@@ -52,7 +49,7 @@ function makeAuth(db: MigratedDb["db"]) {
       user: {
         create: {
           after: async (createdUser: { id: string }) => {
-            await onUserCreated(createdUser.id, workspaceRepo, projectRepo);
+            await onUserCreated(createdUser.id, tenancyRepo, projectRepo);
           },
         },
       },
@@ -87,6 +84,7 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
   let h: MigratedDb;
   let app: ReturnType<typeof createApp>;
   let A: { userId: string; cookie: string };
+  let WA = "";
   let billingId: string;
   let paymentsId: string;
   let docSlug: string;
@@ -107,30 +105,31 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     h = await withMigratedDb();
     const auth = makeAuth(h.db);
     const resolveSession = betterAuthSessionResolver(auth);
-    const wsCtx = createProjectsRouteRepo(h.db);
-    const isWorkspaceMember = (userId: string) => wsCtx.isWorkspaceMember(userId);
-    const isWorkspaceAdmin = async (userId: string) => {
-      const wsId = await wsCtx.currentWorkspaceId();
-      return wsId ? wsCtx.isAdmin(wsId, userId) : false;
+    const wsAccess = createWorkspaceAccess(h.db);
+    const resolveWorkspaceRole = (wsId: string, userId: string) => wsAccess.workspaceRoleOf(wsId, userId);
+    const isWorkspaceAdmin = (wsId: string, userId: string) => wsAccess.isWorkspaceAdminFor(wsId, userId);
+    const isWorkspaceMemberOfDoc = async (docId: string, userId: string) => {
+      const wsId = await wsAccess.workspaceOfDoc(docId);
+      return wsId ? wsAccess.isWorkspaceMember(wsId, userId) : false;
     };
     const resolveDocRole = createResolveDocRole(h.db, {
       isOwner: createIsDocOwner(h.db),
-      isWorkspaceMember,
+      isWorkspaceMember: isWorkspaceMemberOfDoc,
     });
 
     app = createApp({
       dbCheck: async () => {},
       authHandler: auth.handler,
-      setup: { db: h.db, resolveSession },
-      projects: { db: h.db, resolveSession },
-      docs: { db: h.db, resolveSession },
+      projects: { db: h.db, resolveSession, resolveWorkspaceRole },
+      docs: { db: h.db, resolveSession, resolveWorkspaceRole },
       versions: {
         db: h.db,
         resolveSession,
+        resolveWorkspaceRole,
         resolveDocRole,
         accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
       },
-      docMove: { db: h.db, resolveSession, resolveDocRole, isWorkspaceAdmin },
+      docMove: { db: h.db, resolveSession, resolveWorkspaceRole, resolveDocRole, isWorkspaceAdmin },
       loadViewer: async (slug) => {
         const [d] = await h.db.select().from(docs).where(eq(docs.slug, slug));
         if (!d) return null;
@@ -139,23 +138,22 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     });
 
     A = await signUpAndIn(`s4a-${process.pid}@itest.local`, "Alice");
-    const setup = await app.handle(
-      withCookie("/api/setup", A.cookie, "POST", {
-        name: "Acme",
-        settings: { providers: { github: false, google: false } },
-      }),
-    );
-    expect(setup.status).toBe(201);
+    // workspaces S-001: A's own workspace was auto-created on signup.
+    const [waRow] = await h.db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(eq(schema.workspaceMembers.userId, A.userId));
+    WA = waRow!.workspaceId;
 
     // Two projects: Billing (source) + Payments (target).
-    const cb = await app.handle(withCookie("/api/projects", A.cookie, "POST", { name: "Billing" }));
+    const cb = await app.handle(withCookie(`/api/w/${WA}/projects`, A.cookie, "POST", { name: "Billing" }));
     billingId = ((await cb.json()) as any).data.id;
-    const cp = await app.handle(withCookie("/api/projects", A.cookie, "POST", { name: "Payments" }));
+    const cp = await app.handle(withCookie(`/api/w/${WA}/projects`, A.cookie, "POST", { name: "Payments" }));
     paymentsId = ((await cp.json()) as any).data.id;
 
     // Publish a doc into Billing, then append v2 + v3 (a 3-version doc).
     const pub = await app.handle(
-      withCookie("/api/docs", A.cookie, "POST", {
+      withCookie(`/api/w/${WA}/docs`, A.cookie, "POST", {
         content: "# Billing v1",
         title: "Billing Spec",
         projectId: billingId,
@@ -167,7 +165,7 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     docId = pubBody.data.docId;
     for (const body of ["# Billing v2", "# Billing v3 current"]) {
       const v = await app.handle(
-        withCookie(`/api/docs/${docSlug}/versions`, A.cookie, "POST", { content: body }),
+        withCookie(`/api/w/${WA}/docs/${docSlug}/versions`, A.cookie, "POST", { content: body }),
       );
       expect(v.status).toBe(201);
     }
@@ -195,7 +193,7 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     expect(annBefore).toHaveLength(1);
 
     const move = await app.handle(
-      withCookie(`/api/docs/${docSlug}/move`, A.cookie, "POST", { projectId: paymentsId }),
+      withCookie(`/api/w/${WA}/docs/${docSlug}/move`, A.cookie, "POST", { projectId: paymentsId }),
     );
     expect(move.status).toBe(200);
     const body = (await move.json()) as any;
@@ -220,7 +218,7 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
 
   test("AS-013/C-008: COPY a 3-version doc → NEW doc in Payments, new slug, 1 version = source v3, 0 annotations; source unchanged", async () => {
     const copy = await app.handle(
-      withCookie(`/api/docs/${docSlug}/copy`, A.cookie, "POST", { projectId: paymentsId }),
+      withCookie(`/api/w/${WA}/docs/${docSlug}/copy`, A.cookie, "POST", { projectId: paymentsId }),
     );
     expect(copy.status).toBe(201);
     const cbody = (await copy.json()) as any;
@@ -256,7 +254,7 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
   test("MOVE to a bogus (non-existent) project → 404, nothing mutated", async () => {
     const bogus = "00000000-0000-4000-8000-000000000000";
     const move = await app.handle(
-      withCookie(`/api/docs/${docSlug}/move`, A.cookie, "POST", { projectId: bogus }),
+      withCookie(`/api/w/${WA}/docs/${docSlug}/move`, A.cookie, "POST", { projectId: bogus }),
     );
     expect(move.status).toBe(404);
     const [after] = await h.db.select().from(docs).where(eq(docs.id, docId));

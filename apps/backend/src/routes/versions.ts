@@ -22,7 +22,13 @@ import { Elysia } from "elysia";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { apiEnvelope } from "../http/envelope";
-import { requireSession, requireCapability, type SessionResolver } from "../http/auth-gate";
+import {
+  requireSession,
+  requireCapability,
+  requireWorkspaceMember,
+  type SessionResolver,
+  type WorkspaceRoleResolver,
+} from "../http/auth-gate";
 import { withValidation } from "../http/validate";
 import { ValidationError, NotFoundError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
@@ -115,6 +121,8 @@ export interface VersionsRoutesDeps {
   lookupRepo?: DocLookupRepo;
   /** Resolves the better-auth session → actor; gates every route (401 if none). */
   resolveSession: SessionResolver;
+  /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
+  resolveWorkspaceRole: WorkspaceRoleResolver;
   /** Doc-scoped effective-role resolver (the sharing seam — see ResolveDocRole). */
   resolveDocRole: ResolveDocRole;
   /**
@@ -196,12 +204,13 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
   return (
     apiEnvelope(new Elysia())
       .use(requireSession({ resolveSession: deps.resolveSession }))
+      .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
 
       // ── POST /api/docs/:slug/versions — S-001 / AS-001 (append a new version) ──
       .group("", (app) =>
         app
           .use(withValidation(versionBodySchema))
-          .post("/api/docs/:slug/versions", async ({ params, actor, validBody, set }) => {
+          .post("/api/w/:workspaceId/docs/:slug/versions", async ({ params, actor, validBody, set }) => {
             const { content, contentHash } = validBody as z.infer<typeof versionBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
             await requireEditor(doc.id, actor.userId); // 403 if not editor
@@ -228,7 +237,7 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
       .group("", (app) =>
         app
           .use(withValidation(titleBodySchema))
-          .patch("/api/docs/:slug", async ({ params, actor, validBody }) => {
+          .patch("/api/w/:workspaceId/docs/:slug", async ({ params, actor, validBody }) => {
             const { title } = validBody as z.infer<typeof titleBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId);
             await requireEditor(doc.id, actor.userId);
@@ -239,7 +248,7 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
 
       // ── GET /api/docs/:slug/versions — S-002 / AS-003 (paginated history) ──
       .get(
-        "/api/docs/:slug/versions",
+        "/api/w/:workspaceId/docs/:slug/versions",
         async ({ params, actor, query }) => {
           const doc = await loadVisibleDoc(params.slug, actor.userId); // viewer+ via canViewDoc
           const page = paginationQuery().parse(query) as PaginationParams;
@@ -253,7 +262,7 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
 
       // ── POST /api/docs/:slug/versions/:n/restore — S-003 / AS-004 ──
       .post(
-        "/api/docs/:slug/versions/:n/restore",
+        "/api/w/:workspaceId/docs/:slug/versions/:n/restore",
         async ({ params, actor, set }) => {
           const target = Number(params.n);
           if (!Number.isInteger(target) || target < 1) {
@@ -278,7 +287,7 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
 
       // ── GET /api/docs/:slug/diff?from=&to= — S-004 / AS-006/007/008 ──
       .get(
-        "/api/docs/:slug/diff",
+        "/api/w/:workspaceId/docs/:slug/diff",
         async ({ params, actor, query }) => {
           const parsed = diffQuerySchema.safeParse(query);
           if (!parsed.success) {

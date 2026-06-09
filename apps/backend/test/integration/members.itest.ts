@@ -1,40 +1,32 @@
-// Integration tier (guarded by RUN_INTEGRATION): workspace-project S-002 over REAL
-// Postgres. Proves the parts the unit/route tests defer to a DB:
-//   AS-003       — admin A invites dev@acme.com (admin-gated OK); dev signs up → member.
-//   AS-004       — a plain member B inviting / removing → 403 (member-management is admin-only).
-//   AS-012/C-007 — M owns an anyone_in_workspace doc; A removes M → (1) the doc still sits in
-//                  its project, (2) another member still resolves access to it, (3) the admin
-//                  can manage its sharing (the owner is gone → admin is the fallback), (4) M
-//                  (now a non-member) can no longer manage it.
+// Integration tier (guarded by RUN_INTEGRATION): workspaces S-004/S-005/S-006 over REAL
+// Postgres. Proves on real rows:
+//   S-001       — each signup auto-creates its OWN workspace (admin), not a shared one.
+//   S-004       — admin invites by email → pending; invitee accepts (email match) → member;
+//                 a mismatched email is refused; reject leaves no membership.
+//   S-005       — admin lists members + pending invites; removes a member; the ≥1-admin
+//                 invariant refuses removing the sole admin; non-admin is refused.
+//   S-006/C-002 — a member of workspace A cannot read workspace B's members (cross-tenant).
 //
-// PRODUCTION FIDELITY: SAME createApp(deps) composition as src/index.ts — better-auth
-// mounted; the onUserCreated hook that makes every signup a member; the gated /api/setup,
-// /api/members, /api/projects, /api/docs, /api/sharing wired to the REAL
-// betterAuthSessionResolver + db-backed repos + the workspace-admin override. The one
-// divergence (as the sibling itests document) is requireEmailVerification:false so sign-in
-// issues a cookie in-process; the create hook fires on sign-up regardless.
+// PRODUCTION FIDELITY: SAME createApp(deps) as src/index.ts — better-auth mounted; the
+// onUserCreated hook auto-creating each user's own workspace; /api/workspaces,
+// /api/invitations, and the path-scoped /api/w/:id/members wired to the REAL
+// betterAuthSessionResolver + db-backed tenancy repo. Divergence: requireEmailVerification
+// :false so sign-in issues a cookie in-process.
 //
 // Run: RUN_INTEGRATION=1 bun test ./test/integration/members.itest.ts
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { docs, projects, user as userTable, workspaceMembers } from "../../src/db/schema";
+import { user as userTable, workspaceMembers } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
-import {
-  createWorkspaceRepo,
-  createProjectRepo,
-  createProjectsRouteRepo,
-} from "../../src/workspace/repo";
-import {
-  createResolveDocRole,
-  createLoadShareConfig,
-  createIsDocOwner,
-} from "../../src/sharing/resolve-doc-role-repo";
+import { createProjectRepo } from "../../src/workspace/repo";
+import { createTenancyRepo, createWorkspaceAccess } from "../../src/workspace/tenancy-repo";
+import { findUserById } from "../../src/sharing/doc-member-repo";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
@@ -42,7 +34,7 @@ const SECRET = "x".repeat(32);
 const BASE_URL = "http://localhost";
 
 function makeAuth(db: MigratedDb["db"]) {
-  const workspaceRepo = createWorkspaceRepo(db);
+  const tenancyRepo = createTenancyRepo(db);
   const projectRepo = createProjectRepo(db);
   return betterAuth({
     secret: SECRET,
@@ -53,7 +45,7 @@ function makeAuth(db: MigratedDb["db"]) {
       user: {
         create: {
           after: async (createdUser: { id: string }) => {
-            await onUserCreated(createdUser.id, workspaceRepo, projectRepo);
+            await onUserCreated(createdUser.id, tenancyRepo, projectRepo);
           },
         },
       },
@@ -84,13 +76,14 @@ function withCookie(path: string, cookie: string, method = "GET", body?: unknown
   });
 }
 
-describe.skipIf(!RUN)("workspace-project S-002: member management (real Postgres)", () => {
+describe.skipIf(!RUN)("workspaces S-004/S-005/S-006: membership (real Postgres)", () => {
   let h: MigratedDb;
   let app: ReturnType<typeof createApp>;
-  let A: { userId: string; cookie: string }; // admin (installer)
-  let B: { userId: string; cookie: string }; // plain member (does the AS-004 denials)
-  let M: { userId: string; cookie: string }; // member who owns a doc, then is removed
-  let dev: { userId: string; cookie: string }; // the invited member (AS-003)
+  let A: { userId: string; cookie: string };
+  let B: { userId: string; cookie: string };
+  let Eve: { userId: string; cookie: string };
+  let WA = ""; // A's auto-created workspace
+  const enqueued: Array<{ email: string; token: string; invitationId: string }> = [];
 
   async function signUpAndIn(email: string, name: string) {
     const password = "correct horse battery staple";
@@ -102,54 +95,35 @@ describe.skipIf(!RUN)("workspace-project S-002: member management (real Postgres
     const rows = await h.db.select().from(userTable).where(eq(userTable.email, email));
     return { userId: rows[0]!.id, cookie };
   }
-
-  const email = (who: string) => `s2${who}-${process.pid}@itest.local`;
+  const email = (who: string) => `s5${who}-${process.pid}@itest.local`;
+  async function workspaceOf(userId: string) {
+    const [row] = await h.db.select().from(workspaceMembers).where(eq(workspaceMembers.userId, userId));
+    return row!.workspaceId;
+  }
 
   beforeAll(async () => {
     h = await withMigratedDb();
     const auth = makeAuth(h.db);
     const resolveSession = betterAuthSessionResolver(auth);
-
-    // Real workspace-membership reads (S-002): drive isWorkspaceMember + the admin override.
-    const workspaceCtx = createProjectsRouteRepo(h.db);
-    const isWorkspaceMember = (userId: string) => workspaceCtx.isWorkspaceMember(userId);
-    const isWorkspaceAdmin = async (userId: string): Promise<boolean> => {
-      const wsId = await workspaceCtx.currentWorkspaceId();
-      return wsId ? workspaceCtx.isAdmin(wsId, userId) : false;
-    };
-    // S-002 membership-gated owner source (mirrors src/index.ts sharingResolveDocRole):
-    // owner_id stays set on removal, but a non-member owner can no longer manage sharing →
-    // the admin override is the fallback. This is what makes AS-012 point (4) true for M.
-    const docOwner = createIsDocOwner(h.db);
-    const resolveDocRole = createResolveDocRole(h.db, {
-      isOwner: async (docId: string, userId: string) =>
-        (await docOwner(docId, userId)) && (await isWorkspaceMember(userId)),
-      isWorkspaceMember,
-    });
-    const loadShareConfig = createLoadShareConfig(h.db);
-    const accessDeps = { isInvited: () => true, isWorkspaceMember: () => true };
+    const wsAccess = createWorkspaceAccess(h.db);
+    const resolveWorkspaceRole = (wsId: string, userId: string) => wsAccess.workspaceRoleOf(wsId, userId);
 
     app = createApp({
       dbCheck: async () => {},
       authHandler: auth.handler,
-      setup: { db: h.db, resolveSession },
-      members: { db: h.db, resolveSession },
-      projects: { db: h.db, resolveSession },
-      docs: { db: h.db, resolveSession },
-      sharing: { db: h.db, resolveSession, resolveDocRole, loadShareConfig, accessDeps, isWorkspaceAdmin },
+      workspaces: {
+        db: h.db,
+        resolveSession,
+        resolveActorEmail: (userId: string) => findUserById(h.db, userId),
+        enqueueInvite: (m) => enqueued.push(m),
+      },
+      members: { db: h.db, resolveSession, resolveWorkspaceRole },
     });
 
     A = await signUpAndIn(email("a"), "Alice");
-    const setup = await app.handle(
-      withCookie("/api/setup", A.cookie, "POST", {
-        name: "Acme",
-        settings: { providers: { github: false, google: false } },
-      }),
-    );
-    expect(setup.status).toBe(201);
-
+    WA = await workspaceOf(A.userId);
     B = await signUpAndIn(email("b"), "Bob");
-    M = await signUpAndIn(email("m"), "Mallory");
+    Eve = await signUpAndIn(email("eve"), "Eve");
   });
 
   afterAll(async () => {
@@ -159,136 +133,112 @@ describe.skipIf(!RUN)("workspace-project S-002: member management (real Postgres
     }
   });
 
-  test("AS-003: B signs up → joins as a MEMBER (role member, not admin)", async () => {
+  test("AS-001: A signs up → its OWN workspace with A as admin (not a shared instance)", async () => {
     const [row] = await h.db
       .select({ role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, A.userId));
+    expect(row!.role).toBe("admin");
+  });
+
+  test("AS-002: B's signup did NOT join A's workspace — B is in its own", async () => {
+    const wb = await workspaceOf(B.userId);
+    expect(wb).not.toBe(WA);
+    const inWA = await h.db
+      .select()
       .from(workspaceMembers)
       .where(eq(workspaceMembers.userId, B.userId));
-    expect(row!.role).toBe("member");
+    expect(inWA.some((m) => m.workspaceId === WA)).toBe(false);
   });
 
-  test("AS-003: admin A invites dev@acme.com (admin-gated OK); dev then signs up → member", async () => {
-    const devEmail = email("dev");
-    const invite = await app.handle(
-      withCookie("/api/members/invite", A.cookie, "POST", { email: devEmail }),
+  test("AS-009/AS-010: A invites B by email → pending; B accepts (email match) → member of WA", async () => {
+    enqueued.length = 0;
+    const inv = await app.handle(
+      withCookie(`/api/workspaces/${WA}/invitations`, A.cookie, "POST", { email: email("b") }),
     );
-    expect(invite.status).toBe(201);
-    expect(((await invite.json()) as any).data.status).toBe("invited");
-
-    // The membership materializes on the invitee's signup (live onUserCreated hook).
-    dev = await signUpAndIn(devEmail, "Dev");
-    const [row] = await h.db
-      .select({ role: workspaceMembers.role })
+    expect(inv.status).toBe(201);
+    expect(((await inv.json()) as any).data.status).toBe("pending");
+    const e = enqueued[0]!;
+    const accept = await app.handle(
+      withCookie(`/api/invitations/${e.invitationId}/accept`, B.cookie, "POST", { token: e.token }),
+    );
+    expect(accept.status).toBe(200);
+    const inWA = await h.db
+      .select()
       .from(workspaceMembers)
-      .where(eq(workspaceMembers.userId, dev.userId));
-    expect(row!.role).toBe("member");
+      .where(eq(workspaceMembers.userId, B.userId));
+    expect(inWA.some((m) => m.workspaceId === WA && m.role === "member")).toBe(true);
   });
 
-  test("AS-004: a plain member B cannot invite → 403 (member-management is admin-only)", async () => {
-    const res = await app.handle(
-      withCookie("/api/members/invite", B.cookie, "POST", { email: "nope@acme.com" }),
+  test("AS-012: an invite accepted by a DIFFERENT email is refused (404); no membership", async () => {
+    enqueued.length = 0;
+    await app.handle(
+      withCookie(`/api/workspaces/${WA}/invitations`, A.cookie, "POST", { email: "ghost@acme.com" }),
     );
-    expect(res.status).toBe(403);
-    expect(((await res.json()) as any).error.code).toBe("FORBIDDEN");
+    const e = enqueued[0]!;
+    // Eve (a different email) tries to claim the invite issued to ghost@acme.com.
+    const res = await app.handle(
+      withCookie(`/api/invitations/${e.invitationId}/accept`, Eve.cookie, "POST", { token: e.token }),
+    );
+    expect(res.status).toBe(404);
+    const inWA = await h.db
+      .select()
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, Eve.userId));
+    expect(inWA.some((m) => m.workspaceId === WA)).toBe(false);
   });
 
-  test("AS-004: a plain member B cannot remove a member → 403", async () => {
-    const res = await app.handle(withCookie(`/api/members/${M.userId}`, B.cookie, "DELETE"));
-    expect(res.status).toBe(403);
-  });
-
-  test("AS-004: a plain member B cannot list the member directory → 403", async () => {
-    const res = await app.handle(withCookie("/api/members", B.cookie));
-    expect(res.status).toBe(403);
-  });
-
-  test("the admin A can list the member directory → 200 (includes A, B, M, dev)", async () => {
-    const res = await app.handle(withCookie("/api/members", A.cookie));
+  test("AS-011: rejecting an invite leaves no membership", async () => {
+    enqueued.length = 0;
+    await app.handle(
+      withCookie(`/api/workspaces/${WA}/invitations`, A.cookie, "POST", { email: email("eve") }),
+    );
+    const e = enqueued[0]!;
+    const res = await app.handle(
+      withCookie(`/api/invitations/${e.invitationId}/reject`, Eve.cookie, "POST", { token: e.token }),
+    );
     expect(res.status).toBe(200);
-    const ids = ((await res.json()) as any).data.members.map((m: any) => m.userId);
-    expect(ids).toEqual(expect.arrayContaining([A.userId, B.userId, M.userId, dev.userId]));
+    const inWA = await h.db
+      .select()
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, Eve.userId));
+    expect(inWA.some((m) => m.workspaceId === WA)).toBe(false);
   });
 
-  describe("AS-012 / C-007: removing M keeps M's doc; the admin takes over its share", () => {
-    let docId: string;
-    let docSlug: string;
-    let projectId: string;
+  test("AS-021: the admin lists WA members (A, B) + pending invitations", async () => {
+    const res = await app.handle(withCookie(`/api/w/${WA}/members`, A.cookie));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    const ids = json.data.members.map((m: any) => m.userId);
+    expect(ids).toEqual(expect.arrayContaining([A.userId, B.userId]));
+    expect(Array.isArray(json.data.invitations)).toBe(true);
+  });
 
-    test("setup: M owns an anyone_in_workspace doc in a project", async () => {
-      const pub = await app.handle(
-        withCookie("/api/docs", M.cookie, "POST", {
-          content: "# M's shared doc\nrefund policy",
-          title: "M Shared",
-        }),
-      );
-      expect(pub.status).toBe(201);
-      const data = (await pub.json()) as any;
-      docId = data.data.docId;
-      docSlug = data.data.slug;
-      const [row] = await h.db.select().from(docs).where(eq(docs.id, docId));
-      expect(row!.ownerId).toBe(M.userId);
-      projectId = row!.projectId!;
-      await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, docId));
-    });
+  test("AS-017: a non-admin member (B) cannot list / remove → 403", async () => {
+    const list = await app.handle(withCookie(`/api/w/${WA}/members`, B.cookie));
+    expect(list.status).toBe(403);
+    const rm = await app.handle(withCookie(`/api/w/${WA}/members/${A.userId}`, B.cookie, "DELETE"));
+    expect(rm.status).toBe(403);
+  });
 
-    test("the admin A removes M → 200", async () => {
-      const res = await app.handle(withCookie(`/api/members/${M.userId}`, A.cookie, "DELETE"));
-      expect(res.status).toBe(200);
-      // M's membership row is gone…
-      const mRows = await h.db
-        .select()
-        .from(workspaceMembers)
-        .where(eq(workspaceMembers.userId, M.userId));
-      expect(mRows).toHaveLength(0);
-      // …but M's user row and doc survive (C-007: never deleted).
-      const uRows = await h.db.select().from(userTable).where(eq(userTable.id, M.userId));
-      expect(uRows).toHaveLength(1);
-    });
+  test("AS-014: the admin removes member B → 200; B loses WA membership", async () => {
+    const res = await app.handle(withCookie(`/api/w/${WA}/members/${B.userId}`, A.cookie, "DELETE"));
+    expect(res.status).toBe(200);
+    const inWA = await h.db
+      .select()
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, B.userId));
+    expect(inWA.some((m) => m.workspaceId === WA)).toBe(false);
+  });
 
-    test("C-007: the doc still sits in its project/workspace after M is removed", async () => {
-      const [row] = await h.db.select().from(docs).where(eq(docs.id, docId));
-      expect(row).toBeTruthy();
-      expect(row!.projectId).toBe(projectId);
-    });
+  test("AS-016: the sole admin (A) cannot be removed → 409", async () => {
+    const res = await app.handle(withCookie(`/api/w/${WA}/members/${A.userId}`, A.cookie, "DELETE"));
+    expect(res.status).toBe(409);
+  });
 
-    test("AS-012: another member (B) still resolves access to the anyone_in_workspace doc", async () => {
-      // B is a workspace member → resolveDocRole grants the link role on anyone_in_workspace.
-      const browse = await app.handle(withCookie(`/api/projects/${projectId}/docs`, B.cookie));
-      expect(browse.status).toBe(200);
-      const titles = ((await browse.json()) as any).data.docs.map((d: any) => d.title);
-      expect(titles).toContain("M Shared");
-    });
-
-    test("AS-012: the admin A can manage the doc's sharing (fallback owner)", async () => {
-      const res = await app.handle(
-        withCookie(`/api/docs/${docSlug}/access`, A.cookie, "PUT", {
-          level: "anyone_with_link",
-          role: "viewer",
-        }),
-      );
-      expect(res.status).toBe(200);
-      const [row] = await h.db.select().from(docs).where(eq(docs.id, docId));
-      expect(row!.generalAccess).toBe("anyone_with_link");
-    });
-
-    test("AS-012 (4): M (now a non-member) can no longer manage the share → 403", async () => {
-      // M still holds docs.owner_id, but the membership-gated owner source denies a
-      // non-member owner → M's manage-sharing authority is gone (the admin took over).
-      const resM = await app.handle(
-        withCookie(`/api/docs/${docSlug}/access`, M.cookie, "PUT", {
-          level: "restricted",
-          role: "viewer",
-        }),
-      );
-      expect(resM.status).toBe(403);
-      // And a plain member B (never owner, not admin) also cannot manage it → 403.
-      const resB = await app.handle(
-        withCookie(`/api/docs/${docSlug}/access`, B.cookie, "PUT", {
-          level: "restricted",
-          role: "viewer",
-        }),
-      );
-      expect(resB.status).toBe(403);
-    });
+  test("AS-018/C-002: A cannot read another workspace's members (Eve's own workspace) → 404", async () => {
+    const wEve = await workspaceOf(Eve.userId);
+    const res = await app.handle(withCookie(`/api/w/${wEve}/members`, A.cookie));
+    expect(res.status).toBe(404); // existence-hiding: A is not a member of Eve's workspace
   });
 });

@@ -100,6 +100,7 @@ function buildApp(opts: {
       findUserByEmail: opts.findUserByEmail ?? (() => null),
       enqueueInvite: opts.enqueueInvite ?? (() => {}),
       resolveSession: opts.resolveSession ?? member,
+      resolveWorkspaceRole: async () => "member",
       resolveDocRole: opts.resolveDocRole ?? asOwner,
       // Default toggle ON (the Google-Docs default) unless a test overrides it.
       loadShareConfig: opts.loadShareConfig ?? shareToggleOn,
@@ -113,7 +114,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const share = fakeShareRepo();
     const app = buildApp({ shareRepo: share.repo });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "commenter", guestCommenting: true }),
       }),
@@ -134,7 +135,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const share = fakeShareRepo();
     const app = buildApp({ shareRepo: share.repo });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "owner" }),
       }),
@@ -148,7 +149,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
   test("AS-003: guest commenting on restricted → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({});
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "restricted", role: "viewer", guestCommenting: true }),
       }),
@@ -162,7 +163,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const share = fakeShareRepo();
     const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOn, shareRepo: share.repo });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
       }),
@@ -175,7 +176,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const share = fakeShareRepo();
     const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOff, shareRepo: share.repo });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
       }),
@@ -189,7 +190,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
   test("AS-024: viewer can never manage sharing → 403 (toggle on)", async () => {
     const app = buildApp({ resolveDocRole: asViewer, loadShareConfig: shareToggleOn });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
       }),
@@ -200,7 +201,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
   test("AS-024: commenter can never manage sharing → 403 (toggle on)", async () => {
     const app = buildApp({ resolveDocRole: asCommenter, loadShareConfig: shareToggleOn });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
       }),
@@ -212,7 +213,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const share = fakeShareRepo();
     const app = buildApp({ resolveDocRole: asOwner, shareRepo: share.repo });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "viewer", editorsCanShare: false }),
       }),
@@ -228,7 +229,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const share = fakeShareRepo();
     const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOn, shareRepo: share.repo });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "viewer", editorsCanShare: false }),
       }),
@@ -242,7 +243,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
   test("no session → 401 UNAUTHENTICATED", async () => {
     const app = buildApp({ resolveSession: noSession });
     const res = await app.handle(
-      req("/api/docs/doc-one/access", {
+      req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
       }),
@@ -253,7 +254,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
   test("missing/hidden doc → 404 (existence-hiding before owner gate)", async () => {
     const app = buildApp({ doc: null });
     const res = await app.handle(
-      req("/api/docs/nope/access", {
+      req("/api/w/ws_1/docs/nope/access", {
         method: "PUT",
         body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
       }),
@@ -264,7 +265,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
   test("bad body (missing level) → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({});
     const res = await app.handle(
-      req("/api/docs/doc-one/access", { method: "PUT", body: JSON.stringify({ role: "viewer" }) }),
+      req("/api/w/ws_1/docs/doc-one/access", { method: "PUT", body: JSON.stringify({ role: "viewer" }) }),
     );
     expect(res.status).toBe(400);
   });
@@ -280,7 +281,7 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
       enqueueInvite: (m) => enqueued.push(m),
     });
     const res = await app.handle(
-      req("/api/docs/doc-one/invites", {
+      req("/api/w/ws_1/docs/doc-one/invites", {
         method: "POST",
         body: JSON.stringify({ email: "has@acct.com", role: "editor" }),
       }),
@@ -303,7 +304,7 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
       enqueueInvite: (m) => enqueued.push(m),
     });
     const res = await app.handle(
-      req("/api/docs/doc-one/invites", {
+      req("/api/w/ws_1/docs/doc-one/invites", {
         method: "POST",
         body: JSON.stringify({ email: "New@Acct.com", role: "commenter" }),
       }),
@@ -321,7 +322,7 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
   test("AS-014: editor with editors_can_share ON → 201 (can invite)", async () => {
     const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOn });
     const res = await app.handle(
-      req("/api/docs/doc-one/invites", {
+      req("/api/w/ws_1/docs/doc-one/invites", {
         method: "POST",
         body: JSON.stringify({ email: "x@y.com", role: "viewer" }),
       }),
@@ -332,7 +333,7 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
   test("AS-023: editor with editors_can_share OFF → 403", async () => {
     const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOff });
     const res = await app.handle(
-      req("/api/docs/doc-one/invites", {
+      req("/api/w/ws_1/docs/doc-one/invites", {
         method: "POST",
         body: JSON.stringify({ email: "x@y.com", role: "viewer" }),
       }),
@@ -343,7 +344,7 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
   test("AS-024: viewer → 403 (cannot invite, toggle on)", async () => {
     const app = buildApp({ resolveDocRole: asViewer, loadShareConfig: shareToggleOn });
     const res = await app.handle(
-      req("/api/docs/doc-one/invites", {
+      req("/api/w/ws_1/docs/doc-one/invites", {
         method: "POST",
         body: JSON.stringify({ email: "x@y.com", role: "viewer" }),
       }),
@@ -354,7 +355,7 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
   test("no session → 401", async () => {
     const app = buildApp({ resolveSession: noSession });
     const res = await app.handle(
-      req("/api/docs/doc-one/invites", {
+      req("/api/w/ws_1/docs/doc-one/invites", {
         method: "POST",
         body: JSON.stringify({ email: "x@y.com", role: "viewer" }),
       }),
@@ -365,7 +366,7 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
   test("missing doc → 404", async () => {
     const app = buildApp({ doc: null });
     const res = await app.handle(
-      req("/api/docs/nope/invites", {
+      req("/api/w/ws_1/docs/nope/invites", {
         method: "POST",
         body: JSON.stringify({ email: "x@y.com", role: "viewer" }),
       }),
@@ -376,7 +377,7 @@ describe("POST /api/docs/:slug/invites (S-003)", () => {
   test("invalid email → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({});
     const res = await app.handle(
-      req("/api/docs/doc-one/invites", {
+      req("/api/w/ws_1/docs/doc-one/invites", {
         method: "POST",
         body: JSON.stringify({ email: "not-an-email", role: "viewer" }),
       }),
@@ -391,7 +392,7 @@ describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
   test("AS-023: editor with editors_can_share OFF → 403 (before any DB write)", async () => {
     const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOff });
     const res = await app.handle(
-      req("/api/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
+      req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
     );
     expect(res.status).toBe(403);
   });
@@ -399,7 +400,7 @@ describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
   test("AS-024: viewer → 403 (cannot set link controls)", async () => {
     const app = buildApp({ resolveDocRole: asViewer, loadShareConfig: shareToggleOn });
     const res = await app.handle(
-      req("/api/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
+      req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
     );
     expect(res.status).toBe(403);
   });
@@ -407,7 +408,7 @@ describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
   test("no session → 401", async () => {
     const app = buildApp({ resolveSession: noSession });
     const res = await app.handle(
-      req("/api/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
+      req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
     );
     expect(res.status).toBe(401);
   });
@@ -415,7 +416,7 @@ describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
   test("missing doc → 404", async () => {
     const app = buildApp({ doc: null });
     const res = await app.handle(
-      req("/api/docs/nope/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
+      req("/api/w/ws_1/docs/nope/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
     );
     expect(res.status).toBe(404);
   });
@@ -423,7 +424,7 @@ describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
   test("bad body (viewLimit not positive) → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({});
     const res = await app.handle(
-      req("/api/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 0 }) }),
+      req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 0 }) }),
     );
     expect(res.status).toBe(400);
   });

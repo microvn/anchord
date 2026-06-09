@@ -45,6 +45,8 @@ export interface SearchInput {
   userId: string;
   /** Optional project scope (AS-010). */
   projectId?: string;
+  /** workspaces S-006/C-002: the path workspace; search is scoped to docs in it. */
+  workspaceId: string;
 }
 
 /**
@@ -99,6 +101,7 @@ export async function search(input: SearchInput, deps: SearchDeps): Promise<Sear
     text,
     userId: input.userId,
     projectId: input.projectId,
+    workspaceId: input.workspaceId,
     limit: cap + 1,
   });
 

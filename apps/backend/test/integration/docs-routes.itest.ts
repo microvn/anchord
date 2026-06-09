@@ -15,17 +15,20 @@ import { docVersions, docs, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import { MAX_TEXT_BYTES } from "../../src/publish/sniff";
-import type { SessionResolver } from "../../src/http/auth-gate";
-import { withMigratedDb, type MigratedDb } from "./harness";
+import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
+import { createPublishProjectResolver } from "../../src/workspace/repo";
+import { withMigratedDb, seedWorkspace, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
 // A real better-auth-shaped TEXT id (NOT a uuid). owner_id/published_by FK → user.id,
 // which is text — seeding + writing this proves C-007 end-to-end on real Postgres.
 const OWNER_ID = "u_owner1";
 const member: SessionResolver = async () => ({ userId: OWNER_ID });
+let WS = "";
+const asMember: WorkspaceRoleResolver = async () => "member";
 
 function post(body: unknown) {
-  return new Request("http://localhost/api/docs", {
+  return new Request(`http://localhost/api/w/${WS}/docs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -45,9 +48,15 @@ describe.skipIf(!RUN)("POST /api/docs (real Postgres)", () => {
       name: "Owner One",
       email: "owner1@example.com",
     });
+    ({ workspaceId: WS } = await seedWorkspace(h.db, { userId: OWNER_ID, withProject: true }));
     app = createApp({
       dbCheck: async () => {},
-      docs: { repo: createDocRepo(h.db), resolveSession: member },
+      docs: {
+        repo: createDocRepo(h.db),
+        resolveSession: member,
+        resolveWorkspaceRole: asMember,
+        resolveProjectId: createPublishProjectResolver(h.db),
+      },
     });
   });
 
@@ -106,7 +115,11 @@ describe.skipIf(!RUN)("POST /api/docs (real Postgres)", () => {
   test("AS-002 / C-002: a publish with no session is refused (401) and writes nothing", async () => {
     const noSessionApp = createApp({
       dbCheck: async () => {},
-      docs: { repo: createDocRepo(h.db), resolveSession: async () => null },
+      docs: {
+        repo: createDocRepo(h.db),
+        resolveSession: async () => null,
+        resolveWorkspaceRole: asMember,
+      },
     });
     const before = await h.db.select().from(docs);
     const res = await noSessionApp.handle(post({ content: "# nope", title: "No Session" }));

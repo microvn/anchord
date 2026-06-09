@@ -29,7 +29,8 @@ import { appendVersion, restoreVersion } from "../../src/services/version";
 import { createVersionRepo } from "../../src/services/version-repo";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
-import { createWorkspaceRepo, createProjectRepo } from "../../src/workspace/repo";
+import { createProjectRepo } from "../../src/workspace/repo";
+import { createTenancyRepo, createWorkspaceAccess } from "../../src/workspace/tenancy-repo";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
@@ -37,7 +38,7 @@ const SECRET = "x".repeat(32);
 const BASE_URL = "http://localhost";
 
 function makeAuth(db: MigratedDb["db"]) {
-  const workspaceRepo = createWorkspaceRepo(db);
+  const tenancyRepo = createTenancyRepo(db);
   const projectRepo = createProjectRepo(db);
   return betterAuth({
     secret: SECRET,
@@ -48,7 +49,7 @@ function makeAuth(db: MigratedDb["db"]) {
       user: {
         create: {
           after: async (createdUser: { id: string }) => {
-            await onUserCreated(createdUser.id, workspaceRepo, projectRepo);
+            await onUserCreated(createdUser.id, tenancyRepo, projectRepo);
           },
         },
       },
@@ -93,6 +94,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
   let app: ReturnType<typeof createApp>;
   let A: { userId: string; cookie: string };
   let X: { userId: string; cookie: string };
+  let WA = "";
   let billingId: string;
 
   async function signUpAndIn(email: string, name: string) {
@@ -107,14 +109,14 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
   }
 
   async function publish(cookie: string, body: Record<string, unknown>): Promise<string> {
-    const pub = await app.handle(withCookie("/api/docs", cookie, "POST", body));
+    const pub = await app.handle(withCookie(`/api/w/${WA}/docs`, cookie, "POST", body));
     expect(pub.status).toBe(201);
     return ((await pub.json()) as any).data.docId;
   }
 
   async function searchAs(cookie: string, q: string, projectId?: string) {
     const qs = `q=${encodeURIComponent(q)}${projectId ? `&projectId=${projectId}` : ""}`;
-    const res = await app.handle(withCookie(`/api/search?${qs}`, cookie));
+    const res = await app.handle(withCookie(`/api/w/${WA}/search?${qs}`, cookie));
     expect(res.status).toBe(200);
     return (await res.json()) as any;
   }
@@ -122,28 +124,31 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
   beforeAll(async () => {
     h = await withMigratedDb();
     const auth = makeAuth(h.db);
+    const wsAccess = createWorkspaceAccess(h.db);
+    const resolveWorkspaceRole = (wsId: string, userId: string) => wsAccess.workspaceRoleOf(wsId, userId);
     app = createApp({
       dbCheck: async () => {},
       authHandler: auth.handler,
-      setup: { db: h.db, resolveSession: betterAuthSessionResolver(auth) },
-      projects: { db: h.db, resolveSession: betterAuthSessionResolver(auth) },
-      docs: { db: h.db, resolveSession: betterAuthSessionResolver(auth) },
-      search: { db: h.db, resolveSession: betterAuthSessionResolver(auth) },
+      projects: { db: h.db, resolveSession: betterAuthSessionResolver(auth), resolveWorkspaceRole },
+      docs: { db: h.db, resolveSession: betterAuthSessionResolver(auth), resolveWorkspaceRole },
+      search: { db: h.db, resolveSession: betterAuthSessionResolver(auth), resolveWorkspaceRole },
     });
 
     A = await signUpAndIn(`s5a-${process.pid}@itest.local`, "Alice");
-    const setup = await app.handle(
-      withCookie("/api/setup", A.cookie, "POST", {
-        name: "Acme",
-        settings: { providers: { github: false, google: false } },
-      }),
-    );
-    expect(setup.status).toBe(201);
+    const [waRow] = await h.db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(eq(schema.workspaceMembers.userId, A.userId));
+    WA = waRow!.workspaceId;
 
     X = await signUpAndIn(`s5x-${process.pid}@itest.local`, "Xavier");
+    // X is invited into A's workspace so the anyone_in_workspace docs are visible to X (S-006).
+    await h.db
+      .insert(schema.workspaceMembers)
+      .values({ workspaceId: WA, userId: X.userId, role: "member" });
 
     // A creates project "Billing".
-    const create = await app.handle(withCookie("/api/projects", A.cookie, "POST", { name: "Billing" }));
+    const create = await app.handle(withCookie(`/api/w/${WA}/projects`, A.cookie, "POST", { name: "Billing" }));
     expect(create.status).toBe(201);
     billingId = ((await create.json()) as any).data.id;
 

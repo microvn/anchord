@@ -15,7 +15,12 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { apiEnvelope } from "../http/envelope";
-import { requireSession, type SessionResolver } from "../http/auth-gate";
+import {
+  requireSession,
+  requireWorkspaceMember,
+  type SessionResolver,
+  type WorkspaceRoleResolver,
+} from "../http/auth-gate";
 import { validateBody } from "../http/validate";
 import { search, SearchRejected, type SearchDeps } from "../search/search";
 import { createSearchRepo, type SearchRepo } from "../search/search-repo";
@@ -33,6 +38,8 @@ export interface SearchRoutesDeps {
   /** Pre-built FTS repo (tests). Wins over `db`. */
   repo?: SearchRepo;
   resolveSession: SessionResolver;
+  /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
+  resolveWorkspaceRole: WorkspaceRoleResolver;
 }
 
 export function searchRoutes(deps: SearchRoutesDeps) {
@@ -50,13 +57,16 @@ export function searchRoutes(deps: SearchRoutesDeps) {
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
-    .get("/api/search", async ({ query, actor }) => {
+    .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
+    .get("/api/w/:workspaceId/search", async ({ query, actor, ws }) => {
       // Validate the QUERY object (q + optional projectId). A blank q → 400 here OR
       // via the service's parseQuery; both surface as VALIDATION_ERROR.
       const { q, projectId } = validateBody(searchQuerySchema, query);
       try {
+        // workspaces S-006/C-002: search is scoped to the path workspace; only docs in
+        // THIS workspace (and only those the caller can access) are returned.
         const results = await search(
-          { q, userId: actor.userId, projectId },
+          { q, userId: actor.userId, projectId, workspaceId: ws.workspaceId },
           serviceDeps,
         );
         return { results };
