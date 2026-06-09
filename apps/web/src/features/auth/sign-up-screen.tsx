@@ -39,6 +39,15 @@ export function SignUpScreen() {
       email: values.email,
       password: values.password,
       name: values.email,
+      // AS-003: better-auth verifies the email link SERVER-SIDE then redirects to
+      // callbackURL resolved against the link's origin (the backend). Pass an ABSOLUTE URL
+      // to the SPA's own verified-landing so the user lands on the app, not the backend's
+      // raw API response. Origin-relative to window.location.origin → correct in dev (the
+      // :5173 dev server is a trusted origin) and prod (same origin).
+      callbackURL:
+        typeof window !== "undefined"
+          ? `${window.location.origin}/verify-email`
+          : "/verify-email",
     });
     if (res?.error) {
       // AS-005: an already-registered email is refused; better-auth returns an error and we

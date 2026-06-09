@@ -14,7 +14,10 @@ describe("web-core S-001 — C-004 same-origin typed client", () => {
     const vite = readFileSync(`${root}vite.config.ts`, "utf8");
     expect(vite).toContain('"/api"');
     expect(vite).toMatch(/proxy/);
-    expect(vite).toContain("localhost:3000");
+    // Proxies /api to the local backend. Port-agnostic: the dev backend port is config
+    // (it moved 3000→3007 to match the running dev/E2E server), so assert the localhost
+    // target, not a hardcoded port that drifts.
+    expect(vite).toMatch(/target:\s*["']http:\/\/localhost:\d+["']/);
   });
 
   it("C-004: the Eden typed client is created with credentials 'include' (sends the session cookie)", () => {

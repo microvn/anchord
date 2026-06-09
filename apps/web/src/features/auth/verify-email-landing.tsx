@@ -29,6 +29,10 @@ export function VerifyEmailLanding() {
     let cancelled = false;
     async function run() {
       // AS-004: a link with no token at all is invalid (recoverable), never a crash.
+      // NOTE (spec signal): better-auth verifies the email link SERVER-SIDE and 302s to
+      // callbackURL WITHOUT a token, so in the real flow this landing is reached
+      // token-less as a SUCCESS. That contradicts AS-004's "no token → invalid". Left as
+      // spec-defined for now; see the report's spec-signal note.
       if (!token) {
         if (!cancelled) setStatus("invalid");
         return;
