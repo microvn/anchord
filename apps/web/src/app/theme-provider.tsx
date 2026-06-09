@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 // S-003 / AS-011: dark is the canonical theme. "Dark is the default" is made an explicit,
 // assertable fact here — not an accident of CSS. On first load with no saved preference we
@@ -31,10 +31,40 @@ export function applyTheme(theme: Theme) {
   root.style.colorScheme = theme;
 }
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  useEffect(() => {
-    applyTheme(resolveTheme(readSavedTheme()));
-  }, []);
+function writeSavedTheme(theme: Theme) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, theme);
+  } catch {
+    // ignore — a blocked storage just means the preference doesn't persist this session.
+  }
+}
 
-  return <>{children}</>;
+// S-005 (AS-018): the header theme toggle reads the current theme and flips it dark↔light.
+// The provider owns the live theme STATE (so the toggle re-renders its glyph) and stamps the
+// root via applyTheme — the same mechanism S-003 uses on load, so dark stays canonical.
+interface ThemeContextValue {
+  theme: Theme;
+  toggleTheme: () => void;
+}
+const ThemeContext = createContext<ThemeContextValue | null>(null);
+
+// Reads the live theme + the toggle. Safe outside a provider (returns the canonical default
+// and a no-op) so a bare component render in a test doesn't crash.
+export function useTheme(): ThemeContextValue {
+  return useContext(ThemeContext) ?? { theme: DEFAULT_THEME, toggleTheme: () => {} };
+}
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setTheme] = useState<Theme>(() => resolveTheme(readSavedTheme()));
+
+  // Apply on mount + whenever the theme changes (covers the S-003 load-default AND the toggle).
+  useEffect(() => {
+    applyTheme(theme);
+    writeSavedTheme(theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+
+  return <ThemeContext.Provider value={{ theme, toggleTheme }}>{children}</ThemeContext.Provider>;
 }

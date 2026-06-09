@@ -2,6 +2,7 @@ import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // ── Mock the better-auth client (auth-client.ts) — tests NEVER hit a real backend.
 // A real browser↔backend round-trip is [→E2E] (Playwright), deferred. Here signIn/
@@ -38,21 +39,42 @@ mock.module("../src/features/auth/client", () => ({
   acceptDocInvite: mock(async () => ({ data: { success: true, data: { status: "active" } }, error: null })),
 }));
 
+// web-core S-005: the AppShell now hosts AppHeader, which reads the /api/me bootstrap through the
+// shared client. Mock the workspaces client so the authenticated-shell renders (AS-002/AS-005)
+// resolve the bootstrap to an empty workspace set without a backend.
+const wsEnv = (body: unknown) => ({ data: { success: true, data: body }, error: null });
+mock.module("../src/features/workspaces/client", () => ({
+  fetchBootstrap: mock(async () => wsEnv({ userId: "me", workspaces: [], activeWorkspaceId: null })),
+  setActiveWorkspace: mock(async () => wsEnv({})),
+  fetchMembers: mock(async () => wsEnv({ members: [], invitations: [] })),
+  createWorkspace: mock(async () => wsEnv({})),
+  renameWorkspace: mock(async () => wsEnv({})),
+  inviteMember: mock(async () => wsEnv({})),
+  removeMember: mock(async () => wsEnv({})),
+  changeMemberRole: mock(async () => wsEnv({})),
+  acceptInvitation: mock(async () => wsEnv({})),
+  rejectInvitation: mock(async () => wsEnv({})),
+}));
+
 // Imported AFTER the mock is registered so they bind to the mocked auth-client.
 const { SignInScreen } = await import("../src/features/auth/sign-in-screen");
 const { AuthGuard } = await import("../src/app/auth-guard");
 const { AppShell } = await import("../src/app/app-shell");
 
 function ProtectedApp() {
+  // The shell's AppHeader reads the bootstrap via the shared client → needs a QueryClient.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return (
-    <Routes>
-      <Route path="/signin" element={<SignInScreen />} />
-      <Route element={<AuthGuard />}>
-        <Route element={<AppShell />}>
-          <Route index element={<div>Welcome to your workspace</div>} />
+    <QueryClientProvider client={queryClient}>
+      <Routes>
+        <Route path="/signin" element={<SignInScreen />} />
+        <Route element={<AuthGuard />}>
+          <Route element={<AppShell />}>
+            <Route index element={<div>Welcome to your workspace</div>} />
+          </Route>
         </Route>
-      </Route>
-    </Routes>
+      </Routes>
+    </QueryClientProvider>
   );
 }
 

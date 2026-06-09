@@ -1,6 +1,6 @@
 import { cloneElement, isValidElement, useState, type ReactElement, type ReactNode } from "react";
 import { Outlet } from "react-router-dom";
-import { UserMenu } from "./user-menu";
+import { AppHeader } from "./app-header";
 import { isCompact, useBreakpoint } from "../lib/use-breakpoint";
 
 // AppShell (web-core S-001 chrome, S-003 design-system + responsive, S-004 left sidebar). The
@@ -46,25 +46,26 @@ export function AppShell({ sidebarSlot }: { sidebarSlot?: ReactNode }) {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* HEADER (thin, low-contrast — chrome recedes). Drawer toggle (compact) + account right. */}
-        <header className="flex items-center justify-between border-b border-line bg-surface px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            {compact && (
-              <button
-                type="button"
-                aria-label="Open navigation"
-                aria-expanded={drawerOpen}
-                data-testid="drawer-toggle"
-                onClick={() => setDrawerOpen((v) => !v)}
-                className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-md border border-line bg-surface text-ink hover:border-accent"
-              >
-                <span aria-hidden="true">≡</span>
-              </button>
-            )}
-            <span className="font-serif text-base tracking-tight text-ink">anchord</span>
+        {/* HEADER (thin, low-contrast — chrome recedes). The mobile drawer toggle sits on the
+            left; AppHeader (S-005) carries the breadcrumb + the account/utilities cluster. The
+            account (avatar menu + sign-out) lives here, not the sidebar (C-005); the switcher
+            never appears here (it's the sidebar's single anchor, C-005 / AS-018.T2). */}
+        <header className="flex items-center gap-2 border-b border-line bg-surface px-4 py-2.5">
+          {compact && (
+            <button
+              type="button"
+              aria-label="Open navigation"
+              aria-expanded={drawerOpen}
+              data-testid="drawer-toggle"
+              onClick={() => setDrawerOpen((v) => !v)}
+              className="flex min-h-[40px] min-w-[40px] shrink-0 items-center justify-center rounded-md border border-line bg-surface text-ink hover:border-accent"
+            >
+              <span aria-hidden="true">≡</span>
+            </button>
+          )}
+          <div className="min-w-0 flex-1">
+            <AppHeader />
           </div>
-          {/* Account (avatar/menu + sign-out) lives in the header, not the sidebar (C-005). */}
-          <UserMenu />
         </header>
 
         <main className="min-w-0 flex-1" data-testid="app-content">

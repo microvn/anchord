@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useSyncExternalStore } from "react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // web-core S-001 AS-002 / auth-ui sign-in success → enters the app.
 //
@@ -67,20 +68,40 @@ mock.module("../src/features/auth/client", () => ({
   acceptDocInvite: mock(async () => ({ data: { success: true, data: { status: "active" } }, error: null })),
 }));
 
+// web-core S-005: the AppShell hosts AppHeader, which reads the /api/me bootstrap through the
+// shared client → mock it so the authenticated shell resolves without a backend.
+const wsEnv = (body: unknown) => ({ data: { success: true, data: body }, error: null });
+mock.module("../src/features/workspaces/client", () => ({
+  fetchBootstrap: mock(async () => wsEnv({ userId: "me", workspaces: [], activeWorkspaceId: null })),
+  setActiveWorkspace: mock(async () => wsEnv({})),
+  fetchMembers: mock(async () => wsEnv({ members: [], invitations: [] })),
+  createWorkspace: mock(async () => wsEnv({})),
+  renameWorkspace: mock(async () => wsEnv({})),
+  inviteMember: mock(async () => wsEnv({})),
+  removeMember: mock(async () => wsEnv({})),
+  changeMemberRole: mock(async () => wsEnv({})),
+  acceptInvitation: mock(async () => wsEnv({})),
+  rejectInvitation: mock(async () => wsEnv({})),
+}));
+
 const { SignInScreen } = await import("../src/features/auth/sign-in-screen");
 const { AuthGuard } = await import("../src/app/auth-guard");
 const { AppShell } = await import("../src/app/app-shell");
 
 function ProtectedApp() {
+  // The shell's AppHeader reads the bootstrap via the shared client → needs a QueryClient.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return (
-    <Routes>
-      <Route path="/signin" element={<SignInScreen />} />
-      <Route element={<AuthGuard />}>
-        <Route element={<AppShell />}>
-          <Route index element={<div>Welcome to your workspace</div>} />
+    <QueryClientProvider client={queryClient}>
+      <Routes>
+        <Route path="/signin" element={<SignInScreen />} />
+        <Route element={<AuthGuard />}>
+          <Route element={<AppShell />}>
+            <Route index element={<div>Welcome to your workspace</div>} />
+          </Route>
         </Route>
-      </Route>
-    </Routes>
+      </Routes>
+    </QueryClientProvider>
   );
 }
 

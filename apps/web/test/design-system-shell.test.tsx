@@ -2,8 +2,27 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { render, screen, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+
+// web-core S-005 added the header AppHeader, which reads the /api/me bootstrap through the shared
+// client — so the shell now needs a QueryClient + the workspaces client mocked even for the bare
+// chrome tests. Mock the client so the bootstrap read resolves to an empty workspace set (the
+// S-003 chrome assertions don't depend on its data).
+const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
+mock.module("../src/features/workspaces/client", () => ({
+  fetchBootstrap: mock(async () => env({ userId: "me", workspaces: [], activeWorkspaceId: null })),
+  setActiveWorkspace: mock(async () => env({})),
+  fetchMembers: mock(async () => env({ members: [], invitations: [] })),
+  createWorkspace: mock(async () => env({})),
+  renameWorkspace: mock(async () => env({})),
+  inviteMember: mock(async () => env({})),
+  removeMember: mock(async () => env({})),
+  changeMemberRole: mock(async () => env({})),
+  acceptInvitation: mock(async () => env({})),
+  rejectInvitation: mock(async () => env({})),
+}));
 
 // Mock the auth client so AppShell's UserMenu (which imports signOut) renders without a backend.
 mock.module("../src/lib/auth-client", () => ({
@@ -34,10 +53,13 @@ function setWidth(width: number) {
 }
 
 function renderShell() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={["/"]}>
-      <AppShell />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/"]}>
+        <AppShell />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -93,9 +115,11 @@ describe("web-core S-003 — chrome uses the design system (AS-009)", () => {
     // Chrome surfaces/lines come from the @theme token classes (bg-surface, border-line).
     expect(banner.className).toContain("bg-surface");
     expect(banner.className).toContain("border-line");
-    // The Fraunces serif is applied to the wordmark (DESIGN.md: serif for title/headings).
-    const wordmark = within(banner).getByText("anchord");
-    expect(wordmark.className).toContain("font-serif");
+    // web-core S-005 moved the brand wordmark into the SIDEBAR (S-004) and made the header-left
+    // the breadcrumb (DESIGN.md §App shell). So the banner now hosts the AppHeader (breadcrumb +
+    // account cluster), not the wordmark — assert the header mounted here. The Fraunces serif
+    // wiring is covered by the @theme/CSS assertion below.
+    expect(within(banner).getByTestId("header-breadcrumb")).toBeInTheDocument();
   });
 
   it("AS-009 / C-003: the @theme token set and chrome contain NO banned colors (no Claude-orange, no purple/violet)", () => {
