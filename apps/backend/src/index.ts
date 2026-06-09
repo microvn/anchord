@@ -11,6 +11,8 @@ import {
 import { createProjectsRouteRepo } from "./workspace/repo";
 import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport } from "./auth/mail-transport";
+import { createDocMemberRepo, findUserById } from "./sharing/doc-member-repo";
+import { createDocMembersPendingInviteRepo } from "./sharing/invite";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -27,11 +29,25 @@ const trustedOrigins = [
   ...(cfg.NODE_ENV === "development" ? ["http://localhost:5173"] : []),
 ];
 
+// Shared mail queue + the transport selected from cfg.email (the same provider auth,
+// invites, and notify all use). Built here (before createAuth) so the auth
+// emailVerification block can enqueue verify mail through the same retry/dead-letter path.
+const mailQueue = new MailQueue();
+const mailTransport = createMailTransport(cfg.email);
+
+// AS-008: the concrete pending-invite repo (sharing-permissions doc_members glue) that
+// auth's afterEmailVerification hook drives to activate invites on email verification.
+const pendingInviteRepo = createDocMembersPendingInviteRepo(createDocMemberRepo(db));
+
 const auth = createAuth(db, {
   secret: cfg.APP_SECRET,
   baseURL: `http://localhost:${cfg.PORT}`,
   oauth: cfg.oauth,
   trustedOrigins,
+  // AS-001/AS-012: send a verification email on sign-up (fixes the live bug where
+  // requireEmailVerification:true had no sender → sign-in was permanently blocked).
+  // AS-008: on verification, activate any pending invite for that exact email.
+  emailVerification: { queue: mailQueue, transport: mailTransport, pendingInviteRepo },
 });
 
 const resolveSession = betterAuthSessionResolver(auth);
@@ -95,14 +111,12 @@ const sharingResolveDocRole = createResolveDocRole(db, {
   isWorkspaceMember,
 });
 
-// workspace-project S-006 notify-on-reply (AS-011 / C-004): the shared MailQueue +
-// the selected transport (resolved from cfg.email — the same provider auth uses). The
-// notify path only ENQUEUES one mail per recipient; we drive delivery to a terminal
-// state in the BACKGROUND (best-effort, post-commit) so a slow/failing transport never
-// blocks the HTTP reply. A failed send dead-letters in the queue (operator-visible),
-// never surfaced to the replier — matching notifyOnReply's best-effort contract.
-const mailQueue = new MailQueue();
-const mailTransport = createMailTransport(cfg.email);
+// workspace-project S-006 notify-on-reply (AS-011 / C-004): reuse the shared MailQueue +
+// transport (built above). The notify path only ENQUEUES one mail per recipient; we drive
+// delivery to a terminal state in the BACKGROUND (best-effort, post-commit) so a
+// slow/failing transport never blocks the HTTP reply. A failed send dead-letters in the
+// queue (operator-visible), never surfaced to the replier — matching notifyOnReply's
+// best-effort contract.
 const notifyMail = {
   enqueue(msg: { to: string; subject: string; body: string }): string {
     const id = mailQueue.enqueue(msg);
@@ -171,9 +185,9 @@ const app = createApp({
     isWorkspaceAdmin,
   },
   // sharing-permissions S-001/S-003/S-004: owner-only access/invites/link controls.
-  // Owner gate reads the concrete resolver (owner source still seamed to false — see
-  // above). Mail wiring is omitted here; the prod enqueueInvite degrades to a no-op
-  // transport until the mail cluster wires the live transport selection.
+  // Owner gate reads the concrete resolver. The invite mail now flows through the shared
+  // queue + transport, and the pending-invite mail carries a real accept-link minted with
+  // APP_SECRET (AS-011) so the invitee can join even if the verify/invite email fails.
   sharing: {
     db,
     resolveSession,
@@ -187,6 +201,20 @@ const app = createApp({
     // owner is REMOVED from the workspace they can no longer manage its sharing; the admin
     // becomes the fallback manager and can change the doc's general access.
     isWorkspaceAdmin,
+    // AS-011/C-009: real invite mail + the secret the accept-link token is minted with.
+    mailQueue,
+    mailTransport,
+    secret: cfg.APP_SECRET,
+  },
+  // auth S-005 (AS-011 / harden H6): the invite accept-link endpoint. The accepting
+  // email is resolved from the session actor (findUserById over the user table), never
+  // the body; the token is verified against APP_SECRET. Email-independent of any mail.
+  invite: {
+    db,
+    resolveSession,
+    pendingInviteRepo,
+    resolveActorEmail: (userId: string) => findUserById(db, userId),
+    secret: cfg.APP_SECRET,
   },
 }).listen(cfg.PORT);
 

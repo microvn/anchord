@@ -4,6 +4,7 @@ import {
   SIGNIN_RATE_LIMIT_MAX,
   SIGNIN_RATE_LIMIT_WINDOW_SECONDS,
 } from "./auth";
+import { MailQueue, type MailTransport } from "./mail-queue";
 import type { DB } from "../db/client";
 
 // The live sign up / sign in / cookie flow needs a real Postgres + HTTP → that is
@@ -90,4 +91,37 @@ test("AS-001: a session-signing secret is wired (APP_SECRET → cookie signing)"
   // The httpOnly session cookie is signed with APP_SECRET (C-001 / spec). The secret
   // passed to createAuth must be the one the instance uses.
   expect(auth.options.secret).toBe("x".repeat(32));
+});
+
+test("AS-001/AS-012: without mail deps, NO emailVerification block is added (the pure config)", () => {
+  // The base instance (no mail deps) omits emailVerification — so this unit test, and any
+  // caller that doesn't need live mail, builds a clean config. Production wires the block.
+  expect(auth.options.emailVerification).toBeUndefined();
+});
+
+test("AS-001/AS-012/AS-008: with mail deps, the emailVerification block sends on sign-up + activates invites on verify", () => {
+  // The LIVE-BUG fix: requireEmailVerification:true with no sender permanently blocks
+  // sign-in. When mail deps are supplied, createAuth wires sendVerificationEmail +
+  // sendOnSignUp (so verify mail is actually sent — AS-001/AS-012) and
+  // afterEmailVerification (so a pending invite for that email activates — AS-008).
+  const queue = new MailQueue();
+  const transport: MailTransport = { async send() {} };
+  const pendingInviteRepo = {
+    async findPendingByEmail() {
+      return [];
+    },
+    async activate() {},
+  };
+  const wired = createAuth(stubDb, {
+    secret: "x".repeat(32),
+    baseURL: "http://localhost:3000",
+    emailVerification: { queue, transport, pendingInviteRepo },
+  });
+  const ev = wired.options.emailVerification;
+  expect(ev).toBeDefined();
+  expect(ev?.sendOnSignUp).toBe(true);
+  expect(typeof ev?.sendVerificationEmail).toBe("function");
+  expect(typeof ev?.afterEmailVerification).toBe("function");
+  // requireEmailVerification is still on — the block is what makes that gate completable.
+  expect(wired.options.emailAndPassword?.requireEmailVerification).toBe(true);
 });

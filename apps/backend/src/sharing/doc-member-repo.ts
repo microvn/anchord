@@ -19,6 +19,7 @@ import { docMembers, user } from "../db/schema";
 import type { DB } from "../db/client";
 import { normalizeEmail } from "../auth/invite";
 import { buildAcceptLink } from "../auth/invite";
+import { mintInviteToken } from "../auth/invite-token";
 import { sendInviteEmail } from "../auth/mail-transport";
 import type { MailQueue, MailTransport } from "../auth/mail-queue";
 import type { DocMemberRepo, DocMemberRow, NewDocMember, EnqueuedInvite } from "./invite";
@@ -98,11 +99,31 @@ export async function findUserByEmail(db: DB, email: string): Promise<{ id: stri
 }
 
 /**
+ * Resolve a user's verified email by id over the better-auth `user` table. Used by the
+ * invite accept-link route (auth S-005, AS-011) to derive the accepting email + verified
+ * flag from the SESSION actor — never the request body (anti-forgery). Null = no such user.
+ */
+export async function findUserById(
+  db: DB,
+  userId: string,
+): Promise<{ email: string; emailVerified: boolean } | null> {
+  const [row] = await db
+    .select({ email: user.email, emailVerified: user.emailVerified })
+    .from(user)
+    .where(eq(user.id, userId));
+  return row ?? null;
+}
+
+/**
  * Build the invite.ts `enqueueInvite` port backed by the real mail queue + transport.
  * On a pending invite it sends the accept-link mail; on an active invite (existing
- * account) it sends the "you've been granted access" notify mail. The accept link
- * uses a placeholder token — the real token issuance is an auth seam (invite.ts owns
- * buildAcceptLink); delivery flows through the queue's retry/dead-letter path.
+ * account) it sends the "you've been granted access" notify mail.
+ *
+ * AS-011 / C-009: the accept link now carries the REAL pending-invite id (msg.inviteId)
+ * and a REAL token minted from APP_SECRET (invite-token.ts), so the link in the mail
+ * points at this exact invite and is verifiable server-side by the accept route — no
+ * placeholder. The email-independent join path is the belt-and-braces against a failing
+ * transport; delivery itself flows through the queue's retry/dead-letter path.
  *
  * The send is fire-and-forget from the synchronous port (the service calls it without
  * await); failures are owned by the queue's dead-letter machinery, not the request.
@@ -110,12 +131,11 @@ export async function findUserByEmail(db: DB, email: string): Promise<{ id: stri
 export function createEnqueueInvite(
   queue: MailQueue,
   transport: MailTransport,
+  secret: string,
 ): (msg: EnqueuedInvite) => void {
   return (msg: EnqueuedInvite) => {
-    // Both kinds get an invite mail; the accept link is the belt-and-braces path so
-    // an invitee can still join even if a notify is missed. Token wiring is the auth
-    // seam — a placeholder keeps the link well-formed until auth issues real tokens.
-    const acceptLink = buildAcceptLink("pending", "token-pending");
+    const token = mintInviteToken(msg.inviteId, secret);
+    const acceptLink = buildAcceptLink(msg.inviteId, token);
     void sendInviteEmail(queue, transport, { to: msg.email, acceptLink });
   };
 }

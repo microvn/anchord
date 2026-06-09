@@ -109,6 +109,13 @@ export interface SharingRoutesDeps {
   /** Mail wiring for the real enqueueInvite (prod). Omitted in tests (enqueueInvite injected). */
   mailQueue?: MailQueue;
   mailTransport?: MailTransport;
+  /**
+   * APP_SECRET — keys the accept-link token the invite mail carries (AS-011/C-009). Only
+   * read when building the real enqueueInvite from `db`+mail; tests inject `enqueueInvite`
+   * directly so they never need it. Defaults to a constant when omitted (link is still
+   * well-formed; prod always passes the real secret).
+   */
+  secret?: string;
 }
 
 export function sharingRoutes(deps: SharingRoutesDeps) {
@@ -124,12 +131,13 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
 
   // invite.ts's findUserByEmail port is SYNC; over Drizzle it must be async. We resolve
   // it per-request in the handler (await) and pass a resolved closure to the service.
+  const inviteSecret = deps.secret ?? "anchord-invite-token";
   const enqueueInvite =
     deps.enqueueInvite ??
     (deps.mailQueue && deps.mailTransport
-      ? createEnqueueInvite(deps.mailQueue, deps.mailTransport)
+      ? createEnqueueInvite(deps.mailQueue, deps.mailTransport, inviteSecret)
       : deps.db
-        ? createEnqueueInvite(new MailQueue(), noopTransport())
+        ? createEnqueueInvite(new MailQueue(), noopTransport(), inviteSecret)
         : need("enqueueInvite"));
 
   /** Resolve :slug → a visible DocLookup or throw 404 (existence-hiding, C-006). */

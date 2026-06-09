@@ -23,6 +23,8 @@ import type { DB } from "../db/client";
 import * as schema from "../db/schema";
 import { MIN_PASSWORD_LENGTH } from "./password";
 import { activatePendingInvites, type PendingInviteRepo } from "./invite";
+import { makeSendVerificationEmail } from "./mail-transport";
+import type { MailQueue, MailTransport } from "./mail-queue";
 import { oauthEmailVerified, type OAuthProvider } from "./oauth";
 import { addMemberOnSignup, type WorkspaceRepo } from "../workspace/setup";
 import { createWorkspaceRepo, createProjectRepo } from "../workspace/repo";
@@ -96,6 +98,34 @@ export type CreateAuthOptions = {
    * the baseURL origin only.
    */
   trustedOrigins?: string[];
+  /**
+   * Email-verification wiring (auth S-001/S-005 — AS-001/AS-008/AS-012). When present,
+   * createAuth adds better-auth's `emailVerification` block so:
+   *  - sign-up sends a verification email (`sendOnSignUp`) via the shared mail queue +
+   *    selected transport — without this, requireEmailVerification:true permanently
+   *    blocks sign-in because no verify mail is ever sent.
+   *  - on verification, any pending workspace/doc invite issued to that exact email is
+   *    activated (afterEmailVerification → onEmailVerified → activatePendingInvites).
+   *
+   * Optional so the pure unit test (and any caller that does not need live mail) builds
+   * the instance without an emailVerification block. Production (index.ts) always wires it.
+   */
+  emailVerification?: {
+    /** Shared mail queue (retry/dead-letter) — verify mail flows through it. */
+    queue: MailQueue;
+    /** Selected transport (Resend/SMTP) resolved from the configured provider. */
+    transport: MailTransport;
+    /** Concrete pending-invite repo (sharing-permissions doc_members glue). */
+    pendingInviteRepo: PendingInviteRepo;
+  };
+  /**
+   * Sign-in rate limiting (C-007). Defaults to ENABLED — production never sets this. It
+   * exists only so the integration suite, which drives many sign-up/sign-in calls in a
+   * single 15-minute window against one in-process instance, can turn the brute-force
+   * limiter off (it would otherwise 429 the test's own legitimate calls). Prod keeps the
+   * limiter on; this is a test seam, not a relitigation of C-007.
+   */
+  rateLimitEnabled?: boolean;
 };
 
 /**
@@ -140,10 +170,34 @@ function socialProvidersFrom(oauth: CreateAuthOptions["oauth"]) {
 export function createAuth(db: DB, opts: CreateAuthOptions) {
   const workspaceRepo = createWorkspaceRepo(db);
   const projectRepo = createProjectRepo(db);
+
+  // AS-001/AS-012 + AS-008: when mail deps are supplied, build the emailVerification
+  // block. sendVerificationEmail enqueues the verify mail through the shared queue +
+  // transport (makeSendVerificationEmail), sendOnSignUp fires it on sign-up (so a
+  // requireEmailVerification:true account can actually verify), and
+  // afterEmailVerification activates any pending invite for the now-verified email.
+  // better-auth v1.6.x callback shapes (verified against dist):
+  //   sendVerificationEmail({ user, url, token }, request)
+  //   afterEmailVerification(user, request)
+  const ev = opts.emailVerification;
+  const emailVerification = ev
+    ? {
+        sendOnSignUp: true,
+        sendVerificationEmail: makeSendVerificationEmail(ev.queue, ev.transport),
+        afterEmailVerification: async (verifiedUser: { id: string; email: string }) => {
+          // AS-008: the invite-on-verify glue. onEmailVerified runs activatePendingInvites
+          // with isVerified=true (better-auth has just confirmed it) so the invited role
+          // is granted on the matching doc. A non-matching email finds no invites (AS-009).
+          await onEmailVerified(verifiedUser.email, verifiedUser.id, ev.pendingInviteRepo);
+        },
+      }
+    : undefined;
+
   return betterAuth({
     secret: opts.secret,
     baseURL: opts.baseURL,
     ...(opts.trustedOrigins ? { trustedOrigins: opts.trustedOrigins } : {}),
+    ...(emailVerification ? { emailVerification } : {}),
     database: drizzleAdapter(db, { provider: "pg", schema }),
     // workspace-project S-001 (AS-002/C-001): after better-auth creates a user, add
     // them to the single workspace as `member` (no-op until first-run created the
@@ -166,8 +220,9 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
       minPasswordLength: MIN_PASSWORD_LENGTH,
     },
     // C-007: rate-limit sign-in against brute force. Default window/threshold per GAP-002.
+    // `enabled` defaults true (prod); only the integration test seam turns it off.
     rateLimit: {
-      enabled: true,
+      enabled: opts.rateLimitEnabled ?? true,
       window: SIGNIN_RATE_LIMIT_WINDOW_SECONDS,
       max: SIGNIN_RATE_LIMIT_MAX,
     },

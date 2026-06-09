@@ -11,6 +11,7 @@ import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
 import { membersRoutes, type MembersRoutesDeps } from "./routes/members";
 import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
 import { docMoveRoutes, type DocMoveRoutesDeps } from "./routes/doc-move";
+import { inviteRoutes, type InviteRoutesDeps } from "./routes/invite";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -105,6 +106,16 @@ export type AppDeps = {
    * resolver + the doc-scoped role resolver. Omit to leave these routes unmounted.
    */
   docMove?: DocMoveRoutesDeps;
+  /**
+   * auth S-005 (AS-011 / harden H6): enables the enveloped, session-gated POST
+   * /api/invite/accept. Accepts a pending invite via its shareable accept-link
+   * (inviteId + token from the link), email-independent of the verify/invite mail.
+   * The accepting email is the SERVER-resolved session actor's verified email, never
+   * the body. Provide a Drizzle handle (production) or a pre-built pending-invite repo
+   * (tests) + a session resolver + actor-email resolver + APP_SECRET. Omit to leave it
+   * unmounted.
+   */
+  invite?: InviteRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -221,6 +232,13 @@ export function createApp(deps: AppDeps) {
   // cluster's /api/docs/:slug/versions, so the two coexist on /api/docs/:slug.
   if (deps.docMove) {
     app.use(docMoveRoutes(deps.docMove));
+  }
+
+  // /api/invite/accept — auth S-005 (AS-011 / harden H6). Self-enveloped + session-gated,
+  // mounted outside /api/auth/*. Accepts a pending invite via its email-independent
+  // accept-link; the accepting email is the SERVER session actor's verified email (C-005).
+  if (deps.invite) {
+    app.use(inviteRoutes(deps.invite));
   }
 
   // /d/:slug — viewer shell (trusted app origin)

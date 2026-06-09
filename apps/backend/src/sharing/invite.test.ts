@@ -29,7 +29,7 @@ function setup(opts: { existingEmails?: string[] } = {}) {
   for (const e of opts.existingEmails ?? []) {
     accounts.set(e.trim().toLowerCase(), { id: `user_${++seq}` });
   }
-  const enqueued: Array<{ kind: "active" | "pending"; email: string }> = [];
+  const enqueued: Array<{ kind: "active" | "pending"; email: string; inviteId: string }> = [];
   const deps: InviteDeps = {
     findUserByEmail(email) {
       return accounts.get(email.trim().toLowerCase()) ?? null;
@@ -72,8 +72,8 @@ test("AS-007: invite an existing account → ACTIVE editor doc_members row + not
   });
   expect(rows[0].userId).toBe("user_1"); // bound to the existing account
 
-  // Notified: a mail was enqueued for that person.
-  expect(f.enqueued).toEqual([{ kind: "active", email: "dev@acme.com" }]);
+  // Notified: a mail was enqueued for that person, carrying the created row's id.
+  expect(f.enqueued).toEqual([{ kind: "active", email: "dev@acme.com", inviteId: rows[0].id }]);
 });
 
 test("AS-008: invite an email with no account → PENDING row + invite mail enqueued", async () => {
@@ -96,8 +96,9 @@ test("AS-008: invite an email with no account → PENDING row + invite mail enqu
   });
   expect(rows[0].userId).toBeNull(); // no account yet → unbound
 
-  // Invite mail (not an active-notify) enqueued so Bob can find his way in.
-  expect(f.enqueued).toEqual([{ kind: "pending", email: "bob@x.com" }]);
+  // Invite mail (not an active-notify) enqueued so Bob can find his way in — carrying the
+  // REAL pending-invite id the accept-link is minted against (AS-011).
+  expect(f.enqueued).toEqual([{ kind: "pending", email: "bob@x.com", inviteId: rows[0].id }]);
 });
 
 test("AS-008 / C-006: pending invite keyed by email activates on verified signup → editor role (round-trip via auth)", async () => {

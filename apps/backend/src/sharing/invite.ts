@@ -63,6 +63,12 @@ export interface EnqueuedInvite {
   /** "active" → notify an existing member; "pending" → invite mail with accept path. */
   kind: "active" | "pending";
   email: string;
+  /**
+   * The doc_members row id of the invite just created. For a pending invite this is the
+   * id the accept-link is minted against (auth AS-011 / C-009) — the email-independent
+   * path needs a REAL id, not a placeholder, so a handed-out link points at this invite.
+   */
+  inviteId: string;
 }
 
 export interface InviteDeps {
@@ -102,7 +108,7 @@ export async function inviteByEmail(input: InviteInput, deps: InviteDeps): Promi
   const account = deps.findUserByEmail(email);
 
   if (account) {
-    await deps.members.insert({
+    const activeRow = await deps.members.insert({
       docId: input.docId,
       userId: account.id,
       email,
@@ -111,11 +117,11 @@ export async function inviteByEmail(input: InviteInput, deps: InviteDeps): Promi
       invitedBy: input.invitedBy,
       status: "active",
     });
-    deps.enqueueInvite({ kind: "active", email });
+    deps.enqueueInvite({ kind: "active", email, inviteId: activeRow.id });
     return { status: "active", role: input.role };
   }
 
-  await deps.members.insert({
+  const pendingRow = await deps.members.insert({
     docId: input.docId,
     userId: null,
     email,
@@ -124,7 +130,9 @@ export async function inviteByEmail(input: InviteInput, deps: InviteDeps): Promi
     invitedBy: input.invitedBy,
     status: "pending",
   });
-  deps.enqueueInvite({ kind: "pending", email });
+  // AS-011: the enqueue carries the REAL pending-invite id so the invite mail's accept-link
+  // points at this invite (no placeholder) — the email-independent join path (C-009).
+  deps.enqueueInvite({ kind: "pending", email, inviteId: pendingRow.id });
   return { status: "pending" };
 }
 
