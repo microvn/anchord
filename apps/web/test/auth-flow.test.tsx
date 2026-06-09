@@ -18,10 +18,21 @@ const signOutMock = mock(async () => {
 });
 
 mock.module("../src/lib/auth-client", () => ({
-  signIn: { email: signInEmail },
+  signIn: { email: signInEmail, social: mock(async () => ({})) },
+  signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: signOutMock,
+  sendVerificationEmail: mock(async () => ({ data: {}, error: null })),
+  verifyEmail: mock(async () => ({ data: {}, error: null })),
   useSession: () => ({ data: sessionValue, isPending: sessionPending }),
   authClient: {},
+}));
+
+// SignInScreen now renders OAuthButtons, which reads the enabled-provider list via the
+// auth-ui Eden wrapper. Mock it so the web-core sign-in tests never reach a real backend
+// (no OAuth buttons here — web-core's flow is email+password).
+mock.module("../src/features/auth/client", () => ({
+  fetchAuthProviders: mock(async () => ({ data: { success: true, data: { providers: [] } }, error: null })),
+  acceptDocInvite: mock(async () => ({ data: { success: true, data: { status: "active" } }, error: null })),
 }));
 
 // Imported AFTER the mock is registered so they bind to the mocked auth-client.

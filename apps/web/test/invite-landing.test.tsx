@@ -35,7 +35,10 @@ let sessionEmail = "bob@acme.com";
 mock.module("../src/lib/auth-client", () => ({
   useSession: () => ({ data: { user: { email: sessionEmail } }, isPending: false }),
   signOut: mock(async () => ({})),
-  signIn: { email: mock(async () => ({})) },
+  signIn: { email: mock(async () => ({})), social: mock(async () => ({})) },
+  signUp: { email: mock(async () => ({})) },
+  sendVerificationEmail: mock(async () => ({})),
+  verifyEmail: mock(async () => ({})),
   authClient: {},
 }));
 

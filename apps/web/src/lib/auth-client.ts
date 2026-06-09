@@ -4,8 +4,14 @@ import { createAuthClient } from "better-auth/react";
 // (same origin — dev proxied, prod served by the backend). better-auth manages the
 // session as an httpOnly cookie; this client stores NO token client-side (C-001).
 //
-// We expose the three things web-core needs: signIn (email+password), signOut, and the
-// reactive useSession hook the AuthGuard reads on load.
+// web-core exposes signIn (email+password), signOut, and the reactive useSession hook the
+// AuthGuard reads on load. auth-ui ADDS the rest of the pre-session surface:
+//  - signUp.email          → sign-up (S-001 AS-001/AS-005)
+//  - sendVerificationEmail → "resend" on the verify-sent / expired-link states (AS-001/AS-004)
+//  - verifyEmail           → consume a verification link (S-001 AS-003/AS-004)
+//  - signIn.social         → OAuth sign-in; on a denied/failed callback better-auth
+//                            redirects to the per-flow `errorCallbackURL` with ?error=…
+//                            so the sign-in screen can render OAuthErrorBanner (S-002 AS-006/AS-008)
 export const authClient = createAuthClient({
   baseURL:
     typeof window !== "undefined"
@@ -13,4 +19,5 @@ export const authClient = createAuthClient({
       : "http://localhost:3000/api/auth",
 });
 
-export const { signIn, signOut, useSession } = authClient;
+export const { signIn, signUp, signOut, sendVerificationEmail, verifyEmail, useSession } =
+  authClient;

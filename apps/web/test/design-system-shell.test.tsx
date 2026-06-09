@@ -7,8 +7,11 @@ import { join } from "node:path";
 
 // Mock the auth client so AppShell's UserMenu (which imports signOut) renders without a backend.
 mock.module("../src/lib/auth-client", () => ({
-  signIn: { email: mock(async () => ({ data: null, error: null })) },
+  signIn: { email: mock(async () => ({ data: null, error: null })), social: mock(async () => ({})) },
+  signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({ data: { success: true }, error: null })),
+  sendVerificationEmail: mock(async () => ({ data: {}, error: null })),
+  verifyEmail: mock(async () => ({ data: {}, error: null })),
   useSession: () => ({ data: { user: { email: "a@b.co" } }, isPending: false }),
   authClient: {},
 }));

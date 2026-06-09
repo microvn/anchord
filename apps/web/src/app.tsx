@@ -3,6 +3,9 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthGuard } from "./app/auth-guard";
 import { AppShell } from "./app/app-shell";
 import { SignInScreen } from "./features/auth/sign-in-screen";
+import { SignUpScreen } from "./features/auth/sign-up-screen";
+import { VerifyEmailLanding } from "./features/auth/verify-email-landing";
+import { InviteAcceptLanding } from "./features/auth/invite-accept-landing";
 import { createQueryClient } from "./app/query-client";
 import { SessionExpiryListener } from "./app/session-expiry-listener";
 import { ThemeProvider } from "./app/theme-provider";
@@ -24,12 +27,19 @@ const queryClient = createQueryClient();
 export function AppRoutes() {
   return (
     <Routes>
+      {/* auth-ui S-001/S-002: pre-session screens (public, outside AuthGuard). */}
       <Route path="/signin" element={<SignInScreen />} />
+      <Route path="/signup" element={<SignUpScreen />} />
+      {/* auth-ui S-001 AS-003/AS-004: the verification-link landing. Public — the link is
+          opened before any session exists. */}
+      <Route path="/verify-email" element={<VerifyEmailLanding />} />
       <Route element={<AuthGuard />}>
-        {/* workspaces-ui S-004: the invite accept/reject landing — a DISTINCT route from
-            auth-ui's per-doc invite (GAP-002). Signed-in but OUTSIDE the workspace shell,
-            since accepting is what grants membership. */}
+        {/* workspaces-ui S-004: the WORKSPACE invite accept/reject landing. */}
         <Route path="/invite/workspace/:invitationId" element={<WorkspaceInviteLanding />} />
+        {/* auth-ui S-003: the PER-DOC invite accept-link landing — DISTINCT from the
+            workspace invite above. Signed-in (needs the session actor's verified email to
+            match), but OUTSIDE the workspace shell, since accepting grants a doc role. */}
+        <Route path="/invite/doc/:inviteId" element={<InviteAcceptLanding />} />
 
         <Route element={<AppShell workspaceSlot={<WorkspaceSwitcher />} />}>
           {/* workspaces-ui S-001: the active workspace is the URL path `/w/:workspaceId/…`

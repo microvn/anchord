@@ -30,7 +30,10 @@ mock.module("../src/lib/api", () => ({
 const signOutMock = mock(async () => ({ data: { success: true }, error: null }));
 mock.module("../src/lib/auth-client", () => ({
   signOut: signOutMock,
-  signIn: { email: mock(async () => ({ data: null, error: null })) },
+  signIn: { email: mock(async () => ({ data: null, error: null })), social: mock(async () => ({})) },
+  signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
+  sendVerificationEmail: mock(async () => ({ data: {}, error: null })),
+  verifyEmail: mock(async () => ({ data: {}, error: null })),
   useSession: () => ({ data: { user: { email: "a@b.co" } }, isPending: false }),
   authClient: {},
 }));
