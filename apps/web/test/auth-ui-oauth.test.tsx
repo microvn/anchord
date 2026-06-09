@@ -20,6 +20,7 @@ mock.module("../src/lib/auth-client", () => ({
   signOut: mock(async () => ({})),
   sendVerificationEmail: mock(async () => ({ data: {}, error: null })),
   verifyEmail: mock(async () => ({ data: {}, error: null })),
+  getSession: mock(async () => ({ data: null, error: null })),
   useSession: () => ({ data: null, isPending: false }),
   authClient: {},
 }));

@@ -23,6 +23,9 @@ mock.module("../src/lib/auth-client", () => ({
   signOut: signOutMock,
   sendVerificationEmail: mock(async () => ({ data: {}, error: null })),
   verifyEmail: mock(async () => ({ data: {}, error: null })),
+  // The post-sign-in session refetch the screen awaits before redirecting. The AS-002 test
+  // already commits sessionValue inside the signIn mock, so this just resolves.
+  getSession: mock(async () => ({ data: sessionValue, error: null })),
   useSession: () => ({ data: sessionValue, isPending: sessionPending }),
   authClient: {},
 }));

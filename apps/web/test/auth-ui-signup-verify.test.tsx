@@ -36,6 +36,7 @@ mock.module("../src/lib/auth-client", () => ({
   signOut: mock(async () => ({})),
   sendVerificationEmail,
   verifyEmail,
+  getSession: mock(async () => ({ data: sessionValue, error: null })),
   useSession: () => ({ data: sessionValue, isPending: false }),
   authClient: {},
 }));
@@ -90,6 +91,27 @@ describe("auth-ui S-001 — sign up and verify email", () => {
     expect(sendVerificationEmail).toHaveBeenCalledWith(
       expect.objectContaining({ email: "new@acme.com" }),
     );
+  });
+
+  it("AS-003: sign-up passes a callbackURL to the SPA's own /verify-email landing (not the backend API)", async () => {
+    const user = userEvent.setup();
+    renderAt(
+      <Routes>
+        <Route path="/signup" element={<SignUpScreen />} />
+      </Routes>,
+      "/signup",
+    );
+    await user.type(screen.getByLabelText(/email/i), "new@acme.com");
+    await user.type(screen.getByLabelText(/password/i), "longenough");
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => expect(signUpEmail).toHaveBeenCalled());
+    const arg = signUpEmail.mock.calls[0]![0] as { callbackURL?: string };
+    // Bug 3: better-auth resolves callbackURL against the LINK origin (the backend), so
+    // without an absolute SPA URL the post-verify redirect dead-ends on the backend's raw
+    // API response. The callbackURL must point at the app's own /verify-email landing.
+    expect(typeof arg.callbackURL).toBe("string");
+    expect(arg.callbackURL).toBe(`${window.location.origin}/verify-email`);
   });
 
   it("AS-001: a password under 8 characters is rejected client-side and sign-up is not called", async () => {

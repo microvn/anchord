@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "./zod-resolver";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { z } from "zod";
-import { signIn, sendVerificationEmail } from "../../lib/auth-client";
+import { signIn, sendVerificationEmail, getSession, useSession } from "../../lib/auth-client";
 import { OAuthButtons } from "./oauth-buttons";
 import { OAuthErrorBanner } from "./oauth-error-banner";
 
@@ -36,6 +36,20 @@ export function SignInScreen() {
   // verify-first state (with resend) keyed off the attempted email — never a credential error.
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [resent, setResent] = useState(false);
+  // AS-002: after a successful sign-in we wait for the better-auth session to COMMIT before
+  // redirecting. The race we fix: navigate("/") fired the instant signIn.email resolved, but
+  // the session store hadn't updated yet, so the AuthGuard read no session and bounced back to
+  // /signin. We refetch the session (getSession, below) and drive the redirect off an effect
+  // watching the SAME reactive session the guard reads — so the redirect only lands once the
+  // guard would admit it (deterministic, no setTimeout).
+  const [signedIn, setSignedIn] = useState(false);
+  const { data: session } = useSession();
+
+  useEffect(() => {
+    if (signedIn && session) {
+      navigate("/", { replace: true });
+    }
+  }, [signedIn, session, navigate]);
   const {
     register,
     handleSubmit,
@@ -59,7 +73,11 @@ export function SignInScreen() {
       setFormError(msg || "Sign in failed. Check your credentials.");
       return;
     }
-    navigate("/", { replace: true });
+    // Force the better-auth session store to refresh from the just-set cookie, THEN flag
+    // signedIn. The effect above redirects once useSession reflects the session — the same
+    // store the AuthGuard reads, so there's no window where the guard sees no session.
+    await getSession();
+    setSignedIn(true);
   }
 
   async function onResend() {
