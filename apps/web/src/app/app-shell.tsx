@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 import { UserMenu } from "./user-menu";
 import { isCompact, useBreakpoint } from "../lib/use-breakpoint";
@@ -10,7 +10,11 @@ import { isCompact, useBreakpoint } from "../lib/use-breakpoint";
 // S-003 / AS-010: the shell reflows off the ONE breakpoint hook (C-003). On desktop/laptop
 // the side region is persistent inline; on tablet/mobile it collapses to an off-canvas
 // drawer toggled by a button. Every interactive control is ≥40px (tap-target rule).
-export function AppShell() {
+// `workspaceSlot` is the top-bar workspace-name SLOT (the spec's hand-off point): the real
+// app fills it with the workspaces-ui <WorkspaceSwitcher /> (app.tsx). It's optional so the
+// AppShell stays provider-free on its own — web-core's shell tests render it bare without
+// needing the workspaces data layer.
+export function AppShell({ workspaceSlot }: { workspaceSlot?: ReactNode }) {
   const tier = useBreakpoint();
   const compact = isCompact(tier);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -34,6 +38,8 @@ export function AppShell() {
             </button>
           )}
           <span className="font-serif text-base tracking-tight text-ink">anchord</span>
+          {/* workspaces-ui S-001 fills this workspace-name slot with the <WorkspaceSwitcher />. */}
+          {workspaceSlot}
         </div>
         <UserMenu />
       </header>

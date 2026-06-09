@@ -1,12 +1,17 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthGuard } from "./app/auth-guard";
 import { AppShell } from "./app/app-shell";
 import { SignInScreen } from "./features/auth/sign-in-screen";
 import { createQueryClient } from "./app/query-client";
 import { SessionExpiryListener } from "./app/session-expiry-listener";
-import { BootstrapPanel } from "./app/bootstrap-panel";
 import { ThemeProvider } from "./app/theme-provider";
+import { WorkspaceRouteGuard } from "./features/workspaces/active-workspace";
+import { WorkspaceSwitcher } from "./features/workspaces/workspace-switcher";
+import { MembersScreen } from "./features/workspaces/members-screen";
+import { WorkspaceHome } from "./features/workspaces/workspace-home";
+import { WorkspaceRootRedirect } from "./features/workspaces/workspace-root-redirect";
+import { WorkspaceInviteLanding } from "./features/workspaces/invite-landing";
 
 // One shared QueryClient for the app's server-state layer (S-002). Its cache-level onError
 // centralizes session-expiry handling: any query that comes back UNAUTHENTICATED bounces the
@@ -21,11 +26,22 @@ export function AppRoutes() {
     <Routes>
       <Route path="/signin" element={<SignInScreen />} />
       <Route element={<AuthGuard />}>
-        <Route element={<AppShell />}>
-          {/* S-002: the index route is a representative authenticated read through the
-              shared client — it exercises the resilient-fetch + session-expiry layer in the
-              real app. Feature `-ui` specs replace it with their own screens. */}
-          <Route index element={<BootstrapPanel />} />
+        {/* workspaces-ui S-004: the invite accept/reject landing — a DISTINCT route from
+            auth-ui's per-doc invite (GAP-002). Signed-in but OUTSIDE the workspace shell,
+            since accepting is what grants membership. */}
+        <Route path="/invite/workspace/:invitationId" element={<WorkspaceInviteLanding />} />
+
+        <Route element={<AppShell workspaceSlot={<WorkspaceSwitcher />} />}>
+          {/* workspaces-ui S-001: the active workspace is the URL path `/w/:workspaceId/…`
+              (mirroring the backend's `/api/w/:workspaceId/…`). The root redirects into the
+              bootstrap's active workspace; the guard re-scopes the subtree per route param. */}
+          <Route index element={<WorkspaceRootRedirect />} />
+          <Route path="/w/:workspaceId" element={<WorkspaceRouteGuard />}>
+            <Route index element={<WorkspaceHome />} />
+            <Route path="members" element={<MembersScreen />} />
+          </Route>
+          {/* Any unknown authenticated path falls back to the workspace root resolver. */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Route>
     </Routes>
