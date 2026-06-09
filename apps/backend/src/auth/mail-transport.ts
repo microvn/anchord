@@ -11,6 +11,7 @@
 
 import type { MailMessage, MailTransport, MailQueue, QueuedMail } from "./mail-queue";
 import type { EmailProvider } from "../config/env";
+import { buildWorkspaceAcceptLink } from "./invite";
 
 // Default From — overridable later via config; kept here so the payload always carries
 // one (Resend/SMTP both require a from). Not a secret, safe as a constant for v0.
@@ -165,4 +166,46 @@ export function sendInviteEmail(
     subject: "You've been invited to a doc on anchord",
     body: `<p>You have a pending invite. Accept it here:</p><p><a href="${args.acceptLink}">${args.acceptLink}</a></p>`,
   });
+}
+
+/**
+ * Send a WORKSPACE-invite email through the shared queue + selected transport (workspaces
+ * S-004 / AS-009). Distinct copy from the per-doc invite: this grants workspace MEMBERSHIP,
+ * not a role on a single doc. The mail carries the accept/reject landing link
+ * (`/invite/workspace/:id?token=…&email=…`) the FE WorkspaceInviteLanding (workspaces-ui
+ * S-004) consumes — delivery flows through the queue's retry/dead-letter path (C-009).
+ */
+export function sendWorkspaceInviteEmail(
+  queue: MailQueue,
+  transport: MailTransport,
+  args: { to: string; acceptLink: string },
+): Promise<QueuedMail> {
+  return sendAppMail(queue, transport, {
+    to: args.to,
+    subject: "You've been invited to a workspace on anchord",
+    body: `<p>You've been invited to a workspace on anchord. Accept or decline here:</p><p><a href="${args.acceptLink}">${args.acceptLink}</a></p>`,
+  });
+}
+
+/**
+ * Build the workspaces-route `enqueueInvite` port backed by the shared queue + transport
+ * (workspaces S-004 / AS-009). This is the wiring index.ts injects so a member invite
+ * actually sends the workspace-invite email carrying the accept/reject landing link.
+ *
+ * Fire-and-forget from the sync port (the route calls it without await); delivery is owned
+ * by the queue's retry/dead-letter machinery, never the request. A send rejection is
+ * swallowed here so an unhandled rejection can't crash the process.
+ */
+export function createEnqueueWorkspaceInvite(
+  queue: MailQueue,
+  transport: MailTransport,
+): (msg: { workspaceId: string; email: string; token: string; invitationId: string }) => void {
+  return (msg) => {
+    const acceptLink = buildWorkspaceAcceptLink(msg.invitationId, msg.token, msg.email);
+    void sendWorkspaceInviteEmail(queue, transport, { to: msg.email, acceptLink }).catch(
+      (err) => {
+        console.error("workspace invite mail delivery failed (dead-lettered)", err);
+      },
+    );
+  };
 }

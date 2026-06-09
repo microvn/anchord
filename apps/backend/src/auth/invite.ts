@@ -103,6 +103,22 @@ export function buildAcceptLink(inviteId: string, token: string): string {
   return `${ACCEPT_LINK_PREFIX}${encodeURIComponent(inviteId)}/${encodeURIComponent(token)}`;
 }
 
+/**
+ * Mint the WORKSPACE-invite accept/reject landing link (workspaces S-004 / AS-009).
+ * Shape consumed by the FE WorkspaceInviteLanding route (workspaces-ui S-004):
+ * `/invite/workspace/:invitationId?token=…&email=…`. Distinct from buildAcceptLink
+ * (the per-doc invite path) — a workspace invite grants MEMBERSHIP, not a doc role.
+ * The token is the random DB token (workspace_invitations.token), not an APP_SECRET mint.
+ */
+export function buildWorkspaceAcceptLink(
+  invitationId: string,
+  token: string,
+  email: string,
+): string {
+  const q = new URLSearchParams({ token, email });
+  return `/invite/workspace/${encodeURIComponent(invitationId)}?${q.toString()}`;
+}
+
 export interface ParsedAcceptLink {
   inviteId: string;
   token: string;

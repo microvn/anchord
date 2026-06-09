@@ -28,6 +28,7 @@ import {
   type TenancyRepo,
 } from "../workspace/tenancy";
 import { createTenancyRepo } from "../workspace/tenancy-repo";
+import { buildWorkspaceAcceptLink } from "../auth/invite";
 import { createProjectRepo } from "../workspace/repo";
 import type { ProjectRepo } from "../workspace/projects";
 import type { DB } from "../db/client";
@@ -135,7 +136,14 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
           invitationId: inv.id,
         });
         set.status = 201;
-        return { id: inv.id, status: inv.status };
+        // AS-009/AS-011: surface the accept/reject landing link in the response so the
+        // invitee can be reached even if the email is slow/dead-lettered (the admin can
+        // copy it). Same link the invite email carries; the FE landing consumes it.
+        return {
+          id: inv.id,
+          status: inv.status,
+          acceptLink: buildWorkspaceAcceptLink(inv.id, inv.token, email),
+        };
       } catch (err) {
         if (err instanceof TenancyRejected) throw mapRejected(err);
         throw err;

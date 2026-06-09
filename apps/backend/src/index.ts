@@ -12,7 +12,7 @@ import { createWorkspaceAccess } from "./workspace/tenancy-repo";
 import { eq } from "drizzle-orm";
 import { session as sessionTable } from "./db/schema";
 import { MailQueue } from "./auth/mail-queue";
-import { createMailTransport } from "./auth/mail-transport";
+import { createMailTransport, createEnqueueWorkspaceInvite } from "./auth/mail-transport";
 import { createDocMemberRepo, findUserById } from "./sharing/doc-member-repo";
 import { createDocMembersPendingInviteRepo } from "./sharing/invite";
 
@@ -177,6 +177,11 @@ const app = createApp({
     db,
     resolveSession,
     resolveActorEmail: (userId: string) => findUserById(db, userId),
+    // AS-009: inviting a member ENQUEUES a workspace-invite email carrying the accept/
+    // reject landing link the FE consumes — through the SAME shared queue + transport the
+    // verification mail uses. Fixes the live wiring gap where this dep was absent so the
+    // route's optional `enqueueInvite?.(...)` silently no-op'd (201, no mail, no way in).
+    enqueueInvite: createEnqueueWorkspaceInvite(mailQueue, mailTransport),
   },
   // workspaces S-003: top-level bootstrap (/api/me) + switch. The active workspace is the
   // login-default landing (C-005); read/written on the session row.
