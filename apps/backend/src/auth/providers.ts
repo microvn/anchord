@@ -21,8 +21,14 @@ import type { Config } from "../config/env";
 /** Every sign-in method anchord can offer. `email` = email+password (always available). */
 export type AuthMethod = "email" | "github" | "google";
 
+/** The OAuth (social) providers only — what the FE renders extra buttons for. */
+export type OAuthMethod = "github" | "google";
+
 /** Stable render/iteration order for the sign-in card. email+pw first, then OAuth. */
 const PROVIDER_ORDER: readonly AuthMethod[] = ["email", "github", "google"];
+
+/** Stable order for the OAuth-only list the FE consumes (no email+pw). */
+const OAUTH_ORDER: readonly OAuthMethod[] = ["github", "google"];
 
 /**
  * Thrown by the callback guard when a (forced) callback targets a disabled provider.
@@ -55,6 +61,16 @@ export function isProviderEnabled(config: Config, provider: AuthMethod): boolean
  */
 export function enabledProviders(config: Config): AuthMethod[] {
   return PROVIDER_ORDER.filter((p) => isProviderEnabled(config, p));
+}
+
+/**
+ * GAP-002 (auth-ui AS-007) — the OAuth-only list the FE reads to know which
+ * "Continue with …" buttons to render. email+password is excluded (it is not a button
+ * the FE toggles on creds; the sign-up/sign-in form is always present). A provider with
+ * no ENV creds is simply absent from the list, so its button never renders.
+ */
+export function enabledOAuthProviders(config: Config): OAuthMethod[] {
+  return OAUTH_ORDER.filter((p) => isProviderEnabled(config, p));
 }
 
 /**

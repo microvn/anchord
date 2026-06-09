@@ -13,6 +13,7 @@ import { membersRoutes, type MembersRoutesDeps } from "./routes/members";
 import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
 import { docMoveRoutes, type DocMoveRoutesDeps } from "./routes/doc-move";
 import { inviteRoutes, type InviteRoutesDeps } from "./routes/invite";
+import { authProvidersRoutes, type AuthProvidersRoutesDeps } from "./routes/auth-providers";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -121,6 +122,14 @@ export type AppDeps = {
    * unmounted.
    */
   invite?: InviteRoutesDeps;
+  /**
+   * auth-ui GAP-002 (AS-007): enables the enveloped, top-level, PRE-SESSION
+   * GET /api/auth-providers, which returns the OAuth providers the operator enabled
+   * (ENV creds present). The sign-in/sign-up screens read it to render only those
+   * "Continue with …" buttons. Provide the config's `oauth` toggle. Omit to leave
+   * it unmounted.
+   */
+  authProviders?: AuthProvidersRoutesDeps;
 };
 
 const esc = (s: string) =>
@@ -248,6 +257,14 @@ export function createApp(deps: AppDeps) {
   // accept-link; the accepting email is the SERVER session actor's verified email (C-005).
   if (deps.invite) {
     app.use(inviteRoutes(deps.invite));
+  }
+
+  // /api/auth-providers — auth-ui GAP-002 (AS-007). Enveloped, top-level, PRE-SESSION
+  // (the sign-in/sign-up screens read it before any session exists). Returns only the
+  // OAuth provider NAMES the operator enabled (ENV creds present) so the FE renders just
+  // those buttons; no creds leak.
+  if (deps.authProviders) {
+    app.use(authProvidersRoutes(deps.authProviders));
   }
 
   // /d/:slug — viewer shell (trusted app origin)

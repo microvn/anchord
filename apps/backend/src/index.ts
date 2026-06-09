@@ -247,6 +247,10 @@ const app = createApp({
     resolveActorEmail: (userId: string) => findUserById(db, userId),
     secret: cfg.APP_SECRET,
   },
+  // auth-ui GAP-002 (AS-007): the FE reads this to render only the OAuth buttons whose
+  // ENV creds are present. Same gating output (cfg.oauth) the socialProviders block above
+  // uses — one source of truth for "enabled".
+  authProviders: { oauth: cfg.oauth },
 }).listen(cfg.PORT);
 
 console.log(`anchord on http://localhost:${cfg.PORT} (${cfg.NODE_ENV})`);
