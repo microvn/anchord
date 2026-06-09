@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Bunny Fonts (privacy-friendly) — Fraunces, Geist, Geist Mono.
+   Must precede all non-@import statements (CSS spec) — hence here, not below @theme. */
+@import url("https://fonts.bunny.net/css?family=fraunces:500|geist:400,500,600|geist-mono:400");
 
 /* anchord design system — Tailwind 4 CSS-first @theme.
    Dark is the canonical/default theme (operator-grade). Teal is the ONLY accent —
@@ -40,9 +43,6 @@
   --radius-md: 8px;
   --radius-lg: 10px;
 }
-
-/* Bunny Fonts (privacy-friendly) — Fraunces, Geist, Geist Mono. */
-@import url("https://fonts.bunny.net/css?family=fraunces:500|geist:400,500,600|geist-mono:400");
 
 :root {
   color-scheme: dark;

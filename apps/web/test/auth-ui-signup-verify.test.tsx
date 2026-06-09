@@ -216,14 +216,29 @@ describe("auth-ui S-001 — sign up and verify email", () => {
     );
   });
 
-  it("AS-004: a verification link with NO token shows the recoverable invalid state, not a crash", async () => {
+  it("AS-004: a failed verification (better-auth redirects with ?error=) shows the recoverable invalid state, no crash", async () => {
+    renderAt(
+      <Routes>
+        <Route path="/verify-email" element={<VerifyEmailLanding />} />
+      </Routes>,
+      "/verify-email?error=INVALID_TOKEN",
+    );
+    await waitFor(() => expect(screen.getByTestId("verify-invalid")).toBeInTheDocument());
+    // The token was consumed server-side; the FE makes no verifyEmail call on the redirect.
+    expect(verifyEmail).not.toHaveBeenCalled();
+  });
+
+  it("AS-003: the success redirect (token-less, no error param) shows verified, not an error", async () => {
+    // better-auth verifies the link SERVER-SIDE then 302s here clean (no token, no error).
+    // Reaching the landing this way is a SUCCESS, not a missing-token failure.
     renderAt(
       <Routes>
         <Route path="/verify-email" element={<VerifyEmailLanding />} />
       </Routes>,
       "/verify-email",
     );
-    await waitFor(() => expect(screen.getByTestId("verify-invalid")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("verify-success")).toBeInTheDocument());
+    expect(screen.getByTestId("verify-proceed")).toBeInTheDocument();
     expect(verifyEmail).not.toHaveBeenCalled();
   });
 

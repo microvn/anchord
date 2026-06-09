@@ -2,13 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { sendVerificationEmail, verifyEmail } from "../../lib/auth-client";
 
-// auth-ui S-001 VerifyEmailLanding (AS-003/AS-004) — the route the verification link opens
-// (`/verify-email?token=…`). On mount it consumes the token via better-auth's verifyEmail.
-//   - valid token   → "verified" success, with a link to proceed to sign in / the app (AS-003)
-//   - expired/bad    → a recoverable "expired or invalid" state with a resend, NOT a crash (AS-004)
+// auth-ui S-001 VerifyEmailLanding (AS-003/AS-004) — the route the verification link opens.
 //
-// The live mail round-trip is [→E2E]; here the verifyEmail call is the unit-tested seam
-// (mocked) and the state machine (verifying → verified | invalid) is what we assert.
+// In the configured better-auth flow the email link is verified SERVER-SIDE: better-auth
+// 302s here to the callbackURL on SUCCESS (clean `/verify-email`, no token) and to
+// `/verify-email?error=…` on FAILURE (expired/tampered). So the success/failure signal is
+// the `error` param, NOT token presence. We also still honor a `token` in the URL for the
+// alternate client-verify flow (verifyEmail consumes it).
+//   - `?error=…`           → recoverable "expired or invalid" state with resend, no crash (AS-004)
+//   - clean redirect / ok  → "verified" success, with a link to proceed to sign in (AS-003)
+//
+// The live mail round-trip is [→E2E]; here the param→state machine + the verifyEmail seam
+// (mocked) are what we assert.
 
 type Status = "verifying" | "verified" | "invalid";
 
@@ -28,13 +33,16 @@ export function VerifyEmailLanding() {
     ran.current = true;
     let cancelled = false;
     async function run() {
-      // AS-004: a link with no token at all is invalid (recoverable), never a crash.
-      // NOTE (spec signal): better-auth verifies the email link SERVER-SIDE and 302s to
-      // callbackURL WITHOUT a token, so in the real flow this landing is reached
-      // token-less as a SUCCESS. That contradicts AS-004's "no token → invalid". Left as
-      // spec-defined for now; see the report's spec-signal note.
-      if (!token) {
+      // AS-004: better-auth redirects a failed (expired/tampered) verification here with an
+      // `error` param → the recoverable invalid state, never a crash.
+      if (params.get("error")) {
         if (!cancelled) setStatus("invalid");
+        return;
+      }
+      // AS-003: the success redirect arrives token-less (the link was verified server-side
+      // and produced no error) → verified.
+      if (!token) {
+        if (!cancelled) setStatus("verified");
         return;
       }
       try {
