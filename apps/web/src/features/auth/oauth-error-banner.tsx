@@ -18,7 +18,7 @@ export function oauthErrorMessage(code: string | null): string {
 export function OAuthErrorBanner({ code }: { code: string | null }) {
   if (!code) return null;
   return (
-    <p role="alert" data-testid="oauth-error" className="mb-4 rounded-md bg-error/10 px-3 py-2 text-sm text-error">
+    <p role="alert" data-testid="oauth-error" className="auth-error-banner">
       {oauthErrorMessage(code)}
     </p>
   );

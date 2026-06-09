@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { signIn } from "../../lib/auth-client";
 import { fetchAuthProviders } from "./client";
 import { unwrapEnvelope } from "../workspaces/use-bootstrap";
+import { Icon } from "../../components/icon";
 
 // auth-ui S-002 OAuthButtons (AS-006/AS-007) — renders a "Continue with …" button for ONLY
 // the OAuth providers the operator enabled (ENV creds present), read from the GAP-002
@@ -10,6 +11,9 @@ import { unwrapEnvelope } from "../workspaces/use-bootstrap";
 // denied/failed callback better-auth redirects to `errorCallbackURL` (here /signin?error=…)
 // so the sign-in screen renders OAuthErrorBanner (AS-008). The live OAuth round-trip is
 // [→E2E]; the unit-tested logic is "which buttons render" + "click calls signIn.social".
+//
+// Visual: the Anchord-Design auth layout (oauth-row + provider glyph). The chrome is the
+// design's; the behavior/wiring is unchanged.
 
 export type OAuthProvider = "github" | "google";
 
@@ -46,15 +50,13 @@ export function OAuthButtons() {
 
   return (
     <div className="mt-6">
-      <div className="flex items-center gap-3" aria-hidden="true">
-        <span className="h-px flex-1 bg-line" />
-        <span className="text-xs text-muted">or</span>
-        <span className="h-px flex-1 bg-line" />
-      </div>
-      <div className="mt-4 flex flex-col gap-3">
+      <div className="oauth-row">
         {providers.map((p) => (
           <OAuthButton key={p} provider={p} />
         ))}
+      </div>
+      <div className="auth-divider" aria-hidden="true">
+        or continue with email
       </div>
     </div>
   );
@@ -73,12 +75,8 @@ export function OAuthButton({ provider }: { provider: OAuthProvider }) {
     });
   }
   return (
-    <button
-      type="button"
-      data-testid={`oauth-${provider}`}
-      onClick={onClick}
-      className="min-h-[40px] rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink hover:border-accent"
-    >
+    <button type="button" data-testid={`oauth-${provider}`} onClick={onClick} className="oauth-btn">
+      <Icon name={provider} size={16} fill />
       {PROVIDER_LABEL[provider]}
     </button>
   );

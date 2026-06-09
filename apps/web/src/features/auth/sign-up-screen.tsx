@@ -6,12 +6,18 @@ import { z } from "zod";
 import { signUp } from "../../lib/auth-client";
 import { VerifyEmailSent } from "./verify-email-sent";
 import { OAuthButtons } from "./oauth-buttons";
+import { AuthAside } from "./auth-aside";
+import { Brandmark } from "../../components/icon";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
 
 // auth-ui S-001 SignUpScreen — email + password (≥8) → "check your inbox" (AS-001); an
 // already-registered email stays on this screen with an "email already in use" error
 // (AS-005). No token is stored client-side: better-auth manages the session as an httpOnly
 // cookie, and with requireEmailVerification a fresh sign-up has NO session yet (C-003).
 // OAuthButtons (only enabled providers) are reused here too.
+// Visual: the Anchord-Design two-pane auth layout (form card + AuthAside), shadcn primitives.
 
 // C-001/AS-001: password must be at least 8 characters (mirrors the backend
 // minPasswordLength). Validate on the client so the user gets the rule before submit.
@@ -70,72 +76,66 @@ export function SignUpScreen() {
   }
 
   return (
-    <main className="min-h-full grid place-items-center px-4 py-12">
-      <div className="w-full max-w-sm">
-        <h1 className="font-serif text-3xl tracking-tight text-ink">anchord</h1>
-        <p className="mt-1 text-sm text-muted">Create your account.</p>
+    <main className="auth">
+      <div className="auth-pane">
+        <div className="auth-card">
+          <div className="auth-brand">
+            <Brandmark size={22} />
+            <span className="anchord-brand-name">anchord</span>
+          </div>
+          <h1 className="auth-title">Create your account</h1>
+          <p className="auth-sub">Set up your first workspace in seconds.</p>
 
-        <form className="mt-8 flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="email" className="text-sm text-muted">
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              className="min-h-[40px] rounded-md border border-line bg-surface px-3 text-ink outline-none focus:border-accent"
-              {...register("email")}
-            />
-            {errors.email && (
-              <p className="text-xs text-error" role="alert">
-                {errors.email.message}
-              </p>
-            )}
+          <div className="auth-form">
+            {/* AS-006/AS-007: provider buttons (only enabled ones). Renders nothing if none. */}
+            <OAuthButtons />
+
+            <form className="auth-fields" onSubmit={handleSubmit(onSubmit)} noValidate>
+              <div className="auth-field">
+                <Label htmlFor="email" className="field-label">
+                  Email
+                </Label>
+                <Input id="email" type="email" autoComplete="email" placeholder="name@company.com" {...register("email")} />
+                {errors.email && (
+                  <p className="field-err" role="alert">
+                    {errors.email.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="auth-field">
+                <Label htmlFor="password" className="field-label">
+                  Password
+                </Label>
+                <Input id="password" type="password" autoComplete="new-password" placeholder="Create a password" {...register("password")} />
+                {errors.password && (
+                  <p className="field-err" role="alert">
+                    {errors.password.message}
+                  </p>
+                )}
+              </div>
+
+              {formError && (
+                <p className="auth-error" role="alert">
+                  {formError}
+                </p>
+              )}
+
+              <Button type="submit" size="lg" disabled={isSubmitting} className="w-full">
+                {isSubmitting ? "Creating account…" : "Create account"}
+              </Button>
+            </form>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="password" className="text-sm text-muted">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              className="min-h-[40px] rounded-md border border-line bg-surface px-3 text-ink outline-none focus:border-accent"
-              {...register("password")}
-            />
-            {errors.password && (
-              <p className="text-xs text-error" role="alert">
-                {errors.password.message}
-              </p>
-            )}
-          </div>
-
-          {formError && (
-            <p className="text-sm text-error" role="alert">
-              {formError}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="min-h-[40px] rounded-md bg-accent px-4 font-medium text-on-accent hover:bg-accent-strong disabled:opacity-60"
-          >
-            {isSubmitting ? "Creating account…" : "Create account"}
-          </button>
-        </form>
-
-        <OAuthButtons />
-
-        <p className="mt-6 text-center text-sm text-muted">
-          Already have an account?{" "}
-          <Link to="/signin" className="text-accent hover:underline">
-            Sign in
-          </Link>
-        </p>
+          <p className="auth-foot">
+            Already have an account?{" "}
+            <Link to="/signin" className="auth-link">
+              Sign in
+            </Link>
+          </p>
+        </div>
       </div>
+      <AuthAside />
     </main>
   );
 }

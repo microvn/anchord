@@ -6,6 +6,11 @@ import { z } from "zod";
 import { signIn, sendVerificationEmail, getSession, useSession } from "../../lib/auth-client";
 import { OAuthButtons } from "./oauth-buttons";
 import { OAuthErrorBanner } from "./oauth-error-banner";
+import { AuthAside } from "./auth-aside";
+import { Brandmark, Icon } from "../../components/icon";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
 
 // SignInScreen — web-core built the email+password sign-in; auth-ui EXTENDS it with:
 //  - the verify-first state of AS-002 / C-001 (a sign-in attempt on an UNVERIFIED account
@@ -14,6 +19,8 @@ import { OAuthErrorBanner } from "./oauth-error-banner";
 //  - the OAuthButtons (only enabled providers — AS-007),
 //  - the OAuthErrorBanner driven by ?error=… set when better-auth redirected back after a
 //    denied/failed OAuth callback (AS-008).
+// Visual: the Anchord-Design two-pane auth layout (form card + AuthAside brand pane). The
+// primitives are shadcn (Button/Input/Label, themed teal); the layout/visual is the design CSS.
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
   password: z.string().min(1, "Enter your password"),
@@ -90,114 +97,97 @@ export function SignInScreen() {
   // generic wrong-password error, with a way to resend.
   if (unverifiedEmail) {
     return (
-      <main className="min-h-full grid place-items-center px-4 py-12">
-        <div className="w-full max-w-sm text-center">
-          <h1 className="font-serif text-2xl tracking-tight text-ink" data-testid="verify-first">
-            Verify your email first
-          </h1>
-          <p className="mt-2 text-sm text-muted">
-            You need to verify <span className="text-ink">{unverifiedEmail}</span> before you can
+      <main className="auth-center">
+        <div className="auth-panel">
+          <div className="badge-icon">
+            <Icon name="mail" size={24} />
+          </div>
+          <h1 data-testid="verify-first">Verify your email first</h1>
+          <p className="pmsg">
+            You need to verify <span className="strong">{unverifiedEmail}</span> before you can
             sign in. Check your inbox for the link.
           </p>
-          <button
-            type="button"
-            data-testid="verify-first-resend"
-            onClick={() => void onResend()}
-            className="mt-6 min-h-[40px] rounded-md border border-line bg-surface px-4 text-sm text-ink hover:border-accent"
-          >
-            Resend verification email
-          </button>
+          <div className="pactions">
+            <Button type="button" variant="secondary" data-testid="verify-first-resend" onClick={() => void onResend()}>
+              Resend verification email
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setUnverifiedEmail(null)}>
+              Back to sign in
+            </Button>
+          </div>
           {resent && (
-            <p className="mt-3 text-sm text-muted" data-testid="verify-first-resent">
+            <p className="pnote" data-testid="verify-first-resent">
               Verification email sent.
             </p>
           )}
-          <p className="mt-6 text-sm text-muted">
-            <button
-              type="button"
-              onClick={() => setUnverifiedEmail(null)}
-              className="text-accent hover:underline"
-            >
-              Back to sign in
-            </button>
-          </p>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-full grid place-items-center px-4 py-12">
-      <div className="w-full max-w-sm">
-        <h1 className="font-serif text-3xl tracking-tight text-ink">anchord</h1>
-        <p className="mt-1 text-sm text-muted">Sign in to your workspace.</p>
+    <main className="auth">
+      <div className="auth-pane">
+        <div className="auth-card">
+          <div className="auth-brand">
+            <Brandmark size={22} />
+            <span className="anchord-brand-name">anchord</span>
+          </div>
+          <h1 className="auth-title">Sign in</h1>
+          <p className="auth-sub">Welcome back. Sign in to your workspace.</p>
 
-        <div className="mt-8">
-          {/* AS-008: render the OAuth failure banner when ?error=… is present. */}
-          <OAuthErrorBanner code={oauthError} />
+          <div className="auth-form">
+            {/* AS-008: render the OAuth failure banner when ?error=… is present. */}
+            <OAuthErrorBanner code={oauthError} />
+            {/* AS-006/AS-007: provider buttons (only enabled ones). Renders nothing if none. */}
+            <OAuthButtons />
 
-          <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="email" className="text-sm text-muted">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                className="min-h-[40px] rounded-md border border-line bg-surface px-3 text-ink outline-none focus:border-accent"
-                {...register("email")}
-              />
-              {errors.email && (
-                <p className="text-xs text-error" role="alert">
-                  {errors.email.message}
+            <form className="auth-fields" onSubmit={handleSubmit(onSubmit)} noValidate>
+              <div className="auth-field">
+                <Label htmlFor="email" className="field-label">
+                  Email
+                </Label>
+                <Input id="email" type="email" autoComplete="email" placeholder="name@company.com" {...register("email")} />
+                {errors.email && (
+                  <p className="field-err" role="alert">
+                    {errors.email.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="auth-field">
+                <Label htmlFor="password" className="field-label">
+                  Password
+                </Label>
+                <Input id="password" type="password" autoComplete="current-password" placeholder="••••••••" {...register("password")} />
+                {errors.password && (
+                  <p className="field-err" role="alert">
+                    {errors.password.message}
+                  </p>
+                )}
+              </div>
+
+              {formError && (
+                <p className="auth-error" role="alert" data-testid="signin-error">
+                  {formError}
                 </p>
               )}
-            </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="password" className="text-sm text-muted">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                className="min-h-[40px] rounded-md border border-line bg-surface px-3 text-ink outline-none focus:border-accent"
-                {...register("password")}
-              />
-              {errors.password && (
-                <p className="text-xs text-error" role="alert">
-                  {errors.password.message}
-                </p>
-              )}
-            </div>
+              <Button type="submit" size="lg" disabled={isSubmitting} className="w-full">
+                {isSubmitting ? "Signing in…" : "Sign in"}
+              </Button>
+            </form>
+          </div>
 
-            {formError && (
-              <p className="text-sm text-error" role="alert" data-testid="signin-error">
-                {formError}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="min-h-[40px] rounded-md bg-accent px-4 font-medium text-on-accent hover:bg-accent-strong disabled:opacity-60"
-            >
-              {isSubmitting ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
-
-          <OAuthButtons />
-
-          <p className="mt-6 text-center text-sm text-muted">
-            New to anchord?{" "}
-            <Link to="/signup" className="text-accent hover:underline">
-              Create an account
+          <p className="auth-foot">
+            Don&rsquo;t have an account?{" "}
+            <Link to="/signup" className="auth-link">
+              Sign up
             </Link>
           </p>
         </div>
       </div>
+      <AuthAside />
     </main>
   );
 }

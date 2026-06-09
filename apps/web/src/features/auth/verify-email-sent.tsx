@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { sendVerificationEmail } from "../../lib/auth-client";
+import { Icon } from "../../components/icon";
+import { Button } from "../../components/ui/button";
 
 // auth-ui S-001 VerifyEmailSent (AS-001) — the post-sign-up "check your inbox" state.
 // Shows the address we sent to and a "resend" affordance that re-triggers the verification
 // mail via better-auth. No session exists yet (requireEmailVerification), so there is
 // nothing to navigate into — the user goes to their inbox.
+// Visual: the Anchord-Design centered "VerifySent" panel (mail badge + actions).
 
 export function VerifyEmailSent({ email }: { email: string }) {
   const [resending, setResending] = useState(false);
@@ -26,42 +29,36 @@ export function VerifyEmailSent({ email }: { email: string }) {
   }
 
   return (
-    <main className="min-h-full grid place-items-center px-4 py-12">
-      <div className="w-full max-w-sm text-center">
-        <h1 className="font-serif text-2xl tracking-tight text-ink" data-testid="verify-sent">
-          Check your inbox
-        </h1>
-        <p className="mt-2 text-sm text-muted">
-          We sent a verification link to <span className="text-ink">{email}</span>. Open it to
-          finish setting up your account.
+    <main className="auth-center">
+      <div className="auth-panel">
+        <div className="badge-icon">
+          <Icon name="mail" size={24} />
+        </div>
+        <h1 data-testid="verify-sent">Check your inbox</h1>
+        <p className="pmsg">
+          We sent a verification link to <span className="strong">{email}</span>. Click it to
+          activate your account — the link expires in 30 minutes.
         </p>
 
         {error && (
-          <p role="alert" className="mt-3 text-sm text-error">
+          <p role="alert" className="pnote" style={{ color: "var(--red)" }}>
             {error}
           </p>
         )}
         {resent && (
-          <p className="mt-3 text-sm text-muted" data-testid="verify-resent">
+          <p className="pnote" data-testid="verify-resent">
             Verification email sent again.
           </p>
         )}
 
-        <button
-          type="button"
-          data-testid="verify-resend"
-          disabled={resending}
-          onClick={() => void onResend()}
-          className="mt-6 min-h-[40px] rounded-md border border-line bg-surface px-4 text-sm text-ink hover:border-accent disabled:opacity-60"
-        >
-          {resending ? "Resending…" : "Resend verification email"}
-        </button>
-
-        <p className="mt-6 text-sm text-muted">
-          <Link to="/signin" className="text-accent hover:underline">
-            Back to sign in
-          </Link>
-        </p>
+        <div className="pactions">
+          <Button type="button" variant="secondary" data-testid="verify-resend" disabled={resending} onClick={() => void onResend()}>
+            {resending ? "Resending…" : "Resend email"}
+          </Button>
+          <Button asChild variant="ghost">
+            <Link to="/signin">Back to sign in</Link>
+          </Button>
+        </div>
       </div>
     </main>
   );
