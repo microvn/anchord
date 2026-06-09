@@ -10,7 +10,8 @@ import { createQueryClient } from "./app/query-client";
 import { SessionExpiryListener } from "./app/session-expiry-listener";
 import { ThemeProvider } from "./app/theme-provider";
 import { WorkspaceRouteGuard } from "./features/workspaces/active-workspace";
-import { WorkspaceSwitcher } from "./features/workspaces/workspace-switcher";
+import { WorkspaceSidebar } from "./app/workspace-sidebar";
+import { NavPlaceholder } from "./app/nav-placeholder";
 import { MembersScreen } from "./features/workspaces/members-screen";
 import { WorkspaceHome } from "./features/workspaces/workspace-home";
 import { WorkspaceRootRedirect } from "./features/workspaces/workspace-root-redirect";
@@ -41,7 +42,7 @@ export function AppRoutes() {
             match), but OUTSIDE the workspace shell, since accepting grants a doc role. */}
         <Route path="/invite/doc/:inviteId" element={<InviteAcceptLanding />} />
 
-        <Route element={<AppShell workspaceSlot={<WorkspaceSwitcher />} />}>
+        <Route element={<AppShell sidebarSlot={<WorkspaceSidebar />} />}>
           {/* workspaces-ui S-001: the active workspace is the URL path `/w/:workspaceId/…`
               (mirroring the backend's `/api/w/:workspaceId/…`). The root redirects into the
               bootstrap's active workspace; the guard re-scopes the subtree per route param. */}
@@ -49,6 +50,13 @@ export function AppRoutes() {
           <Route path="/w/:workspaceId" element={<WorkspaceRouteGuard />}>
             <Route index element={<WorkspaceHome />} />
             <Route path="members" element={<MembersScreen />} />
+            {/* web-core S-004 / GAP-002: the sidebar nav destinations (All docs · Projects ·
+                Activity + New doc) are owned by workspace-project-ui and not built here. The
+                shell ROUTES to them regardless; until that ships they land on a placeholder. */}
+            <Route path="docs" element={<NavPlaceholder title="All docs" />} />
+            <Route path="docs/new" element={<NavPlaceholder title="New doc" />} />
+            <Route path="projects" element={<NavPlaceholder title="Projects" />} />
+            <Route path="activity" element={<NavPlaceholder title="Activity" />} />
           </Route>
           {/* Any unknown authenticated path falls back to the workspace root resolver. */}
           <Route path="*" element={<Navigate to="/" replace />} />
