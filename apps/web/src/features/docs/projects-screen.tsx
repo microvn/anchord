@@ -10,6 +10,7 @@ import { useProjectsBrowse } from "./use-docs";
 import { createProject } from "./client";
 import { ProjectCardMoreMenu } from "./project-more-menu";
 import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Icon } from "../../components/icon";
 import { Skeleton } from "../../components/skeleton";
 import { EmptyState } from "../../components/empty-state";
@@ -53,12 +54,10 @@ export function ProjectsScreen() {
         </div>
         <div className="ml-auto flex flex-none items-center gap-3">
           <label className="flex cursor-pointer select-none items-center gap-2 text-[12.5px] text-muted">
-            <input
-              type="checkbox"
+            <Checkbox
               data-testid="show-archived-toggle"
               checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-              className="size-4 accent-[var(--accent)]"
+              onCheckedChange={(v) => setShowArchived(v === true)}
             />
             Show archived
           </label>
