@@ -80,6 +80,16 @@ describe.skipIf(!RUN)("render-publish S-002/S-003/S-004: access-gated viewer (re
       loadViewer: createLoadViewer(deps),
       loadContent: createLoadContent(deps),
       resolveViewerSession: async () => viewerSession,
+      // Mount an enveloped /api group alongside the viewer so apiEnvelope's
+      // `{as:"scoped"}` onAfterHandle propagates to this parent app — reproducing the
+      // production condition (index.ts mounts many enveloped groups). The viewer routes
+      // must still serve RAW HTML (api-core C-009 exempt), NOT the JSON envelope. Without
+      // this group the leak can't occur and the no-envelope assertions are vacuous.
+      docs: {
+        db: h.db,
+        resolveSession: async () => null,
+        resolveWorkspaceRole: async () => null,
+      },
     });
   }
 
@@ -104,9 +114,14 @@ describe.skipIf(!RUN)("render-publish S-002/S-003/S-004: access-gated viewer (re
     });
     const res = await buildApp().handle(new Request(`${BASE}/d/${slug}`));
     expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
     expect(html).toContain('<main class="doc-md">');
     expect(html).toContain("Hello");
+    // C-009: served RAW, never wrapped in the api JSON envelope (regression guard — the
+    // viewer once 500'd and, once mounted, was double-wrapped by the leaked scoped hook).
+    expect(html.trimStart().startsWith("<!doctype")).toBe(true);
+    expect(html).not.toContain('"success":true');
   });
 
   test("AS-006: anyone_with_link HTML doc → 200 + sandbox iframe pointing at /v/:id", async () => {

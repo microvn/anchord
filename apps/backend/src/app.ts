@@ -302,30 +302,28 @@ export function createApp(deps: AppDeps) {
   // /d/:slug — viewer shell (trusted app origin). ACCESS-GATED: a missing doc OR one the
   // caller cannot view both come back null → 404 (existence-hiding, sharing C-003).
   if (deps.loadViewer) {
-    app.get("/d/:slug", async ({ params, request, set }) => {
+    // Returns a RAW Response so the scoped apiEnvelope onAfterHandle (which propagates to
+    // this parent app from the enveloped /api groups) passes it through untouched — the
+    // viewer serves HTML, not the JSON envelope (api-core C-009: /d is envelope-exempt).
+    app.get("/d/:slug", async ({ params, request }) => {
       const viewer = await resolveViewer(request);
       const doc = await deps.loadViewer!(params.slug, viewer);
-      if (!doc) {
-        set.status = 404;
-        return "Not found";
-      }
-      set.headers["Content-Type"] = "text/html; charset=utf-8";
-      return viewerPage(doc);
+      if (!doc) return new Response("Not found", { status: 404 });
+      return new Response(viewerPage(doc), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     });
   }
 
   // /v/:id — untrusted content, served sandboxed (opaque origin via CSP), scripts run
   // isolated. ACCESS-GATED the same way: the version's doc must be viewable by the caller.
   if (deps.loadContent) {
-    app.get("/v/:id", async ({ params, request, set }) => {
+    // Raw Response (envelope-exempt, as above) carrying the sandbox CSP/opaque-origin headers.
+    app.get("/v/:id", async ({ params, request }) => {
       const viewer = await resolveViewer(request);
       const v = await deps.loadContent!(params.id, viewer);
-      if (!v) {
-        set.status = 404;
-        return "Not found";
-      }
-      for (const [k, val] of Object.entries(contentHeaders())) set.headers[k] = val;
-      return v.content;
+      if (!v) return new Response("Not found", { status: 404 });
+      return new Response(v.content, { headers: contentHeaders() });
     });
   }
 
