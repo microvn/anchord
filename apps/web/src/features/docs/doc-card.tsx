@@ -19,9 +19,12 @@ export function DocCard({
   projects?: ProjectRow[];
 }) {
   const meta = FORMAT_META[doc.kind] ?? FORMAT_META.markdown;
+  // annotation-core-ui S-001: open in the in-app React viewer (workspace-scoped route) when we
+  // know the workspace; fall back to the bare /d/:slug server page otherwise.
+  const href = workspaceId ? `/w/${workspaceId}/d/${doc.slug}` : `/d/${doc.slug}`;
   return (
     <Link
-      to={`/d/${doc.slug}`}
+      to={href}
       data-testid={`doc-card-${doc.slug}`}
       className="flex flex-col overflow-hidden rounded-[11px] border border-line bg-surface text-inherit no-underline transition-[border-color,box-shadow,transform] duration-100 hover:-translate-y-px hover:border-subtle hover:shadow-[0_8px_24px_rgba(0,0,0,0.28)]"
     >

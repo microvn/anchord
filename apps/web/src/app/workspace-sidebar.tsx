@@ -50,6 +50,7 @@ export function WorkspaceSidebar({ dataTestId }: { dataTestId?: string }) {
         recentDocs={recentDocs}
         totalDocs={totalDocs}
         docsHref={`${base}/docs`}
+        docHrefBase={workspaceId ? base : undefined}
         onNewDoc={workspaceId ? () => setNewDocOpen(true) : undefined}
         dataTestId={dataTestId}
       />

@@ -19,6 +19,7 @@ import { DocsScreen } from "./features/docs/docs-screen";
 import { ProjectsScreen } from "./features/docs/projects-screen";
 import { ActivityScreen } from "./features/docs/activity-screen";
 import { SearchScreen } from "./features/docs/search-screen";
+import { ViewerScreen } from "./features/viewer/viewer-screen";
 import { Toaster } from "./components/ui/sonner";
 
 // One shared QueryClient for the app's server-state layer (S-002). Its cache-level onError
@@ -46,6 +47,12 @@ export function AppRoutes() {
 
         {/* S-001: the app root resolves the landing workspace and redirects into its /w/:id/. */}
         <Route index element={<WorkspaceRootRedirect />} />
+
+        {/* annotation-core-ui S-001: the doc viewer is a full-screen 3-pane route, workspace-scoped
+            (/w/:workspaceId/d/:slug — mirrors the workspace-scoped API) but OUTSIDE the AppShell
+            sidebar+header chrome so the doc is the high-contrast element. The bare server /d/:slug
+            stays a public fallback (untouched). */}
+        <Route path="/w/:workspaceId/d/:slug" element={<ViewerScreen />} />
 
         {/* Tenancy is scoped by URL path /w/:workspaceId/… (mirrors /api/w/:workspaceId/…). The
             AppShell (sidebar + header) wraps the WorkspaceRouteGuard, which resolves the active

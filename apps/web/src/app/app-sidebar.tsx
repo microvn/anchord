@@ -70,6 +70,7 @@ export function AppSidebar({
   recentDocs = [],
   totalDocs,
   docsHref = "#",
+  docHrefBase,
   onNewDoc,
   // The shell tags the rendered Sidebar so its responsive tests can find it: the persistent
   // inline rail is `app-sidebar`/`side-region` on desktop; the same Sidebar renders as the
@@ -87,6 +88,9 @@ export function AppSidebar({
   totalDocs?: number;
   /** Base /w/:id/docs path — the "→ View all docs" link + the All-docs nav target. */
   docsHref?: string;
+  /** Workspace base path (/w/:id) for the in-app viewer link — `${docHrefBase}/d/:slug`
+   *  (annotation-core-ui S-001). Falls back to the bare `/d/:slug` server page when absent. */
+  docHrefBase?: string;
   /** When provided, the `+ New doc` button calls this instead of navigating (opens the dialog). */
   onNewDoc?: () => void;
   dataTestId?: string;
@@ -251,7 +255,7 @@ export function AppSidebar({
                 <SidebarMenuItem key={d.slug}>
                   <SidebarMenuButton asChild className="h-8 gap-[9px] rounded-sm p-0 px-[9px] text-[12.5px] leading-[18.75px] text-muted hover:bg-elev hover:text-ink active:bg-elev active:text-ink focus-visible:ring-2 focus-visible:ring-accent">
                     <NavLink
-                      to={`/d/${d.slug}`}
+                      to={docHrefBase ? `${docHrefBase}/d/${d.slug}` : `/d/${d.slug}`}
                       data-testid={`sidebar-recent-${d.slug}`}
                       title={d.title}
                       className="group/doc"

@@ -27,7 +27,8 @@ export function DocList({
       {docs.map((d) => (
         <Link
           key={d.id}
-          to={`/d/${d.slug}`}
+          // annotation-core-ui S-001: in-app viewer route when scoped to a workspace.
+          to={workspaceId ? `/w/${workspaceId}/d/${d.slug}` : `/d/${d.slug}`}
           data-testid={`doc-row-${d.slug}`}
           className="grid min-h-[56px] grid-cols-[30px_1fr_auto_auto] items-center gap-[14px] border-b border-line px-4 text-inherit no-underline last:border-b-0 hover:bg-elev sm:grid-cols-[30px_1fr_70px_96px_96px]"
         >
