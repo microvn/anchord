@@ -3,6 +3,11 @@
    Must precede all non-@import statements (CSS spec) — hence here, not below @theme. */
 @import url("https://fonts.bunny.net/css?family=fraunces:400,500,600|geist:400,500,600,700|geist-mono:400,500,600");
 @import "tw-animate-css";
+/* Anchord-Design ported skins — MUST sit with the other @imports, ABOVE @theme/:root
+   rules (CSS @import must precede all non-import statements, else Lightning CSS drops them). */
+@import "./styles/auth.css";
+@import "./styles/shell.css";
+@import "./styles/screens.css";
 
 /* ============================================================
    anchord — design tokens (ported from Anchord-Design/tokens.css)
@@ -204,11 +209,3 @@ h3,
 h4 {
   font-family: var(--font-serif);
 }
-
-/* Anchord-Design auth + shared primitive CSS (scoped to .anchord-* / .auth* classes
-   so it doesn't fight Tailwind utilities). */
-@import "./styles/auth.css";
-/* Anchord-Design app shell skin (sidebar/header/switcher/menu/drawer classes). */
-@import "./styles/shell.css";
-/* Screen content skin (page-head + states) used by the workspace landing. */
-@import "./styles/screens.css";
