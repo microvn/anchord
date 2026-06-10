@@ -12,7 +12,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
+  useSidebar,
 } from "../components/ui/sidebar";
 
 // AppSidebar (web-core S-004): the left workspace-nav frame, rebuilt on the shadcn Sidebar
@@ -92,6 +92,7 @@ export function AppSidebar({
   dataTestId?: string;
 }) {
   const { pathname } = useLocation();
+  const { toggleSidebar } = useSidebar();
   // Mirror NavLink's match semantics: Dashboard (the workspace index) matches only the exact
   // `base` path; the others match their segment + any descendant. Driving `isActive` here lets
   // us pass it to the primitive's SidebarMenuButton (data-[active=true]) AND merge the anchord
@@ -122,11 +123,15 @@ export function AppSidebar({
               anchord
             </span>
           </NavLink>
-          <SidebarTrigger
+          <button
+            type="button"
             data-testid="sidebar-collapse"
             aria-label="Collapse sidebar"
-            className="ml-auto text-muted hover:text-ink group-data-[collapsible=icon]:hidden"
-          />
+            onClick={toggleSidebar}
+            className="ml-auto grid size-7 flex-none place-items-center rounded-md text-muted hover:bg-elev hover:text-ink group-data-[collapsible=icon]:hidden"
+          >
+            <Icon name="chevLeft" size={16} />
+          </button>
         </div>
       </SidebarHeader>
 
@@ -164,7 +169,7 @@ export function AppSidebar({
 
         {/* 4. Primary nav (AS-012 order #4; active marking AS-013). */}
         <SidebarGroup>
-          <SidebarGroupLabel className="font-mono text-[11px] font-medium tracking-[0.12em] text-subtle">
+          <SidebarGroupLabel className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
             Overview
           </SidebarGroupLabel>
           <SidebarMenu data-testid="sidebar-nav" aria-label="Primary">
@@ -218,7 +223,7 @@ export function AppSidebar({
             "→ View all docs" link closes the group. Hidden in the collapsed icon rail. */}
         {recentDocs.length > 0 && (
           <SidebarGroup className="group-data-[collapsible=icon]:hidden" data-testid="sidebar-recent-group">
-            <SidebarGroupLabel className="font-mono text-[11px] font-medium tracking-[0.12em] text-subtle">
+            <SidebarGroupLabel className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
               Recent
             </SidebarGroupLabel>
             <SidebarMenu aria-label="Recent docs">
@@ -267,7 +272,9 @@ export function AppSidebar({
                 className="text-muted [&_svg]:text-subtle data-[active=true]:bg-accent-soft data-[active=true]:font-semibold data-[active=true]:text-accent-ink data-[active=true]:[&_svg]:text-accent-ink"
               >
                 <NavLink to={membersHref} data-testid="sidebar-members" title="Members">
-                  <Icon name="settings" size={17} />
+                  <span className="grid size-5 flex-none place-items-center rounded-[5px] border border-line bg-elev text-subtle">
+                    <Icon name="settings" size={12} />
+                  </span>
                   <span>Members</span>
                 </NavLink>
               </SidebarMenuButton>
