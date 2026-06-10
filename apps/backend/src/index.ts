@@ -182,6 +182,10 @@ const app = createApp({
   // (404, existence-hiding) before any handler.
   // render-publish S-001: enveloped, session-gated POST /api/w/:workspaceId/docs.
   docs: { db, resolveSession, resolveWorkspaceRole },
+  // render-publish S-005: enveloped, session-gated GET /api/w/:workspaceId/docs/:slug for
+  // the in-app React viewer. Reuses the SAME access model (viewerLoaderDeps) the /d viewer
+  // uses; markdown → sanitized app-theme HTML, html/image → /v sandbox reference (C-008).
+  viewerDoc: { resolveSession, resolveWorkspaceRole, loaderDeps: viewerLoaderDeps },
   // versioning-diff S-001..S-004: version create/title/history/restore/diff.
   versions: {
     db,

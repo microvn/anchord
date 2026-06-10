@@ -84,6 +84,74 @@ export function createLoadViewer(
   };
 }
 
+/**
+ * The doc payload the in-app React viewer (S-005, direction B) loads by slug.
+ * Carries the metadata (title, kind, current version number, status, generalAccess)
+ * plus the version id needed to build the `/v/:id` sandbox reference for html/image.
+ * The route turns this into the `GET /api/w/:workspaceId/docs/:slug` JSON: markdown
+ * → sanitized app-theme HTML in `content` (C-008/C-002); html/image → a
+ * `{ contentUrl: "/v/<versionId>" }` reference, never the untrusted content inline.
+ */
+export interface ViewerDocPayload {
+  versionId: string;
+  title: string;
+  kind: ViewerDoc["kind"];
+  /** Current (highest) version number. */
+  version: number;
+  /**
+   * Doc lifecycle status. render-publish has no draft state (C-004: create → version 1),
+   * so any doc that reaches the viewer (it has ≥1 published version, the loader requires
+   * one) is "published". Derived, not a stored column — see the S-005 spec signal.
+   */
+  status: "published";
+  generalAccess: GeneralAccessLevel;
+  /** Raw current-version content (markdown text / html / image url) — the route renders it. */
+  content: string;
+}
+
+/**
+ * Build the access-gated S-005 loader: doc-by-slug → meta + current-version content,
+ * for the in-app React viewer. Same two-layer existence-hiding gate as createLoadViewer
+ * (a missing doc OR one the caller cannot view BOTH return null → the route 404s, AS-018).
+ */
+export function createLoadViewerDoc(
+  deps: ViewerLoaderDeps,
+): (slug: string, viewer: Viewer) => Promise<ViewerDocPayload | null> {
+  return async (slug, viewer) => {
+    const [doc] = await deps.db
+      .select({
+        id: docs.id,
+        title: docs.title,
+        kind: docs.kind,
+        generalAccess: docs.generalAccess,
+      })
+      .from(docs)
+      .where(eq(docs.slug, slug))
+      .limit(1);
+    if (!doc) return null;
+    if (!(await canViewVisible(deps, doc.id, doc.generalAccess, viewer))) return null;
+
+    // CURRENT version = highest `version` row (mirrors createLoadViewer / search).
+    const [ver] = await deps.db
+      .select({ id: docVersions.id, version: docVersions.version, content: docVersions.content })
+      .from(docVersions)
+      .where(eq(docVersions.docId, doc.id))
+      .orderBy(desc(docVersions.version))
+      .limit(1);
+    if (!ver) return null; // a doc with no published version has nothing to render
+
+    return {
+      versionId: ver.id,
+      title: doc.title,
+      kind: doc.kind,
+      version: ver.version,
+      status: "published",
+      generalAccess: doc.generalAccess,
+      content: ver.content,
+    };
+  };
+}
+
 /** Build the access-gated /v/:id content loader (gates on the version's OWN doc). */
 export function createLoadContent(
   deps: ViewerLoaderDeps,

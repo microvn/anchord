@@ -3,6 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { contentHeaders, sandboxIframe } from "./render/sandbox";
 import { renderMarkdown } from "./render/markdown";
 import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
+import { viewerDocRoutes, type ViewerDocRoutesDeps } from "./routes/viewer-doc";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
@@ -65,6 +66,16 @@ export type AppDeps = {
    * session resolver. Omit to leave /api/docs unmounted (e.g. viewer-only tests).
    */
   docs?: DocsRoutesDeps;
+  /**
+   * render-publish S-005: enables the enveloped, session-gated, workspace-scoped
+   * GET /api/w/:workspaceId/docs/:slug for the in-app React viewer (direction B).
+   * Returns the doc's meta + rendered content (markdown → sanitized app-theme HTML;
+   * html/image → a `{ contentUrl: /v/:id }` sandbox reference, never inline — C-008).
+   * Access-gated existence-hiding (a missing OR no-access doc → 404). Provide the
+   * loader deps (db + access model) + session/workspace resolvers, or a pre-built
+   * loadViewerDoc (tests). Omit to leave the route unmounted.
+   */
+  viewerDoc?: ViewerDocRoutesDeps;
   /**
    * versioning-diff S-001..S-004: enables the enveloped, session-gated version
    * create/title-patch/history/restore/diff routes under /api/docs/:slug. Provide
@@ -211,6 +222,14 @@ export function createApp(deps: AppDeps) {
   // (better-auth owns its own protocol — api-core C-009).
   if (deps.docs) {
     app.use(docsRoutes(deps.docs));
+  }
+
+  // GET /api/w/:workspaceId/docs/:slug — render-publish S-005, the in-app React viewer's
+  // doc loader. Self-enveloped + session-gated + workspace-scoped, mounted outside the
+  // /api/auth/* catch-all. Markdown → sanitized app-theme HTML; html/image → a sandbox
+  // /v reference (C-008: untrusted HTML never inline); existence-hiding 404 (AS-018).
+  if (deps.viewerDoc) {
+    app.use(viewerDocRoutes(deps.viewerDoc));
   }
 
   // /api/docs/:slug/... — versioning-diff S-001..S-004. Self-enveloped + session-
