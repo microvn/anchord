@@ -9,7 +9,10 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 if (!(globalThis as { happyDOM?: unknown }).happyDOM) {
-  GlobalRegistrator.register();
+  // Give happy-dom a concrete origin so `window.location.origin` is a real URL (not
+  // "null"). The auth client + Eden client both read `window.location.origin` at module
+  // eval; without a URL here better-auth throws "Invalid base URL: null/api/auth".
+  GlobalRegistrator.register({ url: "http://localhost:3000" });
 }
 
 import { afterEach, expect } from "bun:test";

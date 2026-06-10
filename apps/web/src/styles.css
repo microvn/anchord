@@ -1,20 +1,19 @@
-@import "tailwindcss";
 /* Bunny Fonts (privacy-friendly) — Fraunces, Geist, Geist Mono.
-   Must precede all non-@import statements (CSS spec) — hence here, not below @theme. */
+   The external url() @import MUST come FIRST — before `@import "tailwindcss"`, which the
+   Vite plugin expands into real rules. If the font @import sits after it, Lightning CSS
+   sees an @import preceded by rules and DROPS it (a real layout bug — fonts vanish from
+   the production bundle). ALL @imports stay at the very top, above every @theme/:root. */
 @import url("https://fonts.bunny.net/css?family=fraunces:400,500,600|geist:400,500,600,700|geist-mono:400,500,600");
+@import "tailwindcss";
 @import "tw-animate-css";
-/* Anchord-Design ported skins — MUST sit with the other @imports, ABOVE @theme/:root
-   rules (CSS @import must precede all non-import statements, else Lightning CSS drops them). */
-@import "./styles/auth.css";
-@import "./styles/screens.css";
 
 @custom-variant dark (&:is(.dark *));
 
 /* ============================================================
-   anchord — design tokens (ported from Anchord-Design/tokens.css)
+   anchord — design tokens (ported from Anchord-Design/tokens.css + DESIGN.md §Color)
    Dark is the canonical/default theme (theme-provider stamps data-theme="dark"
    on load). Light is the toggle. Teal is the ONLY accent — never purple/violet,
-   never Claude-orange (#d97757). See DESIGN.md §Color/Typography.
+   never Claude-orange (#d97757).
 
    The raw palette lives on :root / [data-theme] selectors below so it can switch
    at runtime; the @theme blocks expose those vars as Tailwind utilities + the
@@ -195,24 +194,6 @@
 
 :root {
   color-scheme: dark;
-
-  /* Anchord-Design px scale + radii + ease, referenced by the still-imported screens.css
-     (the dashboard/screens skins get redone in a later batch — until then they need these
-     vars, which previously lived in the now-deleted shell.css). The shell itself no longer
-     uses them; it reads the @theme radius/spacing utilities. */
-  --t-display: 30px;
-  --t-h2: 21px;
-  --t-h3: 15px;
-  --t-body: 13.5px;
-  --t-small: 12.5px;
-  --t-mono: 11px;
-
-  --r-sm: 6px;
-  --r-md: 8px;
-  --r-lg: 11px;
-  --r-pill: 999px;
-
-  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 :root[data-theme="light"] {
   color-scheme: light;
