@@ -6,15 +6,16 @@ import { AppRoutes } from "../src/app";
 import { createQueryClient } from "../src/app/query-client";
 import { ThemeProvider, applyTheme } from "../src/app/theme-provider";
 
-// Phase 0 smoke: the foundation boots — the route table resolves the public /signin
-// placeholder, and the theme provider stamps the dark canonical marker on the root.
+// Smoke: the foundation boots — the route table resolves the public /signin route to the
+// real sign-in screen (Phase 1 replaced the placeholder), and the theme provider stamps the
+// dark canonical marker on the root.
 
 afterEach(() => {
   document.documentElement.removeAttribute("data-theme");
 });
 
 describe("foundation boots", () => {
-  it("renders the sign-in placeholder at /signin", () => {
+  it("renders the real sign-in screen at /signin", () => {
     const queryClient = createQueryClient();
     render(
       <ThemeProvider>
@@ -25,7 +26,9 @@ describe("foundation boots", () => {
         </QueryClientProvider>
       </ThemeProvider>,
     );
-    expect(screen.getByTestId("route-label")).toHaveTextContent("signin");
+    // The real screen renders the email + password form (not a placeholder label).
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
   });
 
   it("stamps data-theme=dark by default", () => {

@@ -5,6 +5,11 @@ import { createQueryClient } from "./app/query-client";
 import { SessionExpiryListener } from "./app/session-expiry-listener";
 import { ThemeProvider } from "./app/theme-provider";
 import { Brandmark } from "./components/icon";
+import { SignInScreen } from "./features/auth/sign-in-screen";
+import { SignUpScreen } from "./features/auth/sign-up-screen";
+import { VerifyEmailLanding } from "./features/auth/verify-email-landing";
+import { InviteAcceptLanding } from "./features/auth/invite-accept-landing";
+import { WorkspaceInviteLanding } from "./features/workspaces/invite-landing";
 
 // One shared QueryClient for the app's server-state layer (S-002). Its cache-level onError
 // centralizes session-expiry handling: any query that comes back UNAUTHENTICATED bounces the
@@ -36,18 +41,15 @@ export function AppRoutes() {
   return (
     <Routes>
       {/* Public pre-session screens (outside AuthGuard). */}
-      <Route path="/signin" element={<Placeholder label="signin" />} />
-      <Route path="/signup" element={<Placeholder label="signup" />} />
-      <Route path="/verify-email" element={<Placeholder label="verify-email" />} />
+      <Route path="/signin" element={<SignInScreen />} />
+      <Route path="/signup" element={<SignUpScreen />} />
+      <Route path="/verify-email" element={<VerifyEmailLanding />} />
 
       <Route element={<AuthGuard />}>
         {/* Workspace invite accept/reject landing — signed in, outside the shell. */}
-        <Route
-          path="/invite/workspace/:invitationId"
-          element={<Placeholder label="invite-workspace" />}
-        />
+        <Route path="/invite/workspace/:invitationId" element={<WorkspaceInviteLanding />} />
         {/* Per-doc invite accept-link landing — distinct from the workspace invite. */}
-        <Route path="/invite/doc/:inviteId" element={<Placeholder label="invite-doc" />} />
+        <Route path="/invite/doc/:inviteId" element={<InviteAcceptLanding />} />
 
         {/* Tenancy is scoped by URL path /w/:workspaceId/… (mirrors /api/w/:workspaceId/…). */}
         <Route index element={<Placeholder label="root-redirect" />} />
