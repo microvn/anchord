@@ -135,10 +135,15 @@ export function AppSidebar({
         </div>
       </SidebarHeader>
 
-      <SidebarContent>
+      {/* gap-0 + explicit per-group spacing matches the prototype's `.sb-body` rhythm (block
+          flow with margin-top on each group), not the shadcn default gap-2 between groups.
+          px-[10px] gives the 10px L / 11px R content inset (227px items inside the 248px rail). */}
+      <SidebarContent className="gap-0 px-[10px] py-[4px] pb-[10px]">
         {/* 2. Primary action — `+ New doc` (flat teal, compact ~32px). Collapses to a `+`.
-            With onNewDoc it opens the publish dialog in place; otherwise it links to newDocHref. */}
-        <SidebarGroup className="pb-0">
+            With onNewDoc it opens the publish dialog in place; otherwise it links to newDocHref.
+            `.sb-action` = padding 2px 0 10px → pt-[2px] pb-[10px], no horizontal pad (inset owned
+            by SidebarContent). */}
+        <SidebarGroup className="px-0 pt-[2px] pb-[10px]">
           <Button
             asChild={!onNewDoc}
             size="sm"
@@ -163,16 +168,21 @@ export function AppSidebar({
 
         {/* 3. Workspace switcher slot (AS-012; C-005 — the single switcher anchor). Owned by
             workspaces-ui — mounted here, never rebuilt. */}
-        <SidebarGroup data-testid="sidebar-switcher-slot" className="py-0">
+        {/* `.switcher` carries margin-bottom 8px in the prototype → mb-2 here (the trigger's own
+            38px height is set in workspace-switcher.tsx). px-0: inset owned by SidebarContent. */}
+        <SidebarGroup data-testid="sidebar-switcher-slot" className="px-0 py-0 mb-2">
           {switcherSlot}
         </SidebarGroup>
 
-        {/* 4. Primary nav (AS-012 order #4; active marking AS-013). */}
-        <SidebarGroup>
+        {/* 4. Primary nav (AS-012 order #4; active marking AS-013). `.nav-group` = margin-top 12px
+            (mt-3); px-0 because SidebarContent owns the 10px inset. */}
+        <SidebarGroup className="px-0 py-0 mt-3">
           <SidebarGroupLabel className="h-auto px-[9px] pb-[6px] font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
             Overview
           </SidebarGroupLabel>
-          <SidebarMenu data-testid="sidebar-nav" aria-label="Primary">
+          {/* gap-px → 1px between rows (the prototype's block rows collapse the 1px top+bottom
+              margins to 1px; flex gap-px reproduces that without margin collapse). */}
+          <SidebarMenu data-testid="sidebar-nav" aria-label="Primary" className="gap-px">
             {nav.map((item) => {
               const active = isNavActive(item);
               return (
@@ -192,8 +202,14 @@ export function AppSidebar({
                     className={[
                       "h-[33px] gap-[10px] rounded-sm p-0 px-[9px] text-[12.5px] font-medium leading-[18.75px] [&>svg]:size-[17px]",
                       "text-muted [&_svg]:text-subtle",
+                      // Hover = .nav-item:hover (bg --elev, text --ink, icon --muted) — override the
+                      // shadcn default hover:bg-sidebar-accent (accent-soft) which is the ACTIVE look.
+                      // Focus-visible = teal ring.
+                      // The prototype has no :active (press) rule → press stays at the hover look;
+                      // neutralise the shadcn variant's active:bg-sidebar-accent (accent-soft) flash.
+                      "hover:bg-elev hover:text-ink hover:[&_svg]:text-muted active:bg-elev active:text-ink focus-visible:ring-2 focus-visible:ring-accent",
                       active
-                        ? "bg-accent-soft font-semibold text-accent-ink [&_svg]:text-accent-ink data-[active=true]:font-semibold"
+                        ? "bg-accent-soft font-semibold text-accent-ink [&_svg]:text-accent-ink hover:bg-accent-soft hover:text-accent-ink hover:[&_svg]:text-accent-ink active:bg-accent-soft active:text-accent-ink data-[active=true]:bg-accent-soft data-[active=true]:font-semibold data-[active=true]:text-accent-ink"
                         : "",
                     ].join(" ")}
                   >
@@ -226,14 +242,14 @@ export function AppSidebar({
             Each row: a small format-icon chip + the truncated title → the doc viewer. A
             "→ View all docs" link closes the group. Hidden in the collapsed icon rail. */}
         {recentDocs.length > 0 && (
-          <SidebarGroup className="group-data-[collapsible=icon]:hidden" data-testid="sidebar-recent-group">
+          <SidebarGroup className="px-0 py-0 mt-[14px] group-data-[collapsible=icon]:hidden" data-testid="sidebar-recent-group">
             <SidebarGroupLabel className="h-auto px-[9px] pb-[6px] font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
               Recent
             </SidebarGroupLabel>
-            <SidebarMenu aria-label="Recent docs">
+            <SidebarMenu aria-label="Recent docs" className="gap-px">
               {recentDocs.map((d) => (
                 <SidebarMenuItem key={d.slug}>
-                  <SidebarMenuButton asChild className="h-8 gap-[9px] rounded-sm p-0 px-[9px] text-[12.5px] leading-[18.75px] text-muted">
+                  <SidebarMenuButton asChild className="h-8 gap-[9px] rounded-sm p-0 px-[9px] text-[12.5px] leading-[18.75px] text-muted hover:bg-elev hover:text-ink active:bg-elev active:text-ink focus-visible:ring-2 focus-visible:ring-accent">
                     <NavLink
                       to={`/d/${d.slug}`}
                       data-testid={`sidebar-recent-${d.slug}`}
@@ -249,7 +265,7 @@ export function AppSidebar({
                 </SidebarMenuItem>
               ))}
               <SidebarMenuItem>
-                <SidebarMenuButton asChild className="h-8 gap-[9px] rounded-sm p-0 px-[9px] text-[12.5px] leading-[18.75px] text-subtle hover:text-ink">
+                <SidebarMenuButton asChild className="h-8 gap-[9px] rounded-sm p-0 px-[9px] text-[12.5px] leading-[18.75px] text-subtle hover:bg-elev hover:text-ink active:bg-elev active:text-ink focus-visible:ring-2 focus-visible:ring-accent">
                   <NavLink to={docsHref} data-testid="sidebar-view-all-docs" title="View all docs">
                     <span className="grid size-5 flex-none place-items-center">
                       <Icon name="arrowRight" size={13} />
@@ -266,14 +282,14 @@ export function AppSidebar({
       {/* 5. Footer — Members, admin-only (AS-014, C-006). The account is NOT here; it lives in
           the header (C-005). A non-admin member simply doesn't get the Members entry. */}
       {isAdmin && (
-        <SidebarFooter className="border-t border-sidebar-border">
+        <SidebarFooter className="border-t border-sidebar-border px-[10px] py-2">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
                 isActive={pathname.startsWith(membersHref)}
                 tooltip="Members"
-                className="h-[33px] gap-[10px] rounded-sm p-0 px-[9px] text-[12.5px] font-medium leading-[18.75px] [&>svg]:size-[17px] text-muted [&_svg]:text-subtle data-[active=true]:bg-accent-soft data-[active=true]:font-semibold data-[active=true]:text-accent-ink data-[active=true]:[&_svg]:text-accent-ink"
+                className="h-[33px] gap-[10px] rounded-sm p-0 px-[9px] text-[12.5px] font-medium leading-[18.75px] [&>svg]:size-[17px] text-muted [&_svg]:text-subtle hover:bg-elev hover:text-ink hover:[&_svg]:text-muted active:bg-elev active:text-ink focus-visible:ring-2 focus-visible:ring-accent data-[active=true]:bg-accent-soft data-[active=true]:font-semibold data-[active=true]:text-accent-ink data-[active=true]:[&_svg]:text-accent-ink data-[active=true]:active:bg-accent-soft data-[active=true]:active:text-accent-ink"
               >
                 <NavLink to={membersHref} data-testid="sidebar-members" title="Members">
                   <Icon name="settings" size={17} />

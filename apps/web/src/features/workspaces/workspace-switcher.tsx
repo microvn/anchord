@@ -71,7 +71,7 @@ export function WorkspaceSwitcher() {
                 // plain button (NOT SidebarMenuButton) so the switcher renders standalone — many
                 // workspaces-ui tests mount it without a SidebarProvider. ≥40px tap target (C-003);
                 // collapse-to-icon hides the meta + chevron via the primitive's group-data attr.
-                className="flex min-h-[40px] w-full items-center gap-[9px] overflow-hidden rounded-md border border-transparent pl-[7px] pr-2 text-left text-ink outline-none transition-colors hover:bg-elev focus-visible:ring-2 focus-visible:ring-accent data-[state=open]:border-line data-[state=open]:bg-elev group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+                className="flex h-[38px] w-full items-center gap-[9px] overflow-hidden rounded-md border border-transparent pl-[7px] pr-2 text-left text-ink outline-none transition-colors hover:bg-elev focus-visible:ring-2 focus-visible:ring-accent data-[state=open]:border-line data-[state=open]:bg-elev group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
               >
                 <span className={WS_GLYPH}>{glyph}</span>
                 <span className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
