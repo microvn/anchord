@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApiQuery } from "../../lib/use-api-query";
 import { EmptyState } from "../../components/empty-state";
@@ -6,7 +6,15 @@ import { ErrorState } from "../../components/error-state";
 import { Skeleton } from "../../components/skeleton";
 import { DocPane } from "./doc-pane";
 import { TocSidebar } from "./toc-sidebar";
-import { fetchViewerDoc, type ViewerDocResponse } from "./client";
+import { AnnotationsRail } from "./annotations-rail";
+import { useAnnotationMarks, placeAnnotations, scrollToAnno } from "./annotation-marks";
+import {
+  fetchViewerDoc,
+  listAnnotations,
+  type ViewerDocResponse,
+  type ListAnnotationsResponse,
+  type ViewerAnnotation,
+} from "./client";
 
 // ViewerScreen (S-001): the React route `/w/:workspaceId/d/:slug`. It fetches the doc via the
 // workspace-scoped read, then renders it inside the 3-pane viewer shell — only the DocPane is
@@ -67,20 +75,35 @@ export function ViewerScreen() {
 
   const doc = query.data;
   return (
-    <ViewerShell title={doc.doc.title}>
+    <ViewerShell title={doc.doc.title} workspaceId={workspaceId} slug={slug}>
       <DocPane doc={doc} />
     </ViewerShell>
   );
 }
 
-// The minimal 3-pane shell (S-001 + S-002). The TOC (S-002) now reads its outline from the rendered
-// doc content element (the scrollable doc pane) and drives scroll-spy/jump there; the rail (S-003)
-// stays a reserved slot. The top bar's full controls are S-005; here it carries only doc identity.
-function ViewerShell({ title, children }: { title: string; children: React.ReactNode }) {
-  // The scrollable doc pane is both the scroll-spy container and the heading source for the TOC.
-  // A callback ref re-derives the outline once the content mounts (and when a new doc renders).
+// The minimal 3-pane shell (S-001 + S-002 + S-003). The TOC (S-002) reads its outline from the
+// rendered doc content element (the scrollable doc pane). The AnnotationsRail (S-003) reads the
+// doc's annotations and pairs each anchored one to an in-text highlight in that same content
+// element. The top bar's full controls are S-005; here it carries only doc identity.
+//
+// workspaceId/slug are absent on the loading / error shells (no doc yet) — the rail only mounts
+// once a doc has rendered, so those calls omit them and the rail slot stays reserved-but-empty.
+function ViewerShell({
+  title,
+  children,
+  workspaceId,
+  slug,
+}: {
+  title: string;
+  children: React.ReactNode;
+  workspaceId?: string;
+  slug?: string;
+}) {
+  // The scrollable doc pane is both the scroll-spy container, the TOC heading source, AND the
+  // highlight host for S-003. A callback ref re-derives once the content mounts (and on new doc).
   const [docPaneEl, setDocPaneEl] = useState<HTMLElement | null>(null);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const hasDoc = Boolean(workspaceId && slug);
 
   return (
     <div data-testid="viewer-screen" className="flex h-dvh flex-col bg-paper text-ink">
@@ -106,13 +129,67 @@ function ViewerShell({ title, children }: { title: string; children: React.React
         >
           {children}
         </main>
-        {/* AnnotationsRail slot — S-003. */}
+        {/* AnnotationsRail — S-003 (collapses to a drawer on narrow screens in S-006). */}
         <aside
           data-testid="viewer-rail-slot"
           className="hidden border-l border-line bg-sunken lg:block"
-          aria-hidden
-        />
+        >
+          {hasDoc ? (
+            <AnnotationsPane workspaceId={workspaceId!} slug={slug!} docPaneEl={docPaneEl} />
+          ) : null}
+        </aside>
       </div>
     </div>
+  );
+}
+
+// AnnotationsPane (S-003): reads the doc's annotations, places highlight marks against the doc
+// content element, and renders the rail. Owns focus pairing (C-003): clicking a highlight focuses
+// its thread (via useAnnotationMarks), clicking a thread scrolls to + emphasises its highlight.
+function AnnotationsPane({
+  workspaceId,
+  slug,
+  docPaneEl,
+}: {
+  workspaceId: string;
+  slug: string;
+  docPaneEl: HTMLElement | null;
+}) {
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+
+  const annoQuery = useApiQuery<ListAnnotationsResponse>(
+    ["viewer-annotations", workspaceId, slug],
+    () => listAnnotations(workspaceId, slug),
+  );
+
+  const annotations: ViewerAnnotation[] = annoQuery.data?.items ?? [];
+
+  // Which anchored annotations the FE could NOT place at runtime (GAP-005) — a dry placement run
+  // against the live content drives the "couldn't place" flag in the rail.
+  const unplaceableIds = useMemo(() => {
+    const set = new Set<string>();
+    if (!docPaneEl) return set;
+    const { unplaceable } = placeAnnotations(docPaneEl, annotations);
+    unplaceable.forEach((id) => set.add(id));
+    return set;
+  }, [docPaneEl, annotations]);
+
+  // Place marks + wire click-on-highlight → focus thread (AS-008).
+  useAnnotationMarks(docPaneEl, annotations, focusedId, setFocusedId);
+
+  const focusThread = (id: string) => {
+    setFocusedId(id);
+    scrollToAnno(docPaneEl, id); // AS-009: scroll to + emphasise the highlight.
+  };
+
+  if (annoQuery.isPending) return null;
+
+  return (
+    <AnnotationsRail
+      annotations={annotations}
+      focusedId={focusedId}
+      unplaceableIds={unplaceableIds}
+      onFocusThread={focusThread}
+    />
   );
 }

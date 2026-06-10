@@ -22,8 +22,12 @@ const httpError = (status: number, code?: string) => ({
 
 let response: unknown;
 const fetchViewerDoc = mock(async () => response);
+// S-003 added the annotations read to this client module; the viewer now mounts the rail, which
+// calls listAnnotations. These S-001 tests only assert the doc surface, so the rail's read returns
+// an empty list (the rail then shows its empty state, irrelevant to the S-001 assertions).
+const listAnnotations = mock(async () => ({ data: { items: [] }, error: null }));
 
-mock.module("../src/features/viewer/client", () => ({ fetchViewerDoc }));
+mock.module("../src/features/viewer/client", () => ({ fetchViewerDoc, listAnnotations }));
 
 const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
 
