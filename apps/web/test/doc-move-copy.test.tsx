@@ -5,9 +5,10 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // workspace-project-ui S-001 — move/copy a doc between projects. The Eden client wrappers
-// (moveDoc/copyDoc) are MOCKED; we assert the ⋯ more-menu → Move/Copy dialog → project
-// pick → confirm calls the right wrapper with (workspaceId, slug, targetProjectId), that the
-// destination list offers ONLY this workspace's projects (C-003), and that move vs copy carry
+// (moveDoc/copyDoc) are MOCKED; we assert the ⋯ kebab opens the Move/Copy dialog DIRECTLY (1:1
+// with the prototype — no intermediate menu; the Move|Copy toggle lives inside the dialog),
+// project pick → confirm calls the right wrapper with (workspaceId, slug, targetProjectId), that
+// the destination list offers ONLY this workspace's projects (C-003), and that move vs copy carry
 // their distinct intent (helper copy + which endpoint fires). Pixel/responsive [→MANUAL].
 
 const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
@@ -60,10 +61,6 @@ function renderCard() {
   );
 }
 
-async function openMenu(testid: string) {
-  await userEvent.click(screen.getByTestId(testid));
-}
-
 beforeEach(() => {
   moveDoc.mockClear();
   copyDoc.mockClear();
@@ -72,8 +69,8 @@ beforeEach(() => {
 describe("workspace-project-ui S-001 — move / copy a doc between projects", () => {
   it("AS-001: Move a doc to another project", async () => {
     renderCard();
-    await openMenu("doc-more-auth-spec");
-    await userEvent.click(await screen.findByTestId("doc-more-move"));
+    // The ⋯ kebab opens the dialog directly (no intermediate menu).
+    await userEvent.click(screen.getByTestId("doc-more-auth-spec"));
 
     // Move|Copy toggle defaults to Move; the helper line reflects move intent.
     const dialog = await screen.findByTestId("move-copy-dialog");
@@ -91,11 +88,14 @@ describe("workspace-project-ui S-001 — move / copy a doc between projects", ()
 
   it("AS-002: Copy a doc to another project", async () => {
     renderCard();
-    await openMenu("doc-more-auth-spec");
-    await userEvent.click(await screen.findByTestId("doc-more-copy"));
+    await userEvent.click(screen.getByTestId("doc-more-auth-spec"));
+    await screen.findByTestId("move-copy-dialog");
 
-    const dialog = await screen.findByTestId("move-copy-dialog");
-    expect(dialog).toHaveTextContent(/duplicate is created; the original stays/i);
+    // Flip the in-dialog toggle to Copy; the helper line reflects copy intent.
+    await userEvent.click(screen.getByTestId("mode-copy"));
+    expect(screen.getByTestId("move-copy-dialog")).toHaveTextContent(
+      /duplicate is created; the original stays/i,
+    );
 
     await userEvent.click(await screen.findByTestId("dest-project-p-pay"));
     await userEvent.click(screen.getByTestId("move-copy-confirm"));
@@ -109,8 +109,7 @@ describe("workspace-project-ui S-001 — move / copy a doc between projects", ()
 
   it("C-003: the destination list offers only this workspace's projects", async () => {
     renderCard();
-    await openMenu("doc-more-auth-spec");
-    await userEvent.click(await screen.findByTestId("doc-more-move"));
+    await userEvent.click(screen.getByTestId("doc-more-auth-spec"));
     await screen.findByTestId("move-copy-dialog");
 
     // Exactly the two workspace projects are offered — nothing more.
@@ -120,7 +119,7 @@ describe("workspace-project-ui S-001 — move / copy a doc between projects", ()
     expect(options).toHaveLength(PROJECTS.length);
   });
 
-  it("AS-001: the DocList row also exposes the move/copy more-menu", async () => {
+  it("AS-001: the DocList row also exposes the move/copy kebab", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
@@ -129,8 +128,8 @@ describe("workspace-project-ui S-001 — move / copy a doc between projects", ()
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    await openMenu("doc-more-auth-spec");
-    await userEvent.click(await screen.findByTestId("doc-more-move"));
+    await userEvent.click(screen.getByTestId("doc-more-auth-spec"));
+    await screen.findByTestId("move-copy-dialog");
     await userEvent.click(await screen.findByTestId("dest-project-p-pay"));
     await userEvent.click(screen.getByTestId("move-copy-confirm"));
     await waitFor(() =>

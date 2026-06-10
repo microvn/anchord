@@ -8,12 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../components/ui/dropdown-menu";
 import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
 import { queryKeys } from "../workspaces/query-keys";
@@ -197,8 +191,15 @@ export function MoveCopyDialog({
   );
 }
 
-// The ⋯ more-menu on a DocCard / DocList row. Move / Copy each open the dialog in that mode.
-// Self-contained so both the grid card and the list row reuse it identically.
+// The ⋯ button on a DocCard / DocList row. 1:1 with the Anchord-Design prototype: it opens the
+// MoveCopyDialog DIRECTLY (the dialog carries the Move|Copy toggle) — there is NO intermediate
+// Move/Copy menu. Self-contained so the grid card and the list row reuse it identically.
+//
+// The wrapper's onClick stops propagation: the kebab and the Radix Dialog are rendered inside the
+// surrounding doc-card <Link>, and Radix portals the dialog to <body> but React still bubbles the
+// portal's events UP THE REACT TREE — so a click inside the dialog (toggle / project / confirm)
+// would otherwise reach the <Link> and navigate. Stopping it here (a React ancestor of the portal)
+// keeps every dialog click from triggering navigation.
 export function DocMoreMenu({
   doc,
   workspaceId,
@@ -209,54 +210,23 @@ export function DocMoreMenu({
   projects: ProjectRow[];
 }) {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<Mode>("move");
-
-  function openWith(m: Mode) {
-    setMode(m);
-    setOpen(true);
-  }
 
   return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            data-testid={`doc-more-${doc.slug}`}
-            aria-label="More actions"
-            // Stop the surrounding <Link> from navigating when the kebab is clicked.
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            className="grid size-7 flex-none place-items-center rounded-md text-subtle hover:bg-elev hover:text-ink"
-          >
-            <Icon name="more" size={16} />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="border-line bg-surface">
-          <DropdownMenuItem
-            data-testid="doc-more-move"
-            onSelect={(e) => {
-              e.preventDefault();
-              openWith("move");
-            }}
-          >
-            <Icon name="arrowRight" size={15} />
-            Move…
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            data-testid="doc-more-copy"
-            onSelect={(e) => {
-              e.preventDefault();
-              openWith("copy");
-            }}
-          >
-            <Icon name="copy" size={15} />
-            Copy…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+    <span className="contents" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        data-testid={`doc-more-${doc.slug}`}
+        aria-label="More actions"
+        title="Move or copy"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        className="grid size-7 flex-none place-items-center rounded-md text-subtle hover:bg-elev hover:text-ink"
+      >
+        <Icon name="more" size={16} />
+      </button>
       {open && (
         <MoveCopyDialog
           open={open}
@@ -264,9 +234,8 @@ export function DocMoreMenu({
           doc={doc}
           workspaceId={workspaceId}
           projects={projects}
-          initialMode={mode}
         />
       )}
-    </>
+    </span>
   );
 }
