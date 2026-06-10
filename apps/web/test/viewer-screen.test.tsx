@@ -109,6 +109,36 @@ describe("ViewerScreen S-001", () => {
     expect(img.style.transform).toContain("scale(1)");
   });
 
+  it("AS-012: the top bar shows doc identity and the comments toggle shows/hides the rail", async () => {
+    response = ok({
+      doc: { title: "My MD doc", kind: "markdown", version: 4, status: "live", generalAccess: "restricted" },
+      content: "<h2>Intro</h2><p>body</p>",
+    });
+
+    render(<App />);
+
+    // Top bar identity (title · Live · format · version).
+    await screen.findByTestId("markdown-view");
+    expect(screen.getByTestId("vt-title")).toHaveTextContent("My MD doc");
+    expect(screen.getByTestId("vt-live-badge")).toHaveTextContent("Live");
+    expect(screen.getByTestId("vt-format-badge")).toHaveTextContent("MD");
+    expect(screen.getByTestId("vt-version")).toHaveTextContent("v4");
+
+    // Rail visible by default; the comments toggle reads pressed.
+    expect(screen.getByTestId("viewer-rail-slot")).toBeInTheDocument();
+    const toggle = screen.getByTestId("vt-comments-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    // Click → rail unmounts (hidden), toggle reads not-pressed.
+    await userEvent.click(toggle);
+    expect(screen.queryByTestId("viewer-rail-slot")).toBeNull();
+    expect(screen.getByTestId("vt-comments-toggle")).toHaveAttribute("aria-pressed", "false");
+
+    // Click again → rail back.
+    await userEvent.click(screen.getByTestId("vt-comments-toggle"));
+    expect(screen.getByTestId("viewer-rail-slot")).toBeInTheDocument();
+  });
+
   it("AS-004: a doc I cannot access (404) shows a not-found state, never its content", async () => {
     response = httpError(404, "NOT_FOUND");
 

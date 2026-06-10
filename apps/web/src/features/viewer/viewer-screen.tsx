@@ -7,6 +7,9 @@ import { Skeleton } from "../../components/skeleton";
 import { DocPane } from "./doc-pane";
 import { TocSidebar } from "./toc-sidebar";
 import { AnnotationsRail } from "./annotations-rail";
+import { ViewerTopBar } from "./viewer-top-bar";
+import { MetaStrip, type SpecMeta } from "./meta-strip";
+import { toast } from "sonner";
 import { useAnnotationMarks, placeAnnotations, scrollToAnno } from "./annotation-marks";
 import {
   fetchViewerDoc,
@@ -74,8 +77,13 @@ export function ViewerScreen() {
   }
 
   const doc = query.data;
+  // S-005: the spec meta strip. The S-001 doc payload does NOT carry a spec flag or the
+  // story/AS/updated/draft fields the strip wants (see meta-strip.tsx PAYLOAD GAP), so there is no
+  // spec meta to show yet → `spec={null}` and the strip renders nothing. When the backend grows
+  // those fields (or a spec-meta read lands), build a SpecMeta here from slug/version/url + counts.
+  const specMeta: SpecMeta | null = null;
   return (
-    <ViewerShell title={doc.doc.title} workspaceId={workspaceId} slug={slug}>
+    <ViewerShell title={doc.doc.title} doc={doc.doc} specMeta={specMeta} workspaceId={workspaceId} slug={slug}>
       <DocPane doc={doc} />
     </ViewerShell>
   );
@@ -90,11 +98,16 @@ export function ViewerScreen() {
 // once a doc has rendered, so those calls omit them and the rail slot stays reserved-but-empty.
 function ViewerShell({
   title,
+  doc,
+  specMeta,
   children,
   workspaceId,
   slug,
 }: {
   title: string;
+  /** present only on the success path — drives the S-005 ViewerTopBar identity. */
+  doc?: { title: string; kind: ViewerDocResponse["doc"]["kind"]; version: number; status: string };
+  specMeta?: SpecMeta | null;
   children: React.ReactNode;
   workspaceId?: string;
   slug?: string;
@@ -103,13 +116,35 @@ function ViewerShell({
   // highlight host for S-003. A callback ref re-derives once the content mounts (and on new doc).
   const [docPaneEl, setDocPaneEl] = useState<HTMLElement | null>(null);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  // S-005 (AS-012): `railVisible` is lifted here so the top bar's comments toggle can show/hide the
+  // rail. Defaults to shown; the rail aside only mounts (and the AnnotationsPane only reads) while
+  // visible.
+  const [railVisible, setRailVisible] = useState(true);
   const hasDoc = Boolean(workspaceId && slug);
 
   return (
     <div data-testid="viewer-screen" className="flex h-dvh flex-col bg-paper text-ink">
-      <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-4">
-        <span className="truncate text-[13.5px] font-semibold text-ink">{title}</span>
-      </header>
+      {doc ? (
+        // S-005: the full top bar (identity + comments/theme/version/share controls). Version &
+        // share open sibling-spec panels not built here → placeholder toasts.
+        <ViewerTopBar
+          doc={doc}
+          railVisible={railVisible}
+          onToggleRail={() => setRailVisible((v) => !v)}
+          onVersion={() => toast("Version history isn't available yet")}
+          onShare={() => toast("Sharing isn't available yet")}
+          onOverflow={() => toast("More actions")}
+        />
+      ) : (
+        // Loading / not-found / error states have no doc yet → a minimal title-only bar.
+        <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-4">
+          <span className="truncate text-[13.5px] font-semibold text-ink">{title}</span>
+        </header>
+      )}
+      {/* S-005 (AS-013): the spec meta strip — desktop, spec docs only. Null when not a spec doc. */}
+      <div className="hidden lg:block">
+        <MetaStrip spec={specMeta ?? null} />
+      </div>
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[260px_1fr_360px]">
         {/* TocSidebar — S-002 (collapses to a drawer on narrow screens in S-006). */}
         <aside
@@ -129,15 +164,18 @@ function ViewerShell({
         >
           {children}
         </main>
-        {/* AnnotationsRail — S-003 (collapses to a drawer on narrow screens in S-006). */}
-        <aside
-          data-testid="viewer-rail-slot"
-          className="hidden border-l border-line bg-sunken lg:block"
-        >
-          {hasDoc ? (
-            <AnnotationsPane workspaceId={workspaceId!} slug={slug!} docPaneEl={docPaneEl} />
-          ) : null}
-        </aside>
+        {/* AnnotationsRail — S-003. Hidden when the comments toggle collapses it (S-005, AS-012);
+            collapses to a drawer on narrow screens in S-006. */}
+        {railVisible && (
+          <aside
+            data-testid="viewer-rail-slot"
+            className="hidden border-l border-line bg-sunken lg:block"
+          >
+            {hasDoc ? (
+              <AnnotationsPane workspaceId={workspaceId!} slug={slug!} docPaneEl={docPaneEl} />
+            ) : null}
+          </aside>
+        )}
       </div>
     </div>
   );
