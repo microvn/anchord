@@ -200,6 +200,17 @@
   color-scheme: light;
 }
 
+/* Tailwind v4 defaults an uncolored `border-*` to currentColor (the text color), which on
+   a light theme renders a dark/visible divider (e.g. the sidebar's `border-r` showed as a
+   near-black line). Restore the shadcn base: every border defaults to the faint --line token. */
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--color-border);
+  }
+}
+
 html,
 body,
 #root {
