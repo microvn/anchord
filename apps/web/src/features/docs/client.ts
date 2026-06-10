@@ -62,3 +62,32 @@ export function publishDoc(
 ): Promise<EdenResult<unknown>> {
   return treaty.api.w({ workspaceId }).docs.post(body) as Promise<EdenResult<unknown>>;
 }
+
+/**
+ * POST /api/w/:workspaceId/docs/:slug/move { projectId } — relocate the doc as-is into another
+ * project of THIS workspace (workspace-project S-004 / AS-008). Returns { docId, slug, projectId }.
+ */
+export function moveDoc(
+  workspaceId: string,
+  slug: string,
+  projectId: string,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).docs({ slug }).move.post({ projectId }) as Promise<
+    EdenResult<unknown>
+  >;
+}
+
+/**
+ * POST /api/w/:workspaceId/docs/:slug/copy { projectId } — duplicate into another project of
+ * THIS workspace (a clean copy: new slug, current version as v1, no annotations; the original
+ * stays). workspace-project S-004 / AS-013. Returns the NEW doc { docId, slug, projectId }.
+ */
+export function copyDoc(
+  workspaceId: string,
+  slug: string,
+  projectId: string,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).docs({ slug }).copy.post({ projectId }) as Promise<
+    EdenResult<unknown>
+  >;
+}

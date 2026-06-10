@@ -43,6 +43,8 @@ mock.module("../src/features/docs/client", () => ({
   createProject,
   searchDocs,
   publishDoc,
+  moveDoc: mock(async () => env({ docId: "d1", slug: "s1", projectId: "p1" })),
+  copyDoc: mock(async () => env({ docId: "d2", slug: "s2", projectId: "p1" })),
 }));
 
 const { WorkspaceHome } = await import("../src/features/workspaces/workspace-home");

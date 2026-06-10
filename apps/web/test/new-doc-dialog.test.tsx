@@ -22,6 +22,8 @@ mock.module("../src/features/docs/client", () => ({
   createProject: mock(async () => env({})),
   searchDocs: mock(async () => env({ results: [] })),
   publishDoc,
+  moveDoc: mock(async () => env({})),
+  copyDoc: mock(async () => env({})),
 }));
 
 const { NewDocDialog } = await import("../src/features/docs/new-doc-dialog");

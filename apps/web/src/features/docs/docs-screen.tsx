@@ -29,6 +29,7 @@ export function DocsScreen() {
   const [view, setView] = useState<View>("grid");
 
   const allDocs = query.data?.docs ?? [];
+  const projects = query.data?.projects ?? [];
 
   // Shared / Has-detached depend on per-doc access + detached-anchor counts that no mounted
   // endpoint returns yet, so those filters resolve to 0 today (NoResultsState). The chips are
@@ -117,11 +118,11 @@ export function DocsScreen() {
               className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-3"
             >
               {filtered.map((d) => (
-                <DocCard key={d.id} doc={d} />
+                <DocCard key={d.id} doc={d} workspaceId={workspace.id} projects={projects} />
               ))}
             </div>
           ) : (
-            <DocList docs={filtered} />
+            <DocList docs={filtered} workspaceId={workspace.id} projects={projects} />
           )}
         </>
       )}

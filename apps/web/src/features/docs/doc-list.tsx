@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { FormatBadge, FormatTag, MetaDot, VersionTag, CommentCount, StatusTag } from "./doc-bits";
-import type { DocRow } from "./types";
+import { DocMoreMenu } from "./move-copy-dialog";
+import type { DocRow, ProjectRow } from "./types";
 
 // The "Documents · Recent" list rows on the dashboard + the All-docs list view, 1:1 with
 // Anchord-Design's DocList (.list wrapper of .doc-row). Each row is COLUMNAR
@@ -9,7 +10,15 @@ import type { DocRow } from "./types";
 // All columns are real: version + commentCount + authorName + status now come from the
 // docs-list endpoint. On narrow widths the version + comments columns drop (design @720px).
 
-export function DocList({ docs }: { docs: DocRow[] }) {
+export function DocList({
+  docs,
+  workspaceId,
+  projects,
+}: {
+  docs: DocRow[];
+  workspaceId?: string;
+  projects?: ProjectRow[];
+}) {
   return (
     <div
       data-testid="doc-list"
@@ -49,9 +58,12 @@ export function DocList({ docs }: { docs: DocRow[] }) {
           <span className="hidden justify-end sm:flex">
             <CommentCount count={d.commentCount} />
           </span>
-          {/* status — always visible, right-aligned. */}
-          <span className="flex justify-end">
+          {/* status — always visible, right-aligned; the ⋯ menu rides alongside it. */}
+          <span className="flex items-center justify-end gap-1">
             <StatusTag status={d.status} />
+            {workspaceId && projects && (
+              <DocMoreMenu doc={d} workspaceId={workspaceId} projects={projects} />
+            )}
           </span>
         </Link>
       ))}

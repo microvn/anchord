@@ -1,13 +1,23 @@
 import { Link } from "react-router-dom";
 import { FormatBadge, MetaDot, VersionTag, CommentCount, StatusTag } from "./doc-bits";
-import { FORMAT_META, type DocRow } from "./types";
+import { DocMoreMenu } from "./move-copy-dialog";
+import { FORMAT_META, type DocRow, type ProjectRow } from "./types";
 
 // DocCard — the grid tile in the All-docs browser, 1:1 with Anchord-Design's DocCard
-// (.doc-card: top row [format glyph · ver], body [title · project · author], foot
+// (.doc-card: top row [format glyph · ver · ⋯], body [title · project · author], foot
 // [format label · spacer · ✉ comments · status]). Version/commentCount/author/status now
-// come from the docs-list endpoint, so the card carries real metadata.
+// come from the docs-list endpoint, so the card carries real metadata. When `workspaceId` +
+// `projects` are supplied (the browse screen), a ⋯ more-menu offers Move / Copy (S-001).
 
-export function DocCard({ doc }: { doc: DocRow }) {
+export function DocCard({
+  doc,
+  workspaceId,
+  projects,
+}: {
+  doc: DocRow;
+  workspaceId?: string;
+  projects?: ProjectRow[];
+}) {
   const meta = FORMAT_META[doc.kind] ?? FORMAT_META.markdown;
   return (
     <Link
@@ -21,6 +31,9 @@ export function DocCard({ doc }: { doc: DocRow }) {
         <span className="ml-auto font-mono text-[12.5px] uppercase tracking-[0.06em] text-muted">
           {meta.label}
         </span>
+        {workspaceId && projects && (
+          <DocMoreMenu doc={doc} workspaceId={workspaceId} projects={projects} />
+        )}
       </div>
       <div className="flex-1 px-[14px] pb-[11px] pt-[11px]">
         <div className="text-[15px] font-semibold leading-[1.3] text-ink">{doc.title}</div>

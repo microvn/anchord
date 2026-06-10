@@ -30,6 +30,8 @@ mock.module("../src/features/docs/client", () => ({
   createProject: mock(async () => env({})),
   searchDocs,
   publishDoc: mock(async () => env({})),
+  moveDoc: mock(async () => env({})),
+  copyDoc: mock(async () => env({})),
 }));
 
 const { SearchScreen } = await import("../src/features/docs/search-screen");
