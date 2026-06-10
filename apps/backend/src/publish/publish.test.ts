@@ -145,3 +145,18 @@ test("AS-005 / C-005: content whose sniffed type contradicts the .html extension
   // A clean PNG with an image extension sniffs as image (positive control).
   expect(sniffKind("flow.png", png)).toBe("image");
 });
+
+test("AS-014 / C-006: a whitespace-only artifact is rejected (carries no content)", () => {
+  // 0 bytes already rejected (above); whitespace-only TEXT must reject the same way.
+  expect(() => sniffKind(undefined, enc("   \n\t  "))).toThrow(PublishRejected);
+  expect(() => sniffKind("notes.md", enc("\n\n   \n"))).toThrow(PublishRejected);
+  expect(() => sniffKind("paste.html", enc("     "))).toThrow(PublishRejected);
+  // Boundary: a single non-whitespace char is NOT empty → accepted (defaults to markdown).
+  expect(sniffKind(undefined, enc("x"))).toBe("markdown");
+});
+
+test("AS-015 / C-007: ambiguous paste (no format, no filename) defaults to markdown", () => {
+  // No declared kind, no filename to infer from, plain text with no HTML markers → markdown.
+  expect(sniffKind(undefined, enc("a plain text paragraph"))).toBe("markdown");
+  expect(sniffKind(undefined, enc("line one\nline two\n- a bullet"))).toBe("markdown");
+});

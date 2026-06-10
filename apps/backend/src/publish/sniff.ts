@@ -113,6 +113,12 @@ export function sniffKind(
     );
   }
 
+  // C-006 / AS-014: text that is only whitespace (e.g. "   \n") carries no content —
+  // reject like a 0-byte artifact (the byte-length guard above only catches truly empty).
+  if (new TextDecoder("utf-8").decode(bytes).trim().length === 0) {
+    throw new PublishRejected("artifact is empty — nothing to publish");
+  }
+
   // Text content. If the author declared an image extension, that's a mismatch.
   if (byExt === "image") {
     throw new PublishRejected(
