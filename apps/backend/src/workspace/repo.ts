@@ -5,7 +5,7 @@
 // (now workspace-scoped), and the browse-context repo (isInvited + docsInProject).
 
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { docs, projects, user } from "../db/schema";
+import { annotations, comments, docs, docVersions, projects, user } from "../db/schema";
 import type { DB } from "../db/client";
 import { ensureDefaultProject, ProjectRejected, type ProjectRepo, type ProjectRow } from "./projects";
 import { activeRolesFor } from "../sharing/doc-member-repo";
@@ -103,7 +103,7 @@ export function createProjectRepo(db: DB): ProjectRepo {
   };
 }
 
-/** A doc row as the browse route needs it (id + the visibility fields). */
+/** A doc row as the browse route needs it (id + the visibility fields + browse columns). */
 export interface ProjectDocRow {
   id: string;
   slug: string;
@@ -111,6 +111,13 @@ export interface ProjectDocRow {
   kind: "html" | "markdown" | "image";
   ownerId: string | null;
   generalAccess: "restricted" | "anyone_in_workspace" | "anyone_with_link";
+  // Browse columns (workspace-project dashboard rows, Anchord-Design columnar layout).
+  // Derived in one query via correlated subqueries — no N+1. Honest values: latestVersion is
+  // the doc's highest published version number (0 if none yet); commentCount counts every
+  // comment across the doc's annotations; ownerName is the first-publisher's display name.
+  latestVersion: number;
+  commentCount: number;
+  ownerName: string | null;
 }
 
 /**
@@ -132,6 +139,18 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
       return roles.length > 0;
     },
     async docsInProject(projectId): Promise<ProjectDocRow[]> {
+      // Correlated subqueries keep this a single round-trip (no per-doc fan-out): the latest
+      // published version, the total comment count across the doc's annotations, and the
+      // first-publisher's display name. COALESCE keeps version/count numeric (0) when absent.
+      const latestVersion = sql<number>`coalesce((
+        select max(${docVersions.version}) from ${docVersions}
+        where ${docVersions.docId} = ${docs.id}
+      ), 0)`;
+      const commentCount = sql<number>`coalesce((
+        select count(*) from ${comments}
+        join ${annotations} on ${annotations.id} = ${comments.annotationId}
+        where ${annotations.docId} = ${docs.id}
+      ), 0)`;
       const rows = await db
         .select({
           id: docs.id,
@@ -140,10 +159,19 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
           kind: docs.kind,
           ownerId: docs.ownerId,
           generalAccess: docs.generalAccess,
+          latestVersion,
+          commentCount,
+          ownerName: user.name,
         })
         .from(docs)
+        .leftJoin(user, eq(user.id, docs.ownerId))
         .where(eq(docs.projectId, projectId));
-      return rows;
+      // Drizzle returns the count/max as strings from postgres.js — coerce to number.
+      return rows.map((r) => ({
+        ...r,
+        latestVersion: Number(r.latestVersion),
+        commentCount: Number(r.commentCount),
+      }));
     },
   };
 }

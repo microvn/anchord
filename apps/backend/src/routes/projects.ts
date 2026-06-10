@@ -205,7 +205,20 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       return {
         docs: visible.map((v) => {
           const d = byId.get(v.id)!;
-          return { id: d.id, slug: d.slug, title: d.title, kind: d.kind };
+          // status maps from general_access: a doc shared beyond "restricted" is LIVE
+          // (reachable by its audience); a restricted doc is still a private DRAFT. This is
+          // the honest published-state signal available without a separate publish flag.
+          const status = d.generalAccess === "restricted" ? "draft" : "live";
+          return {
+            id: d.id,
+            slug: d.slug,
+            title: d.title,
+            kind: d.kind,
+            version: d.latestVersion,
+            commentCount: d.commentCount,
+            authorName: d.ownerName,
+            status,
+          };
         }),
       };
     });

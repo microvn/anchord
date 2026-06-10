@@ -1,12 +1,11 @@
 import { Link } from "react-router-dom";
-import { FormatBadge, MetaDot } from "./doc-bits";
+import { FormatBadge, MetaDot, VersionTag, CommentCount, StatusTag } from "./doc-bits";
 import { FORMAT_META, type DocRow } from "./types";
 
 // DocCard — the grid tile in the All-docs browser, 1:1 with Anchord-Design's DocCard
-// (.doc-card: top row [format glyph · ver · more], body [title · project], foot [access …
-// comments · status]). The design's version/access/detached/comments/status come from
-// fields no mounted endpoint returns yet, so the card shows what the backend gives:
-// the format glyph + title + project name. The foot carries the mono format label.
+// (.doc-card: top row [format glyph · ver], body [title · project · author], foot
+// [format label · spacer · ✉ comments · status]). Version/commentCount/author/status now
+// come from the docs-list endpoint, so the card carries real metadata.
 
 export function DocCard({ doc }: { doc: DocRow }) {
   const meta = FORMAT_META[doc.kind] ?? FORMAT_META.markdown;
@@ -18,18 +17,26 @@ export function DocCard({ doc }: { doc: DocRow }) {
     >
       <div className="flex items-center gap-[9px] px-[14px] pt-[13px]">
         <FormatBadge kind={doc.kind} />
+        <VersionTag version={doc.version} />
         <span className="ml-auto font-mono text-[12.5px] uppercase tracking-[0.06em] text-muted">
           {meta.label}
         </span>
       </div>
-      <div className="flex-1 px-[14px] pb-[13px] pt-[11px]">
+      <div className="flex-1 px-[14px] pb-[11px] pt-[11px]">
         <div className="text-[15px] font-semibold leading-[1.3] text-ink">{doc.title}</div>
-        {doc.projectName && (
+        {(doc.projectName || doc.authorName) && (
           <div className="mt-[5px] flex items-center gap-[7px] text-[11.5px] text-subtle">
-            <MetaDot />
-            <span className="truncate">{doc.projectName}</span>
+            {doc.projectName && <span className="truncate">{doc.projectName}</span>}
+            {doc.projectName && doc.authorName && <MetaDot />}
+            {doc.authorName && <span className="truncate">{doc.authorName}</span>}
           </div>
         )}
+      </div>
+      <div className="flex items-center gap-[9px] border-t border-line px-[14px] py-[10px]">
+        <CommentCount count={doc.commentCount} />
+        <span className="ml-auto">
+          <StatusTag status={doc.status} />
+        </span>
       </div>
     </Link>
   );

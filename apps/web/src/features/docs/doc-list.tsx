@@ -1,12 +1,13 @@
 import { Link } from "react-router-dom";
-import { FormatBadge, FormatTag, MetaDot } from "./doc-bits";
+import { FormatBadge, FormatTag, MetaDot, VersionTag, CommentCount, StatusTag } from "./doc-bits";
 import type { DocRow } from "./types";
 
-// The "Documents · Recent" list rows on the dashboard, 1:1 with Anchord-Design's DocList
-// (.list wrapper of .doc-row). Each row: teal format glyph · title + (FormatTag · project)
-// meta · → the doc viewer (/d/:slug, the trusted app-origin shell the backend serves).
-// Version/comments/status columns from the design are omitted — no mounted endpoint
-// exposes those fields yet (see features/docs/types.ts).
+// The "Documents · Recent" list rows on the dashboard + the All-docs list view, 1:1 with
+// Anchord-Design's DocList (.list wrapper of .doc-row). Each row is COLUMNAR
+// (grid 30px 1fr 70px 96px 96px, the design's exact track sizes):
+//   [format glyph] · (title + "FORMAT · project · author" subline) · version · ✉ comments · status
+// All columns are real: version + commentCount + authorName + status now come from the
+// docs-list endpoint. On narrow widths the version + comments columns drop (design @720px).
 
 export function DocList({ docs }: { docs: DocRow[] }) {
   return (
@@ -19,7 +20,7 @@ export function DocList({ docs }: { docs: DocRow[] }) {
           key={d.id}
           to={`/d/${d.slug}`}
           data-testid={`doc-row-${d.slug}`}
-          className="grid min-h-[56px] grid-cols-[30px_1fr] items-center gap-[14px] border-b border-line px-4 text-inherit no-underline last:border-b-0 hover:bg-elev"
+          className="grid min-h-[56px] grid-cols-[30px_1fr_auto_auto] items-center gap-[14px] border-b border-line px-4 text-inherit no-underline last:border-b-0 hover:bg-elev sm:grid-cols-[30px_1fr_70px_96px_96px]"
         >
           <FormatBadge kind={d.kind} />
           <div className="min-w-0">
@@ -32,8 +33,26 @@ export function DocList({ docs }: { docs: DocRow[] }) {
                   <span className="truncate">{d.projectName}</span>
                 </>
               )}
+              {d.authorName && (
+                <>
+                  <MetaDot />
+                  <span className="truncate">{d.authorName}</span>
+                </>
+              )}
             </div>
           </div>
+          {/* version — hidden below sm (design @720px), like .doc-updated-cell. */}
+          <span className="hidden justify-self-start sm:block">
+            <VersionTag version={d.version} />
+          </span>
+          {/* comments — hidden below sm. */}
+          <span className="hidden justify-end sm:flex">
+            <CommentCount count={d.commentCount} />
+          </span>
+          {/* status — always visible, right-aligned. */}
+          <span className="flex justify-end">
+            <StatusTag status={d.status} />
+          </span>
         </Link>
       ))}
     </div>

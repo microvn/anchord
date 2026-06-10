@@ -23,8 +23,10 @@ import {
 // in styles.css), so the recessed teal look follows the active theme.
 //
 // Top-to-bottom order (AS-012): brand + collapse trigger · `+ New doc` (flat teal) · the
-// workspace switcher slot (owned by workspaces-ui — mounted, not rebuilt; C-005) · the primary
-// nav (Dashboard · All docs · Projects · Activity) · a Members footer (admin-only, AS-014).
+// workspace switcher slot (owned by workspaces-ui — mounted, not rebuilt; C-005) · the OVERVIEW
+// nav (Dashboard · All docs WITH a count badge · Projects · Activity) · a RECENT group (the
+// most-recent docs + a "→ View all docs" link) · a Members footer (admin-only, AS-014).
+// 1:1 with Anchord-Design shell.jsx — the 2nd group is RECENT docs, NOT a projects list.
 //
 // This component is PRESENTATIONAL: the active workspace's admin role + the switcher come in as
 // props/slots, so the bare AppShell (web-core S-003 shell tests) can render it without the
@@ -39,12 +41,12 @@ export interface NavDestination {
   icon: string;
 }
 
-/** A project entry in the sidebar PROJECTS group — the doc-grouping tier under OVERVIEW. */
-export interface SidebarProject {
-  id: string;
-  name: string;
-  /** Browse-visible doc count, shown as a quiet number on the right. */
-  docCount?: number;
+/** A recent-doc entry in the sidebar RECENT group (icon + truncated title → the doc viewer). */
+export interface SidebarRecentDoc {
+  slug: string;
+  title: string;
+  /** The Anchord-Design Icon name for this doc's format chip. */
+  icon: string;
 }
 
 // GAP-002: the destination SCREENS (Dashboard / All docs / Projects / Activity) are owned by
@@ -65,8 +67,9 @@ export function AppSidebar({
   newDocHref = "#",
   membersHref = "#",
   nav = [],
-  projects = [],
-  projectsHref = "#",
+  recentDocs = [],
+  totalDocs,
+  docsHref = "#",
   onNewDoc,
   // The shell tags the rendered Sidebar so its responsive tests can find it: the persistent
   // inline rail is `app-sidebar`/`side-region` on desktop; the same Sidebar renders as the
@@ -78,10 +81,12 @@ export function AppSidebar({
   newDocHref?: string;
   membersHref?: string;
   nav?: NavDestination[];
-  /** PROJECTS group: the workspace's projects with per-project doc counts (doc-grouping tier). */
-  projects?: SidebarProject[];
-  /** Base /w/:id path so the PROJECTS group can link to /w/:id/projects. */
-  projectsHref?: string;
+  /** RECENT group: the most-recent docs (≈6), icon + title → the doc viewer. */
+  recentDocs?: SidebarRecentDoc[];
+  /** Total workspace doc count — the teal pill on the `All docs` nav item. */
+  totalDocs?: number;
+  /** Base /w/:id/docs path — the "→ View all docs" link + the All-docs nav target. */
+  docsHref?: string;
   /** When provided, the `+ New doc` button calls this instead of navigating (opens the dialog). */
   onNewDoc?: () => void;
   dataTestId?: string;
@@ -171,17 +176,15 @@ export function AppSidebar({
                     asChild
                     isActive={active}
                     tooltip={item.label}
-                    // AS-013 active treatment, anchord style. The primitive's data-[active=true]
-                    // already paints accent-soft bg + accent-ink text via the --sidebar-accent
-                    // tokens; we ALSO append the explicit anchord utilities (bg-accent-soft /
-                    // text-accent-ink + a 2px teal left bar via ::before) so the look is
-                    // token-exact and the S-004 class-presence assertions match this element.
-                    // With asChild these classes merge onto the NavLink <a> (which carries the
-                    // testid + aria-current), so testid + active styling sit on one element.
+                    // AS-013 active treatment, anchord style (1:1 with shell.css .nav-item.active):
+                    // a fully-rounded teal-SOFT pill filling the row — bg accent-soft, text +
+                    // icon accent-ink, semibold. NO left bar (the prototype's "Dashboard" is a
+                    // solid pill). With asChild these classes merge onto the NavLink <a> (which
+                    // carries the testid + aria-current), so testid + active styling are one node.
                     className={[
-                      "relative text-muted",
+                      "text-muted [&_svg]:text-subtle",
                       active
-                        ? "bg-accent-soft text-accent-ink before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-r before:bg-accent before:content-['']"
+                        ? "bg-accent-soft font-semibold text-accent-ink [&_svg]:text-accent-ink"
                         : "",
                     ].join(" ")}
                   >
@@ -193,6 +196,15 @@ export function AppSidebar({
                     >
                       <Icon name={item.icon} size={17} />
                       <span>{item.label}</span>
+                      {/* All docs carries a teal count pill (total docs), like the prototype's "8". */}
+                      {item.label === "All docs" && totalDocs != null && (
+                        <span
+                          data-testid="sidebar-docs-count"
+                          className="ml-auto inline-flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-accent px-1 font-mono text-[10px] font-semibold tabular-nums text-on-accent group-data-[collapsible=icon]:hidden"
+                        >
+                          {totalDocs}
+                        </span>
+                      )}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -201,44 +213,39 @@ export function AppSidebar({
           </SidebarMenu>
         </SidebarGroup>
 
-        {/* PROJECTS group — the doc-grouping tier under OVERVIEW. Lists the workspace's projects
-            with per-project doc counts; the active project highlights; `+ New project` routes to
-            the Projects screen (which hosts the create dialog). Hidden in the collapsed icon rail. */}
-        {projects.length > 0 && (
-          <SidebarGroup className="group-data-[collapsible=icon]:hidden" data-testid="sidebar-projects-group">
+        {/* RECENT group — the most-recent docs (≈6), 1:1 with shell.jsx (NOT a projects list).
+            Each row: a small format-icon chip + the truncated title → the doc viewer. A
+            "→ View all docs" link closes the group. Hidden in the collapsed icon rail. */}
+        {recentDocs.length > 0 && (
+          <SidebarGroup className="group-data-[collapsible=icon]:hidden" data-testid="sidebar-recent-group">
             <SidebarGroupLabel className="font-mono text-[11px] font-medium tracking-[0.12em] text-subtle">
-              Projects
+              Recent
             </SidebarGroupLabel>
-            <SidebarMenu aria-label="Projects">
-              {projects.map((p) => {
-                const to = `${projectsHref}?project=${p.id}`;
-                const active = pathname.startsWith(`${projectsHref}`) && pathname.includes("/projects");
-                return (
-                  <SidebarMenuItem key={p.id}>
-                    <SidebarMenuButton asChild className="relative text-muted">
-                      <NavLink
-                        to={to}
-                        data-testid={`sidebar-project-${p.id}`}
-                        title={p.name}
-                        className={active ? "text-accent-ink" : undefined}
-                      >
-                        <Icon name="folder" size={16} />
-                        <span className="truncate">{p.name}</span>
-                        {p.docCount != null && (
-                          <span className="ml-auto font-mono text-[10px] tabular-nums text-subtle">
-                            {p.docCount}
-                          </span>
-                        )}
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
+            <SidebarMenu aria-label="Recent docs">
+              {recentDocs.map((d) => (
+                <SidebarMenuItem key={d.slug}>
+                  <SidebarMenuButton asChild className="h-8 text-[13px] text-muted">
+                    <NavLink
+                      to={`/d/${d.slug}`}
+                      data-testid={`sidebar-recent-${d.slug}`}
+                      title={d.title}
+                      className="group/doc"
+                    >
+                      <span className="grid size-5 flex-none place-items-center rounded-[5px] border border-line bg-elev text-subtle group-hover/doc:border-transparent group-hover/doc:bg-accent-soft group-hover/doc:text-accent-ink">
+                        <Icon name={d.icon} size={12} />
+                      </span>
+                      <span className="truncate">{d.title}</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
               <SidebarMenuItem>
-                <SidebarMenuButton asChild className="text-muted">
-                  <NavLink to={projectsHref} data-testid="sidebar-new-project" title="New project">
-                    <Icon name="plus" size={16} />
-                    <span>New project</span>
+                <SidebarMenuButton asChild className="h-8 text-[13px] text-subtle hover:text-ink">
+                  <NavLink to={docsHref} data-testid="sidebar-view-all-docs" title="View all docs">
+                    <span className="grid size-5 flex-none place-items-center">
+                      <Icon name="arrowRight" size={13} />
+                    </span>
+                    <span>View all docs</span>
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -255,8 +262,9 @@ export function AppSidebar({
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
+                isActive={pathname.startsWith(membersHref)}
                 tooltip="Members"
-                className="relative text-muted data-[active=true]:before:absolute data-[active=true]:before:inset-y-1 data-[active=true]:before:left-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-r data-[active=true]:before:bg-accent"
+                className="text-muted [&_svg]:text-subtle data-[active=true]:bg-accent-soft data-[active=true]:font-semibold data-[active=true]:text-accent-ink data-[active=true]:[&_svg]:text-accent-ink"
               >
                 <NavLink to={membersHref} data-testid="sidebar-members" title="Members">
                   <Icon name="settings" size={17} />

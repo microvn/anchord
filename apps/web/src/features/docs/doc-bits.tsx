@@ -1,11 +1,10 @@
 import { Icon } from "../../components/icon";
-import { FORMAT_META, type DocKind } from "./types";
+import { FORMAT_META, type DocKind, type DocStatus } from "./types";
 
 // Shared presentational bits for the doc browse surfaces, 1:1 with Anchord-Design's
-// FormatBadge / .doc-fmt / .doc-fmt-tag. Only metadata the backend actually returns is
-// shown: the format chip (kind) + the mono format tag. Richer DocCard fields in the design
-// (version, author, access, detached, commentCount) have no mounted endpoint yet, so they
-// are intentionally absent here rather than faked.
+// FormatBadge / .doc-fmt / .doc-fmt-tag + the columnar row cells (.doc-ver / .doc-comments /
+// .status-tag). The docs-list endpoint now returns version + commentCount + authorName +
+// status, so these columns carry real values.
 
 /** The teal rounded format glyph (Anchord-Design `.doc-fmt` / `.doc-card-fmt`). */
 export function FormatBadge({ kind, size = 30 }: { kind: DocKind; size?: number }) {
@@ -34,4 +33,36 @@ export function FormatTag({ kind }: { kind: DocKind }) {
 /** A small grey dot separator (Anchord-Design `.dot`). */
 export function MetaDot() {
   return <span className="size-[3px] flex-none rounded-full bg-faint" aria-hidden="true" />;
+}
+
+/** The mono version cell (`v4`), `.doc-ver`. Shows `v0` style only when something is published. */
+export function VersionTag({ version }: { version: number }) {
+  return (
+    <span className="font-mono text-[13px] tabular-nums text-muted">{version > 0 ? `v${version}` : "—"}</span>
+  );
+}
+
+/** The comment-count cell (✉ N), `.doc-comments`. Faint when zero. */
+export function CommentCount({ count }: { count: number }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-[5px] text-[13px] tabular-nums ${count > 0 ? "text-muted" : "text-faint"}`}
+    >
+      <Icon name="inbox" size={13} />
+      {count}
+    </span>
+  );
+}
+
+/** The mono status pill (● LIVE / DRAFT), `.status-tag`. Live = green dot+ink; draft = faint. */
+export function StatusTag({ status }: { status: DocStatus }) {
+  const live = status === "live";
+  return (
+    <span
+      className={`inline-flex items-center gap-[5px] font-mono text-[9.5px] font-medium uppercase tracking-[0.08em] ${live ? "text-success" : "text-subtle"}`}
+    >
+      <span className={`size-[6px] rounded-full ${live ? "bg-success" : "bg-faint"}`} aria-hidden="true" />
+      {live ? "Live" : "Draft"}
+    </span>
+  );
 }

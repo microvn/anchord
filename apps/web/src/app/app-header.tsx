@@ -169,11 +169,17 @@ function ThemeToggle({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
   );
 }
 
-// GAP-003: no backend notifications-count endpoint exists yet → an INERT placeholder bell with
-// NO unread badge. When a notifications slice ships it gets the count + badge.
+// GAP-003: no backend notifications-count endpoint exists yet. The bell keeps the prototype's
+// shape (an active hairline icon-button, NOT dimmed) but is INERT — no unread count is faked,
+// so it shows no badge. When a notifications slice ships it gets the real count + a teal pill.
 function NotificationsBell({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
   return (
-    <button type="button" data-testid={testid} aria-label="Notifications" disabled className={inMenu ? MENU_ITEM : ICON_BTN}>
+    <button
+      type="button"
+      data-testid={testid}
+      aria-label="Notifications"
+      className={`relative ${inMenu ? MENU_ITEM : ICON_BTN}`}
+    >
       <Icon name="bell" size={16} />
       {inMenu && <span>Notifications</span>}
     </button>

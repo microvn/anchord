@@ -135,7 +135,7 @@ describe("web-core S-004 — sidebar frame + order (AS-012)", () => {
 });
 
 describe("web-core S-004 — active nav item by route (AS-013)", () => {
-  it("AS-013: the current section's nav item is marked active (accent-soft bg + teal left bar + accent-ink), others are not", () => {
+  it("AS-013: the current section's nav item is marked active (a full teal-soft pill — accent-soft bg + accent-ink text + semibold), others are not", () => {
     render(
       withProvider(
         <MemoryRouter initialEntries={["/w/ws-1/docs"]}>
@@ -145,9 +145,11 @@ describe("web-core S-004 — active nav item by route (AS-013)", () => {
     );
     const active = screen.getByTestId("sidebar-nav-all-docs");
     const inactive = screen.getByTestId("sidebar-nav-projects");
+    // The prototype's active look is a fully-rounded teal-soft pill filling the row (NO left bar).
     expect(active.className).toContain("bg-accent-soft");
     expect(active.className).toContain("text-accent-ink");
-    expect(active.className).toContain("before:bg-accent"); // the 2px teal left bar
+    expect(active.className).toContain("font-semibold");
+    expect(active.className).not.toContain("before:bg-accent"); // no left bar — solid pill
     expect(inactive.className).not.toContain("bg-accent-soft");
     expect(active).toHaveAttribute("aria-current", "page");
   });

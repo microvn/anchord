@@ -20,7 +20,10 @@ interface ProjectsResult {
   projects: ProjectRow[];
 }
 interface ProjectDocsResult {
-  docs: Pick<DocRow, "id" | "slug" | "title" | "kind">[];
+  docs: Pick<
+    DocRow,
+    "id" | "slug" | "title" | "kind" | "version" | "commentCount" | "authorName" | "status"
+  >[];
 }
 interface SearchResult {
   results: SearchResultRow[];

@@ -37,8 +37,11 @@ export function WorkspaceHome() {
     { k: "Docs", v: docsQuery.isPending ? "—" : String(docs.length) },
     { k: "Projects", v: docsQuery.isPending ? "—" : String(projects.length) },
     { k: "Members", v: memberCount == null ? "—" : String(memberCount) },
-    // No aggregate/per-doc comment-count endpoint is mounted → not derivable, shown as "—".
-    { k: "Comments", v: "—" },
+    // Comments now sum the per-doc commentCount the docs-list endpoint returns.
+    {
+      k: "Comments",
+      v: docsQuery.isPending ? "—" : String(docs.reduce((a, d) => a + (d.commentCount ?? 0), 0)),
+    },
   ];
 
   const recent = docs.slice(0, RECENT_LIMIT);
