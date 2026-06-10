@@ -154,7 +154,11 @@ describe.skipIf(!RUN)("render-publish S-002/S-003/S-004: access-gated viewer (re
     expect(res.headers.get("Content-Security-Policy")).toBe(CONTENT_SECURITY_POLICY);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     const body = await res.text();
-    expect(body).toBe(raw); // served as-is (identity serializer — isolation, not stripping)
+    // Isolation, not stripping: the script is preserved verbatim (it runs, sandboxed by
+    // opaque origin). S-006/C-009 injects positional block-ids on the sandbox content too,
+    // so the <h1> now carries one — but nothing is removed (the script is untouched).
+    expect(body).toContain("<script>window.x=1</script>"); // not stripped — isolation
+    expect(body).toContain('<h1 id="block-h1-1">raw untrusted</h1>'); // C-009 block-id marker
   });
 
   test("non-existent slug → 404 (not 500 — the wiring bug regression)", async () => {

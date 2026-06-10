@@ -26,6 +26,7 @@ import {
 } from "../http/auth-gate";
 import { NotFoundError } from "../http/errors";
 import { renderMarkdown } from "../render/markdown";
+import { injectBlockIds } from "../annotation/block-id";
 import { createLoadViewerDoc, type ViewerLoaderDeps, type ViewerDocPayload } from "../render/viewer-loaders";
 import type { Viewer } from "../sharing/access";
 
@@ -58,7 +59,9 @@ function toResponse(payload: ViewerDocPayload): {
   };
   if (payload.kind === "markdown") {
     // C-002/C-008: markdown is rendered in the APP origin → MUST be sanitized (dompurify).
-    return { doc, content: renderMarkdown(payload.content) };
+    // S-006/C-009: then stamp positional block-ids on the served HTML so the viewer's
+    // annotation layer can anchor to a block. Best-effort, never throws (AS-019..022).
+    return { doc, content: injectBlockIds(renderMarkdown(payload.content)) };
   }
   // C-008: html/image content is NEVER returned inline for the app origin — only a
   // reference to the sandboxed /v content the viewer loads into an isolated iframe.

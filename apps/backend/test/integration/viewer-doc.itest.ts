@@ -118,8 +118,30 @@ describe.skipIf(!RUN)("render-publish S-005: in-app viewer doc loader (real Post
     // content — sanitized HTML in the app theme (markdown rendered, NOT a sandbox ref)
     expect(typeof json.data.content).toBe("string");
     expect(json.data.content).toContain("Release Notes");
-    expect(json.data.content).toContain("<li>one</li>");
+    // S-006/C-009: the served markdown now carries block-id markers, so the <li> is
+    // `<li id="block-li-N">one</li>` rather than a bare `<li>one</li>`. Assert the list
+    // item text content survives the render (the markers are covered by the S-006 test below).
+    expect(json.data.content).toMatch(/<li[^>]*>one<\/li>/);
     expect(json.data.content).not.toContain("<script>"); // C-002 dompurify stripped it
+  });
+
+  test("AS-019 / C-009: served markdown content carries positional block-id markers (S-006 wiring)", async () => {
+    // Proves the block-id injector actually runs on the S-005 serve path (not just as a
+    // dead unit function): the returned `content` HTML must carry block-{tag}-{n} ids.
+    viewerSession = { userId: "u-member" };
+    docRole = "viewer";
+    workspaceRole = "member";
+    const { slug } = await seedDoc(h, {
+      kind: "markdown",
+      generalAccess: "anyone_in_workspace",
+      versions: ["# Heading\n\nFirst para\n\nSecond para"],
+    });
+    const res = await buildApp().handle(get(slug));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.content).toContain('id="block-h1-1"');
+    expect(json.data.content).toContain('id="block-p-1"');
+    expect(json.data.content).toContain('id="block-p-2"'); // per-tag counter, distinct blocks
   });
 
   test("AS-017: html doc → 200 + meta + a sandbox /v reference (contentUrl), NOT inline html", async () => {

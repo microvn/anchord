@@ -83,3 +83,50 @@ test("C-001: special characters / unicode in block text are preserved", () => {
   expect(out).toContain("Giá: 24h — “quote” &amp;");
   expect(out).toContain("🚀");
 });
+
+// render-publish S-006 (C-009) — the SAME injectBlockIds transform is what the serve
+// path applies (see app.test.ts for the wiring proof). These re-assert its behavior
+// against render-publish's own AS ids so the Spec Coverage Gate counts them, and add
+// the malformed/empty (AS-022) depth the annotation-core suite above didn't cover.
+
+test("AS-019: a doc with several block elements gets per-tag sequential block-{tag}-{n} ids", () => {
+  // 3 paragraphs + 2 headings (AS-019 data).
+  const html = "<h1>T</h1><h2>S</h2><p>one</p><p>two</p><p>three</p>";
+  const out = injectBlockIds(html);
+  expect(out).toContain('<h1 id="block-h1-1">');
+  expect(out).toContain('<h2 id="block-h2-1">');
+  expect(out).toContain('<p id="block-p-1">one');
+  expect(out).toContain('<p id="block-p-2">two');
+  expect(out).toContain('<p id="block-p-3">three'); // counter is per-tag, headings don't consume it
+});
+
+test("AS-020: an element with an existing id keeps it and gets data-block-id instead", () => {
+  const out = injectBlockIds('<h2 id="intro">Intro</h2>'); // AS-020 data
+  expect(out).toContain('id="intro"');
+  expect(out).toContain('data-block-id="block-h2-1"');
+  expect(out).not.toContain('<h2 id="block-h2-1"');
+});
+
+test("AS-021: the same text in two blocks resolves to distinct block ids", () => {
+  const blocks = Array.from({ length: 9 }, (_, i) =>
+    i === 2 || i === 8 ? "<p>see below</p>" : `<p>para ${i + 1}</p>`,
+  ).join("");
+  const out = injectBlockIds(blocks);
+  expect(out).toContain('<p id="block-p-3">see below</p>');
+  expect(out).toContain('<p id="block-p-9">see below</p>');
+});
+
+test("AS-022: malformed / unclosed tags are injected best-effort without throwing", () => {
+  // unclosed <div>/<h1> (AS-022 / mirrors AS-008 best-effort) → no throw, markers applied.
+  let out = "";
+  expect(() => {
+    out = injectBlockIds("<div><p>orphan paragraph<h1>still here");
+  }).not.toThrow();
+  expect(out).toContain("orphan paragraph");
+  expect(out).toContain('id="block-p-1"');
+});
+
+test("AS-022: empty content returns empty without throwing", () => {
+  expect(() => injectBlockIds("")).not.toThrow();
+  expect(injectBlockIds("")).toBe("");
+});

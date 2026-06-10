@@ -2,6 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { contentHeaders, sandboxIframe } from "./render/sandbox";
 import { renderMarkdown } from "./render/markdown";
+import { injectBlockIds } from "./annotation/block-id";
 import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
 import { viewerDocRoutes, type ViewerDocRoutesDeps } from "./routes/viewer-doc";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
@@ -173,7 +174,9 @@ const esc = (s: string) =>
 function viewerPage(doc: ViewerDoc): string {
   let main: string;
   if (doc.kind === "markdown") {
-    main = `<main class="doc-md">${renderMarkdown(doc.content)}</main>`;
+    // S-006/C-009: stamp positional block-ids on the served (rendered+sanitized) HTML
+    // so annotations can anchor to a block. Best-effort, never throws (AS-019..022).
+    main = `<main class="doc-md">${injectBlockIds(renderMarkdown(doc.content))}</main>`;
   } else {
     // html + image (incl. svg) → sandboxed iframe (opaque origin, scripts run isolated)
     main = sandboxIframe(`/v/${doc.versionId}`);
@@ -342,7 +345,10 @@ export function createApp(deps: AppDeps) {
       const viewer = await resolveViewer(request);
       const v = await deps.loadContent!(params.id, viewer);
       if (!v) return new Response("Not found", { status: 404 });
-      return new Response(v.content, { headers: contentHeaders() });
+      // S-006/C-009: the sandboxed /v content also carries positional block-ids so the
+      // annotation bridge inside the iframe can anchor. HTML/SVG get markers; an image
+      // (no block tags) is an inert no-op. Best-effort on malformed (AS-022).
+      return new Response(injectBlockIds(v.content), { headers: contentHeaders() });
     });
   }
 
