@@ -15,9 +15,15 @@ mock.module("sonner", () => ({
   toast: Object.assign(mock(() => {}), { success: mock(() => {}), error: mock(() => {}) }),
 }));
 
+// The project picker (S-003) reads the workspace's projects through useProjects → fetchProjects.
+// Tests swap this list per-case to cover the default-preselect (AS-009), a chosen non-default
+// project (AS-008), and the workspace-scoped-only listing (C-003). Default empty → the original
+// S-001 tests still see no projects, so projectId stays undefined for them.
+let projectsList: { id: string; name: string; isDefault: boolean; archived: boolean }[] = [];
+
 const publishDoc = mock(async () => env({ docId: "d1", slug: "new-doc", url: "/d/new-doc" }));
 mock.module("../src/features/docs/client", () => ({
-  fetchProjects: mock(async () => env({ projects: [] })),
+  fetchProjects: mock(async () => env({ projects: projectsList })),
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   createProject: mock(async () => env({})),
   searchDocs: mock(async () => env({ results: [] })),
@@ -44,6 +50,64 @@ function Host() {
 
 beforeEach(() => {
   publishDoc.mockClear();
+  projectsList = [];
+});
+
+// A workspace with two projects: the default ("Default") and a non-default ("Billing").
+const TWO_PROJECTS = [
+  { id: "p-default", name: "Default", isDefault: true, archived: false },
+  { id: "p-billing", name: "Billing", isDefault: false, archived: false },
+];
+
+// Helper: switch to Paste and type publishable content (the cheapest path to an enabled Publish).
+async function pasteSomething() {
+  await userEvent.click(screen.getByTestId("tab-paste"));
+  await userEvent.type(screen.getByTestId("paste-area"), "# Hello\n\nbody");
+  await waitFor(() => expect(screen.getByTestId("publish-button")).not.toBeDisabled());
+}
+
+describe("workspace-project-ui S-003 — publish into a chosen project", () => {
+  it("AS-009: the default project is pre-selected in the picker", async () => {
+    projectsList = TWO_PROJECTS;
+    render(<Host />);
+    // The picker defaults to the workspace's default project (Default), shown on the trigger.
+    await waitFor(() => expect(screen.getByTestId("new-doc-project")).toHaveTextContent("Default"));
+
+    await pasteSomething();
+    // Publish WITHOUT touching the picker → the doc lands in the default project.
+    await userEvent.click(screen.getByTestId("publish-button"));
+    await waitFor(() => expect(publishDoc).toHaveBeenCalled());
+    const [, body] = publishDoc.mock.calls[0] as [string, { projectId?: string }];
+    expect(body.projectId).toBe("p-default");
+  });
+
+  it("AS-008: selecting a non-default project publishes the doc into it", async () => {
+    projectsList = TWO_PROJECTS;
+    render(<Host />);
+    await waitFor(() => expect(screen.getByTestId("new-doc-project")).toHaveTextContent("Default"));
+
+    // Open the Radix Select and pick "Billing".
+    await userEvent.click(screen.getByTestId("new-doc-project"));
+    await userEvent.click(await screen.findByRole("option", { name: "Billing" }));
+    await waitFor(() => expect(screen.getByTestId("new-doc-project")).toHaveTextContent("Billing"));
+
+    await pasteSomething();
+    await userEvent.click(screen.getByTestId("publish-button"));
+    await waitFor(() => expect(publishDoc).toHaveBeenCalled());
+    const [, body] = publishDoc.mock.calls[0] as [string, { projectId?: string }];
+    expect(body.projectId).toBe("p-billing");
+  });
+
+  it("C-003: the picker lists exactly the active workspace's projects", async () => {
+    projectsList = TWO_PROJECTS;
+    render(<Host />);
+    await waitFor(() => expect(screen.getByTestId("new-doc-project")).toHaveTextContent("Default"));
+
+    // Open the picker → it offers Default + Billing and nothing else (the list is workspace-scoped).
+    await userEvent.click(screen.getByTestId("new-doc-project"));
+    const options = await screen.findAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["Default (Default)", "Billing"]);
+  });
 });
 
 describe("render-publish S-001 — New-doc dialog", () => {

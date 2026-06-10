@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -16,16 +16,17 @@ import { queryKeys } from "../workspaces/query-keys";
 import { unwrapEnvelope } from "../workspaces/use-bootstrap";
 import { toApiError } from "../../lib/api-error";
 import { publishDoc } from "./client";
+import { useProjects } from "./use-docs";
+import { NewDocProjectPicker } from "./new-doc-project-picker";
+import { NewDocMcpPane } from "./new-doc-mcp-pane";
 import type { PublishResult } from "./types";
 
-// NewDocDialog (render-publish S-001) — Upload / Paste / via-MCP tabs, 1:1 with
-// Anchord-Design's NewDocDialog (dialogs2.jsx). Caps: 5 MB for text, 25 MB for images
-// (AS-004); unsupported type (AS-005) and empty (AS-014) are rejected inline BEFORE the
-// request. Title is auto-inferred from the file name (and editable). Publish → the JSON
-// publish variant POST /api/w/:id/docs (the route reads { content, kind?, title? }; the
-// multipart file variant is deferred backend-side, so Upload reads the file's text and
-// sends it as content). On success: invalidate the workspace docs cache, toast, and
-// navigate to the new doc's viewer (/d/:slug).
+// NewDocDialog (render-publish S-001; project picker S-003) — Upload / Paste / via-MCP tabs,
+// 1:1 with Anchord-Design's NewDocDialog. Caps: 5 MB text, 25 MB images (AS-004); unsupported
+// type (AS-005) and empty (AS-014) rejected inline before the request. The doc lands in the
+// chosen project (defaulting to the workspace's default project — S-003). Publish → JSON variant
+// POST /api/w/:id/docs { content, kind?, title?, projectId? }; on success invalidate caches,
+// toast, navigate to /d/:slug.
 
 const TEXT_CAP = 5 * 1024 * 1024; // 5 MB
 const IMAGE_CAP = 25 * 1024 * 1024; // 25 MB
@@ -92,6 +93,15 @@ export function NewDocDialog({
   const [reject, setReject] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Project picker (S-003). The list is the active workspace's projects ONLY (C-003); the picker
+  // defaults to the workspace's default project, so publishing without touching it lands there.
+  const { data: projects } = useProjects(workspace.id);
+  const [projectId, setProjectId] = useState("");
+  useEffect(() => {
+    if (projectId || !projects?.length) return;
+    setProjectId((projects.find((p) => p.isDefault) ?? projects[0]).id);
+  }, [projects, projectId]);
+
   function resetAll() {
     setTab("upload");
     setFile(null);
@@ -100,6 +110,7 @@ export function NewDocDialog({
     setTitle("");
     setReject(null);
     setSubmitting(false);
+    setProjectId("");
   }
 
   async function onFilePicked(picked: File) {
@@ -126,9 +137,9 @@ export function NewDocDialog({
     setReject(null);
     const body =
       tab === "upload" && file
-        ? { content: file.content, kind: file.kind, title: title.trim() || undefined }
+        ? { content: file.content, kind: file.kind, title: title.trim() || undefined, projectId: projectId || undefined }
         : tab === "paste"
-          ? { content: paste, kind: pasteKind, title: title.trim() || undefined }
+          ? { content: paste, kind: pasteKind, title: title.trim() || undefined, projectId: projectId || undefined }
           : null;
     if (!body || !body.content.trim()) {
       setReject("Add a file or paste some content to publish.");
@@ -171,17 +182,14 @@ export function NewDocDialog({
     >
       <DialogContent
         data-testid="new-doc-dialog"
-        // Anchord-Design `.scrim` — full-viewport teal-black scrim (the --scrim token), matching
-        // the create/rename dialogs (not the shadcn black/50 default).
+        // Anchord-Design `.scrim` — full-viewport teal-black scrim (--scrim token).
         overlayClassName="bg-[var(--scrim)]"
         className="border-line bg-surface sm:max-w-[520px]"
       >
         <DialogHeader>
-          <DialogTitle className="font-serif text-[21px] font-medium text-ink">
-            New doc
-          </DialogTitle>
+          <DialogTitle className="font-serif text-[21px] font-medium text-ink">New doc</DialogTitle>
           <DialogDescription className="text-[13px] text-muted">
-            Publish an artifact into the default project.
+            Publish an artifact into a project of this workspace.
           </DialogDescription>
         </DialogHeader>
 
@@ -220,12 +228,8 @@ export function NewDocDialog({
                 <span className="grid size-10 place-items-center rounded-md text-subtle">
                   <Icon name="upload" size={22} />
                 </span>
-                <span className="text-[13px] font-semibold text-ink">
-                  Drop a file or click to browse
-                </span>
-                <span className="text-[12px] text-subtle">
-                  .html · .md · image — up to 5 MB (25 MB image)
-                </span>
+                <span className="text-[13px] font-semibold text-ink">Drop a file or click to browse</span>
+                <span className="text-[12px] text-subtle">.html · .md · image — up to 5 MB (25 MB image)</span>
               </button>
             ) : (
               <div
@@ -235,9 +239,7 @@ export function NewDocDialog({
                 <span className="grid size-7 place-items-center rounded-sm bg-accent-soft text-accent-ink">
                   <Icon name="docs" size={15} />
                 </span>
-                <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">
-                  {file.name}
-                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{file.name}</span>
                 <button
                   type="button"
                   aria-label="Remove file"
@@ -297,52 +299,23 @@ export function NewDocDialog({
           </div>
         )}
 
-        {tab === "mcp" && (
-          <div className="rounded-[11px] border border-line bg-sunken p-4" data-testid="mcp-pane">
-            <div className="text-[14px] font-semibold text-ink">Publish from your agent</div>
-            <p className="mt-1 text-[12.5px] leading-[1.5] text-muted">
-              Point your MCP-enabled agent at this workspace. Docs published via MCP land in the
-              default project automatically.
-            </p>
-            <div className="mt-3 flex items-center gap-2 rounded-md border border-line bg-surface px-3 py-2">
-              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-subtle">
-                Endpoint
-              </span>
-              <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink">
-                /mcp/w/{workspace.id}
-              </code>
-              <button
-                type="button"
-                aria-label="Copy endpoint"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(`/mcp/w/${workspace.id}`);
-                  toast.success("Endpoint copied");
-                }}
-                className="text-subtle hover:text-ink"
-              >
-                <Icon name="copy" size={15} />
-              </button>
-            </div>
-          </div>
-        )}
+        {tab === "mcp" && <NewDocMcpPane workspaceId={workspace.id} />}
 
         {tab !== "mcp" && (
-          <div>
-            <label
-              htmlFor="new-doc-title"
-              className="mb-1.5 block text-[12px] font-medium text-muted"
-            >
-              Title
-            </label>
-            <input
-              id="new-doc-title"
-              data-testid="new-doc-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Auto-inferred from the file or first heading"
-              className="h-9 w-full rounded-md border border-line bg-surface px-[11px] text-[13.5px] text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
-            />
-          </div>
+          <>
+            <NewDocProjectPicker projects={projects ?? []} value={projectId} onChange={setProjectId} />
+            <div>
+              <label htmlFor="new-doc-title" className="mb-1.5 block text-[12px] font-medium text-muted">Title</label>
+              <input
+                id="new-doc-title"
+                data-testid="new-doc-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Auto-inferred from the file or first heading"
+                className="h-9 w-full rounded-md border border-line bg-surface px-[11px] text-[13.5px] text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+              />
+            </div>
+          </>
         )}
 
         {reject && (
@@ -358,9 +331,7 @@ export function NewDocDialog({
 
         {tab !== "mcp" && (
           <div className="flex justify-end gap-2 border-t border-line pt-4">
-            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
+            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
               type="button"
               data-testid="publish-button"
