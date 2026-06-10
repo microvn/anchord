@@ -38,6 +38,35 @@ export function useProjects(workspaceId: string) {
   });
 }
 
+/**
+ * The Projects-browse view: the workspace's projects (active by default; ALL when
+ * `includeArchived`), each annotated with its browse-visible doc count. Separate from
+ * `useWorkspaceDocs` because the Projects screen needs archived projects on demand (the
+ * "Show archived" toggle, S-002/AS-005) — `useWorkspaceDocs` always drops archived. Keyed on
+ * `includeArchived` so toggling refetches the broadened list rather than reading a stale slice.
+ */
+export function useProjectsBrowse(workspaceId: string, includeArchived = false) {
+  return useQuery<ProjectRow[], ApiError>({
+    queryKey: [...queryKeys.projects(workspaceId), includeArchived ? "all" : "active"] as const,
+    retry: (failureCount, error) => !error?.isUnauthenticated && failureCount < 1,
+    queryFn: async (): Promise<ProjectRow[]> => {
+      const projRes = unwrapEnvelope<ProjectsResult>(await fetchProjects(workspaceId, includeArchived));
+      if (projRes.error) throw toApiError(projRes.error);
+      const projects = projRes.data?.projects ?? [];
+      const visible = includeArchived ? projects : projects.filter((p) => !p.archived);
+      return Promise.all(
+        visible.map(async (p) => {
+          const docsRes = unwrapEnvelope<ProjectDocsResult>(
+            await fetchProjectDocs(workspaceId, p.id),
+          );
+          if (docsRes.error) throw toApiError(docsRes.error);
+          return { ...p, docCount: docsRes.data?.docs?.length ?? 0 };
+        }),
+      );
+    },
+  });
+}
+
 export interface WorkspaceDocs {
   /** Active projects, each annotated with its browse-visible doc count. */
   projects: ProjectRow[];

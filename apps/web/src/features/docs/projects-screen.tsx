@@ -6,8 +6,9 @@ import { useActiveWorkspace } from "../workspaces/active-workspace";
 import { queryKeys } from "../workspaces/query-keys";
 import { unwrapEnvelope } from "../workspaces/use-bootstrap";
 import { toApiError } from "../../lib/api-error";
-import { useWorkspaceDocs } from "./use-docs";
+import { useProjectsBrowse } from "./use-docs";
 import { createProject } from "./client";
+import { ProjectCardMoreMenu } from "./project-more-menu";
 import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
 import { Skeleton } from "../../components/skeleton";
@@ -31,10 +32,13 @@ import {
 export function ProjectsScreen() {
   const { workspace } = useActiveWorkspace();
   const navigate = useNavigate();
-  const query = useWorkspaceDocs(workspace.id);
   const [dialogOpen, setDialogOpen] = useState(false);
+  // S-002 / AS-005: "Show archived" broadens the browse to include archived projects (so they
+  // can be unarchived). Off by default → archived projects are hidden (AS-004).
+  const [showArchived, setShowArchived] = useState(false);
+  const query = useProjectsBrowse(workspace.id, showArchived);
 
-  const projects = query.data?.projects ?? [];
+  const projects = query.data ?? [];
 
   return (
     <section className="mx-auto max-w-[1100px] px-6 py-8" data-testid="projects-screen">
@@ -47,7 +51,17 @@ export function ProjectsScreen() {
             Projects
           </h1>
         </div>
-        <div className="ml-auto flex flex-none items-center gap-2">
+        <div className="ml-auto flex flex-none items-center gap-3">
+          <label className="flex cursor-pointer select-none items-center gap-2 text-[12.5px] text-muted">
+            <input
+              type="checkbox"
+              data-testid="show-archived-toggle"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+              className="size-4 accent-[var(--accent)]"
+            />
+            Show archived
+          </label>
           <Button
             type="button"
             variant="secondary"
@@ -81,29 +95,49 @@ export function ProjectsScreen() {
           className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-3"
         >
           {projects.map((p) => (
-            <button
+            <div
               key={p.id}
-              type="button"
               data-testid={`proj-card-${p.id}`}
-              onClick={() => navigate(`/w/${workspace.id}/docs`)}
-              className="flex flex-col rounded-[11px] border border-line bg-surface p-4 text-left transition-[border-color,box-shadow,transform] duration-100 hover:-translate-y-px hover:border-subtle hover:shadow-[0_8px_24px_rgba(0,0,0,0.28)]"
+              className={`group relative flex flex-col rounded-[11px] border border-line bg-surface p-4 transition-[border-color,box-shadow,transform] duration-100 hover:-translate-y-px hover:border-subtle hover:shadow-[0_8px_24px_rgba(0,0,0,0.28)] ${
+                p.archived ? "opacity-70" : ""
+              }`}
             >
-              <div className="flex items-center gap-[10px]">
+              {/* Whole-card navigation lives on this absolute overlay so the ⋯ menu (a real
+                  button) can sit above it without nesting buttons. */}
+              <button
+                type="button"
+                aria-label={`Open ${p.name}`}
+                data-testid={`proj-open-${p.id}`}
+                onClick={() => navigate(`/w/${workspace.id}/docs`)}
+                className="absolute inset-0 rounded-[11px]"
+              />
+              <div className="relative flex items-center gap-[10px]">
                 <span className="grid size-8 flex-none place-items-center rounded-sm bg-accent-soft text-accent-ink">
                   <Icon name="folder" size={17} />
                 </span>
-                <span className="text-[15px] font-semibold text-ink">{p.name}</span>
+                <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">
+                  {p.name}
+                </span>
+                {p.archived && (
+                  <span
+                    data-testid={`proj-archived-${p.id}`}
+                    className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle"
+                  >
+                    Archived
+                  </span>
+                )}
                 {p.isDefault && (
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
                     <Icon name="pin" size={11} />
                     Default
                   </span>
                 )}
+                <ProjectCardMoreMenu project={p} workspaceId={workspace.id} />
               </div>
-              <div className="mt-[14px] text-[13px] tabular-nums text-muted">
+              <div className="relative mt-[14px] text-[13px] tabular-nums text-muted">
                 {p.docCount ?? 0} {p.docCount === 1 ? "doc" : "docs"}
               </div>
-            </button>
+            </div>
           ))}
           <button
             type="button"

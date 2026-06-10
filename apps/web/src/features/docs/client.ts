@@ -16,9 +16,16 @@ import type { EdenResult } from "../../lib/use-api-query";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const treaty = api as any;
 
-/** GET /api/w/:workspaceId/projects — list projects (workspace-project S-003). */
-export function fetchProjects(workspaceId: string): Promise<EdenResult<unknown>> {
-  return treaty.api.w({ workspaceId }).projects.get() as Promise<EdenResult<unknown>>;
+/**
+ * GET /api/w/:workspaceId/projects — list projects (workspace-project S-003). Active by default;
+ * pass `includeArchived` to also list archived projects (the "Show archived" toggle, AS-005).
+ */
+export function fetchProjects(
+  workspaceId: string,
+  includeArchived = false,
+): Promise<EdenResult<unknown>> {
+  const query = includeArchived ? { query: { includeArchived: "true" } } : undefined;
+  return treaty.api.w({ workspaceId }).projects.get(query) as Promise<EdenResult<unknown>>;
 }
 
 /** GET /api/w/:workspaceId/projects/:id/docs — access-filtered docs in a project (S-003/AS-006). */
@@ -34,6 +41,57 @@ export function fetchProjectDocs(
 /** POST /api/w/:workspaceId/projects — create a project (any member, C-002). */
 export function createProject(workspaceId: string, name: string): Promise<EdenResult<unknown>> {
   return treaty.api.w({ workspaceId }).projects.post({ name }) as Promise<EdenResult<unknown>>;
+}
+
+/**
+ * PATCH /api/w/:workspaceId/projects/:id { name } — rename (owner-or-admin). Returns { id, name }.
+ * workspace-project S-003 (workspace-project-ui AS-003).
+ */
+export function renameProject(
+  workspaceId: string,
+  projectId: string,
+  name: string,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).projects({ id: projectId }).patch({ name }) as Promise<
+    EdenResult<unknown>
+  >;
+}
+
+/**
+ * POST /api/w/:workspaceId/projects/:id/archive — hide from the default browse (owner-or-admin;
+ * the default project is protected). workspace-project-ui AS-004.
+ */
+export function archiveProject(
+  workspaceId: string,
+  projectId: string,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).projects({ id: projectId }).archive.post() as Promise<
+    EdenResult<unknown>
+  >;
+}
+
+/** POST /api/w/:workspaceId/projects/:id/unarchive — show again (owner-or-admin). AS-005. */
+export function unarchiveProject(
+  workspaceId: string,
+  projectId: string,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).projects({ id: projectId }).unarchive.post() as Promise<
+    EdenResult<unknown>
+  >;
+}
+
+/**
+ * DELETE /api/w/:workspaceId/projects/:id — delete (owner-or-admin). The backend REFUSES a
+ * non-empty or default project with a 409 CONFLICT envelope (C-002); the caller surfaces that
+ * reason. workspace-project-ui AS-006/AS-007.
+ */
+export function deleteProject(
+  workspaceId: string,
+  projectId: string,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).projects({ id: projectId }).delete() as Promise<
+    EdenResult<unknown>
+  >;
 }
 
 /** GET /api/w/:workspaceId/search?q= — full-text search across accessible docs (S-005). */
