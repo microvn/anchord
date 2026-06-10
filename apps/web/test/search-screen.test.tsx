@@ -1,5 +1,6 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
@@ -23,11 +24,25 @@ mock.module("../src/features/workspaces/client", () => ({
 }));
 
 let results: unknown;
-const searchDocs = mock(async () => results);
+// S-004: the search response depends on the project scope. `scopedResults` lets a test return
+// a different (narrower) set when a projectId is passed vs the whole-workspace set otherwise.
+let scopedResults: Record<string, unknown> | null = null;
+const searchDocs = mock(async (_ws: string, _q: string, projectId?: string) => {
+  if (scopedResults) return projectId ? scopedResults[projectId] : scopedResults.all;
+  return results;
+});
+const PROJECTS = [
+  { id: "p-billing", name: "Billing", isDefault: false, archived: false },
+  { id: "p-payments", name: "Payments", isDefault: true, archived: false },
+];
 mock.module("../src/features/docs/client", () => ({
-  fetchProjects: mock(async () => env({ projects: [] })),
+  fetchProjects: mock(async () => env({ projects: PROJECTS })),
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   createProject: mock(async () => env({})),
+  renameProject: mock(async () => env({})),
+  archiveProject: mock(async () => env({})),
+  unarchiveProject: mock(async () => env({})),
+  deleteProject: mock(async () => env({})),
   searchDocs,
   publishDoc: mock(async () => env({})),
   moveDoc: mock(async () => env({})),
@@ -40,10 +55,11 @@ function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-function App({ q }: { q: string }) {
+function App({ q, projectId }: { q: string; projectId?: string }) {
+  const qs = `q=${encodeURIComponent(q)}${projectId ? `&projectId=${projectId}` : ""}`;
   return (
     <QueryClientProvider client={client()}>
-      <MemoryRouter initialEntries={[`/w/ws-acme/search?q=${encodeURIComponent(q)}`]}>
+      <MemoryRouter initialEntries={[`/w/ws-acme/search?${qs}`]}>
         <Routes>
           <Route path="/w/:workspaceId/search" element={<SearchScreen />} />
         </Routes>
@@ -54,6 +70,7 @@ function App({ q }: { q: string }) {
 
 beforeEach(() => {
   searchDocs.mockClear();
+  scopedResults = null;
 });
 
 describe("workspace-project S-005 — search results", () => {
@@ -83,5 +100,55 @@ describe("workspace-project S-005 — search results", () => {
       screen.getByText((_, el) => el?.textContent === "No matches for “zzzz”"),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /new doc|publish/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("workspace-project-ui S-004 — search scoped to a project", () => {
+  // "invoice" matches a Billing doc and a Payments doc I can access. Scoped to Billing the
+  // backend returns only the Billing doc; whole-workspace returns both.
+  const billingDoc = { docId: "d-bill", slug: "billing-invoice", title: "Billing Invoice", kind: "markdown", matchSource: "title" };
+  const paymentsDoc = { docId: "d-pay", slug: "payments-invoice", title: "Payments Invoice", kind: "html", matchSource: "title" };
+
+  function setScopedResults() {
+    scopedResults = {
+      "p-billing": env({ results: [billingDoc] }),
+      all: env({ results: [billingDoc, paymentsDoc] }),
+    };
+  }
+
+  it("AS-010: search scoped to a project returns only its accessible docs", async () => {
+    setScopedResults();
+    // Arrive with the scope already set to Billing (a project context in the URL).
+    render(<App q="invoice" projectId="p-billing" />);
+
+    const row = await screen.findByTestId("result-row-billing-invoice");
+    expect(row).toHaveTextContent("Billing Invoice");
+    // The Payments doc is NOT returned under the Billing scope.
+    expect(screen.queryByTestId("result-row-payments-invoice")).not.toBeInTheDocument();
+    expect(screen.getByTestId("search-count")).toHaveTextContent("1 result");
+    // searchDocs was called with the Billing project id.
+    expect(searchDocs.mock.calls.some((c) => c[2] === "p-billing")).toBe(true);
+  });
+
+  it("AS-011: switching scope to whole workspace broadens results", async () => {
+    setScopedResults();
+    const user = userEvent.setup();
+    render(<App q="invoice" projectId="p-billing" />);
+    // Starts scoped to Billing — only the Billing doc.
+    await screen.findByTestId("result-row-billing-invoice");
+    expect(screen.queryByTestId("result-row-payments-invoice")).not.toBeInTheDocument();
+
+    // Switch the scope to the whole workspace.
+    await user.click(screen.getByTestId("search-scope-trigger"));
+    await user.click(await screen.findByTestId("scope-option-all"));
+
+    // Now both docs (across projects) are returned, including the Payments one.
+    await waitFor(() =>
+      expect(screen.getByTestId("result-row-payments-invoice")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("result-row-billing-invoice")).toBeInTheDocument();
+    expect(screen.getByTestId("search-count")).toHaveTextContent("2 results");
+    // searchDocs was re-run with projectId undefined (whole-workspace).
+    expect(searchDocs.mock.calls.some((c) => c[2] === undefined)).toBe(true);
   });
 });

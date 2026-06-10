@@ -27,6 +27,12 @@ export const queryKeys = {
   /** All docs in ONE workspace — the union across the workspace's projects (browse). */
   docs: (workspaceId: string) => ["w", workspaceId, "docs"] as const,
 
-  /** A search run in ONE workspace, keyed by the query text (workspace-project S-005). */
-  search: (workspaceId: string, q: string) => ["w", workspaceId, "search", q] as const,
+  /**
+   * A search run in ONE workspace, keyed by the query text AND the project scope
+   * (workspace-project S-005/S-004). `projectId` undefined = whole-workspace scope; a project id
+   * = scoped to that project — distinct cache entries so switching scope re-runs the search
+   * (AS-010, AS-011) rather than reading a stale slice.
+   */
+  search: (workspaceId: string, q: string, projectId?: string) =>
+    ["w", workspaceId, "search", q, projectId ?? "all"] as const,
 };

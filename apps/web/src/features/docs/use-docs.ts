@@ -111,15 +111,20 @@ export function useWorkspaceDocs(workspaceId: string) {
   });
 }
 
-/** GET …/search?q= — runs only when q is non-empty. */
-export function useSearch(workspaceId: string, q: string) {
+/**
+ * GET …/search?q=&projectId= — runs only when q is non-empty. When `projectId` is set the
+ * search is scoped to that project (the backend project-scopes + access-filters); undefined
+ * broadens to the whole workspace (S-004 / AS-010, AS-011). The scope is part of the query key
+ * so scoped vs whole-workspace are distinct cache entries.
+ */
+export function useSearch(workspaceId: string, q: string, projectId?: string) {
   const trimmed = q.trim();
   return useQuery<SearchResultRow[], ApiError>({
-    queryKey: queryKeys.search(workspaceId, trimmed),
+    queryKey: queryKeys.search(workspaceId, trimmed, projectId),
     enabled: trimmed.length > 0,
     retry: (failureCount, error) => !error?.isUnauthenticated && failureCount < 1,
     queryFn: async (): Promise<SearchResultRow[]> => {
-      const res = unwrapEnvelope<SearchResult>(await searchDocs(workspaceId, trimmed));
+      const res = unwrapEnvelope<SearchResult>(await searchDocs(workspaceId, trimmed, projectId));
       if (res.error) throw toApiError(res.error);
       return res.data?.results ?? [];
     },

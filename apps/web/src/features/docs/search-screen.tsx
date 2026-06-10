@@ -1,5 +1,6 @@
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { useSearch } from "./use-docs";
+import { useSearch, useProjects } from "./use-docs";
+import { SearchScopeControl } from "./search-scope-control";
 import { FormatBadge } from "./doc-bits";
 import { Skeleton } from "../../components/skeleton";
 import { ErrorState } from "../../components/error-state";
@@ -16,8 +17,20 @@ export function SearchScreen() {
   const { workspaceId = "" } = useParams();
   const [params, setParams] = useSearchParams();
   const q = params.get("q") ?? "";
-  const query = useSearch(workspaceId, q);
+  // Scope lives in the `projectId` query param (S-004): present → scoped to that project,
+  // absent → whole-workspace. Arriving from a project context (a `projectId` in the URL)
+  // defaults the scope to that project; otherwise it defaults to whole-workspace (AS-010/AS-011).
+  const scope = params.get("projectId") ?? undefined;
+  const query = useSearch(workspaceId, q, scope);
   const results = query.data ?? [];
+  const { data: projects } = useProjects(workspaceId);
+
+  function setScope(projectId: string | undefined) {
+    const next = new URLSearchParams(params);
+    if (projectId) next.set("projectId", projectId);
+    else next.delete("projectId");
+    setParams(next);
+  }
 
   return (
     <section className="mx-auto max-w-[1100px] px-6 py-8" data-testid="search-screen">
@@ -28,6 +41,9 @@ export function SearchScreen() {
         <p className="mt-1 text-[13px] text-muted">
           Searched titles, content, and comments across docs you can access.
         </p>
+        <div className="mt-3">
+          <SearchScopeControl projects={projects ?? []} value={scope} onChange={setScope} />
+        </div>
       </div>
 
       {!q.trim() ? (
