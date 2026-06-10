@@ -7,7 +7,16 @@ import { signIn, sendVerificationEmail, getSession, useSession } from "../../lib
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AuthShell, AuthCenter } from "./auth-shell";
+import {
+  AuthShell,
+  AuthCenter,
+  authTitleClass,
+  authSubClass,
+  authLabelClass,
+  authInputClass,
+  authSubmitClass,
+  authFootClass,
+} from "./auth-shell";
 import { OAuthButtons } from "./oauth-buttons";
 import { OAuthErrorBanner } from "./oauth-error-banner";
 
@@ -135,8 +144,8 @@ export function SignInScreen() {
 
   return (
     <AuthShell>
-      <h1 className="font-serif text-[28px] font-medium tracking-[-0.02em] text-ink">Sign in</h1>
-      <p className="mt-[7px] text-sm text-muted">Welcome back. Sign in to your workspace.</p>
+      <h1 className={authTitleClass}>Sign in</h1>
+      <p className={authSubClass}>Welcome back. Sign in to your workspace.</p>
 
       <div className="mt-[26px] flex flex-col gap-3.5">
         {/* AS-008: render the OAuth failure banner when ?error=… is present. */}
@@ -147,10 +156,16 @@ export function SignInScreen() {
 
         <form className="flex flex-col gap-3.5" onSubmit={handleSubmit(onSubmit)} noValidate>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="email" className="text-muted">
+            <Label htmlFor="email" className={authLabelClass}>
               Email
             </Label>
-            <Input id="email" type="email" autoComplete="email" {...register("email")} />
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              className={authInputClass}
+              {...register("email")}
+            />
             {errors.email && (
               <p className="text-xs text-error" role="alert">
                 {errors.email.message}
@@ -159,13 +174,14 @@ export function SignInScreen() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password" className="text-muted">
+            <Label htmlFor="password" className={authLabelClass}>
               Password
             </Label>
             <Input
               id="password"
               type="password"
               autoComplete="current-password"
+              className={authInputClass}
               {...register("password")}
             />
             {errors.password && (
@@ -181,13 +197,13 @@ export function SignInScreen() {
             </p>
           )}
 
-          <Button type="submit" size="lg" disabled={isSubmitting} className="mt-1 w-full">
+          <Button type="submit" size="lg" disabled={isSubmitting} className={authSubmitClass}>
             {isSubmitting ? "Signing in…" : "Sign in"}
           </Button>
         </form>
       </div>
 
-      <p className="mt-[22px] text-center text-sm text-muted">
+      <p className={authFootClass}>
         Don't have an account?{" "}
         <Link to="/signup" className="font-semibold text-accent-ink hover:underline">
           Sign up

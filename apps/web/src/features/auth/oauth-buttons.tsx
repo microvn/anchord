@@ -51,7 +51,7 @@ export function OAuthButtons() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="grid grid-cols-1 gap-[9px] sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-[9px] min-[600px]:grid-cols-2">
         {providers.map((p) => (
           <OAuthButton key={p} provider={p} />
         ))}
@@ -83,7 +83,7 @@ export function OAuthButton({ provider }: { provider: OAuthProvider }) {
       variant="outline"
       data-testid={`oauth-${provider}`}
       onClick={onClick}
-      className="h-[38px] border-line bg-surface text-ink hover:border-subtle hover:bg-elev"
+      className="h-[38px] rounded-md border-line bg-surface text-[12.5px] font-medium text-ink hover:border-subtle hover:bg-elev"
     >
       <Icon name={provider} size={16} fill />
       {PROVIDER_LABEL[provider]}

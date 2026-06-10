@@ -7,7 +7,15 @@ import { signUp } from "../../lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AuthShell } from "./auth-shell";
+import {
+  AuthShell,
+  authTitleClass,
+  authSubClass,
+  authLabelClass,
+  authInputClass,
+  authSubmitClass,
+  authFootClass,
+} from "./auth-shell";
 import { VerifyEmailSent } from "./verify-email-sent";
 import { OAuthButtons } from "./oauth-buttons";
 
@@ -76,20 +84,24 @@ export function SignUpScreen() {
 
   return (
     <AuthShell>
-      <h1 className="font-serif text-[28px] font-medium tracking-[-0.02em] text-ink">
-        Create your account
-      </h1>
-      <p className="mt-[7px] text-sm text-muted">Set up your first workspace in seconds.</p>
+      <h1 className={authTitleClass}>Create your account</h1>
+      <p className={authSubClass}>Set up your first workspace in seconds.</p>
 
       <div className="mt-[26px] flex flex-col gap-3.5">
         <OAuthButtons />
 
         <form className="flex flex-col gap-3.5" onSubmit={handleSubmit(onSubmit)} noValidate>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="email" className="text-muted">
+            <Label htmlFor="email" className={authLabelClass}>
               Email
             </Label>
-            <Input id="email" type="email" autoComplete="email" {...register("email")} />
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              className={authInputClass}
+              {...register("email")}
+            />
             {errors.email && (
               <p className="text-xs text-error" role="alert">
                 {errors.email.message}
@@ -98,13 +110,14 @@ export function SignUpScreen() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password" className="text-muted">
+            <Label htmlFor="password" className={authLabelClass}>
               Password
             </Label>
             <Input
               id="password"
               type="password"
               autoComplete="new-password"
+              className={authInputClass}
               {...register("password")}
             />
             {errors.password && (
@@ -120,13 +133,13 @@ export function SignUpScreen() {
             </p>
           )}
 
-          <Button type="submit" size="lg" disabled={isSubmitting} className="mt-1 w-full">
+          <Button type="submit" size="lg" disabled={isSubmitting} className={authSubmitClass}>
             {isSubmitting ? "Creating account…" : "Create account"}
           </Button>
         </form>
       </div>
 
-      <p className="mt-[22px] text-center text-sm text-muted">
+      <p className={authFootClass}>
         Already have an account?{" "}
         <Link to="/signin" className="font-semibold text-accent-ink hover:underline">
           Sign in

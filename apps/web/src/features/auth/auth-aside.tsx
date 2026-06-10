@@ -13,7 +13,7 @@ const FEATURES: ReadonlyArray<readonly [string, string]> = [
 
 export function AuthAside() {
   return (
-    <aside className="relative hidden flex-col justify-center overflow-hidden border-l border-line bg-sunken p-14 max-[820px]:hidden lg:flex">
+    <aside className="relative hidden flex-col justify-center overflow-hidden border-l border-line bg-sunken p-14 min-[820px]:flex">
       {/* Bespoke one-off: the gridded backdrop. A line grid masked to a corner glow — not a
           Tailwind utility, so it lives as an inline background. The only allowed CSS pile. */}
       <div
@@ -30,7 +30,9 @@ export function AuthAside() {
       <div className="relative">
         <div className="mb-[34px] flex items-center gap-2.5">
           <Brandmark size={24} />
-          <span className="font-serif text-[19px] tracking-tight text-ink">anchord</span>
+          <span className="font-serif text-[19px] font-medium tracking-[-0.03em] text-ink">
+            anchord
+          </span>
         </div>
 
         <p className="max-w-[420px] font-serif text-[26px] font-medium leading-[1.3] tracking-[-0.015em] text-ink">
@@ -40,7 +42,7 @@ export function AuthAside() {
 
         <div className="mt-[30px] flex flex-col gap-[13px]">
           {FEATURES.map(([icon, label]) => (
-            <div key={label} className="flex items-center gap-[11px] text-[13px] text-muted">
+            <div key={label} className="flex items-center gap-[11px] text-[12.5px] text-muted">
               <span className="grid size-7 flex-none place-items-center rounded-sm border border-line bg-surface text-accent">
                 <Icon name={icon} size={15} />
               </span>
