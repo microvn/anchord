@@ -18,9 +18,11 @@ export type EdenResult<T> = { data: T | null; error: unknown };
 export function useApiQuery<T>(
   queryKey: readonly unknown[],
   call: () => Promise<EdenResult<T>>,
+  options?: { enabled?: boolean },
 ): UseQueryResult<T, ApiError> {
   return useQuery<T, ApiError>({
     queryKey,
+    enabled: options?.enabled,
     queryFn: async () => {
       // A transport failure (backend unreachable) rejects here; toApiError normalizes it.
       let result: EdenResult<T>;
