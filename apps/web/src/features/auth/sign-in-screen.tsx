@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "./zod-resolver";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { z } from "zod";
+import { toast } from "sonner";
 import { signIn, sendVerificationEmail, getSession, useSession } from "../../lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -174,9 +175,21 @@ export function SignInScreen() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password" className={authLabelClass}>
-              Password
-            </Label>
+            <div className="flex items-baseline justify-between">
+              <Label htmlFor="password" className={authLabelClass}>
+                Password
+              </Label>
+              {/* No password-reset backend yet → graceful no-op toast. Matches the prototype's
+                  `.auth-link` on the password label row (11.5px / 500 / accent-ink, right-aligned). */}
+              <button
+                type="button"
+                data-testid="forgot-password"
+                onClick={() => toast("Password reset isn't available yet")}
+                className="text-[11.5px] font-medium text-accent-ink hover:underline"
+              >
+                Forgot?
+              </button>
+            </div>
             <Input
               id="password"
               type="password"

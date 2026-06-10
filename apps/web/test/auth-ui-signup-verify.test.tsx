@@ -77,13 +77,14 @@ describe("auth-ui S-001 — sign up and verify email", () => {
       </Routes>,
       "/signup",
     );
+    await user.type(screen.getByLabelText(/^name$/i), "Ada Lovelace");
     await user.type(screen.getByLabelText(/email/i), "new@acme.com");
     await user.type(screen.getByLabelText(/password/i), "longenough");
     await user.click(screen.getByRole("button", { name: /create account/i }));
 
     await waitFor(() => expect(screen.getByTestId("verify-sent")).toBeInTheDocument());
     expect(signUpEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "new@acme.com", password: "longenough" }),
+      expect.objectContaining({ name: "Ada Lovelace", email: "new@acme.com", password: "longenough" }),
     );
     // Resend is offered and triggers another verification mail.
     await user.click(screen.getByTestId("verify-resend"));
@@ -101,6 +102,7 @@ describe("auth-ui S-001 — sign up and verify email", () => {
       </Routes>,
       "/signup",
     );
+    await user.type(screen.getByLabelText(/^name$/i), "Ada Lovelace");
     await user.type(screen.getByLabelText(/email/i), "new@acme.com");
     await user.type(screen.getByLabelText(/password/i), "longenough");
     await user.click(screen.getByRole("button", { name: /create account/i }));
@@ -252,6 +254,7 @@ describe("auth-ui S-001 — sign up and verify email", () => {
       </Routes>,
       "/signup",
     );
+    await user.type(screen.getByLabelText(/^name$/i), "Ada Lovelace");
     await user.type(screen.getByLabelText(/email/i), "new@acme.com");
     await user.type(screen.getByLabelText(/password/i), "longenough");
     await user.click(screen.getByRole("button", { name: /create account/i }));
@@ -274,6 +277,7 @@ describe("auth-ui S-001 — sign up and verify email", () => {
       </Routes>,
       "/signup",
     );
+    await user.type(screen.getByLabelText(/^name$/i), "Ada Lovelace");
     await user.type(screen.getByLabelText(/email/i), "taken@acme.com");
     await user.type(screen.getByLabelText(/password/i), "longenough");
     await user.click(screen.getByRole("button", { name: /create account/i }));

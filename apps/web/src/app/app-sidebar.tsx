@@ -118,7 +118,7 @@ export function AppSidebar({
             <Brandmark size={22} />
             <span
               data-testid="sidebar-brand"
-              className="truncate font-serif text-[17px] font-medium tracking-[-0.02em] group-data-[collapsible=icon]:hidden"
+              className="truncate font-serif text-[19px] font-medium tracking-[-0.03em] group-data-[collapsible=icon]:hidden"
             >
               anchord
             </span>

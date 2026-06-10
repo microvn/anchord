@@ -28,6 +28,7 @@ import { OAuthButtons } from "./oauth-buttons";
 // C-001/AS-001: password must be at least 8 characters (mirrors the backend
 // minPasswordLength). Validate on the client so the user gets the rule before submit.
 const schema = z.object({
+  name: z.string().trim().min(1, "Enter your name"),
   email: z.string().email("Enter a valid email"),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
@@ -50,7 +51,7 @@ export function SignUpScreen() {
     const res = await signUp.email({
       email: values.email,
       password: values.password,
-      name: values.email,
+      name: values.name,
       // AS-003: better-auth verifies the email link SERVER-SIDE then redirects to
       // callbackURL resolved against the link's origin (the backend). Pass an ABSOLUTE URL
       // to the SPA's own verified-landing so the user lands on the app, not the backend's
@@ -91,6 +92,25 @@ export function SignUpScreen() {
         <OAuthButtons />
 
         <form className="flex flex-col gap-3.5" onSubmit={handleSubmit(onSubmit)} noValidate>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="name" className={authLabelClass}>
+              Name
+            </Label>
+            <Input
+              id="name"
+              type="text"
+              autoComplete="name"
+              placeholder="Your name"
+              className={authInputClass}
+              {...register("name")}
+            />
+            {errors.name && (
+              <p className="text-xs text-error" role="alert">
+                {errors.name.message}
+              </p>
+            )}
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="email" className={authLabelClass}>
               Email

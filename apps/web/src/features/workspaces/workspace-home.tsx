@@ -47,7 +47,7 @@ export function WorkspaceHome() {
   const recent = docs.slice(0, RECENT_LIMIT);
 
   return (
-    <section className="mx-auto max-w-[1100px] px-6 py-8" data-testid="workspace-home">
+    <section className="mx-auto max-w-[1080px] px-8 py-8" data-testid="workspace-home">
       {/* page-head — Workspace eyebrow + Fraunces title, admin actions + New-doc pinned right. */}
       <div className="mb-[22px] flex items-end gap-4">
         <div>
@@ -63,7 +63,7 @@ export function WorkspaceHome() {
           {isAdmin && (
             <Link
               to={`/w/${workspace.id}/members`}
-              className="inline-flex h-8 items-center gap-[7px] rounded-md border border-line bg-surface px-3 text-[12.5px] font-semibold text-ink hover:border-subtle hover:bg-elev"
+              className="inline-flex h-8 items-center gap-[7px] rounded-[8px] px-3 text-[12.5px] font-semibold text-muted transition-colors hover:bg-elev hover:text-ink"
             >
               <Icon name="members" size={15} />
               Members
@@ -101,7 +101,7 @@ export function WorkspaceHome() {
           <Link
             to={`/w/${workspace.id}/docs`}
             data-testid="view-all-docs"
-            className="ml-auto text-[13.5px] text-muted hover:text-ink"
+            className="ml-auto inline-flex h-7 items-center rounded-[8px] px-2.5 text-[12.5px] font-semibold text-muted transition-colors hover:bg-elev hover:text-ink"
           >
             View all
           </Link>

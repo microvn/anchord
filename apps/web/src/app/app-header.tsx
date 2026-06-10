@@ -207,7 +207,7 @@ export function AppHeader({ contextActions }: { contextActions?: ReactNode }) {
   ) : undefined;
 
   return (
-    <div className="flex min-w-0 items-center gap-3">
+    <div className="flex min-w-0 items-center gap-2.5">
       {/* LEFT: breadcrumb (AS-017). */}
       <div className="min-w-0 flex-1">
         <Breadcrumb crumbs={crumbs} />

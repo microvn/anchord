@@ -175,10 +175,13 @@ export function NewDocDialog({
     >
       <DialogContent
         data-testid="new-doc-dialog"
+        // Anchord-Design `.scrim` — full-viewport teal-black scrim (the --scrim token), matching
+        // the create/rename dialogs (not the shadcn black/50 default).
+        overlayClassName="bg-[var(--scrim)]"
         className="border-line bg-surface sm:max-w-[520px]"
       >
         <DialogHeader>
-          <DialogTitle className="font-serif text-[19px] font-medium text-ink">
+          <DialogTitle className="font-serif text-[21px] font-medium text-ink">
             New doc
           </DialogTitle>
           <DialogDescription className="text-[13px] text-muted">
@@ -216,7 +219,7 @@ export function NewDocDialog({
                 type="button"
                 data-testid="dropzone"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex w-full flex-col items-center gap-2 rounded-[11px] border border-dashed border-line bg-sunken px-6 py-8 text-center transition-colors hover:border-accent"
+                className="flex w-full flex-col items-center gap-1 rounded-md border-[1.5px] border-dashed border-line bg-elev px-5 py-[30px] text-center transition-colors hover:border-accent hover:bg-accent-soft"
               >
                 <span className="grid size-10 place-items-center rounded-md text-subtle">
                   <Icon name="upload" size={22} />
@@ -341,7 +344,7 @@ export function NewDocDialog({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Auto-inferred from the file or first heading"
-              className="min-h-[40px] w-full rounded-md border border-line bg-surface px-3 text-[13px] text-ink outline-none focus:border-accent"
+              className="h-9 w-full rounded-md border border-line bg-surface px-[11px] text-[13.5px] text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
             />
           </div>
         )}
