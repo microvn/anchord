@@ -50,6 +50,7 @@ const { AppShell } = await import("../src/app/app-shell");
 const { WorkspaceSidebar } = await import("../src/app/workspace-sidebar");
 const { AppSidebar } = await import("../src/app/app-sidebar");
 const { ThemeProvider } = await import("../src/app/theme-provider");
+const { SidebarProvider } = await import("../src/components/ui/sidebar");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -219,9 +220,11 @@ describe("web-core S-005 — C-005 no duplication (both directions)", () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client()}>
-          <MemoryRouter initialEntries={["/w/ws-1"]}>
-            <AppSidebar switcherSlot={<div data-testid="ws-switcher-trigger">switcher</div>} isAdmin />
-          </MemoryRouter>
+          <SidebarProvider>
+            <MemoryRouter initialEntries={["/w/ws-1"]}>
+              <AppSidebar switcherSlot={<div data-testid="ws-switcher-trigger">switcher</div>} isAdmin />
+            </MemoryRouter>
+          </SidebarProvider>
         </QueryClientProvider>
       </ThemeProvider>,
     );

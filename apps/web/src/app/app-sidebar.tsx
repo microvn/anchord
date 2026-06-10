@@ -1,31 +1,34 @@
 import type { ReactNode } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { Brandmark, Icon } from "../components/icon";
+import { Button } from "../components/ui/button";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../components/ui/tooltip";
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarTrigger,
+} from "../components/ui/sidebar";
 
-// AppSidebar (web-core S-004): the left workspace-nav frame, re-skinned to Anchord-Design's
-// `shell.css` (.sidebar/.newdoc/.switcher/.nav-item/.sb-foot). DESIGN.md §App shell — the sidebar
-// sits on a RECESSED (`sunken`) surface so chrome recedes behind content; only the active nav item
-// lights up (accent-soft bg + 2px teal left bar + accent-ink text).
+// AppSidebar (web-core S-004): the left workspace-nav frame, rebuilt on the shadcn Sidebar
+// PRIMITIVE (`@/components/ui/sidebar`) instead of a hand-rolled <aside> + shell.css. The
+// primitive natively owns collapse↔icon-rail (`collapsible="icon"`), the mobile off-canvas
+// Sheet, keyboard toggle and state persistence — so there is no bespoke layout CSS here.
+// Every surface reads the anchord `--sidebar-*` tokens (mapped to --sunken/--accent-soft/…
+// in styles.css), so the recessed teal look follows the active theme.
 //
-// Top-to-bottom order (AS-012): brand + collapse chevron · `+ New doc` (flat teal) · the workspace
-// switcher slot (owned by workspaces-ui — mounted here, not rebuilt) · the primary nav
-// (Dashboard · All docs · Projects · Activity) · a Members/Settings footer (admin-only, AS-014).
+// Top-to-bottom order (AS-012): brand + collapse trigger · `+ New doc` (flat teal) · the
+// workspace switcher slot (owned by workspaces-ui — mounted, not rebuilt; C-005) · the primary
+// nav (Dashboard · All docs · Projects · Activity) · a Members footer (admin-only, AS-014).
 //
 // This component is PRESENTATIONAL: the active workspace's admin role + the switcher come in as
-// props/slots, so the bare AppShell (web-core S-003 tests) can render it without the workspaces
-// data layer. app.tsx wires the connected <WorkspaceSidebar /> that supplies the real switcher +
-// role from the /api/me bootstrap.
-//
-// Collapse (AS-015): the chevron toggles an icon RAIL (~56px) — glyphs + tooltips only; the
-// switcher slot is replaced by a workspace glyph and `+ New doc` by a bare `+`. Toggling restores.
-// Responsive (AS-016) is owned by AppShell: at compact this same sidebar renders inside an
-// off-canvas Sheet drawer with the switcher at the top.
+// props/slots, so the bare AppShell (web-core S-003 shell tests) can render it without the
+// workspaces data layer. app.tsx wires the connected <WorkspaceSidebar />.
 
 export interface NavDestination {
   to: string;
@@ -48,151 +51,151 @@ export function navDestinations(base: string): NavDestination[] {
   ];
 }
 
-// Wrap a rail control in a shadcn Tooltip ONLY when collapsed (the label is hidden then). shadcn
-// owns the tooltip behavior (portal, keyboard, focus); we skin its content with `.rail-tip`.
-function RailTip({ label, collapsed, children }: { label: string; collapsed: boolean; children: ReactNode }) {
-  if (!collapsed) return <>{children}</>;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="right" className="rail-tip border-0 bg-ink text-paper">
-        {label}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
 export function AppSidebar({
   switcherSlot,
   isAdmin = false,
-  collapsed = false,
-  onToggleCollapse,
   newDocHref = "#",
   membersHref = "#",
   nav = [],
+  // The shell tags the rendered Sidebar so its responsive tests can find it: the persistent
+  // inline rail is `app-sidebar`/`side-region` on desktop; the same Sidebar renders as the
+  // off-canvas Sheet at compact, tagged `side-drawer` (AS-016).
+  dataTestId = "app-sidebar",
 }: {
   switcherSlot?: ReactNode;
   isAdmin?: boolean;
-  collapsed?: boolean;
-  onToggleCollapse?: () => void;
   newDocHref?: string;
   membersHref?: string;
   nav?: NavDestination[];
+  dataTestId?: string;
 }) {
+  const { pathname } = useLocation();
+  // Mirror NavLink's match semantics: Dashboard (the workspace index) matches only the exact
+  // `base` path; the others match their segment + any descendant. Driving `isActive` here lets
+  // us pass it to the primitive's SidebarMenuButton (data-[active=true]) AND merge the anchord
+  // active utilities onto the same NavLink element (asChild) that carries aria-current (AS-013).
+  const isNavActive = (item: NavDestination) =>
+    item.label === "Dashboard"
+      ? pathname === item.to || pathname === `${item.to}/`
+      : pathname === item.to || pathname.startsWith(`${item.to}/`);
+
   return (
-    <TooltipProvider delayDuration={150}>
-      <aside
-        data-testid="app-sidebar"
-        data-collapsed={collapsed ? "true" : "false"}
-        // `.sidebar` carries the recessed `sunken` surface + rail width from shell.css; the
-        // `bg-sunken` utility is kept so the S-004 design-token assertion still matches.
-        className="sidebar thin-scroll bg-sunken"
-      >
-        {/* 1. Brand + collapse chevron (AS-012 order #1, AS-015 toggle). */}
-        <div className="sb-top">
-          <span className="brand">
+    <Sidebar
+      collapsible="icon"
+      data-testid={dataTestId}
+      // `bg-sidebar` resolves to --sunken (the recessed surface — chrome recedes behind
+      // content); the bg-sunken utility is kept so the S-004 design-token assertion matches
+      // this element regardless of the primitive's own bg-sidebar class.
+      className="bg-sunken"
+    >
+      {/* 1. Brand + collapse trigger (AS-012 order #1, AS-015 toggle via the primitive's rail). */}
+      <SidebarHeader>
+        <div className="flex items-center gap-2 px-1">
+          <NavLink to={newDocHref ? newDocHref.replace(/\/docs\/new$/, "") || "/" : "/"} className="flex min-w-0 items-center gap-2 text-ink no-underline">
             <Brandmark size={22} />
-            {!collapsed && (
-              <span data-testid="sidebar-brand" className="brand-name">
-                anchord
-              </span>
-            )}
-          </span>
-          <button
-            type="button"
+            <span
+              data-testid="sidebar-brand"
+              className="truncate font-serif text-[17px] font-medium tracking-[-0.02em] group-data-[collapsible=icon]:hidden"
+            >
+              anchord
+            </span>
+          </NavLink>
+          <SidebarTrigger
             data-testid="sidebar-collapse"
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-expanded={!collapsed}
-            title={collapsed ? "Expand" : "Collapse"}
-            onClick={onToggleCollapse}
-            className="icon-btn collapse-btn"
+            aria-label="Collapse sidebar"
+            className="ml-auto text-muted hover:text-ink group-data-[collapsible=icon]:hidden"
+          />
+        </div>
+      </SidebarHeader>
+
+      <SidebarContent>
+        {/* 2. Primary action — `+ New doc` (flat teal, compact ~32px). Collapses to a `+`. */}
+        <SidebarGroup className="pb-0">
+          <Button
+            asChild
+            size="sm"
+            data-testid="sidebar-new-doc"
+            title="New doc"
+            className="h-8 w-full justify-start gap-2 bg-accent font-semibold text-on-accent hover:bg-accent-strong group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
           >
-            <Icon name="chevLeft" size={16} />
-          </button>
-        </div>
+            <NavLink to={newDocHref}>
+              <Icon name="plus" size={16} />
+              <span className="group-data-[collapsible=icon]:hidden">New doc</span>
+            </NavLink>
+          </Button>
+        </SidebarGroup>
 
-        <div className="sb-body thin-scroll">
-          {/* 2. Primary action — `+ New doc` (flat teal). Collapses to a bare `+` glyph (AS-015). */}
-          <div className="sb-action">
-            <RailTip label="New doc" collapsed={collapsed}>
-              <NavLink to={newDocHref} data-testid="sidebar-new-doc" title="New doc" className="newdoc">
-                <Icon name="plus" size={16} />
-                {!collapsed && <span className="lbl">New doc</span>}
-              </NavLink>
-            </RailTip>
-          </div>
+        {/* 3. Workspace switcher slot (AS-012; C-005 — the single switcher anchor). Owned by
+            workspaces-ui — mounted here, never rebuilt. */}
+        <SidebarGroup data-testid="sidebar-switcher-slot" className="py-0">
+          {switcherSlot}
+        </SidebarGroup>
 
-          {/* 3. Workspace switcher slot (AS-012; C-005 — the single switcher anchor). When collapsed
-              the rail shows a workspace glyph in its place. The slot is owned by workspaces-ui. */}
-          <div data-testid="sidebar-switcher-slot">
-            {collapsed ? (
-              <RailTip label="Workspace" collapsed={collapsed}>
-                <div
-                  data-testid="sidebar-switcher-glyph"
-                  title="Workspace"
-                  aria-label="Workspace"
-                  className="switcher-rail"
-                >
-                  <span className="ws-glyph">W</span>
-                </div>
-              </RailTip>
-            ) : (
-              switcherSlot
-            )}
-          </div>
-
-          {/* 4. Primary nav (AS-012 order #4; active marking AS-013). */}
-          <nav data-testid="sidebar-nav" aria-label="Primary" className="nav-group">
-            {!collapsed && <div className="group-label mono-label">Overview</div>}
-            {nav.map((item) => (
-              <RailTip key={item.label} label={item.label} collapsed={collapsed}>
-                <NavLink
-                  to={item.to}
-                  // `end` on Dashboard (the workspace index) so it isn't marked active on child routes.
-                  end={item.label === "Dashboard"}
-                  data-testid={`sidebar-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
-                  title={item.label}
-                  className={({ isActive }) =>
-                    // AS-013 active styling lives in `.nav-item.active` (accent-soft bg + accent-ink
-                    // + 2px teal left bar). The Tailwind utilities are ALSO appended so the S-004
-                    // class-presence assertions (bg-accent-soft / text-accent-ink / before:bg-accent)
-                    // keep matching the same element.
-                    [
-                      "nav-item",
-                      isActive
-                        ? "active bg-accent-soft text-accent-ink before:bg-accent"
+        {/* 4. Primary nav (AS-012 order #4; active marking AS-013). */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="font-mono text-[11px] font-medium tracking-[0.12em] text-subtle">
+            Overview
+          </SidebarGroupLabel>
+          <SidebarMenu data-testid="sidebar-nav" aria-label="Primary">
+            {nav.map((item) => {
+              const active = isNavActive(item);
+              return (
+                <SidebarMenuItem key={item.label}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={active}
+                    tooltip={item.label}
+                    // AS-013 active treatment, anchord style. The primitive's data-[active=true]
+                    // already paints accent-soft bg + accent-ink text via the --sidebar-accent
+                    // tokens; we ALSO append the explicit anchord utilities (bg-accent-soft /
+                    // text-accent-ink + a 2px teal left bar via ::before) so the look is
+                    // token-exact and the S-004 class-presence assertions match this element.
+                    // With asChild these classes merge onto the NavLink <a> (which carries the
+                    // testid + aria-current), so testid + active styling sit on one element.
+                    className={[
+                      "relative text-muted",
+                      active
+                        ? "bg-accent-soft text-accent-ink before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-r before:bg-accent before:content-['']"
                         : "",
-                    ].join(" ")
-                  }
-                >
-                  <Icon name={item.icon} size={17} className="ic" />
-                  {!collapsed && <span className="lbl">{item.label}</span>}
-                </NavLink>
-              </RailTip>
-            ))}
-          </nav>
-        </div>
+                    ].join(" ")}
+                  >
+                    <NavLink
+                      to={item.to}
+                      end={item.label === "Dashboard"}
+                      data-testid={`sidebar-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
+                      title={item.label}
+                    >
+                      <Icon name={item.icon} size={17} />
+                      <span>{item.label}</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+        </SidebarGroup>
+      </SidebarContent>
 
-        {/* 5. Footer — Members / Settings, admin-only (AS-014, C-006). The account is NOT here; it
-            lives in the header (C-005). A non-admin member simply doesn't get the Members entry. */}
-        <div className="sb-foot">
-          {isAdmin ? (
-            <RailTip label="Members & Settings" collapsed={collapsed}>
-              <NavLink
-                to={membersHref}
-                data-testid="sidebar-members"
-                title="Members / Settings"
-                className={({ isActive }) =>
-                  ["nav-item", isActive ? "active bg-accent-soft text-accent-ink" : ""].join(" ")
-                }
+      {/* 5. Footer — Members, admin-only (AS-014, C-006). The account is NOT here; it lives in
+          the header (C-005). A non-admin member simply doesn't get the Members entry. */}
+      {isAdmin && (
+        <SidebarFooter className="border-t border-sidebar-border">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                tooltip="Members"
+                className="relative text-muted data-[active=true]:before:absolute data-[active=true]:before:inset-y-1 data-[active=true]:before:left-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-r data-[active=true]:before:bg-accent"
               >
-                <Icon name="settings" size={17} className="ic" />
-                {!collapsed && <span className="lbl">Members</span>}
-              </NavLink>
-            </RailTip>
-          ) : null}
-        </div>
-      </aside>
-    </TooltipProvider>
+                <NavLink to={membersHref} data-testid="sidebar-members" title="Members">
+                  <Icon name="settings" size={17} />
+                  <span>Members</span>
+                </NavLink>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      )}
+    </Sidebar>
   );
 }

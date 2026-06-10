@@ -6,8 +6,9 @@
 /* Anchord-Design ported skins — MUST sit with the other @imports, ABOVE @theme/:root
    rules (CSS @import must precede all non-import statements, else Lightning CSS drops them). */
 @import "./styles/auth.css";
-@import "./styles/shell.css";
 @import "./styles/screens.css";
+
+@custom-variant dark (&:is(.dark *));
 
 /* ============================================================
    anchord — design tokens (ported from Anchord-Design/tokens.css)
@@ -178,10 +179,40 @@
   --color-border: var(--line);
   --color-input: var(--line);
   --color-ring: var(--accent);
+
+  /* shadcn Sidebar contract → anchord tokens (NO zinc default leaks). The shadcn
+     `sidebar` primitive reads these; mapping them here means the recessed teal look
+     follows data-theme live, both dark (canonical) and light. */
+  --color-sidebar: var(--sunken); /* recessed surface — chrome recedes behind content */
+  --color-sidebar-foreground: var(--muted); /* idle nav/label text */
+  --color-sidebar-primary: var(--accent); /* the teal accent (e.g. brand / active bar) */
+  --color-sidebar-primary-foreground: var(--on-accent);
+  --color-sidebar-accent: var(--accent-soft); /* active/hover item bg */
+  --color-sidebar-accent-foreground: var(--accent-ink); /* active item text */
+  --color-sidebar-border: var(--line); /* hairlines / rail edge */
+  --color-sidebar-ring: var(--accent); /* focus ring */
 }
 
 :root {
   color-scheme: dark;
+
+  /* Anchord-Design px scale + radii + ease, referenced by the still-imported screens.css
+     (the dashboard/screens skins get redone in a later batch — until then they need these
+     vars, which previously lived in the now-deleted shell.css). The shell itself no longer
+     uses them; it reads the @theme radius/spacing utilities. */
+  --t-display: 30px;
+  --t-h2: 21px;
+  --t-h3: 15px;
+  --t-body: 13.5px;
+  --t-small: 12.5px;
+  --t-mono: 11px;
+
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 11px;
+  --r-pill: 999px;
+
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 :root[data-theme="light"] {
   color-scheme: light;

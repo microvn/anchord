@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { signOut } from "../lib/auth-client";
 import { Icon } from "../components/icon";
+import { MENU_ITEM } from "./app-header";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,9 +40,9 @@ export function UserMenu({ foldedItems }: { foldedItems?: ReactNode }) {
           data-testid="user-menu-trigger"
           aria-label="Account menu"
           // ≥40px tap target (AS-019); the avatar anchors the header's right edge.
-          className="icon-btn lg min-h-[40px] min-w-[40px]"
+          className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-md text-muted transition-colors hover:bg-elev"
         >
-          <span className="avatar" style={{ background: "var(--accent-soft)", color: "var(--accent-ink)" }}>
+          <span className="inline-flex size-[26px] items-center justify-center rounded-full bg-accent-soft font-mono text-[10.5px] font-semibold text-accent-ink">
             AC
           </span>
         </button>
@@ -50,7 +51,8 @@ export function UserMenu({ foldedItems }: { foldedItems?: ReactNode }) {
       <DropdownMenuContent
         align="end"
         data-testid="user-menu"
-        className="menu w-[236px] border-0 bg-transparent p-0 shadow-none"
+        // Anchord menu surface: `elev` bg + a `line` hairline + the pop shadow (drops shadcn zinc).
+        className="w-[236px] rounded-[11px] border border-line bg-elev p-1.5 shadow-[var(--shadow-pop)]"
       >
         {/* Folded utilities (mobile, AS-019): theme toggle + notifications live here when the
             header has condensed. Empty on desktop, where they sit inline in the header. */}
@@ -60,13 +62,13 @@ export function UserMenu({ foldedItems }: { foldedItems?: ReactNode }) {
           data-testid="menu-settings"
           onClick={() => setOpen(false)}
           // No settings route ships in web-core (workspace-project-ui owns it) — inert placeholder.
-          className="menu-item"
+          className={MENU_ITEM}
         >
-          <Icon name="settings" size={16} className="ic" />
+          <Icon name="settings" size={16} />
           Settings
         </button>
-        <button type="button" data-testid="menu-sign-out" onClick={handleSignOut} className="menu-item">
-          <Icon name="logout" size={16} className="ic" />
+        <button type="button" data-testid="menu-sign-out" onClick={handleSignOut} className={MENU_ITEM}>
+          <Icon name="logout" size={16} />
           Sign out
         </button>
       </DropdownMenuContent>

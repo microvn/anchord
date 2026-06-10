@@ -12,13 +12,9 @@ import { useBootstrap } from "../features/workspaces/use-bootstrap";
 //
 // Keeping the data binding here (not inside AppSidebar) lets the bare AppShell render the
 // presentational sidebar without the workspaces query layer (web-core S-003 shell tests).
-export function WorkspaceSidebar({
-  collapsed,
-  onToggleCollapse,
-}: {
-  collapsed?: boolean;
-  onToggleCollapse?: () => void;
-}) {
+// Collapse↔rail + the mobile drawer are now owned by the shadcn Sidebar primitive (via the
+// shared SidebarProvider), so this no longer threads collapse props.
+export function WorkspaceSidebar({ dataTestId }: { dataTestId?: string }) {
   const query = useBootstrap();
 
   // The shell (hence this sidebar) is mounted ABOVE the `/w/:workspaceId` route, so `useParams`
@@ -35,11 +31,10 @@ export function WorkspaceSidebar({
     <AppSidebar
       switcherSlot={<WorkspaceSwitcher />}
       isAdmin={isAdmin}
-      collapsed={collapsed}
-      onToggleCollapse={onToggleCollapse}
       newDocHref={`${base}/docs/new`}
       membersHref={`${base}/members`}
       nav={navDestinations(base)}
+      dataTestId={dataTestId}
     />
   );
 }

@@ -6,9 +6,9 @@ import { useBootstrap } from "../features/workspaces/use-bootstrap";
 import { isCompact, useBreakpoint } from "../lib/use-breakpoint";
 import { Icon } from "../components/icon";
 
-// AppHeader (web-core S-005): the thin top bar, re-skinned to Anchord-Design `shell.css`
-// (.crumbs/.header-right/.header-search/.icon-btn). DESIGN.md §App shell — `surface` bg + a `line`
-// hairline at the bottom (applied by AppShell's <header className="header">); chrome recedes.
+// AppHeader (web-core S-005): the thin top bar, styled with Tailwind utilities reading the
+// anchord @theme tokens (no shell.css). DESIGN.md §App shell — `surface` bg + a `line` hairline
+// at the bottom (applied by AppShell's <header>); chrome recedes.
 //   - LEFT: a `Workspace › Project › Doc` breadcrumb (AS-017) — last crumb emphasized (`ink`),
 //     parents `muted`, separators `faint`.
 //   - RIGHT (AS-018): a context-actions slot · search (⌕, `/` focuses) · theme toggle ·
@@ -45,21 +45,24 @@ export function deriveCrumbs(pathname: string, workspaceName: string | undefined
 
 function Breadcrumb({ crumbs }: { crumbs: Crumb[] }) {
   return (
-    <nav data-testid="header-breadcrumb" aria-label="Breadcrumb" className="crumbs">
+    <nav
+      data-testid="header-breadcrumb"
+      aria-label="Breadcrumb"
+      className="flex min-w-0 flex-[0_1_auto] items-center gap-[7px]"
+    >
       {crumbs.map((c, i) => {
         const last = i === crumbs.length - 1;
         return (
           <Fragment key={c.id}>
             {i > 0 && (
-              <span data-testid="header-separator" aria-hidden="true" className="crumb-sep text-faint">
+              <span data-testid="header-separator" aria-hidden="true" className="text-[13px] text-faint">
                 ›
               </span>
             )}
             <span
               data-testid={`crumb-${c.id}`}
-              // AS-017: last crumb emphasized (`ink`); parents `muted`. The Tailwind colour
-              // utilities are kept alongside `.crumb` so the S-005 class assertions still match.
-              className={`crumb truncate ${last ? "last text-ink" : "text-muted"}`}
+              // AS-017: last crumb emphasized (`ink`, semibold); parents `muted`.
+              className={`cursor-default truncate text-[12.5px] ${last ? "font-semibold text-ink" : "text-muted"}`}
               aria-current={last ? "page" : undefined}
             >
               {c.label}
@@ -70,6 +73,14 @@ function Breadcrumb({ crumbs }: { crumbs: Crumb[] }) {
     </nav>
   );
 }
+
+// Chrome icon-button — a ~28px hairline-quiet control (theme toggle / bell / drawer trigger).
+const ICON_BTN =
+  "inline-flex size-7 flex-none items-center justify-center rounded-md border border-transparent bg-transparent text-muted transition-colors hover:bg-elev hover:text-ink disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-muted";
+// A menu row inside a DropdownMenu (folded utilities + settings/sign-out). Exported so the
+// UserMenu's Settings/Sign-out rows share the exact anchord row styling.
+export const MENU_ITEM =
+  "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-[7px] text-left text-[12.5px] text-ink outline-none transition-colors hover:bg-surface focus:bg-surface data-[highlighted]:bg-surface [&>svg]:flex-none [&>svg]:text-subtle";
 
 // The search affordance — an expanded input on desktop (`/` focuses it, AS-018.T1) or a collapsed
 // icon button on mobile (AS-019). The `/` shortcut is wired only when the input is present.
@@ -93,17 +104,27 @@ function HeaderSearch({ compact }: { compact: boolean }) {
 
   if (compact) {
     return (
-      <button type="button" data-testid="header-search-icon" aria-label="Search" className="icon-btn fold">
+      <button type="button" data-testid="header-search-icon" aria-label="Search" className={ICON_BTN}>
         <Icon name="search" size={16} />
       </button>
     );
   }
 
   return (
-    <label data-testid="header-search" className="header-search fold">
+    <label
+      data-testid="header-search"
+      className="flex h-[30px] w-[210px] cursor-text items-center gap-2 rounded-md border border-transparent bg-elev px-[9px] text-subtle transition-colors hover:border-line focus-within:border-line"
+    >
       <Icon name="search" size={15} />
-      <input ref={inputRef} data-testid="header-search-input" type="search" aria-label="Search" placeholder="Search docs…" />
-      <span className="kbd">/</span>
+      <input
+        ref={inputRef}
+        data-testid="header-search-input"
+        type="search"
+        aria-label="Search"
+        placeholder="Search docs…"
+        className="min-w-0 flex-1 border-none bg-transparent text-[12.5px] text-ink outline-none placeholder:text-subtle"
+      />
+      <span className="rounded border border-line bg-surface px-[5px] py-px font-mono text-[10px] text-subtle">/</span>
     </label>
   );
 }
@@ -116,9 +137,9 @@ function ThemeToggle({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
       data-testid={testid}
       aria-label="Toggle theme"
       onClick={toggleTheme}
-      className={inMenu ? "menu-item" : "icon-btn fold"}
+      className={inMenu ? MENU_ITEM : ICON_BTN}
     >
-      <Icon name={theme === "dark" ? "sun" : "moon"} size={16} className={inMenu ? "ic" : undefined} />
+      <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
       {inMenu && <span>{theme === "dark" ? "Light theme" : "Dark theme"}</span>}
     </button>
   );
@@ -128,8 +149,8 @@ function ThemeToggle({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
 // NO unread badge. When a notifications slice ships it gets the count + badge.
 function NotificationsBell({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
   return (
-    <button type="button" data-testid={testid} aria-label="Notifications" disabled className={inMenu ? "menu-item" : "icon-btn"}>
-      <Icon name="bell" size={16} className={inMenu ? "ic" : undefined} />
+    <button type="button" data-testid={testid} aria-label="Notifications" disabled className={inMenu ? MENU_ITEM : ICON_BTN}>
+      <Icon name="bell" size={16} />
       {inMenu && <span>Notifications</span>}
     </button>
   );
@@ -163,16 +184,16 @@ export function AppHeader({ contextActions }: { contextActions?: ReactNode }) {
       </div>
 
       {/* RIGHT: account + utilities cluster (AS-018). The switcher is intentionally absent (C-005). */}
-      <div data-testid="header-right" className="header-right">
+      <div data-testid="header-right" className="ml-auto flex items-center gap-1">
         <div data-testid="header-context-actions" className="flex items-center gap-2">
           {contextActions}
         </div>
         <HeaderSearch compact={compact} />
         {/* Inline theme + notifications on desktop; folded into the avatar menu on mobile. */}
-        {!compact && <div className="hdr-divider fold" />}
+        {!compact && <div className="mx-1 h-[18px] w-px flex-none bg-line" />}
         {!compact && <ThemeToggle testid="header-theme-toggle" />}
         {!compact && <NotificationsBell testid="header-notifications" />}
-        <div className="hdr-divider" />
+        <div className="mx-1 h-[18px] w-px flex-none bg-line" />
         <UserMenu foldedItems={folded} />
       </div>
     </div>
