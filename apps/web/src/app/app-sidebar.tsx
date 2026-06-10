@@ -272,9 +272,7 @@ export function AppSidebar({
                 className="text-muted [&_svg]:text-subtle data-[active=true]:bg-accent-soft data-[active=true]:font-semibold data-[active=true]:text-accent-ink data-[active=true]:[&_svg]:text-accent-ink"
               >
                 <NavLink to={membersHref} data-testid="sidebar-members" title="Members">
-                  <span className="grid size-5 flex-none place-items-center rounded-[5px] border border-line bg-elev text-subtle">
-                    <Icon name="settings" size={12} />
-                  </span>
+                  <Icon name="settings" size={17} />
                   <span>Members</span>
                 </NavLink>
               </SidebarMenuButton>
