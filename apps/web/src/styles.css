@@ -3,7 +3,7 @@
    Vite plugin expands into real rules. If the font @import sits after it, Lightning CSS
    sees an @import preceded by rules and DROPS it (a real layout bug — fonts vanish from
    the production bundle). ALL @imports stay at the very top, above every @theme/:root. */
-@import url("https://fonts.bunny.net/css?family=fraunces:400,500,600|geist:400,500,600,700|geist-mono:400,500,600");
+@import url("https://fonts.bunny.net/css?family=ibm-plex-mono:400,500,600|ibm-plex-sans:400,500,600|fraunces:400,500,600|geist:400,500,600,700|geist-mono:400,500,600");
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -119,10 +119,11 @@
   --color-error: #f1655d;
   --color-success: #43b873;
 
-  /* Type — Geist (body/UI), Fraunces (headings/title), Geist Mono (code/data) */
-  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Fraunces", ui-serif, Georgia, serif;
-  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+  /* Type — Anchord-Design "Dev · IBM Plex" preset (user-selected over DESIGN.md's
+     Fraunces/Geist): IBM Plex Sans (body/UI), IBM Plex Mono (headings/title + data). */
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "IBM Plex Mono", ui-monospace, monospace;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
 
   /* Radius (Anchord-Design --r-*) */
   --radius-sm: 6px;
@@ -214,10 +215,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Headings use Fraunces by default (DESIGN.md). */
+/* Headings use the heading font (--font-serif = IBM Plex Mono in the Dev preset).
+   Anchord-Design `.type-mono-head`: mono headings get tighter tracking + steadier weight. */
 h1,
 h2,
 h3,
 h4 {
   font-family: var(--font-serif);
+  letter-spacing: -0.03em;
+  font-weight: 500;
 }
