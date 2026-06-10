@@ -113,7 +113,7 @@ describe("workspaces-ui S-003 — members screen", () => {
     await waitFor(() => expect(screen.getByTestId("invite-row-inv-dev")).toBeInTheDocument());
   });
 
-  it("AS-009: the admin removes a member", async () => {
+  it("AS-009: the admin removes a member (after confirming in the AlertDialog)", async () => {
     render(<App role="admin" />);
     await screen.findByTestId("member-row-u-bob");
 
@@ -124,10 +124,26 @@ describe("workspaces-ui S-003 — members screen", () => {
       }),
     );
 
+    // The trash icon opens a confirm dialog — it does NOT delete on its own.
     await userEvent.click(within(screen.getByTestId("member-row-u-bob")).getByTestId("remove-u-bob"));
+    expect(removeMember).not.toHaveBeenCalled();
+
+    // Only the destructive "Remove" action in the dialog runs the mutation.
+    await userEvent.click(await screen.findByTestId("remove-confirm-u-bob"));
     expect(removeMember).toHaveBeenCalledWith("ws-acme", "u-bob");
     // Bob disappears from the list.
     await waitFor(() => expect(screen.queryByTestId("member-row-u-bob")).not.toBeInTheDocument());
+  });
+
+  it("AS-009: cancelling the remove confirm does NOT remove the member", async () => {
+    render(<App role="admin" />);
+    await screen.findByTestId("member-row-u-bob");
+
+    await userEvent.click(within(screen.getByTestId("member-row-u-bob")).getByTestId("remove-u-bob"));
+    // Dismiss with the safe-default Cancel; the mutation must never fire.
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(removeMember).not.toHaveBeenCalled();
+    expect(screen.getByTestId("member-row-u-bob")).toBeInTheDocument();
   });
 
   it("AS-010: the admin changes a member's role", async () => {

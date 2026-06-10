@@ -8,6 +8,7 @@ import { inviteMember, removeMember, changeMemberRole } from "./client";
 import { queryKeys } from "./query-keys";
 import { ErrorState } from "../../components/error-state";
 import { EmptyState } from "../../components/empty-state";
+import { ConfirmDialog } from "../../components/confirm-dialog";
 import { Icon } from "../../components/icon";
 import { initials, avatarColor } from "../../lib/initials";
 import type { MemberRow, InvitationRow, WorkspaceRole } from "./types";
@@ -276,19 +277,32 @@ function MemberRowView({
         )}
       </div>
 
-      {/* remove (AS-009) */}
+      {/* remove (AS-009) — guarded by a confirm AlertDialog; only confirm runs removeMember. */}
       <div className="flex items-center justify-end [grid-area:remove] sm:[grid-area:auto]">
         {!isSelf && (
-          <button
-            type="button"
-            data-testid={`remove-${member.userId}`}
-            aria-label={`Remove ${member.name || member.email}`}
-            title="Remove"
-            onClick={() => void onRemove()}
-            className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-[6px] text-muted transition-colors hover:bg-elev hover:text-ink"
-          >
-            <Icon name="trash" size={15} />
-          </button>
+          <ConfirmDialog
+            title="Remove member?"
+            description={
+              <>
+                <span className="font-medium text-ink">{member.name || member.email}</span> will
+                lose access to this workspace.
+              </>
+            }
+            confirmLabel="Remove"
+            confirmTestId={`remove-confirm-${member.userId}`}
+            onConfirm={() => void onRemove()}
+            trigger={
+              <button
+                type="button"
+                data-testid={`remove-${member.userId}`}
+                aria-label={`Remove ${member.name || member.email}`}
+                title="Remove"
+                className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-[6px] text-muted transition-colors hover:bg-elev hover:text-ink"
+              >
+                <Icon name="trash" size={15} />
+              </button>
+            }
+          />
         )}
       </div>
     </div>
@@ -339,16 +353,29 @@ function InvitePendingRow({
       </div>
 
       <div className="flex items-center justify-end [grid-area:remove] sm:[grid-area:auto]">
-        <button
-          type="button"
-          data-testid={`revoke-${invitation.id}`}
-          aria-label="Revoke invite"
-          title="Revoke invite"
-          onClick={() => void onRevoke()}
-          className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-[6px] text-muted transition-colors hover:bg-elev hover:text-ink"
-        >
-          <Icon name="x" size={15} />
-        </button>
+        <ConfirmDialog
+          title="Revoke invite?"
+          description={
+            <>
+              The invite to{" "}
+              <span className="font-medium text-ink">{invitation.email}</span> will be cancelled.
+            </>
+          }
+          confirmLabel="Revoke"
+          confirmTestId={`revoke-confirm-${invitation.id}`}
+          onConfirm={() => void onRevoke()}
+          trigger={
+            <button
+              type="button"
+              data-testid={`revoke-${invitation.id}`}
+              aria-label="Revoke invite"
+              title="Revoke invite"
+              className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-[6px] text-muted transition-colors hover:bg-elev hover:text-ink"
+            >
+              <Icon name="x" size={15} />
+            </button>
+          }
+        />
       </div>
     </div>
   );
