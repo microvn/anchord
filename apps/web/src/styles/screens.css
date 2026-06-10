@@ -1,0 +1,110 @@
+/* ============================================================
+   anchord — screen content skin (ported from Anchord-Design/screens.css).
+   Only the page-head + state classes the workspace landing needs in this
+   batch; the Browser/DocGrid/Members surfaces land in a later batch.
+   ============================================================ */
+
+/* ---------- page header (inside content) ---------- */
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+.page-title {
+  font-family: var(--font-serif);
+  font-size: var(--t-display);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  color: var(--ink);
+}
+.page-sub {
+  font-size: var(--t-body);
+  color: var(--muted);
+  margin-top: 5px;
+}
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+
+.content-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 30px 32px 56px;
+}
+@media (max-width: 599px) {
+  .content-inner {
+    padding: 22px 16px 48px;
+  }
+}
+
+/* ---------- empty / states ---------- */
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 380px;
+  margin: 0 auto;
+  padding: 56px 24px;
+}
+.state-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  color: var(--subtle);
+  margin-bottom: 16px;
+}
+.state-icon.err {
+  color: var(--red);
+}
+.state-title {
+  font-size: var(--t-h3);
+  font-weight: 600;
+  color: var(--ink);
+}
+.state-msg {
+  font-size: var(--t-small);
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.55;
+}
+.state-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 18px;
+}
+.state-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+/* primary CTA used by the landing empty-state (flat teal) */
+.state-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: var(--r-lg);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: var(--font-sans);
+  font-size: var(--t-body);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  transition: background 0.12s var(--ease-out);
+}
+.state-cta:hover {
+  background: var(--accent-strong);
+}

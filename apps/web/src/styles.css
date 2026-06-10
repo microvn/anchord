@@ -208,3 +208,7 @@ h4 {
 /* Anchord-Design auth + shared primitive CSS (scoped to .anchord-* / .auth* classes
    so it doesn't fight Tailwind utilities). */
 @import "./styles/auth.css";
+/* Anchord-Design app shell skin (sidebar/header/switcher/menu/drawer classes). */
+@import "./styles/shell.css";
+/* Screen content skin (page-head + states) used by the workspace landing. */
+@import "./styles/screens.css";

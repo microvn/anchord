@@ -4,9 +4,11 @@ import { UserMenu } from "./user-menu";
 import { useTheme } from "./theme-provider";
 import { useBootstrap } from "../features/workspaces/use-bootstrap";
 import { isCompact, useBreakpoint } from "../lib/use-breakpoint";
+import { Icon } from "../components/icon";
 
-// AppHeader (web-core S-005): the thin top bar. DESIGN.md §App shell — `surface` bg + a `line`
-// hairline at the bottom; chrome recedes.
+// AppHeader (web-core S-005): the thin top bar, re-skinned to Anchord-Design `shell.css`
+// (.crumbs/.header-right/.header-search/.icon-btn). DESIGN.md §App shell — `surface` bg + a `line`
+// hairline at the bottom (applied by AppShell's <header className="header">); chrome recedes.
 //   - LEFT: a `Workspace › Project › Doc` breadcrumb (AS-017) — last crumb emphasized (`ink`),
 //     parents `muted`, separators `faint`.
 //   - RIGHT (AS-018): a context-actions slot · search (⌕, `/` focuses) · theme toggle ·
@@ -43,20 +45,21 @@ export function deriveCrumbs(pathname: string, workspaceName: string | undefined
 
 function Breadcrumb({ crumbs }: { crumbs: Crumb[] }) {
   return (
-    <nav data-testid="header-breadcrumb" aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5">
+    <nav data-testid="header-breadcrumb" aria-label="Breadcrumb" className="crumbs">
       {crumbs.map((c, i) => {
         const last = i === crumbs.length - 1;
         return (
           <Fragment key={c.id}>
             {i > 0 && (
-              <span data-testid="header-separator" aria-hidden="true" className="text-faint">
+              <span data-testid="header-separator" aria-hidden="true" className="crumb-sep text-faint">
                 ›
               </span>
             )}
             <span
               data-testid={`crumb-${c.id}`}
-              // AS-017: last crumb emphasized (`ink`); parents `muted`.
-              className={`truncate text-sm ${last ? "font-medium text-ink" : "text-muted"}`}
+              // AS-017: last crumb emphasized (`ink`); parents `muted`. The Tailwind colour
+              // utilities are kept alongside `.crumb` so the S-005 class assertions still match.
+              className={`crumb truncate ${last ? "last text-ink" : "text-muted"}`}
               aria-current={last ? "page" : undefined}
             >
               {c.label}
@@ -90,31 +93,18 @@ function HeaderSearch({ compact }: { compact: boolean }) {
 
   if (compact) {
     return (
-      <button
-        type="button"
-        data-testid="header-search-icon"
-        aria-label="Search"
-        className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-md border border-line bg-surface text-muted hover:border-accent hover:text-ink"
-      >
-        <span aria-hidden="true">⌕</span>
+      <button type="button" data-testid="header-search-icon" aria-label="Search" className="icon-btn fold">
+        <Icon name="search" size={16} />
       </button>
     );
   }
 
   return (
-    <div data-testid="header-search" className="relative flex items-center">
-      <span aria-hidden="true" className="pointer-events-none absolute left-2 text-faint">
-        ⌕
-      </span>
-      <input
-        ref={inputRef}
-        data-testid="header-search-input"
-        type="search"
-        aria-label="Search"
-        placeholder="Search  /"
-        className="min-h-[36px] w-56 rounded-md border border-line bg-sunken pl-7 pr-3 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none"
-      />
-    </div>
+    <label data-testid="header-search" className="header-search fold">
+      <Icon name="search" size={15} />
+      <input ref={inputRef} data-testid="header-search-input" type="search" aria-label="Search" placeholder="Search docs…" />
+      <span className="kbd">/</span>
+    </label>
   );
 }
 
@@ -126,14 +116,10 @@ function ThemeToggle({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
       data-testid={testid}
       aria-label="Toggle theme"
       onClick={toggleTheme}
-      className={
-        inMenu
-          ? "flex min-h-[40px] w-full items-center gap-2 rounded-sm px-3 text-left text-sm text-ink hover:bg-accent-soft"
-          : "flex min-h-[40px] min-w-[40px] items-center justify-center rounded-md border border-line bg-surface text-muted hover:border-accent hover:text-ink"
-      }
+      className={inMenu ? "menu-item" : "icon-btn fold"}
     >
-      <span aria-hidden="true">◐</span>
-      {inMenu && <span>Theme: {theme === "dark" ? "Dark" : "Light"}</span>}
+      <Icon name={theme === "dark" ? "sun" : "moon"} size={16} className={inMenu ? "ic" : undefined} />
+      {inMenu && <span>{theme === "dark" ? "Light theme" : "Dark theme"}</span>}
     </button>
   );
 }
@@ -142,18 +128,8 @@ function ThemeToggle({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
 // NO unread badge. When a notifications slice ships it gets the count + badge.
 function NotificationsBell({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
   return (
-    <button
-      type="button"
-      data-testid={testid}
-      aria-label="Notifications"
-      disabled
-      className={
-        inMenu
-          ? "flex min-h-[40px] w-full items-center gap-2 rounded-sm px-3 text-left text-sm text-muted"
-          : "flex min-h-[40px] min-w-[40px] items-center justify-center rounded-md border border-line bg-surface text-muted"
-      }
-    >
-      <span aria-hidden="true">🔔</span>
+    <button type="button" data-testid={testid} aria-label="Notifications" disabled className={inMenu ? "menu-item" : "icon-btn"}>
+      <Icon name="bell" size={16} className={inMenu ? "ic" : undefined} />
       {inMenu && <span>Notifications</span>}
     </button>
   );
@@ -187,14 +163,16 @@ export function AppHeader({ contextActions }: { contextActions?: ReactNode }) {
       </div>
 
       {/* RIGHT: account + utilities cluster (AS-018). The switcher is intentionally absent (C-005). */}
-      <div data-testid="header-right" className="flex shrink-0 items-center gap-2">
+      <div data-testid="header-right" className="header-right">
         <div data-testid="header-context-actions" className="flex items-center gap-2">
           {contextActions}
         </div>
         <HeaderSearch compact={compact} />
         {/* Inline theme + notifications on desktop; folded into the avatar menu on mobile. */}
+        {!compact && <div className="hdr-divider fold" />}
         {!compact && <ThemeToggle testid="header-theme-toggle" />}
         {!compact && <NotificationsBell testid="header-notifications" />}
+        <div className="hdr-divider" />
         <UserMenu foldedItems={folded} />
       </div>
     </div>
