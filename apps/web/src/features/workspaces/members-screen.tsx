@@ -223,8 +223,7 @@ function MemberRowView({
   return (
     <div
       data-testid={`member-row-${member.userId}`}
-      className="grid min-h-[52px] grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1.5 border-b border-line px-3.5 py-3 last:border-b-0 sm:grid-cols-[1fr_120px_132px_40px] sm:items-center sm:py-0"
-      style={{ gridTemplateAreas: '"id role" "id remove"' }}
+      className="grid min-h-[52px] grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1.5 [grid-template-areas:'id_role''id_remove'] border-b border-line px-3.5 py-3 last:border-b-0 sm:grid-cols-[1fr_120px_132px_40px] sm:items-center sm:gap-y-0 sm:py-0 sm:[grid-template-areas:none]"
     >
       {/* member id */}
       <div className="flex min-w-0 items-center gap-[11px] [grid-area:id] sm:[grid-area:auto]">
@@ -316,8 +315,7 @@ function InvitePendingRow({
   return (
     <div
       data-testid={`invite-row-${invitation.id}`}
-      className="grid min-h-[52px] grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1.5 border-b border-line px-3.5 py-3 last:border-b-0 sm:grid-cols-[1fr_120px_132px_40px] sm:items-center sm:py-0"
-      style={{ gridTemplateAreas: '"id role" "id remove"' }}
+      className="grid min-h-[52px] grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1.5 [grid-template-areas:'id_role''id_remove'] border-b border-line px-3.5 py-3 last:border-b-0 sm:grid-cols-[1fr_120px_132px_40px] sm:items-center sm:gap-y-0 sm:py-0 sm:[grid-template-areas:none]"
     >
       <div className="flex min-w-0 items-center gap-[11px] [grid-area:id] sm:[grid-area:auto]">
         <MemberAvatar name={name || invitation.email} />
