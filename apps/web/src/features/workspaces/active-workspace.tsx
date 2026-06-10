@@ -26,6 +26,15 @@ export function useActiveWorkspace(): ActiveWorkspace {
 }
 
 /**
+ * Like useActiveWorkspace but returns null outside the guard instead of throwing. For
+ * components mounted ABOVE the route guard (e.g. the sidebar) that may still want the active
+ * workspace when it happens to be in scope; they pass an explicit id otherwise.
+ */
+export function useActiveWorkspaceSafe(): WorkspaceListItem | null {
+  return useContext(ActiveWorkspaceContext)?.workspace ?? null;
+}
+
+/**
  * S-001 route guard for `/w/:workspaceId/*`. Resolves the param against my workspaces:
  * - member → render the subtree with the active workspace in context (AS-002).
  * - NOT a member (stale link / typo) → redirect to a workspace I DO belong to, never a blank

@@ -39,6 +39,14 @@ export interface NavDestination {
   icon: string;
 }
 
+/** A project entry in the sidebar PROJECTS group — the doc-grouping tier under OVERVIEW. */
+export interface SidebarProject {
+  id: string;
+  name: string;
+  /** Browse-visible doc count, shown as a quiet number on the right. */
+  docCount?: number;
+}
+
 // GAP-002: the destination SCREENS (Dashboard / All docs / Projects / Activity) are owned by
 // workspace-project-ui and not built here. The shell renders the nav + ROUTES to them regardless;
 // a destination with no screen yet routes to a placeholder. `base` is the active workspace path.
@@ -57,6 +65,9 @@ export function AppSidebar({
   newDocHref = "#",
   membersHref = "#",
   nav = [],
+  projects = [],
+  projectsHref = "#",
+  onNewDoc,
   // The shell tags the rendered Sidebar so its responsive tests can find it: the persistent
   // inline rail is `app-sidebar`/`side-region` on desktop; the same Sidebar renders as the
   // off-canvas Sheet at compact, tagged `side-drawer` (AS-016).
@@ -67,6 +78,12 @@ export function AppSidebar({
   newDocHref?: string;
   membersHref?: string;
   nav?: NavDestination[];
+  /** PROJECTS group: the workspace's projects with per-project doc counts (doc-grouping tier). */
+  projects?: SidebarProject[];
+  /** Base /w/:id path so the PROJECTS group can link to /w/:id/projects. */
+  projectsHref?: string;
+  /** When provided, the `+ New doc` button calls this instead of navigating (opens the dialog). */
+  onNewDoc?: () => void;
   dataTestId?: string;
 }) {
   const { pathname } = useLocation();
@@ -109,19 +126,28 @@ export function AppSidebar({
       </SidebarHeader>
 
       <SidebarContent>
-        {/* 2. Primary action — `+ New doc` (flat teal, compact ~32px). Collapses to a `+`. */}
+        {/* 2. Primary action — `+ New doc` (flat teal, compact ~32px). Collapses to a `+`.
+            With onNewDoc it opens the publish dialog in place; otherwise it links to newDocHref. */}
         <SidebarGroup className="pb-0">
           <Button
-            asChild
+            asChild={!onNewDoc}
             size="sm"
             data-testid="sidebar-new-doc"
             title="New doc"
+            onClick={onNewDoc}
             className="h-8 w-full justify-start gap-2 bg-accent font-semibold text-on-accent hover:bg-accent-strong group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
           >
-            <NavLink to={newDocHref}>
-              <Icon name="plus" size={16} />
-              <span className="group-data-[collapsible=icon]:hidden">New doc</span>
-            </NavLink>
+            {onNewDoc ? (
+              <>
+                <Icon name="plus" size={16} />
+                <span className="group-data-[collapsible=icon]:hidden">New doc</span>
+              </>
+            ) : (
+              <NavLink to={newDocHref}>
+                <Icon name="plus" size={16} />
+                <span className="group-data-[collapsible=icon]:hidden">New doc</span>
+              </NavLink>
+            )}
           </Button>
         </SidebarGroup>
 
@@ -174,6 +200,51 @@ export function AppSidebar({
             })}
           </SidebarMenu>
         </SidebarGroup>
+
+        {/* PROJECTS group — the doc-grouping tier under OVERVIEW. Lists the workspace's projects
+            with per-project doc counts; the active project highlights; `+ New project` routes to
+            the Projects screen (which hosts the create dialog). Hidden in the collapsed icon rail. */}
+        {projects.length > 0 && (
+          <SidebarGroup className="group-data-[collapsible=icon]:hidden" data-testid="sidebar-projects-group">
+            <SidebarGroupLabel className="font-mono text-[11px] font-medium tracking-[0.12em] text-subtle">
+              Projects
+            </SidebarGroupLabel>
+            <SidebarMenu aria-label="Projects">
+              {projects.map((p) => {
+                const to = `${projectsHref}?project=${p.id}`;
+                const active = pathname.startsWith(`${projectsHref}`) && pathname.includes("/projects");
+                return (
+                  <SidebarMenuItem key={p.id}>
+                    <SidebarMenuButton asChild className="relative text-muted">
+                      <NavLink
+                        to={to}
+                        data-testid={`sidebar-project-${p.id}`}
+                        title={p.name}
+                        className={active ? "text-accent-ink" : undefined}
+                      >
+                        <Icon name="folder" size={16} />
+                        <span className="truncate">{p.name}</span>
+                        {p.docCount != null && (
+                          <span className="ml-auto font-mono text-[10px] tabular-nums text-subtle">
+                            {p.docCount}
+                          </span>
+                        )}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild className="text-muted">
+                  <NavLink to={projectsHref} data-testid="sidebar-new-project" title="New project">
+                    <Icon name="plus" size={16} />
+                    <span>New project</span>
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       {/* 5. Footer — Members, admin-only (AS-014, C-006). The account is NOT here; it lives in

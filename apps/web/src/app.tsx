@@ -2,7 +2,6 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthGuard } from "./app/auth-guard";
 import { AppShell } from "./app/app-shell";
-import { NavPlaceholder } from "./app/nav-placeholder";
 import { WorkspaceSidebar } from "./app/workspace-sidebar";
 import { createQueryClient } from "./app/query-client";
 import { SessionExpiryListener } from "./app/session-expiry-listener";
@@ -16,6 +15,11 @@ import { WorkspaceRouteGuard } from "./features/workspaces/active-workspace";
 import { WorkspaceRootRedirect } from "./features/workspaces/workspace-root-redirect";
 import { WorkspaceHome } from "./features/workspaces/workspace-home";
 import { MembersScreen } from "./features/workspaces/members-screen";
+import { DocsScreen } from "./features/docs/docs-screen";
+import { ProjectsScreen } from "./features/docs/projects-screen";
+import { ActivityScreen } from "./features/docs/activity-screen";
+import { SearchScreen } from "./features/docs/search-screen";
+import { Toaster } from "./components/ui/sonner";
 
 // One shared QueryClient for the app's server-state layer (S-002). Its cache-level onError
 // centralizes session-expiry handling: any query that comes back UNAUTHENTICATED bounces the
@@ -53,12 +57,14 @@ export function AppRoutes() {
           <Route element={<WorkspaceRouteGuard />}>
             <Route index element={<WorkspaceHome />} />
             <Route path="members" element={<MembersScreen />} />
-            {/* GAP-002: destinations owned by workspace-project-ui (not built yet) → clean
-                placeholders, never a blank/crashed page. */}
-            <Route path="docs" element={<NavPlaceholder title="All docs" />} />
-            <Route path="docs/new" element={<NavPlaceholder title="New doc" />} />
-            <Route path="projects" element={<NavPlaceholder title="Projects" />} />
-            <Route path="activity" element={<NavPlaceholder title="Activity" />} />
+            {/* workspace-project-ui: the real dashboard/browser surfaces, wired to the API. */}
+            <Route path="docs" element={<DocsScreen />} />
+            {/* The New-doc flow is a dialog (opened from the sidebar/dashboard), not a page;
+                the legacy /docs/new route lands on the All-docs grid where the dialog lives. */}
+            <Route path="docs/new" element={<DocsScreen />} />
+            <Route path="projects" element={<ProjectsScreen />} />
+            <Route path="activity" element={<ActivityScreen />} />
+            <Route path="search" element={<SearchScreen />} />
           </Route>
         </Route>
 
@@ -76,6 +82,8 @@ export function App() {
         {/* Mounted inside the Router (main.tsx) so it can navigate on session expiry. */}
         <SessionExpiryListener />
         <AppRoutes />
+        {/* Global toast host — publish/create success + error notices land here. */}
+        <Toaster />
       </QueryClientProvider>
     </ThemeProvider>
   );

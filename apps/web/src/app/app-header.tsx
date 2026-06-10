@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
-import { useLocation } from "react-router-dom";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { UserMenu } from "./user-menu";
 import { useTheme } from "./theme-provider";
 import { useBootstrap } from "../features/workspaces/use-bootstrap";
@@ -84,8 +84,10 @@ export const MENU_ITEM =
 
 // The search affordance — an expanded input on desktop (`/` focuses it, AS-018.T1) or a collapsed
 // icon button on mobile (AS-019). The `/` shortcut is wired only when the input is present.
-function HeaderSearch({ compact }: { compact: boolean }) {
+function HeaderSearch({ compact, workspaceId }: { compact: boolean; workspaceId?: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+  const [value, setValue] = useState("");
 
   useEffect(() => {
     if (compact) return;
@@ -102,9 +104,23 @@ function HeaderSearch({ compact }: { compact: boolean }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [compact]);
 
+  // S-005: submitting the search navigates to the workspace search results route. With no
+  // active workspace (e.g. pre-resolve) the input is inert rather than navigating nowhere.
+  function submit() {
+    const q = value.trim();
+    if (!q || !workspaceId) return;
+    navigate(`/w/${workspaceId}/search?q=${encodeURIComponent(q)}`);
+  }
+
   if (compact) {
     return (
-      <button type="button" data-testid="header-search-icon" aria-label="Search" className={ICON_BTN}>
+      <button
+        type="button"
+        data-testid="header-search-icon"
+        aria-label="Search"
+        className={ICON_BTN}
+        onClick={() => workspaceId && navigate(`/w/${workspaceId}/search`)}
+      >
         <Icon name="search" size={16} />
       </button>
     );
@@ -122,6 +138,14 @@ function HeaderSearch({ compact }: { compact: boolean }) {
         type="search"
         aria-label="Search"
         placeholder="Search docs…"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          }
+        }}
         className="min-w-0 flex-1 border-none bg-transparent text-[12.5px] text-ink outline-none placeholder:text-subtle"
       />
       <span className="rounded border border-line bg-surface px-[5px] py-px font-mono text-[10px] text-subtle">/</span>
@@ -188,7 +212,7 @@ export function AppHeader({ contextActions }: { contextActions?: ReactNode }) {
         <div data-testid="header-context-actions" className="flex items-center gap-2">
           {contextActions}
         </div>
-        <HeaderSearch compact={compact} />
+        <HeaderSearch compact={compact} workspaceId={workspaceId} />
         {/* Inline theme + notifications on desktop; folded into the avatar menu on mobile. */}
         {!compact && <div className="mx-1 h-[18px] w-px flex-none bg-line" />}
         {!compact && <ThemeToggle testid="header-theme-toggle" />}

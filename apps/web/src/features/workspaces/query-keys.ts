@@ -16,4 +16,17 @@ export const queryKeys = {
 
   /** The member directory + pending invites for ONE workspace (S-003). */
   members: (workspaceId: string) => ["w", workspaceId, "members"] as const,
+
+  /** The projects list for ONE workspace (workspace-project S-003). */
+  projects: (workspaceId: string) => ["w", workspaceId, "projects"] as const,
+
+  /** The docs in ONE project (workspace-project S-003 / AS-006). */
+  projectDocs: (workspaceId: string, projectId: string) =>
+    ["w", workspaceId, "projects", projectId, "docs"] as const,
+
+  /** All docs in ONE workspace — the union across the workspace's projects (browse). */
+  docs: (workspaceId: string) => ["w", workspaceId, "docs"] as const,
+
+  /** A search run in ONE workspace, keyed by the query text (workspace-project S-005). */
+  search: (workspaceId: string, q: string) => ["w", workspaceId, "search", q] as const,
 };
