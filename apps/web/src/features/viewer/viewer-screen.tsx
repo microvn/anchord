@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApiQuery } from "../../lib/use-api-query";
 import { EmptyState } from "../../components/empty-state";
 import { ErrorState } from "../../components/error-state";
 import { Skeleton } from "../../components/skeleton";
 import { DocPane } from "./doc-pane";
+import { TocSidebar } from "./toc-sidebar";
 import { fetchViewerDoc, type ViewerDocResponse } from "./client";
 
 // ViewerScreen (S-001): the React route `/w/:workspaceId/d/:slug`. It fetches the doc via the
@@ -71,23 +73,37 @@ export function ViewerScreen() {
   );
 }
 
-// The minimal 3-pane shell (S-001). TOC + rail are later stories — rendered as reserved slots so
-// the structure (and DESIGN.md "chrome recedes behind the doc") is in place now. The top bar's
-// full controls are S-005; here it carries only doc identity so the route is usable.
+// The minimal 3-pane shell (S-001 + S-002). The TOC (S-002) now reads its outline from the rendered
+// doc content element (the scrollable doc pane) and drives scroll-spy/jump there; the rail (S-003)
+// stays a reserved slot. The top bar's full controls are S-005; here it carries only doc identity.
 function ViewerShell({ title, children }: { title: string; children: React.ReactNode }) {
+  // The scrollable doc pane is both the scroll-spy container and the heading source for the TOC.
+  // A callback ref re-derives the outline once the content mounts (and when a new doc renders).
+  const [docPaneEl, setDocPaneEl] = useState<HTMLElement | null>(null);
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+
   return (
     <div data-testid="viewer-screen" className="flex h-dvh flex-col bg-paper text-ink">
       <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-4">
         <span className="truncate text-[13.5px] font-semibold text-ink">{title}</span>
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[260px_1fr_360px]">
-        {/* TocSidebar slot — S-002. */}
+        {/* TocSidebar — S-002 (collapses to a drawer on narrow screens in S-006). */}
         <aside
           data-testid="viewer-toc-slot"
           className="hidden border-r border-line bg-sunken lg:block"
-          aria-hidden
-        />
-        <main data-testid="viewer-doc-pane" className="min-w-0 overflow-auto">
+        >
+          <TocSidebar
+            contentEl={docPaneEl}
+            activeId={activeSection}
+            onActiveChange={setActiveSection}
+          />
+        </aside>
+        <main
+          ref={setDocPaneEl}
+          data-testid="viewer-doc-pane"
+          className="min-w-0 overflow-auto"
+        >
           {children}
         </main>
         {/* AnnotationsRail slot — S-003. */}
