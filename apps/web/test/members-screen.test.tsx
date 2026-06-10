@@ -84,10 +84,10 @@ describe("workspaces-ui S-003 — members screen", () => {
   it("AS-007: the admin sees members and pending invites", async () => {
     render(<App role="admin" />);
     expect(await screen.findByTestId("member-row-u-bob")).toHaveTextContent("bob@acme.com");
-    // The pending invite for eve appears WITH its status.
+    // The pending invite for eve appears in the pending section WITH its status badge.
     const invite = screen.getByTestId("invite-row-inv-eve");
     expect(invite).toHaveTextContent("eve@acme.com");
-    expect(invite).toHaveTextContent(/pending/i);
+    expect(screen.getByTestId("invite-status-inv-eve")).toHaveTextContent(/invited/i);
   });
 
   it("AS-008: the admin invites a member by email", async () => {

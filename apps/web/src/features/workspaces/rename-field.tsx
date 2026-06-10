@@ -5,6 +5,7 @@ import { renameWorkspace } from "./client";
 import { unwrapEnvelope } from "./use-bootstrap";
 import { queryKeys } from "./query-keys";
 import { toApiError } from "../../lib/api-error";
+import { Icon } from "../../components/icon";
 
 // S-002 RenameField (AS-005, AS-006 / C-002): rename the active workspace. ADMIN-ONLY — a
 // non-admin sees NO rename affordance at all (the component renders null). On success we
@@ -31,8 +32,9 @@ export function RenameField() {
           setError(null);
           setEditing(true);
         }}
-        className="min-h-[40px] rounded-md border border-line bg-surface px-3 text-sm text-ink hover:border-accent"
+        className="inline-flex h-8 items-center gap-[7px] rounded-[8px] px-3 text-[12.5px] font-semibold text-muted transition-colors hover:bg-elev hover:text-ink"
       >
+        <Icon name="pencil" size={15} />
         Rename workspace
       </button>
     );

@@ -2,18 +2,22 @@ import { useForm, type Resolver } from "react-hook-form";
 import { z } from "zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { useActiveWorkspace } from "./active-workspace";
-import { useMembers } from "./use-bootstrap";
+import { useMembers, useBootstrap } from "./use-bootstrap";
+import { RenameField } from "./rename-field";
 import { inviteMember, removeMember, changeMemberRole } from "./client";
 import { queryKeys } from "./query-keys";
 import { ErrorState } from "../../components/error-state";
 import { EmptyState } from "../../components/empty-state";
+import { Icon } from "../../components/icon";
+import { initials, avatarColor } from "../../lib/initials";
 import type { MemberRow, InvitationRow, WorkspaceRole } from "./types";
 
 // S-003 MembersScreen (AS-007..AS-012 / C-002). ADMIN-ONLY management: a non-admin sees a
 // read-only view with NO manage controls (invite/remove/change-role hidden). The directory is
 // read via useMembers, which is keyed by workspaceId (GAP-001) so switching workspace never
-// flashes another workspace's members. Mobile: full-width rows, tap targets ≥40px (C-003,
-// [→MANUAL] for pixels).
+// flashes another workspace's members. Visual structure mirrors the Anchord-Design `MembersScreen`
+// (page-head / list-head / member-row / avatar / you-tag / badge / role-select / pending section).
+// Mobile: the .list-head hides and rows reflow (C-003, [→MANUAL] for pixels).
 
 const inviteSchema = z.object({
   // AS-012: client-side email validation (inline) BEFORE the request — a malformed email
@@ -48,10 +52,10 @@ export function MembersScreen() {
   // no member fetch — never an error page from a forbidden read.
   if (!isAdmin) {
     return (
-      <section className="px-4 py-6" data-testid="members-screen">
-        <h2 className="font-serif text-xl text-ink">Members</h2>
-        <p data-testid="members-readonly" className="mt-2 text-sm text-muted">
-          You have read-only access to this workspace's members.
+      <section className="mx-auto max-w-[1080px] px-6 py-8" data-testid="members-screen">
+        <PageHead isAdmin={false} />
+        <p data-testid="members-readonly" className="mt-3.5 text-[12.5px] text-subtle">
+          Only an admin can invite or manage members.
         </p>
       </section>
     );
@@ -60,12 +64,38 @@ export function MembersScreen() {
   return <AdminMembers workspaceId={workspace.id} />;
 }
 
+function PageHead({ isAdmin }: { isAdmin: boolean }) {
+  return (
+    <div className="mb-[22px] flex items-end gap-4">
+      <div>
+        <div className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
+          Settings
+        </div>
+        <h1 className="font-serif text-[30px] font-medium leading-[1.05] tracking-[-0.03em] text-ink">
+          Members
+        </h1>
+        <div className="mt-[5px] text-[13.5px] text-muted">
+          {isAdmin ? "Manage who can access this workspace." : "People in this workspace."}
+        </div>
+      </div>
+      {isAdmin && (
+        <div className="ml-auto flex flex-none items-center gap-2">
+          {/* The page-head rename trigger (admin-only). RenameField owns the edit flow. */}
+          <RenameField />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminMembers({ workspaceId }: { workspaceId: string }) {
   const query = useMembers(workspaceId);
+  const bootstrap = useBootstrap();
+  const myUserId = bootstrap.data?.userId ?? null;
 
   if (query.isPending) {
     return (
-      <p className="px-4 py-8 text-sm text-muted" data-testid="members-loading">
+      <p className="mx-auto max-w-[1080px] px-6 py-8 text-sm text-muted" data-testid="members-loading">
         Loading…
       </p>
     );
@@ -75,97 +105,108 @@ function AdminMembers({ workspaceId }: { workspaceId: string }) {
   }
 
   const members = query.data?.members ?? [];
-  const invitations = query.data?.invitations ?? [];
+  // Only genuinely-pending invites belong in the pending section (the directory may carry
+  // accepted/rejected/revoked rows depending on the backend slice).
+  const invitations = (query.data?.invitations ?? []).filter((i) => i.status === "pending");
 
   return (
-    <section className="px-4 py-6" data-testid="members-screen">
-      <h2 className="font-serif text-xl text-ink">Members</h2>
+    <section className="mx-auto max-w-[1080px] px-6 py-8" data-testid="members-screen">
+      <PageHead isAdmin />
 
       <InviteRow workspaceId={workspaceId} />
 
-      <ul className="mt-4 flex flex-col gap-1">
-        {members.map((m) => (
-          <MemberRowView key={m.userId} member={m} workspaceId={workspaceId} canManage />
-        ))}
-        {invitations.map((inv) => (
-          <InvitePendingRow key={inv.id} invitation={inv} />
-        ))}
-      </ul>
+      {members.length === 0 && invitations.length === 0 ? (
+        <EmptyState title="It's just you" description="Invite teammates by email to share and annotate docs together in this workspace." />
+      ) : (
+        <>
+          <div className="mt-4 overflow-hidden rounded-[11px] border border-line bg-surface">
+            <ListHead />
+            {members.map((m) => (
+              <MemberRowView
+                key={m.userId}
+                member={m}
+                workspaceId={workspaceId}
+                isSelf={myUserId != null && m.userId === myUserId}
+              />
+            ))}
+          </div>
 
-      {members.length === 0 && invitations.length === 0 && (
-        <EmptyState title="No members yet" description="Invite someone by email to get started." />
+          {invitations.length > 0 && (
+            <div className="mt-[26px]">
+              <div className="mb-3 flex items-center gap-[10px]">
+                <span className="text-[15px] font-semibold text-ink">Pending invites</span>
+                <span className="ml-0.5 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
+                  {invitations.length} pending
+                </span>
+              </div>
+              <div className="overflow-hidden rounded-[11px] border border-line bg-surface">
+                {invitations.map((inv) => (
+                  <InvitePendingRow key={inv.id} invitation={inv} workspaceId={workspaceId} />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </section>
   );
 }
 
-function InviteRow({ workspaceId }: { workspaceId: string }) {
-  const queryClient = useQueryClient();
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors, isSubmitting },
-  } = useForm<InviteForm>({
-    resolver: inviteResolver,
-    defaultValues: { email: "", role: "member" },
-  });
-
-  async function onSubmit(values: InviteForm) {
-    await inviteMember(workspaceId, values.email, values.role);
-    // The new pending invite lives in the members directory — refetch this workspace's slice.
-    await queryClient.invalidateQueries({ queryKey: queryKeys.members(workspaceId) });
-    reset();
-  }
-
+function ListHead() {
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="mt-3 flex flex-wrap items-start gap-2"
-      data-testid="invite-row"
+    // The .list-head row: hidden on mobile (the row reflows), shown ≥sm.
+    <div className="hidden min-h-[38px] grid-cols-[1fr_120px_132px_40px] items-center gap-3 border-b border-line bg-elev px-3.5 sm:grid">
+      <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-subtle">
+        Member
+      </span>
+      <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-subtle">
+        Status
+      </span>
+      <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-subtle">
+        Role
+      </span>
+      <span />
+    </div>
+  );
+}
+
+// A 26px Mono-initial circle with a deterministic background (Anchord-Design `.avatar`).
+function MemberAvatar({ name }: { name: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-[26px] w-[26px] flex-none items-center justify-center overflow-hidden rounded-full font-mono text-[10.5px] font-semibold tracking-[0.02em] text-white"
+      style={{ background: avatarColor(name) }}
     >
-      <div className="flex min-w-[200px] flex-1 flex-col">
-        <input
-          {...register("email")}
-          data-testid="invite-email"
-          placeholder="name@example.com"
-          aria-invalid={errors.email ? "true" : undefined}
-          className="min-h-[40px] rounded-md border border-line bg-surface px-3 text-sm text-ink focus:border-accent focus:outline-none"
-        />
-        {errors.email && (
-          <p role="alert" data-testid="invite-email-error" className="mt-1 text-xs text-error">
-            {errors.email.message}
-          </p>
-        )}
-      </div>
-      <select
-        {...register("role")}
-        data-testid="invite-role"
-        className="min-h-[40px] rounded-md border border-line bg-surface px-2 text-sm text-ink"
-      >
-        <option value="member">Member</option>
-        <option value="admin">Admin</option>
-      </select>
-      <button
-        type="submit"
-        data-testid="invite-submit"
-        disabled={isSubmitting}
-        className="min-h-[40px] rounded-md bg-accent px-4 text-sm font-medium text-on-accent disabled:opacity-60"
-      >
-        Invite
-      </button>
-    </form>
+      {initials(name)}
+    </span>
+  );
+}
+
+function StatusBadge({ kind }: { kind: "active" | "invited" }) {
+  if (kind === "invited") {
+    return (
+      <span className="inline-flex h-[19px] items-center gap-[5px] rounded-[6px] bg-amber-bg px-[7px] font-mono text-[11px] font-medium tracking-[0.04em] text-amber">
+        <Icon name="clock" size={11} />
+        Invited
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex h-[19px] items-center gap-[5px] rounded-[6px] bg-accent-soft px-[7px] font-mono text-[11px] font-medium tracking-[0.04em] text-accent-ink">
+      Active
+    </span>
   );
 }
 
 function MemberRowView({
   member,
   workspaceId,
-  canManage,
+  isSelf,
 }: {
   member: MemberRow;
   workspaceId: string;
-  canManage: boolean;
+  isSelf: boolean;
 }) {
   const queryClient = useQueryClient();
 
@@ -180,59 +221,232 @@ function MemberRowView({
   }
 
   return (
-    <li
+    <div
       data-testid={`member-row-${member.userId}`}
-      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-surface px-3 py-2"
+      className="grid min-h-[52px] grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1.5 border-b border-line px-3.5 py-3 last:border-b-0 sm:grid-cols-[1fr_120px_132px_40px] sm:items-center sm:py-0"
+      style={{ gridTemplateAreas: '"id role" "id remove"' }}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="truncate text-sm text-ink">{member.name}</span>
-        <span className="truncate text-xs text-muted">{member.email}</span>
+      {/* member id */}
+      <div className="flex min-w-0 items-center gap-[11px] [grid-area:id] sm:[grid-area:auto]">
+        <MemberAvatar name={member.name || member.email} />
+        <div className="min-w-0">
+          <div className="flex items-center gap-[7px] text-[12.5px] font-semibold text-ink">
+            <span className="truncate">{member.name || member.email}</span>
+            {isSelf && (
+              <span className="rounded-[4px] bg-accent-soft px-[5px] py-px font-mono text-[9.5px] uppercase tracking-[0.06em] text-accent-ink">
+                you
+              </span>
+            )}
+          </div>
+          <div className="truncate text-[11.5px] text-subtle">{member.email}</div>
+        </div>
       </div>
 
-      {canManage ? (
-        <div className="flex items-center gap-2">
-          {/* AS-010: change role */}
-          <select
-            data-testid={`role-${member.userId}`}
-            value={member.role}
-            onChange={(e) => void onRole(e.target.value as WorkspaceRole)}
-            className="min-h-[40px] rounded-md border border-line bg-surface px-2 text-sm text-ink"
-          >
-            <option value="member">Member</option>
-            <option value="admin">Admin</option>
-          </select>
-          {/* AS-009: remove */}
+      {/* status — every active member is "Active" */}
+      <div className="hidden items-center [grid-area:auto] sm:flex">
+        <StatusBadge kind="active" />
+      </div>
+
+      {/* role */}
+      <div className="flex items-center [grid-area:role] sm:[grid-area:auto]">
+        {isSelf ? (
+          // Self: static text, no control (you can't demote/remove yourself here).
+          <span className="text-[12.5px] text-muted">
+            {member.role === "admin" ? "Admin" : "Member"}
+          </span>
+        ) : (
+          // AS-010: change role. A styled native <select> (the prototype's `.role-select`)
+          // keeps full select semantics for keyboard + tests while matching the chrome.
+          <div className="relative inline-flex h-[30px] min-w-[96px] items-center rounded-[6px] border border-line bg-surface px-[9px] text-[12.5px] text-ink hover:border-subtle">
+            <select
+              data-testid={`role-${member.userId}`}
+              aria-label={`Role for ${member.name || member.email}`}
+              value={member.role}
+              onChange={(e) => void onRole(e.target.value as WorkspaceRole)}
+              className="w-full cursor-pointer appearance-none bg-transparent pr-4 text-ink outline-none"
+            >
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+            <Icon
+              name="chevDown"
+              size={13}
+              className="pointer-events-none absolute right-[9px] text-subtle"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* remove (AS-009) */}
+      <div className="flex items-center justify-end [grid-area:remove] sm:[grid-area:auto]">
+        {!isSelf && (
           <button
             type="button"
             data-testid={`remove-${member.userId}`}
-            aria-label={`Remove ${member.name}`}
+            aria-label={`Remove ${member.name || member.email}`}
+            title="Remove"
             onClick={() => void onRemove()}
-            className="min-h-[40px] rounded-md border border-line px-3 text-sm text-muted hover:border-error hover:text-error"
+            className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-[6px] text-muted transition-colors hover:bg-elev hover:text-ink"
           >
-            Remove
+            <Icon name="trash" size={15} />
           </button>
-        </div>
-      ) : (
-        // Read-only: role shown as text, no manage affordance (C-002, AS-011).
-        <span className="text-xs uppercase tracking-wide text-muted">{member.role}</span>
-      )}
-    </li>
+        )}
+      </div>
+    </div>
   );
 }
 
-function InvitePendingRow({ invitation }: { invitation: InvitationRow }) {
+function InvitePendingRow({
+  invitation,
+  workspaceId,
+}: {
+  invitation: InvitationRow;
+  workspaceId: string;
+}) {
+  const queryClient = useQueryClient();
+
+  async function onRevoke() {
+    // Revoke = remove the pending invite. The members endpoint refetch drops it from the list.
+    await removeMember(workspaceId, invitation.id);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.members(workspaceId) });
+  }
+
+  const name = invitation.email.split("@")[0]!.replace(/[._]/g, " ");
+
   return (
-    <li
+    <div
       data-testid={`invite-row-${invitation.id}`}
-      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-line bg-surface px-3 py-2"
+      className="grid min-h-[52px] grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1.5 border-b border-line px-3.5 py-3 last:border-b-0 sm:grid-cols-[1fr_120px_132px_40px] sm:items-center sm:py-0"
+      style={{ gridTemplateAreas: '"id role" "id remove"' }}
     >
-      <span className="truncate text-sm text-muted">{invitation.email}</span>
-      <span
+      <div className="flex min-w-0 items-center gap-[11px] [grid-area:id] sm:[grid-area:auto]">
+        <MemberAvatar name={name || invitation.email} />
+        <div className="min-w-0">
+          <div className="truncate text-[12.5px] font-semibold capitalize text-ink">{name}</div>
+          <div className="truncate text-[11.5px] text-subtle">{invitation.email}</div>
+        </div>
+      </div>
+
+      <div
+        className="hidden items-center [grid-area:auto] sm:flex"
         data-testid={`invite-status-${invitation.id}`}
-        className="rounded-full bg-accent-soft px-2 py-0.5 text-xs text-accent"
       >
-        {invitation.status}
-      </span>
-    </li>
+        <StatusBadge kind="invited" />
+      </div>
+
+      <div className="flex items-center [grid-area:role] sm:[grid-area:auto]">
+        <span className="text-[12.5px] text-muted">
+          {invitation.role === "admin" ? "Admin" : "Member"}
+        </span>
+      </div>
+
+      <div className="flex items-center justify-end [grid-area:remove] sm:[grid-area:auto]">
+        <button
+          type="button"
+          data-testid={`revoke-${invitation.id}`}
+          aria-label="Revoke invite"
+          title="Revoke invite"
+          onClick={() => void onRevoke()}
+          className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-[6px] text-muted transition-colors hover:bg-elev hover:text-ink"
+        >
+          <Icon name="x" size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InviteRow({ workspaceId }: { workspaceId: string }) {
+  const queryClient = useQueryClient();
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<InviteForm>({
+    resolver: inviteResolver,
+    defaultValues: { email: "", role: "member" },
+  });
+  const role = watch("role");
+
+  async function onSubmit(values: InviteForm) {
+    await inviteMember(workspaceId, values.email, values.role);
+    // The new pending invite lives in the members directory — refetch this workspace's slice.
+    await queryClient.invalidateQueries({ queryKey: queryKeys.members(workspaceId) });
+    reset();
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit(onSubmit)}
+      className="mt-1"
+      data-testid="invite-row"
+      noValidate
+    >
+      <div className="flex flex-wrap items-center gap-[9px]">
+        {/* invite-field: a bordered shell holding the mail icon + the borderless input. */}
+        <label
+          className={`flex h-[38px] min-w-0 flex-1 basis-full items-center gap-2 rounded-[8px] border bg-surface px-[11px] transition-[border-color,box-shadow] focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--accent-soft)] sm:basis-auto ${
+            errors.email ? "border-error" : "border-line"
+          }`}
+        >
+          <Icon name="mail" size={15} className="flex-none text-subtle" />
+          <input
+            {...register("email")}
+            data-testid="invite-email"
+            type="email"
+            placeholder="Invite by email…"
+            aria-invalid={errors.email ? "true" : undefined}
+            className="min-w-0 flex-1 border-none bg-transparent text-[13.5px] text-ink outline-none placeholder:text-subtle"
+          />
+        </label>
+
+        {/* segmented Member/Admin toggle (the prototype `.fmt-toggle`). */}
+        <div
+          className="inline-flex gap-0.5 rounded-[8px] border border-line bg-sunken p-0.5"
+          data-testid="invite-role-toggle"
+          role="group"
+          aria-label="Invite role"
+        >
+          {(["member", "admin"] as const).map((r) => (
+            <button
+              key={r}
+              type="button"
+              data-testid={`invite-role-${r}`}
+              aria-pressed={role === r}
+              onClick={() => setValue("role", r)}
+              className={`inline-flex h-7 items-center rounded-[6px] px-[14px] text-[12.5px] transition-colors ${
+                role === r
+                  ? "bg-surface font-semibold text-accent-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
+                  : "font-medium text-muted hover:text-ink"
+              }`}
+            >
+              {r === "admin" ? "Admin" : "Member"}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="submit"
+          data-testid="invite-submit"
+          disabled={isSubmitting}
+          className="inline-flex h-8 flex-none items-center gap-[7px] rounded-[8px] bg-accent px-3 text-[12.5px] font-semibold text-on-accent transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50 max-[599px]:flex-1 max-[599px]:justify-center"
+        >
+          Send invite
+        </button>
+      </div>
+
+      {errors.email && (
+        <p
+          role="alert"
+          data-testid="invite-email-error"
+          className="mt-[7px] text-[11.5px] text-error"
+        >
+          {errors.email.message}
+        </p>
+      )}
+    </form>
   );
 }
