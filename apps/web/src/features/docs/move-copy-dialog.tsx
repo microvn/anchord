@@ -95,8 +95,9 @@ export function MoveCopyDialog({
           <DialogDescription className="text-[13px] text-muted">{doc.title}</DialogDescription>
         </DialogHeader>
 
-        {/* Move|Copy toggle — fmt-toggle taxonomy. */}
-        <div className="flex gap-0.5 rounded-md border border-line bg-sunken p-0.5">
+        {/* Move|Copy toggle — Anchord-Design `.fmt-toggle`: a compact, content-width pill
+            (inline-flex; 28px-tall buttons, 14px side padding), NOT stretched full-width. */}
+        <div className="inline-flex w-fit gap-0.5 justify-self-start rounded-md border border-line bg-sunken p-0.5">
           {(["move", "copy"] as const).map((m) => (
             <button
               key={m}
@@ -104,8 +105,10 @@ export function MoveCopyDialog({
               data-testid={`mode-${m}`}
               aria-pressed={mode === m}
               onClick={() => setMode(m)}
-              className={`flex-1 rounded-sm px-3 py-1.5 text-[12.5px] capitalize transition-colors ${
-                mode === m ? "bg-surface font-semibold text-accent-ink" : "text-muted hover:text-ink"
+              className={`h-7 rounded-sm px-3.5 text-[12.5px] capitalize transition-colors ${
+                mode === m
+                  ? "bg-surface font-semibold text-accent-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
+                  : "font-medium text-muted hover:text-ink"
               }`}
             >
               {m}
