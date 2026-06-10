@@ -11,6 +11,7 @@ import {
 import { createWorkspaceAccess } from "./workspace/tenancy-repo";
 import { eq } from "drizzle-orm";
 import { session as sessionTable } from "./db/schema";
+import { createLoadViewer, createLoadContent } from "./render/viewer-loaders";
 import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport, createEnqueueWorkspaceInvite } from "./auth/mail-transport";
 import { createDocMemberRepo, findUserById } from "./sharing/doc-member-repo";
@@ -50,6 +51,11 @@ const auth = createAuth(db, {
   // requireEmailVerification:true had no sender → sign-in was permanently blocked).
   // AS-008: on verification, activate any pending invite for that exact email.
   emailVerification: { queue: mailQueue, transport: mailTransport, pendingInviteRepo },
+  // Dev-only: the brute-force sign-in limit (C-007) is applied by better-auth to the WHOLE
+  // /api/auth/* subtree, so it also throttles the frequently-polled get-session and 429s a
+  // normal session. Off in development so local testing isn't bounced; prod keeps it (the
+  // proper prod fix — per-path customRules exempting get-session — is a follow-up auth change).
+  rateLimitEnabled: cfg.NODE_ENV !== "development",
 });
 
 const resolveSession = betterAuthSessionResolver(auth);
@@ -142,10 +148,35 @@ const notifyMail = {
   },
 };
 
+// render-publish S-002/S-003/S-004 — the access-gated doc viewer (/d/:slug, /v/:id).
+//
+// The session resolver for the viewer routes: better-auth's cookie → { userId } | null.
+// resolveSession reads Headers; the viewer routes hand us the raw Request, so we adapt.
+// Anonymous (no cookie) returns null and still works for an anyone_with_link doc.
+const resolveViewerSession = async (request: Request): Promise<{ userId: string } | null> => {
+  const actor = await resolveSession(request.headers);
+  return actor ? { userId: actor.userId } : null;
+};
+
+// The loaders gate every doc with the SAME access model the versions/annotations routes
+// use — reusing sharedAccessDeps (structural level rule) + sharedResolveDocRole (the
+// authoritative invited/link/workspace/owner read). Built in render/viewer-loaders.ts.
+const viewerLoaderDeps = {
+  db,
+  accessDeps: sharedAccessDeps,
+  resolveDocRole: sharedResolveDocRole,
+};
+const loadViewer = createLoadViewer(viewerLoaderDeps);
+const loadContent = createLoadContent(viewerLoaderDeps);
+
 const app = createApp({
   dbCheck,
   corsOrigin: cfg.CORS_ORIGIN === "*" ? true : cfg.CORS_ORIGIN.split(","),
   authHandler: auth.handler,
+  // render-publish S-002/S-003/S-004: the access-gated doc viewer + content routes.
+  loadViewer,
+  loadContent,
+  resolveViewerSession,
   // All data APIs are now path-scoped under /api/w/:workspaceId (workspaces S-006). Each
   // group gets resolveWorkspaceRole so the requireWorkspaceMember gate refuses a non-member
   // (404, existence-hiding) before any handler.

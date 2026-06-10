@@ -17,6 +17,7 @@ import { authProvidersRoutes, type AuthProvidersRoutesDeps } from "./routes/auth
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
+import type { Viewer } from "./sharing/access";
 
 export type ViewerDoc = {
   versionId: string;
@@ -30,10 +31,32 @@ export type AppDeps = {
   /** Liveness probe for the database. Resolves if reachable, throws if not. */
   dbCheck: () => Promise<void>;
   corsOrigin?: string | string[] | boolean;
-  /** Look up the current published version of a doc by slug (for /d/:slug viewer). */
-  loadViewer?: (slug: string) => Promise<ViewerDoc | null>;
-  /** Look up a version's raw content by version id (for /v/:id content route). */
-  loadContent?: (versionId: string) => Promise<{ content: string; kind: ViewerDoc["kind"] } | null>;
+  /**
+   * Look up the current published version of a doc by slug for the /d/:slug viewer,
+   * ACCESS-GATED for `viewer` (render-publish §API contract / sharing C-003). The
+   * loader MUST gate before returning: a missing doc OR a doc `viewer` cannot see
+   * BOTH resolve to `null` (existence-hiding — api-core C-006), so the route 404s and
+   * never leaks an out-of-access doc. `viewer` is the SERVER-resolved caller
+   * (anon when there is no session cookie).
+   */
+  loadViewer?: (slug: string, viewer: Viewer) => Promise<ViewerDoc | null>;
+  /**
+   * Look up a version's raw content by version id for the /v/:id content route,
+   * ACCESS-GATED the SAME way (the version's doc must be viewable by `viewer`).
+   * Missing version OR no access → `null` → the route 404s (existence-hiding).
+   */
+  loadContent?: (
+    versionId: string,
+    viewer: Viewer,
+  ) => Promise<{ content: string; kind: ViewerDoc["kind"] } | null>;
+  /**
+   * Resolve the viewer's session from the raw Request (the better-auth cookie) for the
+   * access-gated viewer routes (/d, /v). Returns `{ userId }` for a logged-in caller, or
+   * `null` for an anonymous one (no cookie). Injected so the routes gate without a real
+   * better-auth instance in tests. Required for loadViewer/loadContent gating; when
+   * absent the routes treat every caller as anonymous.
+   */
+  resolveViewerSession?: (request: Request) => Promise<{ userId: string } | null>;
   /** better-auth request handler (auth S-001); mounted at /api/auth/*. */
   authHandler?: (request: Request) => Promise<Response> | Response;
   /**
@@ -267,10 +290,21 @@ export function createApp(deps: AppDeps) {
     app.use(authProvidersRoutes(deps.authProviders));
   }
 
-  // /d/:slug — viewer shell (trusted app origin)
+  // Resolve the caller for the access-gated viewer routes: the better-auth session
+  // cookie → a `Viewer`. No cookie / no resolver → anon. The loaders gate on this, so a
+  // restricted/anyone_in_workspace doc is never rendered to someone who can't see it.
+  const resolveViewer = async (request: Request): Promise<Viewer> => {
+    if (!deps.resolveViewerSession) return { kind: "anon" };
+    const session = await deps.resolveViewerSession(request);
+    return session ? { kind: "user", userId: session.userId } : { kind: "anon" };
+  };
+
+  // /d/:slug — viewer shell (trusted app origin). ACCESS-GATED: a missing doc OR one the
+  // caller cannot view both come back null → 404 (existence-hiding, sharing C-003).
   if (deps.loadViewer) {
-    app.get("/d/:slug", async ({ params, set }) => {
-      const doc = await deps.loadViewer!(params.slug);
+    app.get("/d/:slug", async ({ params, request, set }) => {
+      const viewer = await resolveViewer(request);
+      const doc = await deps.loadViewer!(params.slug, viewer);
       if (!doc) {
         set.status = 404;
         return "Not found";
@@ -280,10 +314,12 @@ export function createApp(deps: AppDeps) {
     });
   }
 
-  // /v/:id — untrusted content, served sandboxed (opaque origin via CSP), scripts run isolated
+  // /v/:id — untrusted content, served sandboxed (opaque origin via CSP), scripts run
+  // isolated. ACCESS-GATED the same way: the version's doc must be viewable by the caller.
   if (deps.loadContent) {
-    app.get("/v/:id", async ({ params, set }) => {
-      const v = await deps.loadContent!(params.id);
+    app.get("/v/:id", async ({ params, request, set }) => {
+      const viewer = await resolveViewer(request);
+      const v = await deps.loadContent!(params.id, viewer);
       if (!v) {
         set.status = 404;
         return "Not found";
