@@ -25,7 +25,7 @@ import { SidebarMenu, SidebarMenuItem } from "../../components/ui/sidebar";
 // dialog (S-002). Tap targets ≥40px (C-003).
 // The two-letter mono workspace glyph (accent-soft tile, accent-ink text).
 const WS_GLYPH =
-  "inline-flex size-6 flex-none items-center justify-center rounded-md bg-accent-soft font-mono text-[10px] font-semibold text-accent-ink";
+  "inline-flex size-6 flex-none items-center justify-center rounded-sm bg-accent-soft font-mono text-[10px] font-semibold text-accent-ink";
 // A dropdown row, anchord style + a ≥40px tap target (C-003).
 const MENU_ITEM =
   "flex min-h-[40px] cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[12.5px] text-ink outline-none transition-colors hover:bg-surface focus:bg-surface data-[highlighted]:bg-surface [&>svg]:flex-none [&>svg]:text-subtle";
@@ -71,7 +71,7 @@ export function WorkspaceSwitcher() {
                 // plain button (NOT SidebarMenuButton) so the switcher renders standalone — many
                 // workspaces-ui tests mount it without a SidebarProvider. ≥40px tap target (C-003);
                 // collapse-to-icon hides the meta + chevron via the primitive's group-data attr.
-                className="flex min-h-[40px] w-full items-center gap-2.5 overflow-hidden rounded-md border border-transparent px-2 text-left text-ink outline-none transition-colors hover:bg-elev focus-visible:ring-2 focus-visible:ring-accent data-[state=open]:border-line data-[state=open]:bg-elev group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+                className="flex min-h-[40px] w-full items-center gap-[9px] overflow-hidden rounded-md border border-transparent pl-[7px] pr-2 text-left text-ink outline-none transition-colors hover:bg-elev focus-visible:ring-2 focus-visible:ring-accent data-[state=open]:border-line data-[state=open]:bg-elev group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
               >
                 <span className={WS_GLYPH}>{glyph}</span>
                 <span className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">

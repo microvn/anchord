@@ -51,7 +51,7 @@ export function WorkspaceHome() {
       {/* page-head — Workspace eyebrow + Fraunces title, admin actions + New-doc pinned right. */}
       <div className="mb-[22px] flex items-end gap-4">
         <div>
-          <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.12em] text-subtle">
+          <div className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
             Workspace
           </div>
           <h1 className="font-serif text-[30px] font-medium leading-[1.05] tracking-[-0.02em] text-ink">
@@ -63,7 +63,7 @@ export function WorkspaceHome() {
           {isAdmin && (
             <Link
               to={`/w/${workspace.id}/members`}
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-md border border-line bg-surface px-3 text-sm text-ink hover:border-accent"
+              className="inline-flex h-8 items-center gap-[7px] rounded-md border border-line bg-surface px-3 text-[12.5px] font-semibold text-ink hover:border-subtle hover:bg-elev"
             >
               <Icon name="members" size={15} />
               Members
@@ -84,7 +84,7 @@ export function WorkspaceHome() {
             <div className="font-mono text-[11px] uppercase tracking-[0.1em] text-subtle">
               {s.k}
             </div>
-            <div className="mt-1.5 font-serif text-[25px] font-medium tabular-nums tracking-[-0.01em] text-ink">
+            <div className="mt-1.5 font-serif text-[25px] font-medium tabular-nums leading-[37.5px] tracking-[-0.03em] text-ink">
               {s.v}
             </div>
           </div>
@@ -95,13 +95,13 @@ export function WorkspaceHome() {
       <div className="mt-[26px]" data-testid="recent-section">
         <div className="mb-3 flex items-center gap-[10px]">
           <span className="text-[15px] font-semibold text-ink">Documents</span>
-          <span className="font-mono text-[11px] uppercase tracking-[0.1em] text-subtle">
+          <span className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
             Recent
           </span>
           <Link
             to={`/w/${workspace.id}/docs`}
             data-testid="view-all-docs"
-            className="ml-auto text-[13px] text-muted hover:text-ink"
+            className="ml-auto text-[13.5px] text-muted hover:text-ink"
           >
             View all
           </Link>

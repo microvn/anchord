@@ -38,7 +38,7 @@ export function MetaDot() {
 /** The mono version cell (`v4`), `.doc-ver`. Shows `v0` style only when something is published. */
 export function VersionTag({ version }: { version: number }) {
   return (
-    <span className="font-mono text-[13px] tabular-nums text-muted">{version > 0 ? `v${version}` : "—"}</span>
+    <span className="font-mono text-[12.5px] tabular-nums text-muted">{version > 0 ? `v${version}` : "—"}</span>
   );
 }
 
@@ -46,7 +46,7 @@ export function VersionTag({ version }: { version: number }) {
 export function CommentCount({ count }: { count: number }) {
   return (
     <span
-      className={`inline-flex items-center gap-[5px] text-[13px] tabular-nums ${count > 0 ? "text-muted" : "text-faint"}`}
+      className={`inline-flex items-center gap-[5px] text-[12.5px] tabular-nums ${count > 0 ? "text-muted" : "text-faint"}`}
     >
       <Icon name="inbox" size={13} />
       {count}

@@ -145,7 +145,7 @@ export function AppSidebar({
             data-testid="sidebar-new-doc"
             title="New doc"
             onClick={onNewDoc}
-            className="h-8 w-full justify-start gap-2 bg-accent font-semibold text-on-accent hover:bg-accent-strong group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+            className="h-8 w-full justify-start gap-2 rounded-md px-[11px] text-[12.5px] font-semibold bg-accent text-on-accent hover:bg-accent-strong has-[>svg]:px-[11px] group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
           >
             {onNewDoc ? (
               <>
@@ -169,7 +169,7 @@ export function AppSidebar({
 
         {/* 4. Primary nav (AS-012 order #4; active marking AS-013). */}
         <SidebarGroup>
-          <SidebarGroupLabel className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
+          <SidebarGroupLabel className="h-auto px-[9px] pb-[6px] font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
             Overview
           </SidebarGroupLabel>
           <SidebarMenu data-testid="sidebar-nav" aria-label="Primary">
@@ -186,10 +186,14 @@ export function AppSidebar({
                     // icon accent-ink, semibold. NO left bar (the prototype's "Dashboard" is a
                     // solid pill). With asChild these classes merge onto the NavLink <a> (which
                     // carries the testid + aria-current), so testid + active styling are one node.
+                    // Geometry computed-matched to shell.css .nav-item: 33px row · 12.5px/600 ·
+                    // lh 18.75px · rounded-sm (6px) · 0 9px padding · 10px gap · 17px icon. The
+                    // shadcn default (h-8 text-sm p-2 gap-2 rounded-md) is overridden here.
                     className={[
+                      "h-[33px] gap-[10px] rounded-sm p-0 px-[9px] text-[12.5px] font-medium leading-[18.75px] [&>svg]:size-[17px]",
                       "text-muted [&_svg]:text-subtle",
                       active
-                        ? "bg-accent-soft font-semibold text-accent-ink [&_svg]:text-accent-ink"
+                        ? "bg-accent-soft font-semibold text-accent-ink [&_svg]:text-accent-ink data-[active=true]:font-semibold"
                         : "",
                     ].join(" ")}
                   >
@@ -223,13 +227,13 @@ export function AppSidebar({
             "→ View all docs" link closes the group. Hidden in the collapsed icon rail. */}
         {recentDocs.length > 0 && (
           <SidebarGroup className="group-data-[collapsible=icon]:hidden" data-testid="sidebar-recent-group">
-            <SidebarGroupLabel className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
+            <SidebarGroupLabel className="h-auto px-[9px] pb-[6px] font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
               Recent
             </SidebarGroupLabel>
             <SidebarMenu aria-label="Recent docs">
               {recentDocs.map((d) => (
                 <SidebarMenuItem key={d.slug}>
-                  <SidebarMenuButton asChild className="h-8 text-[13px] text-muted">
+                  <SidebarMenuButton asChild className="h-8 gap-[9px] rounded-sm p-0 px-[9px] text-[12.5px] leading-[18.75px] text-muted">
                     <NavLink
                       to={`/d/${d.slug}`}
                       data-testid={`sidebar-recent-${d.slug}`}
@@ -245,7 +249,7 @@ export function AppSidebar({
                 </SidebarMenuItem>
               ))}
               <SidebarMenuItem>
-                <SidebarMenuButton asChild className="h-8 text-[13px] text-subtle hover:text-ink">
+                <SidebarMenuButton asChild className="h-8 gap-[9px] rounded-sm p-0 px-[9px] text-[12.5px] leading-[18.75px] text-subtle hover:text-ink">
                   <NavLink to={docsHref} data-testid="sidebar-view-all-docs" title="View all docs">
                     <span className="grid size-5 flex-none place-items-center">
                       <Icon name="arrowRight" size={13} />
@@ -269,7 +273,7 @@ export function AppSidebar({
                 asChild
                 isActive={pathname.startsWith(membersHref)}
                 tooltip="Members"
-                className="text-muted [&_svg]:text-subtle data-[active=true]:bg-accent-soft data-[active=true]:font-semibold data-[active=true]:text-accent-ink data-[active=true]:[&_svg]:text-accent-ink"
+                className="h-[33px] gap-[10px] rounded-sm p-0 px-[9px] text-[12.5px] font-medium leading-[18.75px] [&>svg]:size-[17px] text-muted [&_svg]:text-subtle data-[active=true]:bg-accent-soft data-[active=true]:font-semibold data-[active=true]:text-accent-ink data-[active=true]:[&_svg]:text-accent-ink"
               >
                 <NavLink to={membersHref} data-testid="sidebar-members" title="Members">
                   <Icon name="settings" size={17} />

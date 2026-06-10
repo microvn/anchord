@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
+import { cloneElement, isValidElement, type CSSProperties, type ReactElement, type ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 import { AppHeader } from "./app-header";
 import { isCompact, useBreakpoint } from "../lib/use-breakpoint";
@@ -51,7 +51,7 @@ function ShellInner({ sidebarSlot }: { sidebarSlot?: ReactNode }) {
 
       <SidebarInset className="min-w-0 bg-paper">
         {/* HEADER (thin, low-contrast — chrome recedes). bg-surface + a `line` hairline. */}
-        <header className="flex h-[52px] flex-none items-center gap-3 border-b border-line bg-surface px-4">
+        <header className="flex h-[52px] flex-none items-center gap-3 border-b border-line bg-surface pl-4 pr-[14px]">
           {compact && (
             <SidebarTrigger
               aria-label="Open navigation"
@@ -74,7 +74,11 @@ function ShellInner({ sidebarSlot }: { sidebarSlot?: ReactNode }) {
 
 export function AppShell({ sidebarSlot }: { sidebarSlot?: ReactNode }) {
   return (
-    <SidebarProvider className="h-screen min-h-full overflow-hidden bg-paper">
+    <SidebarProvider
+      // Width computed-matched to shell.css .sidebar (--rail-w: 248px); the shadcn default is 16rem.
+      style={{ "--sidebar-width": "248px" } as CSSProperties}
+      className="h-screen min-h-full overflow-hidden bg-paper"
+    >
       <ShellInner sidebarSlot={sidebarSlot} />
     </SidebarProvider>
   );
