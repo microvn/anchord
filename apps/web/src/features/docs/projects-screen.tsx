@@ -8,6 +8,7 @@ import { unwrapEnvelope } from "../workspaces/use-bootstrap";
 import { toApiError } from "../../lib/api-error";
 import { useWorkspaceDocs } from "./use-docs";
 import { createProject } from "./client";
+import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
 import { Skeleton } from "../../components/skeleton";
 import { EmptyState } from "../../components/empty-state";
@@ -47,15 +48,15 @@ export function ProjectsScreen() {
           </h1>
         </div>
         <div className="ml-auto flex flex-none items-center gap-2">
-          <button
+          <Button
             type="button"
+            variant="secondary"
             data-testid="new-project-button"
             onClick={() => setDialogOpen(true)}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-md border border-line bg-surface px-3 text-sm text-ink hover:border-accent"
           >
             <Icon name="plus" size={16} />
             New project
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -68,15 +69,10 @@ export function ProjectsScreen() {
           title="No projects yet"
           description="Projects group related docs — specs, plans, reports. Create your first to organize them."
           action={
-            <button
-              type="button"
-              data-testid="empty-new-project"
-              onClick={() => setDialogOpen(true)}
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-on-accent hover:bg-accent-strong"
-            >
+            <Button type="button" data-testid="empty-new-project" onClick={() => setDialogOpen(true)}>
               <Icon name="plus" size={16} />
               Create your first project
-            </button>
+            </Button>
           }
         />
       ) : (
@@ -212,22 +208,17 @@ function NewProjectDialog({
           )}
         </div>
         <div className="flex justify-end gap-2 border-t border-line pt-4">
-          <button
-            type="button"
-            onClick={() => onOpenChange(false)}
-            className="min-h-[40px] rounded-md border border-line bg-surface px-4 text-[13px] text-ink hover:border-subtle"
-          >
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             data-testid="create-project-button"
             disabled={submitting}
             onClick={() => void onCreate()}
-            className="min-h-[40px] rounded-md bg-accent px-4 text-[13px] font-semibold text-on-accent hover:bg-accent-strong disabled:opacity-50"
           >
             {submitting ? "Creating…" : "Create project"}
-          </button>
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

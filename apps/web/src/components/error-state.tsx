@@ -1,4 +1,6 @@
 import { GENERIC_MESSAGE } from "../lib/api-error";
+import { Button } from "./ui/button";
+import { Icon } from "./icon";
 
 // S-002 / AS-007: the ONE retryable error surface every screen reuses. A screen whose data
 // request fails renders this instead of crashing or going blank — a message plus a Retry
@@ -23,14 +25,10 @@ export function ErrorState({
     >
       <p className="text-sm text-error">{text}</p>
       {onRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={retrying}
-          className="min-h-[40px] rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink hover:border-accent disabled:opacity-60"
-        >
+        <Button type="button" size="lg" onClick={onRetry} disabled={retrying}>
+          <Icon name="refresh" size={16} />
           {retrying ? "Retrying…" : "Retry"}
-        </button>
+        </Button>
       )}
     </div>
   );

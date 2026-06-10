@@ -2,6 +2,8 @@
 // data set has nothing yet (→ a create CTA); no-results means a query matched nothing (→ name
 // the query + offer Clear search, NO create CTA). web-core owns it so every searchable feature
 // screen reuses one no-results surface. Type-only, dark-operator tokens, no illustration.
+import { Button } from "./ui/button";
+
 export function NoResultsState({
   query,
   onClear,
@@ -19,13 +21,9 @@ export function NoResultsState({
       <p className="text-sm text-muted">
         {description ?? "Try a different search, or clear it to see everything."}
       </p>
-      <button
-        type="button"
-        onClick={onClear}
-        className="mt-1 min-h-[40px] rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink hover:border-accent"
-      >
+      <Button type="button" variant="secondary" onClick={onClear} className="mt-1">
         Clear search
-      </button>
+      </Button>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
+import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
 import { useActiveWorkspaceSafe } from "../workspaces/active-workspace";
 import { queryKeys } from "../workspaces/query-keys";
@@ -57,15 +58,10 @@ export function NewDocButton({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button
-        type="button"
-        data-testid={testid}
-        onClick={() => setOpen(true)}
-        className="inline-flex min-h-[40px] items-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-strong"
-      >
+      <Button type="button" data-testid={testid} onClick={() => setOpen(true)}>
         <Icon name="plus" size={16} />
         New doc
-      </button>
+      </Button>
       <NewDocDialog open={open} onOpenChange={setOpen} workspaceId={workspaceId} />
     </>
   );
@@ -362,23 +358,18 @@ export function NewDocDialog({
 
         {tab !== "mcp" && (
           <div className="flex justify-end gap-2 border-t border-line pt-4">
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              className="min-h-[40px] rounded-md border border-line bg-surface px-4 text-[13px] text-ink hover:border-subtle"
-            >
+            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               data-testid="publish-button"
               disabled={!canPublish || submitting}
               onClick={() => void onPublish()}
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-md bg-accent px-4 text-[13px] font-semibold text-on-accent transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Icon name="arrowRight" size={15} />
               {submitting ? "Publishing…" : "Publish"}
-            </button>
+            </Button>
           </div>
         )}
       </DialogContent>
