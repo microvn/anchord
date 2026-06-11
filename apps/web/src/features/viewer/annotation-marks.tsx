@@ -50,6 +50,25 @@ function findBlock(root: ParentNode, blockId: string): HTMLElement | null {
   return root.querySelector<HTMLElement>(`#${cssEscape(blockId)}`);
 }
 
+/**
+ * All Text descendants of `root` in document order. A manual recursive descent rather than
+ * `createTreeWalker(SHOW_TEXT)` because happy-dom 15's walker does NOT descend into nested inline
+ * elements (`<strong>`, `<a>`, `<code>`) — it would silently drop their text, corrupting char-offset
+ * accounting for cross-inline ranges. A snapshot array is returned so callers can mutate the tree
+ * (split/replace nodes) while iterating without invalidating live traversal.
+ */
+function textNodesOf(root: Node): Text[] {
+  const out: Text[] = [];
+  const visit = (n: Node) => {
+    for (let c = n.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 3) out.push(c as Text);
+      else if (c.nodeType === 1) visit(c);
+    }
+  };
+  visit(root);
+  return out;
+}
+
 function cssEscape(value: string): string {
   // happy-dom lacks CSS.escape in some builds; a conservative manual escape covers block ids
   // (which are server-generated `block-{tag}-{n}`, but stay defensive against odd ids).
@@ -57,10 +76,47 @@ function cssEscape(value: string): string {
 }
 
 /**
- * Locate the [start,end) character range of the snippet within the block's text content.
- * Exact at `offset` first; if that doesn't match, a fuzzy locate = the snippet must occur
- * EXACTLY ONCE in the block text (a single unambiguous match). Zero or multiple → null
- * (couldn't place). Returns char offsets into the concatenated text of the block.
+ * Whitespace-normalize a string: collapse every run of whitespace to a single space and trim the
+ * ends. Returns the normalized text plus a `map[]` from each normalized-char index → its original
+ * index, so a hit in normalized space can be translated back to original (node-walkable) offsets.
+ * Adopted from Plannotator's `normalizeWithMap` (Apache-2.0).
+ */
+function normalizeWithMap(text: string): { text: string; map: number[] } {
+  let normalized = "";
+  const map: number[] = [];
+  let inWhitespace = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (/\s/.test(ch)) {
+      if (!inWhitespace) {
+        normalized += " ";
+        map.push(i);
+        inWhitespace = true;
+      }
+    } else {
+      normalized += ch;
+      map.push(i);
+      inWhitespace = false;
+    }
+  }
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === " ") start++;
+  while (end > start && normalized[end - 1] === " ") end--;
+  return { text: normalized.slice(start, end), map: map.slice(start, end) };
+}
+
+/**
+ * Locate the [start,end) character range of the snippet within the block's text content, in tiers:
+ *   1. exact at the recorded `offset`;
+ *   2. whitespace-normalized match (Plannotator normalizeWithMap) — the recorded snippet may carry
+ *      literal whitespace the rendered text collapses (newlines, indentation); match in normalized
+ *      space then translate back to original offsets;
+ *   3. raw indexOf fallback — when the snippet occurs >1 time, pick the occurrence whose start is
+ *      NEAREST the recorded `offset` (the offset disambiguates; refusing duplicates would orphan a
+ *      short repeated snippet — FIX 3);
+ *   4. zero occurrences → null (couldn't place, GAP-005).
+ * Returns char offsets into the concatenated text of the block.
  */
 export function locateRange(
   blockText: string,
@@ -72,76 +128,101 @@ export function locateRange(
   if (offset >= 0 && blockText.substr(offset, snippet.length) === snippet) {
     return { start: offset, end: offset + snippet.length };
   }
-  // 2. fuzzy: a single unambiguous occurrence anywhere in the block.
-  const first = blockText.indexOf(snippet);
-  if (first === -1) return null; // zero matches
-  const second = blockText.indexOf(snippet, first + 1);
-  if (second !== -1) return null; // multiple matches → ambiguous, refuse (GAP-005)
-  return { start: first, end: first + snippet.length };
+  // 3. raw fuzzy: gather every occurrence, pick the one nearest the recorded offset.
+  const raw = nearestOccurrence(blockText, snippet, offset);
+  if (raw) return raw;
+  // 2. normalized: collapse whitespace on both sides, match, translate the hit back via the map.
+  const haystack = normalizeWithMap(blockText);
+  const needle = normalizeWithMap(snippet).text;
+  if (needle.length > 0) {
+    const normIdx = haystack.text.indexOf(needle);
+    if (normIdx !== -1) {
+      const originalStart = haystack.map[normIdx]!;
+      const originalEnd = haystack.map[normIdx + needle.length - 1]! + 1;
+      return { start: originalStart, end: originalEnd };
+    }
+  }
+  return null; // 4. zero matches
+}
+
+/** All start indices of `snippet` in `text`; pick the one whose start is nearest `offset`. */
+function nearestOccurrence(
+  text: string,
+  snippet: string,
+  offset: number,
+): { start: number; end: number } | null {
+  let from = 0;
+  let best = -1;
+  let bestDist = Infinity;
+  for (;;) {
+    const at = text.indexOf(snippet, from);
+    if (at === -1) break;
+    const dist = Math.abs(at - offset);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = at;
+    }
+    from = at + 1;
+  }
+  if (best === -1) return null;
+  return { start: best, end: best + snippet.length };
 }
 
 /**
- * Wrap [start,end) of a block's text in a <mark data-anno=id> in place. Walks the block's text
- * nodes, splitting at the boundaries. Returns the created mark element, or null if the range
- * couldn't be realised against the live nodes (defensive — treated as couldn't-place).
+ * Wrap [start,end) of a block's text in `<mark data-anno=id>` highlights, IN PLACE. A range that
+ * crosses inline boundaries (`<strong>`, `<a>`, `<code>`) spans multiple text nodes — `surroundContents`
+ * THROWS InvalidStateError on those (the range partially selects a non-Text node), so instead we wrap
+ * EACH intersected text node's covered slice in its own mark. One annotation id → N marks.
+ *
+ * The slices are wrapped in REVERSE document order so splitting/replacing an earlier text node never
+ * invalidates the (still-live) references to later nodes (Plannotator's per-text-node trick, Apache-2.0).
+ *
+ * Returns the created mark elements (>=1) in document order, or [] if the range couldn't be realised
+ * against the live nodes (defensive — treated as couldn't-place).
  */
-function wrapRange(block: HTMLElement, range: { start: number; end: number }, id: string): HTMLElement | null {
+function wrapRange(block: HTMLElement, range: { start: number; end: number }, id: string): HTMLElement[] {
   const doc = block.ownerDocument;
-  const walker = doc.createTreeWalker(block, 0x4 /* NodeFilter.SHOW_TEXT */);
+
+  // Collect each intersected text node's covered slice {node, start, end} (offsets local to the node).
+  const slices: { node: Text; start: number; end: number }[] = [];
   let pos = 0;
-  let startNode: Text | null = null;
-  let startOffset = 0;
-  let endNode: Text | null = null;
-  let endOffset = 0;
-
-  let node = walker.nextNode() as Text | null;
-  while (node) {
+  for (const node of textNodesOf(block)) {
     const len = node.data.length;
-    if (startNode === null && pos + len > range.start) {
-      startNode = node;
-      startOffset = range.start - pos;
-    }
-    if (pos + len >= range.end) {
-      endNode = node;
-      endOffset = range.end - pos;
-      break;
-    }
-    pos += len;
-    node = walker.nextNode() as Text | null;
+    const nodeStart = pos;
+    const nodeEnd = pos + len;
+    // Overlap of [range.start,range.end) with this node's [nodeStart,nodeEnd).
+    const sliceStart = Math.max(range.start, nodeStart) - nodeStart;
+    const sliceEnd = Math.min(range.end, nodeEnd) - nodeStart;
+    if (sliceEnd > sliceStart) slices.push({ node, start: sliceStart, end: sliceEnd });
+    if (nodeEnd >= range.end) break;
+    pos = nodeEnd;
   }
-  if (!startNode || !endNode) return null;
+  if (slices.length === 0) return [];
 
-  // For a single-text-node range (the common case), split precisely and wrap the middle.
-  if (startNode === endNode) {
-    const text = startNode;
-    const before = text.data.slice(0, startOffset);
-    const mid = text.data.slice(startOffset, endOffset);
-    const after = text.data.slice(endOffset);
+  const makeMark = (): HTMLElement => {
     const mark = doc.createElement("mark");
     mark.className = MARK_CLASS;
     mark.setAttribute("data-anno", id);
+    return mark;
+  };
+
+  const marks: HTMLElement[] = [];
+  // REVERSE order: replacing an earlier text node would invalidate later node refs otherwise.
+  for (let i = slices.length - 1; i >= 0; i--) {
+    const { node: text, start, end } = slices[i]!;
+    const before = text.data.slice(0, start);
+    const mid = text.data.slice(start, end);
+    const after = text.data.slice(end);
+    const mark = makeMark();
     mark.textContent = mid;
     const frag = doc.createDocumentFragment();
     if (before) frag.appendChild(doc.createTextNode(before));
     frag.appendChild(mark);
     if (after) frag.appendChild(doc.createTextNode(after));
     text.replaceWith(frag);
-    return mark;
+    marks.unshift(mark); // unshift to keep document order in the returned list
   }
-
-  // Cross-node range: wrap with a DOM Range surround when possible, else bail (couldn't place).
-  try {
-    const r = doc.createRange();
-    r.setStart(startNode, startOffset);
-    r.setEnd(endNode, endOffset);
-    const mark = doc.createElement("mark");
-    mark.className = MARK_CLASS;
-    mark.setAttribute("data-anno", id);
-    r.surroundContents(mark);
-    return mark;
-  } catch {
-    return null;
-  }
+  return marks;
 }
 
 /**
@@ -152,14 +233,17 @@ export function placeAnnotations(
   docRoot: HTMLElement,
   annotations: PlaceableAnnotation[],
 ): PlaceResult {
-  // Clear any prior marks (unwrap) so re-runs are stable.
+  // Clear any prior marks (unwrap) so re-runs are stable. One id may map to N marks (cross-inline
+  // ranges); unwrap them all and normalize() each parent so split text nodes re-merge.
+  const parentsToNormalize = new Set<Node>();
   docRoot.querySelectorAll<HTMLElement>(MARK_SELECTOR).forEach((m) => {
     const parent = m.parentNode;
     if (!parent) return;
     while (m.firstChild) parent.insertBefore(m.firstChild, m);
     parent.removeChild(m);
-    parent.normalize();
+    parentsToNormalize.add(parent);
   });
+  parentsToNormalize.forEach((p) => (p as Element).normalize());
 
   const placed: { id: string; el: HTMLElement }[] = [];
   const unplaceable: string[] = [];
@@ -176,13 +260,14 @@ export function placeAnnotations(
       unplaceable.push(ann.id); // zero / multiple matches (GAP-005)
       continue;
     }
-    const mark = wrapRange(block, range, ann.id);
-    if (!mark) {
+    const marks = wrapRange(block, range, ann.id);
+    if (marks.length === 0) {
       unplaceable.push(ann.id);
       continue;
     }
-    if (ann.status === "resolved") mark.dataset.resolved = "true";
-    placed.push({ id: ann.id, el: mark });
+    // One id → N marks (cross-inline range). Tag resolved on each; report the first as the anchor el.
+    if (ann.status === "resolved") marks.forEach((m) => (m.dataset.resolved = "true"));
+    placed.push({ id: ann.id, el: marks[0]! });
   }
 
   return { placed, unplaceable };
