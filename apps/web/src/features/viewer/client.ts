@@ -44,6 +44,11 @@ export interface ViewerDocResponse {
     generalAccess: string;
     /** the caller's effective role on this doc (C-004 compose gate); optional on older payloads. */
     effectiveRole?: EffectiveRole;
+    /** S-005 (C-007): true when this session is a logged-out GUEST commenting via anyone-with-link
+     *  + guest-commenting-enabled. The FE only CONSUMES this — the toggle that enables guest
+     *  commenting is owned by sharing-permissions. Drives the composer's GuestNameField + the
+     *  name-required gate + the guest attribution badge (C-010). Absent → a logged-in member. */
+    guest?: boolean;
   };
   /** markdown → sanitized HTML string; html/image → a { contentUrl } sandbox reference. */
   content: string | { contentUrl: string };

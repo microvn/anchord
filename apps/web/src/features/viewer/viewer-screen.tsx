@@ -101,6 +101,9 @@ export function ViewerScreen() {
       workspaceId={workspaceId}
       slug={slug}
       canCompose={canComment(doc.doc.effectiveRole)}
+      // S-005: a logged-out guest session (consumed from the read side) → the composer shows the
+      // GuestNameField + name-required gate; the rail badges the guest comment (C-010).
+      guest={doc.doc.guest === true}
     />
   );
 }
@@ -123,6 +126,7 @@ function ViewerShell({
   workspaceId,
   slug,
   canCompose = false,
+  guest = false,
 }: {
   title: string;
   /** present only on the success path — drives the S-005 ViewerTopBar identity. */
@@ -138,6 +142,9 @@ function ViewerShell({
   /** S-001/C-004: whether the session's effective role may comment. A viewer-only role gets a
    *  read-only rail — no popover, no composer. False on the loading / error shells (no doc). */
   canCompose?: boolean;
+  /** S-005: this is a logged-out guest session → the composer shows the GuestNameField + gates
+   *  Send on a name (C-007). Consumed from the read side; the FE doesn't own the sharing toggle. */
+  guest?: boolean;
 }) {
   const { drawerMode, tocDrawer } = useViewerLayoutMode();
   const navigate = useNavigate();
@@ -199,6 +206,7 @@ function ViewerShell({
       <Composer
         quote={compose.quote}
         pending={compose.pending}
+        guest={guest}
         onSend={compose.send}
         onCancel={compose.cancel}
       />

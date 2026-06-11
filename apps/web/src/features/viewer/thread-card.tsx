@@ -43,8 +43,22 @@ export function avatarColor(name: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
 }
 
+// S-005 (C-010): a comment is a GUEST comment when it carries a self-entered guestName and no
+// account authorName — the name is a display label, not an identity. A member comment has an
+// authorName. (A comment with neither falls back to the literal "Guest".)
+function isGuestComment(c: AnnotationComment): boolean {
+  return !c.authorName && Boolean(c.guestName);
+}
+
+// Max rendered guest-name length (C-008.T3 — over-long names truncated even if a stale/forged row
+// slipped past the write-time sanitize). Mirrors composer.GUEST_NAME_MAX. React children already
+// escape it (inert); this only bounds the LENGTH at the render layer.
+const GUEST_NAME_RENDER_MAX = 40;
+
 function commentAuthor(c: AnnotationComment): string {
-  return c.authorName || c.guestName || "Guest";
+  const name = c.authorName || c.guestName || "Guest";
+  // Truncate an over-long (guest) name at render (defence-in-depth, C-008.T3 / AS-012.T2).
+  return name.length > GUEST_NAME_RENDER_MAX ? `${name.slice(0, GUEST_NAME_RENDER_MAX)}…` : name;
 }
 
 /**
@@ -95,6 +109,16 @@ function CommentHead({
     <div className="flex items-center gap-2">
       <Avatar name={name} size={avatarSize} fontSize={avatarFont} />
       <span className="text-[12.5px] font-semibold text-ink">{name}</span>
+      {/* C-010: a guest comment is visibly attributed as a guest — a neutral pill next to the
+          self-entered name (a display label, not an identity, distinct from a workspace member). */}
+      {isGuestComment(c) && (
+        <span
+          data-testid="guest-badge"
+          className="rounded-[4px] bg-sunken px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-subtle"
+        >
+          Guest
+        </span>
+      )}
       <span className="font-mono text-[10px] text-subtle">{timeLabel(c.createdAt)}</span>
     </div>
   );

@@ -29,7 +29,10 @@ export interface ComposeApi {
   pending: boolean;
   startComment: () => void;
   dismissPopover: () => void;
-  send: (body: string) => void;
+  /** S-005: a guest send carries its self-entered name + optional email (AS-010); a member send
+   *  omits `guestIdentity`. The fields ride to addComment alongside the body — no userId either way
+   *  (identity is the session cookie; a guest has none → guestName is its display label, C-010). */
+  send: (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => void;
   cancel: () => void;
   /** S-002: open the compose flow from an externally-supplied anchor (the HTML-sandbox bridge
    *  relays the selection over its port — the parent can't read the opaque iframe's selection).
@@ -137,9 +140,12 @@ export function useCompose(
   }, []);
 
   const send = useCallback(
-    (body: string) => {
+    (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => {
       const anchor = active;
       if (!anchor || !workspaceId || !slug || body.trim().length === 0) return;
+      // S-005: a guest send with no name is a no-op write (the composer already gates Send on a
+      // non-empty name — AS-011 — but re-check here so a forced call can't post an unnamed guest).
+      if (guestIdentity && guestIdentity.guestName.trim().length === 0) return;
 
       const tempId = `optimistic-${++optimisticSeq}`;
       const optimisticThread: ViewerAnnotation = {
@@ -158,7 +164,11 @@ export function useCompose(
           {
             id: `${tempId}-c`,
             parentId: null,
-            authorName: "You",
+            // S-005: a guest's optimistic comment is attributed to its self-entered name (C-010);
+            // a member's is "You". Either way it renders inert via ThreadCard (C-008).
+            ...(guestIdentity
+              ? { guestName: guestIdentity.guestName }
+              : { authorName: "You" }),
             body, // inert plaintext when rendered by ThreadCard (C-008)
             createdAt: new Date().toISOString(),
           },
@@ -215,7 +225,17 @@ export function useCompose(
             return;
           }
           const annotationId = peelId(created.data);
-          const commented = await addComment(workspaceId, slug, annotationId, { body });
+          const commented = await addComment(workspaceId, slug, annotationId, {
+            body,
+            // S-005 (AS-010): a guest comment posts under its self-entered name + optional email;
+            // a member posts body-only (identity rides the session cookie, no userId in the body).
+            ...(guestIdentity
+              ? {
+                  guestName: guestIdentity.guestName,
+                  ...(guestIdentity.guestEmail ? { guestEmail: guestIdentity.guestEmail } : {}),
+                }
+              : {}),
+          });
           if (commented.error) {
             rollback();
             return;
