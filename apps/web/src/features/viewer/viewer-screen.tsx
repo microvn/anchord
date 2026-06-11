@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useApiQuery } from "../../lib/use-api-query";
 import { useViewerLayoutMode } from "../../lib/use-breakpoint";
@@ -7,6 +7,7 @@ import { EmptyState } from "../../components/empty-state";
 import { ErrorState } from "../../components/error-state";
 import { Skeleton } from "../../components/skeleton";
 import { DocPane } from "./doc-pane";
+import type { HtmlSandboxFrameHandle } from "./html-sandbox-frame";
 import { DocModeToolbar } from "./doc-mode-toolbar";
 import { TocSidebar } from "./toc-sidebar";
 import { AnnotationsRail } from "./annotations-rail";
@@ -93,13 +94,12 @@ export function ViewerScreen() {
     <ViewerShell
       title={doc.doc.title}
       doc={doc.doc}
+      docResponse={doc}
       specMeta={specMeta}
       workspaceId={workspaceId}
       slug={slug}
       canCompose={canComment(doc.doc.effectiveRole)}
-    >
-      <DocPane doc={doc} />
-    </ViewerShell>
+    />
   );
 }
 
@@ -115,6 +115,7 @@ export function ViewerScreen() {
 function ViewerShell({
   title,
   doc,
+  docResponse,
   specMeta,
   children,
   workspaceId,
@@ -124,8 +125,12 @@ function ViewerShell({
   title: string;
   /** present only on the success path — drives the S-005 ViewerTopBar identity. */
   doc?: { title: string; kind: ViewerDocResponse["doc"]["kind"]; version: number; status: string };
+  /** the full doc read on the success path — rendered into the center pane (DocPane). Absent on
+   *  the loading / not-found / error shells (no doc to render). */
+  docResponse?: ViewerDocResponse;
   specMeta?: SpecMeta | null;
-  children: React.ReactNode;
+  /** the loading / not-found / error shells render their state here instead of a DocPane. */
+  children?: React.ReactNode;
   workspaceId?: string;
   slug?: string;
   /** S-001/C-004: whether the session's effective role may comment. A viewer-only role gets a
@@ -157,12 +162,29 @@ function ViewerShell({
     if (drawerMode) setRailOpen(true); // AS-014: tapping a highlight opens the rail drawer
   });
 
+  // S-002: a handle to the HTML sandbox frame so a created annotation's highlight can be relayed
+  // DOWN to the in-iframe bridge (the parent can't draw a <mark> into the opaque iframe).
+  const htmlFrameRef = useRef<HtmlSandboxFrameHandle>(null);
+  const isHtml = doc?.kind === "html";
+
   // S-001 (commenting write path): capture a text selection on the doc → popover → composer → send.
   // Gated by `canCompose` (C-004): a viewer-only role never sees a popover/composer (read-only rail).
-  const compose = useCompose(workspaceId, slug, docPaneEl, canCompose, () => {
-    if (drawerMode) setRailOpen(true); // surface the composer in the rail drawer on tablet/mobile
-    void anno.refetch();
-  });
+  // S-002: on a successful create for an HTML doc, relay the highlight to the iframe bridge.
+  const compose = useCompose(
+    workspaceId,
+    slug,
+    docPaneEl,
+    canCompose,
+    () => {
+      if (drawerMode) setRailOpen(true); // surface the composer in the rail drawer on tablet/mobile
+      void anno.refetch();
+    },
+    (anchor, annotationId) => {
+      // C-001: this fires only AFTER the server-authorized create succeeded — the highlight is a
+      // consequence of the real annotation, never of the untrusted selection hint itself.
+      if (isHtml) htmlFrameRef.current?.postHighlight(anchor, annotationId);
+    },
+  );
 
   const toggleRail = () => (drawerMode ? setRailOpen((o) => !o) : setRailVisible((v) => !v));
   const closeDrawers = () => {
@@ -242,7 +264,27 @@ function ViewerShell({
               onMarkupUnavailable={() => toast("Markup mode arrives with commenting")}
             />
           )}
-          {children}
+          {docResponse ? (
+            <DocPane
+              doc={docResponse}
+              htmlFrameRef={isHtml ? htmlFrameRef : undefined}
+              // C-004: wire the bridge selection relay ONLY for a comment-capable role on an HTML
+              // doc. A viewer-only role gets no onSelection → the frame never connects the bridge,
+              // so a relayed (or forged) selection can't open a composer.
+              onSelection={
+                isHtml && canCompose
+                  ? (anchor, rect) =>
+                      compose.beginCompose(
+                        anchor,
+                        rect ? { top: rect.y + rect.height, left: rect.x } : null,
+                      )
+                  : undefined
+              }
+              onClearSelection={isHtml && canCompose ? compose.dismissPopover : undefined}
+            />
+          ) : (
+            children
+          )}
         </main>
         {/* AnnotationsRail — S-003. Inline column on desktop while the comments toggle keeps it
             visible (S-005, AS-012). Hidden as an inline column in drawer mode — it moves to the

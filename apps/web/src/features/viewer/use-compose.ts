@@ -31,6 +31,19 @@ export interface ComposeApi {
   dismissPopover: () => void;
   send: (body: string) => void;
   cancel: () => void;
+  /** S-002: open the compose flow from an externally-supplied anchor (the HTML-sandbox bridge
+   *  relays the selection over its port — the parent can't read the opaque iframe's selection).
+   *  Mirrors the Markdown mouseup path: stash the anchor + raise the popover. */
+  beginCompose: (anchor: ComposeAnchor, rect?: { top: number; left: number } | null) => void;
+}
+
+/** The anchor shape `beginCompose` accepts (the bridge's `segments` is optional; we normalize). */
+export interface ComposeAnchor {
+  blockId: string;
+  textSnippet: string;
+  offset: number;
+  length: number;
+  segments?: { blockId: string; textSnippet: string; offset: number; length: number }[];
 }
 
 export function useCompose(
@@ -39,6 +52,9 @@ export function useCompose(
   docPaneEl: HTMLElement | null,
   canCompose: boolean,
   onSent: () => void,
+  /** S-002: called after a successful create with the anchor + the real annotation id, so the
+   *  screen can relay a highlight DOWN to the in-iframe bridge (the parent can't draw the mark). */
+  onCreated?: (anchor: SelectionAnchor, annotationId: string) => void,
 ): ComposeApi {
   const [popover, setPopover] = useState<{ top: number; left: number } | null>(null);
   const [active, setActive] = useState<SelectionAnchor | null>(null);
@@ -73,6 +89,34 @@ export function useCompose(
     docPaneEl.addEventListener("mouseup", onMouseUp);
     return () => docPaneEl.removeEventListener("mouseup", onMouseUp);
   }, [canCompose, docPaneEl]);
+
+  // C-004 gate also applies to the bridge path: a viewer-only role never opens a composer even if a
+  // (forged or real) selection arrives over the port. The screen only wires the bridge when
+  // canCompose is true, but we re-check here so beginCompose can't be driven for a read-only role.
+  const beginCompose = useCallback(
+    (anchor: ComposeAnchor, rect?: { top: number; left: number } | null) => {
+      if (!canCompose) return;
+      // C-003: an empty / whitespace-only snippet is not a selection — never open the composer.
+      if (!anchor || anchor.textSnippet.trim().length === 0) return;
+      const normalized: SelectionAnchor = {
+        blockId: anchor.blockId,
+        textSnippet: anchor.textSnippet,
+        offset: anchor.offset,
+        length: anchor.length,
+        segments: anchor.segments ?? [
+          {
+            blockId: anchor.blockId,
+            textSnippet: anchor.textSnippet,
+            offset: anchor.offset,
+            length: anchor.length,
+          },
+        ],
+      };
+      pendingAnchor.current = normalized;
+      setPopover(rect ?? { top: 0, left: 0 });
+    },
+    [canCompose],
+  );
 
   const dismissPopover = useCallback(() => {
     setPopover(null);
@@ -181,6 +225,9 @@ export function useCompose(
           // (optimistic + real), the rail count double-counts, and the stale temp mark can collide
           // / double-wrap the same range as the real annotation's mark. onSent() refetches the real row.
           clearOptimistic();
+          // S-002: relay the real highlight DOWN to the in-iframe bridge (HTML docs). For a
+          // Markdown doc onCreated is undefined — the highlight is the refetched row's mark instead.
+          onCreated?.(anchor, annotationId);
           onSent();
         } catch {
           // network failure (C-011/AS-013).
@@ -190,10 +237,10 @@ export function useCompose(
         }
       })();
     },
-    [active, workspaceId, slug, docPaneEl, onSent],
+    [active, workspaceId, slug, docPaneEl, onSent, onCreated],
   );
 
-  return { popover, quote, optimistic, pending, startComment, dismissPopover, send, cancel };
+  return { popover, quote, optimistic, pending, startComment, dismissPopover, send, cancel, beginCompose };
 }
 
 // The create result is `{ annotationId }`, but useApiQuery's peel runs on READS; the write thunks
