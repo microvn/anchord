@@ -63,13 +63,27 @@ export function TocSidebar({
   const onActiveRef = useRef(onActiveChange);
   onActiveRef.current = onActiveChange;
 
-  // Re-derive the outline whenever the content element changes (a new doc rendered).
+  // Re-derive the outline whenever the content element changes (a new doc rendered) AND whenever
+  // the content *inside* it changes. The viewer's <main> scroll container mounts empty (skeleton)
+  // and keeps the same element identity when the doc swaps in after the query resolves, so a
+  // dependency on `contentEl` identity alone never re-runs. A MutationObserver on the subtree
+  // catches the late-arriving headings. We still extract once immediately for the synchronous case.
   useEffect(() => {
     if (!contentEl) {
       setHeadings([]);
       return;
     }
-    setHeadings(extractHeadings(contentEl));
+    const apply = () =>
+      setHeadings((prev) => {
+        const next = extractHeadings(contentEl);
+        // Skip the state update (and its re-render) when the outline is unchanged — the observer
+        // fires on every subtree mutation during render, but the heading set rarely changes.
+        return sameHeadings(prev, next) ? prev : next;
+      });
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(contentEl, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [contentEl]);
 
   // Scroll-spy: find the scroll container, recompute the active heading on scroll. We resolve each
@@ -107,7 +121,7 @@ export function TocSidebar({
       aria-label="Document outline"
       className={`flex h-full min-h-0 flex-col ${className ?? ""}`}
     >
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2.5">
+      <div className="flex h-11 flex-none items-center gap-2 border-b border-line px-3">
         <Icon name="search" size={14} className="flex-none text-subtle" />
         <input
           type="search"
@@ -144,6 +158,18 @@ export function TocSidebar({
       </ul>
     </nav>
   );
+}
+
+// Shallow value-equality for two heading lists, so the MutationObserver can skip a redundant
+// setState (and re-render) when a subtree mutation didn't actually change the outline.
+function sameHeadings(a: readonly Heading[], b: readonly Heading[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (x.id !== y.id || x.text !== y.text || x.level !== y.level) return false;
+  }
+  return true;
 }
 
 // A CSS-escaped `#id` selector so an id with odd chars can't break querySelector.

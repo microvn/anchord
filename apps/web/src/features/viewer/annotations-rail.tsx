@@ -44,7 +44,7 @@ export function AnnotationsRail({
 
   return (
     <div data-testid="annotations-rail" className="flex h-full flex-col">
-      <div className="flex flex-none items-center gap-2 border-b border-line px-4 py-3">
+      <div className="flex h-11 flex-none items-center gap-2 border-b border-line px-4">
         <Icon name="inbox" size={15} />
         <span className="text-[13px] font-semibold text-ink">Comments</span>
         <span
