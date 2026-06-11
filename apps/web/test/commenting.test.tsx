@@ -75,7 +75,9 @@ function App() {
 
 beforeEach(() => {
   fetchViewerDoc.mockClear();
-  listAnnotations.mockClear();
+  // Reset to the default `annoResponse`-driven impl: AS-001 overrides this with mockImplementation,
+  // so a plain mockClear() would leak that impl into sibling tests. Restore the base behaviour here.
+  listAnnotations.mockImplementation(async () => annoResponse);
   createAnnotation.mockClear();
   addComment.mockClear();
   toastError.mockClear();
@@ -138,6 +140,35 @@ function selectNothing(blockId: string) {
 
 describe("Commenting S-001", () => {
   it("AS-001: selecting a sentence, commenting, and sending creates a block-anchored annotation with a highlight and a top thread", async () => {
+    // The post-send refetch returns the REAL created row (the server's source of truth). The first
+    // read (initial mount) returns empty; once the create succeeds, onSent() refetches and the
+    // server now lists the real annotation. This forces the success path to reconcile the optimistic
+    // temp away — if it lingers, the comment renders TWICE and the count double-counts (the bug).
+    const realAnnotation = {
+      id: "anno-real-1",
+      type: "range",
+      status: "unresolved" as const,
+      isOrphaned: false,
+      anchor: {
+        blockId: "block-p-1",
+        textSnippet: "Payment expires after 24h",
+        offset: 0,
+        length: "Payment expires after 24h".length,
+      },
+      comments: [
+        {
+          id: "cmt-real-1",
+          parentId: null,
+          authorName: "You",
+          body: "Why 24h and not 48h?",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    };
+    listAnnotations.mockImplementation(async () =>
+      createAnnotation.mock.calls.length > 0 ? okRead({ items: [realAnnotation] }) : okRead({ items: [] }),
+    );
+
     await renderViewer();
     expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
 
@@ -169,19 +200,29 @@ describe("Commenting S-001", () => {
     expect(commentArgs[2]).toBe("anno-real-1"); // the created annotation id
     expect(commentArgs[3].body).toBe("Why 24h and not 48h?");
 
-    // AS-001.T2: a highlight marks the selected sentence.
+    // AS-001.T2: EXACTLY ONE highlight marks the selected sentence — the real refetched row's mark,
+    // with no leftover optimistic `data-anno=<tempId>` mark double-wrapping the same range.
     await waitFor(() => {
-      const mark = screen.getByTestId("markdown-view").querySelector("[data-anno]");
-      expect(mark).not.toBeNull();
-      expect(mark!.textContent).toBe("Payment expires after 24h");
+      const marks = screen.getByTestId("markdown-view").querySelectorAll("[data-anno]");
+      expect(marks).toHaveLength(1);
+      expect(marks[0]!.textContent).toBe("Payment expires after 24h");
+      expect(marks[0]!.getAttribute("data-anno")).toBe("anno-real-1");
     });
+    // No stale optimistic mark survives the success reconcile.
+    expect(
+      screen.getByTestId("markdown-view").querySelector('[data-anno^="optimistic-"]'),
+    ).toBeNull();
 
-    // AS-001.T3: a thread with the quote + comment tops the rail.
+    // AS-001.T3: EXACTLY ONE thread (the reconciled real row) tops the rail — the optimistic temp
+    // must be cleared on success so the comment doesn't render twice.
+    await waitFor(() => {
+      expect(screen.getAllByTestId("thread-card")).toHaveLength(1);
+    });
     const threads = screen.getAllByTestId("thread-card");
     expect(threads[0]).toHaveTextContent("Payment expires after 24h");
     expect(threads[0]).toHaveTextContent("Why 24h and not 48h?");
 
-    // AS-001.T4: the count increments.
+    // AS-001.T4: the count is EXACTLY 1 — no double-count from a lingering optimistic thread.
     expect(screen.getByTestId("rail-count")).toHaveTextContent("1");
   });
 
@@ -250,12 +291,32 @@ describe("Commenting S-001", () => {
   });
 
   it("C-008.T1: the comment body renders inert (escaped plaintext, no HTML injected)", async () => {
+    // The post-send refetch returns the real row carrying the untrusted body, so we assert inertness
+    // on the reconciled (single source of truth) thread, not the transient optimistic one.
+    const xss = "<img src=x onerror=alert(1)>";
+    listAnnotations.mockImplementation(async () =>
+      createAnnotation.mock.calls.length > 0
+        ? okRead({
+            items: [
+              {
+                id: "anno-real-1",
+                type: "range",
+                status: "unresolved",
+                isOrphaned: false,
+                anchor: { blockId: "block-p-1", textSnippet: "Payment expires after 24h", offset: 0, length: 25 },
+                comments: [{ id: "cmt-real-1", parentId: null, authorName: "You", body: xss, createdAt: new Date().toISOString() }],
+              },
+            ],
+          })
+        : okRead({ items: [] }),
+    );
+
     await renderViewer();
 
     selectPhrase("block-p-1", "Payment expires after 24h");
     await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-comment"));
     const composer = await screen.findByTestId("composer");
-    await userEvent.type(within(composer).getByTestId("composer-input"), "<img src=x onerror=alert(1)>");
+    await userEvent.type(within(composer).getByTestId("composer-input"), xss);
     await userEvent.click(within(composer).getByTestId("composer-send"));
 
     const card = (await screen.findAllByTestId("thread-card"))[0]!;

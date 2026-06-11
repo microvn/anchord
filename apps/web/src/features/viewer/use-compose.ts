@@ -133,8 +133,9 @@ export function useCompose(
       setQuote(null);
       setPending(true);
 
-      const rollback = () => {
-        // C-011: remove the optimistic thread + its highlight; no ghost thread left behind.
+      // Drop the optimistic temp thread + unwrap its highlight mark. Shared by the success reconcile
+      // (the real refetched row becomes the single source of truth) and the failure rollback.
+      const clearOptimistic = () => {
         setOptimistic((prev) => prev.filter((a) => a.id !== tempId));
         if (docPaneEl) {
           const mark = docPaneEl.querySelector<HTMLElement>(`[data-anno="${tempId}"]`);
@@ -145,6 +146,11 @@ export function useCompose(
             parent.normalize?.();
           }
         }
+      };
+
+      const rollback = () => {
+        // C-011: remove the optimistic thread + its highlight; no ghost thread left behind.
+        clearOptimistic();
         toast.error("Couldn't save your comment");
       };
 
@@ -170,7 +176,11 @@ export function useCompose(
             rollback();
             return;
           }
-          // Success: reconcile from the server so the optimistic temp is replaced by the real row.
+          // Success: reconcile. Clear the optimistic temp thread + its highlight mark so the
+          // refetched real row is the SINGLE source of truth — otherwise the comment renders twice
+          // (optimistic + real), the rail count double-counts, and the stale temp mark can collide
+          // / double-wrap the same range as the real annotation's mark. onSent() refetches the real row.
+          clearOptimistic();
           onSent();
         } catch {
           // network failure (C-011/AS-013).
