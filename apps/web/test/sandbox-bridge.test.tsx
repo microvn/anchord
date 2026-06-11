@@ -42,6 +42,7 @@ mock.module("../src/features/viewer/client", () => ({
   listAnnotations,
   createAnnotation,
   addComment,
+  setResolution: mock(async () => ({ data: { success: true, data: { status: "resolved" } }, error: null })),
   canComment,
 }));
 

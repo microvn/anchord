@@ -63,6 +63,7 @@ mock.module("../src/features/viewer/client", () => ({
   // real canComment default (non-viewer → may comment).
   createAnnotation: mock(async () => ({ data: { success: true, data: { annotationId: "a" } }, error: null })),
   addComment: mock(async () => ({ data: { success: true, data: { commentId: "c" } }, error: null })),
+  setResolution: mock(async () => ({ data: { success: true, data: { status: "resolved" } }, error: null })),
   canComment: (role: string | undefined) => role !== "viewer",
 }));
 

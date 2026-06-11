@@ -22,6 +22,7 @@ import {
   fetchViewerDoc,
   listAnnotations,
   addComment,
+  setResolution,
   canComment,
   type ViewerDocResponse,
   type ListAnnotationsResponse,
@@ -383,6 +384,7 @@ function useAnnotations(
     unplaceableIds: Set<string>;
     onFocusThread: (id: string) => void;
     onReply?: (annotation: ViewerAnnotation, body: string) => Promise<boolean>;
+    onResolve?: (annotation: ViewerAnnotation, resolved: boolean) => Promise<boolean>;
   };
 } {
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -445,9 +447,46 @@ function useAnnotations(
         }
       : undefined;
 
+  // S-004 (AS-007/AS-008/C-006): resolve / reopen an anchored thread. Gated by canCompose (C-004):
+  // a viewer-only role gets no Resolve control. NOT author-gated — the server authorizes purely on
+  // the session role (AS-008). On the toggle we also dim the in-text highlight immediately by
+  // flipping the matching mark's data-resolved flag (the spec's "highlight dims"); the next refetch
+  // re-places marks from the server status, so the dim reflects the SERVER result. On a refused/
+  // failed write we revert the mark, return false (the card rolls its optimistic toggle back), and
+  // toast the same error S-001/S-003 use.
+  const dimMark = (annotationId: string, resolved: boolean) => {
+    if (!docPaneEl) return;
+    const mark = docPaneEl.querySelector<HTMLElement>(`[data-anno="${annotationId}"]`);
+    if (mark) {
+      if (resolved) mark.dataset.resolved = "true";
+      else delete mark.dataset.resolved;
+    }
+  };
+  const onResolve =
+    canCompose && workspaceId && slug
+      ? async (annotation: ViewerAnnotation, resolved: boolean): Promise<boolean> => {
+          dimMark(annotation.id, resolved); // AS-007: highlight dims optimistically
+          try {
+            const res = await setResolution(workspaceId, annotation.id, { resolved });
+            if (res.error) {
+              dimMark(annotation.id, !resolved); // revert the highlight
+              toast.error("Couldn't update this thread");
+              return false;
+            }
+            // Reconcile: the refetched annotation carries the server status, re-placing the mark.
+            await annoQuery.refetch();
+            return true;
+          } catch {
+            dimMark(annotation.id, !resolved);
+            toast.error("Couldn't update this thread");
+            return false;
+          }
+        }
+      : undefined;
+
   return {
     count: annotations.length,
     refetch: () => annoQuery.refetch(),
-    railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread, onReply },
+    railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread, onReply, onResolve },
   };
 }

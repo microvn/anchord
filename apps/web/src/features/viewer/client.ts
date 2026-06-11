@@ -170,3 +170,31 @@ export function addComment(
     .annotations({ annotationId })
     .comments.post(body) as Promise<EdenResult<AddCommentResult>>;
 }
+
+// --- Resolution toggle (S-004) -------------------------------------------------------------
+// PATCH /api/w/:workspaceId/annotations/:id/resolution — resolve or reopen a thread. NOTE the
+// path is workspace-scoped on the ANNOTATION id (NOT doc-scoped like create/comment) — it mirrors
+// the backend route `PATCH …/annotations/:id/resolution`. The body is the toggle `{ resolved }`;
+// the server re-authorizes by session role (commenter+, C-006/C-001) and returns the new `status`.
+// Resolving is NOT author-only — there is no creator field; the role alone authorizes (AS-008).
+
+export interface SetResolutionBody {
+  /** true → resolve (status=resolved); false → reopen (status=unresolved). */
+  resolved: boolean;
+}
+
+export interface SetResolutionResult {
+  status: "unresolved" | "resolved";
+}
+
+/** PATCH …/annotations/:id/resolution — toggle an annotation's resolved status (S-004). */
+export function setResolution(
+  workspaceId: string,
+  annotationId: string,
+  body: SetResolutionBody,
+): Promise<EdenResult<SetResolutionResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .annotations({ id: annotationId })
+    .resolution.patch(body) as Promise<EdenResult<SetResolutionResult>>;
+}

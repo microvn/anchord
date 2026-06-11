@@ -14,6 +14,7 @@ export function AnnotationsRail({
   unplaceableIds,
   onFocusThread,
   onReply,
+  onResolve,
   composer,
 }: {
   annotations: ViewerAnnotation[];
@@ -26,6 +27,11 @@ export function AnnotationsRail({
    *  the annotation's first/root comment. Returns false on a refused/failed write so the card rolls
    *  back its optimistic reply (no ghost). Absent → a read-only rail (viewer role, C-004). */
   onReply?: (annotation: ViewerAnnotation, body: string) => Promise<boolean>;
+  /** S-004: resolve / reopen a specific anchored thread. The rail binds this per-thread to the
+   *  ThreadCard's onResolve(resolved); the consumer wires setResolution({ resolved }). Returns false
+   *  on a refused/failed write so the card rolls back its optimistic toggle. Absent → no Resolve
+   *  control (viewer role, C-004/C-006 — resolve is comment-gated, not author-gated). */
+  onResolve?: (annotation: ViewerAnnotation, resolved: boolean) => Promise<boolean>;
   /** S-001: the compose box (Composer) when a comment is in progress; mounts at the TOP of the
    *  rail so the in-progress comment + its new thread read top-down. Absent on a read-only rail
    *  (viewer role / no active selection) — the rail stays read-only (C-004). */
@@ -70,6 +76,8 @@ export function AnnotationsRail({
               onFocus={onFocusThread}
               // S-003: bind the rail reply to THIS thread; the card hands us only the body.
               onReply={onReply ? (body) => onReply(a, body) : undefined}
+              // S-004: bind resolve/reopen to THIS thread; the card hands us only the next state.
+              onResolve={onResolve ? (resolved) => onResolve(a, resolved) : undefined}
             />
           ))}
 

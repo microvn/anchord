@@ -191,6 +191,7 @@ export function ThreadCard({
   unplaceable,
   onFocus,
   onReply,
+  onResolve,
 }: {
   annotation: ViewerAnnotation;
   focused: boolean;
@@ -199,8 +200,25 @@ export function ThreadCard({
   /** S-003: send a reply to THIS annotation. The consumer wires addComment({ body, parentId }) with
    *  parentId = the annotation's first comment. Absent → no reply affordance (read-only rail). */
   onReply?: (body: string) => unknown | Promise<unknown>;
+  /** S-004: resolve / reopen THIS annotation. The consumer wires setResolution({ resolved }).
+   *  Gated on comment permission (C-006/C-004), NOT authorship — resolving is not author-only
+   *  (AS-008). Resolves to `false` on a refused/failed write so the card rolls back its optimistic
+   *  toggle (the toggle reflects the SERVER result). Absent → no Resolve control (viewer, C-004). */
+  onResolve?: (resolved: boolean) => Promise<boolean>;
 }) {
-  const resolved = annotation.status === "resolved";
+  // The resolved state the CARD shows. It starts from the server status, but a local optimistic
+  // override (AS-007) drives it the moment the user toggles, before the refetch reconciles. When the
+  // server status catches up (a fresh annotation prop), drop the override so the server is the truth.
+  const serverResolved = annotation.status === "resolved";
+  const [optimisticResolved, setOptimisticResolved] = useState<boolean | null>(null);
+  const lastServerResolved = useRef(serverResolved);
+  useEffect(() => {
+    if (serverResolved !== lastServerResolved.current) {
+      lastServerResolved.current = serverResolved;
+      setOptimisticResolved(null); // server reconciled — its status wins
+    }
+  }, [serverResolved]);
+  const resolved = optimisticResolved ?? serverResolved;
   // Defensive: a thread with no/absent comments must never white-screen the whole viewer
   // (destructuring `undefined` throws "not iterable"). An empty thread renders quote-only.
   const [root, ...replies] = annotation.comments ?? [];
@@ -246,6 +264,30 @@ export function ThreadCard({
             createdAt: new Date().toISOString(),
           },
         ]);
+      }
+    : undefined;
+
+  // S-004 (AS-007/C-006): toggle the resolved status. Optimistically flip the card (badge + dim)
+  // immediately, then call the consumer's setResolution. On a refused/failed write (resolves false)
+  // roll the optimistic flip back — the toggle must reflect the SERVER result, never a forged one.
+  const [toggling, setToggling] = useState(false);
+  const handleResolveToggle = onResolve
+    ? (e: { stopPropagation: () => void }) => {
+        e.stopPropagation(); // never trigger the card's focus onClick
+        if (toggling) return;
+        const next = !resolved;
+        setOptimisticResolved(next);
+        setToggling(true);
+        void (async () => {
+          try {
+            const ok = await onResolve(next);
+            if (!ok) setOptimisticResolved(!next); // rollback to the prior state
+          } catch {
+            setOptimisticResolved(!next);
+          } finally {
+            setToggling(false);
+          }
+        })();
       }
     : undefined;
 
@@ -331,8 +373,25 @@ export function ThreadCard({
         </div>
       )}
 
-      {/* S-003 reply affordance — only when the consumer supplies onReply (comment-capable role). */}
-      {handleReply && <ReplyComposer onReply={handleReply} />}
+      {/* Comment-capable actions row (C-004/C-006): Reply + Resolve/Reopen. Both appear only when
+          their consumer callback is supplied (comment permission or higher) — a viewer-only role
+          gets neither (read-only rail). The Resolve toggle is NOT author-gated (AS-008). */}
+      {(handleReply || handleResolveToggle) && (
+        <div className="mt-[9px] flex items-center gap-3">
+          {handleReply && <ReplyComposer onReply={handleReply} />}
+          {handleResolveToggle && (
+            <button
+              type="button"
+              data-testid="resolve-toggle"
+              disabled={toggling}
+              onClick={handleResolveToggle}
+              className="text-[12px] font-medium text-subtle hover:text-ink disabled:opacity-50"
+            >
+              {resolved ? "Reopen" : "Resolve"}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
