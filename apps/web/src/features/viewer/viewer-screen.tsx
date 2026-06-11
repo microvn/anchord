@@ -248,9 +248,10 @@ function ViewerShell({
       <div className="hidden lg:block">
         <MetaStrip spec={specMeta ?? null} />
       </div>
-      {/* 3 equal panes (Outline · Doc · Comments) at desktop, per the product owner — diverges from
-          the prototype's doc-hero proportions (236/1fr/312). Single column below lg (drawers). */}
-      <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-3">
+      {/* 3-pane shell (Outline · Doc · Comments) at desktop in the prototype's doc-hero proportions
+          236/1fr/312 (Anchord-Design/viewer.css `.vbody`): the DOC column is the dominant 1fr, the
+          outline + comments are fixed-width rails — NOT equal thirds. Single column below lg (drawers). */}
+      <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[236px_1fr_312px]">
         {/* TocSidebar — S-002. Inline column when NOT in tocDrawer mode; an overlay drawer below
             1200 (S-006), opened by the top bar's outline button. */}
         {!tocDrawer && (
