@@ -465,10 +465,21 @@ export function bridgeScript(nonce: string): string {
 
 /**
  * injectBridge — append the bridge `<script>` to already-block-id'd served HTML. Pure
- * string transform. The script carries a CSP nonce so it survives the sandbox CSP's
- * `script-src 'nonce-…'` (see render/sandbox.ts contentHeaders / app.ts). Body scripts
- * have no nonce and are blocked, which is exactly the isolation we want (only OUR bridge
- * runs as privileged in-iframe code; the untrusted body's own scripts are inert under CSP).
+ * string transform.
+ *
+ * SECURITY MODEL (read before assuming isolation): the served CSP is `sandbox
+ * allow-scripts` with NO `script-src` directive (render/sandbox.ts) — chosen so the doc's
+ * OWN scripts run (AS-006/AS-007). Consequence: body scripts ARE NOT blocked, and our
+ * bridge does NOT run as uniquely-privileged in-iframe code. The `nonce` attribute below is
+ * inert under the current CSP — it is forward-compat plumbing for a future flip to
+ * `script-src 'nonce-…'` (which the spec has not decided; that flip would also kill body
+ * scripts, contradicting AS-006/AS-007).
+ *
+ * Because body scripts run, a hostile body script CAN race our bridge's handshake (it shares
+ * the iframe's contentWindow, which is the parent's only source check). That race lets it
+ * open a composer / suppress the real bridge — it CANNOT create an annotation: every create
+ * is re-authorized server-side by session role (C-001). The bridge channel is
+ * defense-in-depth, NOT the authorization boundary. Do not document this as "isolation".
  */
 export function injectBridge(html: string, nonce: string): string {
   // `</script>` anywhere in an inline script body (e.g. via a hostile nonce) would
