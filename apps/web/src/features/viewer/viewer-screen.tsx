@@ -160,7 +160,7 @@ function ViewerShell({
   const [railVisible, setRailVisible] = useState(true);
   const [railOpen, setRailOpen] = useState(false); // drawer-mode rail overlay
   const [tocOpen, setTocOpen] = useState(false); // toc-drawer overlay
-  // S-001 (DocModeToolbar): the doc measure (Wide 760px | Focus 620px). Set on the docpane <main>
+  // S-001 (DocModeToolbar): the doc measure (Wide = full column width | Focus = 800px). Set on the docpane <main>
   // via data-doc-width so .doc-prose reflows. The toolbar only mounts on the success path (doc present).
   const [docWidth, setDocWidth] = useState<"wide" | "focus">("wide");
   const hasDoc = Boolean(workspaceId && slug);
@@ -257,7 +257,10 @@ function ViewerShell({
         {!tocDrawer && (
           <aside
             data-testid="viewer-toc-slot"
-            className="hidden border-r border-line bg-sunken lg:block"
+            // min-h-0 + overflow-hidden: as a grid item this would otherwise grow to its content
+            // height (grid items default to min-height:auto), so the inner outline list never
+            // overflow-scrolls. Constraining the slot lets TocSidebar's own list scroll.
+            className="hidden min-h-0 overflow-hidden border-r border-line bg-sunken lg:block"
           >
             <TocSidebar contentEl={docPaneEl} activeId={activeSection} onActiveChange={setActiveSection} />
           </aside>
@@ -303,7 +306,9 @@ function ViewerShell({
         {!drawerMode && railVisible && (
           <aside
             data-testid="viewer-rail-slot"
-            className="hidden border-l border-line bg-sunken lg:block"
+            // min-h-0 + overflow-hidden so the rail's own thread list overflow-scrolls (same
+            // grid-item min-height:auto issue as the TOC slot).
+            className="hidden min-h-0 overflow-hidden border-l border-line bg-sunken lg:block"
           >
             {railContent}
           </aside>

@@ -3,7 +3,8 @@
 //   • Select | Markup — Select is the read/selection mode owned HERE; Markup (compose-on-the-doc)
 //     belongs to the commenting spec and is not built yet, so it surfaces a "later" toast instead
 //     of dead UI (kept visible so the shell matches the prototype).
-//   • Wide | Focus — the doc measure (760px vs 620px), driven via `data-doc-width` on the docpane.
+//   • Wide | Focus — the doc measure (Wide = full column width, Focus = 800px capped), driven via
+//     `data-doc-width` on the docpane (widths live in styles.css .doc-prose).
 
 type DocWidth = "wide" | "focus";
 

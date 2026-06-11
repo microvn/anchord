@@ -60,6 +60,7 @@ export function TocSidebar({
 }) {
   const [query, setQuery] = useState("");
   const [headings, setHeadings] = useState<Heading[]>([]);
+  const listRef = useRef<HTMLUListElement>(null);
   const onActiveRef = useRef(onActiveChange);
   onActiveRef.current = onActiveChange;
 
@@ -103,6 +104,16 @@ export function TocSidebar({
     return () => scroller.removeEventListener("scroll", compute);
   }, [contentEl, headings]);
 
+  // Keep the active entry visible as scroll-spy advances it: scroll the outline list (NOT the
+  // page) so the current section's item stays in view while the reader scrolls the content.
+  // `block: "nearest"` only nudges the nearest scroll container (this list, a separate subtree
+  // from the doc scroller) and is a no-op when the item is already visible.
+  useEffect(() => {
+    if (!activeId) return;
+    const el = listRef.current?.querySelector<HTMLElement>('a[aria-current="location"]');
+    el?.scrollIntoView({ block: "nearest" });
+  }, [activeId]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return headings;
@@ -131,7 +142,7 @@ export function TocSidebar({
           className="w-full border-none bg-transparent text-[12.5px] text-ink outline-none placeholder:text-subtle"
         />
       </div>
-      <ul className="min-h-0 flex-1 overflow-auto px-2 py-2">
+      <ul ref={listRef} className="min-h-0 flex-1 overflow-auto px-2 py-2">
         {filtered.map((h) => {
           const active = h.id === activeId;
           return (
