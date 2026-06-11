@@ -13,16 +13,22 @@ export function AnnotationsRail({
   focusedId,
   unplaceableIds,
   onFocusThread,
+  composer,
 }: {
   annotations: ViewerAnnotation[];
   focusedId: string | null;
   /** ids the FE couldn't anchor at runtime (GAP-005) — flagged, no scroll target. */
   unplaceableIds: Set<string>;
   onFocusThread: (id: string) => void;
+  /** S-001: the compose box (Composer) when a comment is in progress; mounts at the TOP of the
+   *  rail so the in-progress comment + its new thread read top-down. Absent on a read-only rail
+   *  (viewer role / no active selection) — the rail stays read-only (C-004). */
+  composer?: React.ReactNode;
 }) {
   const anchored = annotations.filter((a) => !a.isOrphaned);
   const detached = annotations.filter((a) => a.isOrphaned);
-  const isEmpty = annotations.length === 0;
+  // The composer (when present) keeps the rail out of its empty state — there's something to show.
+  const isEmpty = annotations.length === 0 && !composer;
 
   return (
     <div data-testid="annotations-rail" className="flex h-full flex-col">
@@ -48,6 +54,7 @@ export function AnnotationsRail({
         </div>
       ) : (
         <div className="flex-1 space-y-2 overflow-auto p-3">
+          {composer}
           {anchored.map((a) => (
             <ThreadCard
               key={a.id}

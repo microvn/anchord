@@ -25,29 +25,46 @@ mock.module("../src/lib/use-breakpoint", () => ({
 }));
 
 // --- viewer client mock: a markdown doc + 3 annotations (one resolved), like AS-014's data ---
+// The real client returns the api-core envelope unwrapped by the screen (unwrapEnvelope) — so the
+// mock wraps its payload in `{ success, data: ... }`, matching what treaty actually delivers.
 const docResponse = {
   data: {
-    doc: { title: "Doc", kind: "markdown", version: 1, status: "live", generalAccess: "restricted" },
-    content:
-      '<p data-block-id="block-p-0">alpha beta gamma</p>' +
-      '<p data-block-id="block-p-1">delta epsilon zeta</p>' +
-      '<p data-block-id="block-p-2">eta theta iota</p>',
+    success: true,
+    data: {
+      doc: { title: "Doc", kind: "markdown", version: 1, status: "live", generalAccess: "restricted" },
+      content:
+        '<p data-block-id="block-p-0">alpha beta gamma</p>' +
+        '<p data-block-id="block-p-1">delta epsilon zeta</p>' +
+        '<p data-block-id="block-p-2">eta theta iota</p>',
+    },
   },
   error: null,
 };
 const annoResponse = {
   data: {
-    items: [
-      { id: "a1", type: "comment", anchor: { blockId: "block-p-0", textSnippet: "beta", offset: 6, length: 4 }, status: "unresolved", isOrphaned: false, comments: [] },
-      { id: "a2", type: "comment", anchor: { blockId: "block-p-1", textSnippet: "epsilon", offset: 6, length: 7 }, status: "unresolved", isOrphaned: false, comments: [] },
-      { id: "a3", type: "comment", anchor: { blockId: "block-p-2", textSnippet: "theta", offset: 4, length: 5 }, status: "unresolved", isOrphaned: false, comments: [] },
-    ],
+    success: true,
+    data: {
+      items: [
+        { id: "a1", type: "comment", anchor: { blockId: "block-p-0", textSnippet: "beta", offset: 6, length: 4 }, status: "unresolved", isOrphaned: false, comments: [] },
+        { id: "a2", type: "comment", anchor: { blockId: "block-p-1", textSnippet: "epsilon", offset: 6, length: 7 }, status: "unresolved", isOrphaned: false, comments: [] },
+        { id: "a3", type: "comment", anchor: { blockId: "block-p-2", textSnippet: "theta", offset: 4, length: 5 }, status: "unresolved", isOrphaned: false, comments: [] },
+      ],
+    },
   },
   error: null,
 };
 const fetchViewerDoc = mock(async () => docResponse);
 const listAnnotations = mock(async () => annoResponse);
-mock.module("../src/features/viewer/client", () => ({ fetchViewerDoc, listAnnotations }));
+mock.module("../src/features/viewer/client", () => ({
+  fetchViewerDoc,
+  listAnnotations,
+  // S-001 grew the client surface; use-compose imports these at module eval, so the whole-module
+  // mock must provide them. These tests don't exercise the write path — safe no-op stubs + the
+  // real canComment default (non-viewer → may comment).
+  createAnnotation: mock(async () => ({ data: { success: true, data: { annotationId: "a" } }, error: null })),
+  addComment: mock(async () => ({ data: { success: true, data: { commentId: "c" } }, error: null })),
+  canComment: (role: string | undefined) => role !== "viewer",
+}));
 
 const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
 

@@ -21,6 +21,20 @@ const treaty = api as any;
 
 export type ViewerDocKind = "markdown" | "html" | "image";
 
+/** The session's effective role on THIS doc (most-permissive of membership + per-doc share).
+ *  Drives the compose affordance gate (C-004): only `commenter`+ may comment; `viewer` is
+ *  read-only. The server is the source of truth + re-authorizes every write (C-001) — this is a
+ *  UI hint, not a security boundary. Absent (older payload) → treated as comment-capable so the
+ *  read-side viewer tests that don't carry a role keep their compose-agnostic behavior. */
+export type EffectiveRole = "viewer" | "commenter" | "editor" | "owner";
+
+export function canComment(role: EffectiveRole | undefined): boolean {
+  // Only an explicit viewer role is read-only; anything else (incl. an absent/unknown role) may
+  // compose. The server re-authorizes the write regardless (C-001), so an over-permissive hint
+  // surfaces as the AS-013 refused-write rollback, never a silent forged annotation.
+  return role !== "viewer";
+}
+
 export interface ViewerDocResponse {
   doc: {
     title: string;
@@ -28,6 +42,8 @@ export interface ViewerDocResponse {
     version: number;
     status: string;
     generalAccess: string;
+    /** the caller's effective role on this doc (C-004 compose gate); optional on older payloads. */
+    effectiveRole?: EffectiveRole;
   };
   /** markdown → sanitized HTML string; html/image → a { contentUrl } sandbox reference. */
   content: string | { contentUrl: string };
@@ -91,4 +107,66 @@ export function listAnnotations(
     .w({ workspaceId })
     .docs({ slug })
     .annotations.get() as Promise<EdenResult<ListAnnotationsResponse>>;
+}
+
+// --- Annotation / comment WRITE (S-001 commenting) -----------------------------------------
+// The write path: POST …/docs/:slug/annotations to create a block-anchored annotation, then
+// POST …/annotations/:id/comments to attach the comment body. Both are workspace-scoped
+// (GAP-001). Identity rides the session cookie (api.ts credentials:include) — the body carries
+// NO userId. Every write is re-authorized server-side by the session role (C-001): a forged role
+// hint cannot create an annotation; a revoked role comes back refused → the FE rolls back (C-011).
+
+/** The text-range anchor sent on create (selection→anchor, G3). `segments` spans multi-block. */
+export interface CreateAnchor {
+  blockId: string;
+  textSnippet: string;
+  offset: number;
+  length: number;
+  segments?: { blockId: string; textSnippet: string; offset: number; length: number }[];
+}
+
+export interface CreateAnnotationBody {
+  type: string;
+  anchor: CreateAnchor;
+}
+
+export interface CreateAnnotationResult {
+  annotationId: string;
+}
+
+export interface AddCommentBody {
+  body: string;
+  parentId?: string;
+  guestName?: string;
+  guestEmail?: string;
+}
+
+export interface AddCommentResult {
+  commentId: string;
+}
+
+/** POST …/docs/:slug/annotations — create a block-anchored annotation (S-001). */
+export function createAnnotation(
+  workspaceId: string,
+  slug: string,
+  body: CreateAnnotationBody,
+): Promise<EdenResult<CreateAnnotationResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .annotations.post(body) as Promise<EdenResult<CreateAnnotationResult>>;
+}
+
+/** POST …/docs/:slug/annotations/:id/comments — attach a comment to an annotation (S-001). */
+export function addComment(
+  workspaceId: string,
+  slug: string,
+  annotationId: string,
+  body: AddCommentBody,
+): Promise<EdenResult<AddCommentResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .annotations({ annotationId })
+    .comments.post(body) as Promise<EdenResult<AddCommentResult>>;
 }

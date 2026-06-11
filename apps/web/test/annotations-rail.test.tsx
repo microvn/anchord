@@ -51,7 +51,16 @@ let annoResponse: unknown;
 const fetchViewerDoc = mock(async () => docResponse);
 const listAnnotations = mock(async () => annoResponse);
 
-mock.module("../src/features/viewer/client", () => ({ fetchViewerDoc, listAnnotations }));
+mock.module("../src/features/viewer/client", () => ({
+  fetchViewerDoc,
+  listAnnotations,
+  // S-001 grew the client surface; use-compose imports these at module eval, so the whole-module
+  // mock must provide them. These tests don't exercise the write path — safe no-op stubs + the
+  // real canComment default (non-viewer → may comment).
+  createAnnotation: mock(async () => ({ data: { success: true, data: { annotationId: "a" } }, error: null })),
+  addComment: mock(async () => ({ data: { success: true, data: { commentId: "c" } }, error: null })),
+  canComment: (role: string | undefined) => role !== "viewer",
+}));
 
 const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
 
@@ -190,7 +199,7 @@ describe("AnnotationsRail S-003", () => {
     const resolved = screen.getByTestId("annotations-rail").querySelector('[data-anno-thread="a3"]') as HTMLElement;
     expect(resolved.getAttribute("data-resolved")).toBe("true");
     expect(within(resolved).getByTestId("resolved-badge")).toBeInTheDocument();
-    expect(resolved.className).toContain("opacity-60");
+    expect(resolved.className).toContain("opacity-[0.72]"); // .thread.resolved opacity .72 (Anchord-Design)
 
     // The highlight in text carries the resolved (not active) style hook.
     const mark = screen.getByTestId("markdown-view").querySelector('[data-anno="a3"]') as HTMLElement;
@@ -212,6 +221,78 @@ describe("AnnotationsRail S-003", () => {
     expect(screen.getByTestId("markdown-view").querySelectorAll("[data-anno]")).toHaveLength(0);
     // The doc still renders.
     expect(screen.getByTestId("markdown-view")).toHaveTextContent("Payment expires after 24h");
+  });
+
+  it("Regression: an annotation with no comments[] renders the rail (empty thread), never white-screens", async () => {
+    // Regression: BE↔FE linked-field gap — the list-annotations endpoint omitted comments[], so
+    // thread-card.tsx destructured `undefined` ("not iterable") and blanked the whole viewer.
+    // Confirmed live via Playwright before the guard. The rail must survive a thread-less annotation.
+    annoResponse = ok({
+      items: [
+        makeAnnotation({
+          id: "a1",
+          comments: undefined,
+          anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 },
+        }),
+      ],
+    });
+
+    await renderViewer();
+
+    // No crash: the rail + doc still render, the thread shows quote-only.
+    expect(screen.getAllByTestId("thread-card")).toHaveLength(1);
+    expect(screen.getByTestId("markdown-view")).toHaveTextContent("Payment expires after 24h");
+    expect(screen.getAllByTestId("thread-card")[0]!).toHaveTextContent("expires after 24h");
+  });
+
+  it("Regression: a comment whose createdAt is a Date (eden revives ISO) renders, never '[object Date]'", async () => {
+    // Regression: the eden treaty client revives ISO timestamps into Date objects; thread-card's
+    // timeLabel rendered the raw Date as a React child → "Objects are not valid as a React child
+    // ([object Date])" → blank viewer. Confirmed live via Playwright. timeLabel must coerce.
+    annoResponse = ok({
+      items: [
+        makeAnnotation({
+          id: "a1",
+          anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 },
+          comments: [
+            { id: "c1", parentId: null, authorName: "Demo User", body: "a real thread", createdAt: new Date("2026-06-11T02:11:36.384Z") },
+          ],
+        }),
+      ],
+    });
+
+    await renderViewer();
+
+    const card = screen.getAllByTestId("thread-card")[0]!;
+    expect(card).toHaveTextContent("a real thread");
+    expect(card).not.toHaveTextContent("[object Date]");
+  });
+
+  it("Regression: a Date createdAt renders a short relative label (now/Nm/Nh/Nd), never raw ISO", async () => {
+    // The eden treaty client revives ISO timestamps into Date objects. timeLabel must format them
+    // as a short relative label like the prototype ("now", "4h", "2d") — never leak raw ISO
+    // ("2026-06-11T03:00:08.926Z") into the UI.
+    annoResponse = ok({
+      items: [
+        makeAnnotation({
+          id: "a1",
+          anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 },
+          comments: [
+            { id: "c1", parentId: null, authorName: "Demo User", body: "fresh comment", createdAt: new Date() },
+          ],
+        }),
+      ],
+    });
+
+    await renderViewer();
+
+    const card = screen.getAllByTestId("thread-card")[0]!;
+    // No ISO leaking: no "<digit>T<digit>" and no ISO date.
+    expect(card.textContent).not.toMatch(/\dT\d/);
+    expect(card.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    // The timestamp node reads as a short relative label — a Date close to now is "now".
+    const timeNode = within(card).getByText(/^(now|\d+[mhd])$/);
+    expect(timeNode).toHaveTextContent("now");
   });
 
   it("AS-011 / C-004: a detached (isOrphaned) annotation shows in the amber detached section, never as anchored", async () => {

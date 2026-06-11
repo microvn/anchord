@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useApiQuery } from "../../lib/use-api-query";
 import { useViewerLayoutMode } from "../../lib/use-breakpoint";
 import { Icon } from "../../components/icon";
@@ -7,15 +7,20 @@ import { EmptyState } from "../../components/empty-state";
 import { ErrorState } from "../../components/error-state";
 import { Skeleton } from "../../components/skeleton";
 import { DocPane } from "./doc-pane";
+import { DocModeToolbar } from "./doc-mode-toolbar";
 import { TocSidebar } from "./toc-sidebar";
 import { AnnotationsRail } from "./annotations-rail";
 import { ViewerTopBar } from "./viewer-top-bar";
 import { MetaStrip, type SpecMeta } from "./meta-strip";
 import { toast } from "sonner";
 import { useAnnotationMarks, placeAnnotations, scrollToAnno } from "./annotation-marks";
+import { SelectionPopover } from "./selection-popover";
+import { Composer } from "./composer";
+import { useCompose } from "./use-compose";
 import {
   fetchViewerDoc,
   listAnnotations,
+  canComment,
   type ViewerDocResponse,
   type ListAnnotationsResponse,
   type ViewerAnnotation,
@@ -85,7 +90,14 @@ export function ViewerScreen() {
   // those fields (or a spec-meta read lands), build a SpecMeta here from slug/version/url + counts.
   const specMeta: SpecMeta | null = null;
   return (
-    <ViewerShell title={doc.doc.title} doc={doc.doc} specMeta={specMeta} workspaceId={workspaceId} slug={slug}>
+    <ViewerShell
+      title={doc.doc.title}
+      doc={doc.doc}
+      specMeta={specMeta}
+      workspaceId={workspaceId}
+      slug={slug}
+      canCompose={canComment(doc.doc.effectiveRole)}
+    >
       <DocPane doc={doc} />
     </ViewerShell>
   );
@@ -107,6 +119,7 @@ function ViewerShell({
   children,
   workspaceId,
   slug,
+  canCompose = false,
 }: {
   title: string;
   /** present only on the success path — drives the S-005 ViewerTopBar identity. */
@@ -115,8 +128,12 @@ function ViewerShell({
   children: React.ReactNode;
   workspaceId?: string;
   slug?: string;
+  /** S-001/C-004: whether the session's effective role may comment. A viewer-only role gets a
+   *  read-only rail — no popover, no composer. False on the loading / error shells (no doc). */
+  canCompose?: boolean;
 }) {
   const { drawerMode, tocDrawer } = useViewerLayoutMode();
+  const navigate = useNavigate();
 
   // The scrollable doc pane is both the scroll-spy container, the TOC heading source, AND the
   // highlight host for S-003. A callback ref re-derives once the content mounts (and on new doc).
@@ -129,6 +146,9 @@ function ViewerShell({
   const [railVisible, setRailVisible] = useState(true);
   const [railOpen, setRailOpen] = useState(false); // drawer-mode rail overlay
   const [tocOpen, setTocOpen] = useState(false); // toc-drawer overlay
+  // S-001 (DocModeToolbar): the doc measure (Wide 760px | Focus 620px). Set on the docpane <main>
+  // via data-doc-width so .doc-prose reflows. The toolbar only mounts on the success path (doc present).
+  const [docWidth, setDocWidth] = useState<"wide" | "focus">("wide");
   const hasDoc = Boolean(workspaceId && slug);
 
   // S-003/S-006: the annotations are read here (lifted above the rail) so the CommentFab can show
@@ -137,13 +157,39 @@ function ViewerShell({
     if (drawerMode) setRailOpen(true); // AS-014: tapping a highlight opens the rail drawer
   });
 
+  // S-001 (commenting write path): capture a text selection on the doc → popover → composer → send.
+  // Gated by `canCompose` (C-004): a viewer-only role never sees a popover/composer (read-only rail).
+  const compose = useCompose(workspaceId, slug, docPaneEl, canCompose, () => {
+    if (drawerMode) setRailOpen(true); // surface the composer in the rail drawer on tablet/mobile
+    void anno.refetch();
+  });
+
   const toggleRail = () => (drawerMode ? setRailOpen((o) => !o) : setRailVisible((v) => !v));
   const closeDrawers = () => {
     setRailOpen(false);
     setTocOpen(false);
   };
 
-  const railContent = hasDoc ? <AnnotationsRail {...anno.railProps} /> : null;
+  const composerNode =
+    compose.quote !== null ? (
+      <Composer
+        quote={compose.quote}
+        pending={compose.pending}
+        onSend={compose.send}
+        onCancel={compose.cancel}
+      />
+    ) : null;
+
+  // Optimistic threads (created locally, not yet reconciled by a refetch) lead the rail so the
+  // newest comment tops the list (AS-001) and the count includes them (AS-001.T4 / C-011).
+  const railAnnotations = [...compose.optimistic, ...anno.railProps.annotations];
+  const railContent = hasDoc ? (
+    <AnnotationsRail
+      {...anno.railProps}
+      annotations={railAnnotations}
+      composer={composerNode}
+    />
+  ) : null;
 
   return (
     <div data-testid="viewer-screen" className="flex h-dvh flex-col bg-paper text-ink">
@@ -155,6 +201,7 @@ function ViewerShell({
           onToggleRail={toggleRail}
           onToggleToc={() => setTocOpen((o) => !o)}
           showTocToggle={tocDrawer}
+          onBack={workspaceId ? () => navigate(`/w/${workspaceId}`) : undefined}
           onVersion={() => toast("Version history isn't available yet")}
           onShare={() => toast("Sharing isn't available yet")}
           onOverflow={() => toast("More actions")}
@@ -169,7 +216,9 @@ function ViewerShell({
       <div className="hidden lg:block">
         <MetaStrip spec={specMeta ?? null} />
       </div>
-      <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[260px_1fr_360px]">
+      {/* 3 equal panes (Outline · Doc · Comments) at desktop, per the product owner — diverges from
+          the prototype's doc-hero proportions (236/1fr/312). Single column below lg (drawers). */}
+      <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-3">
         {/* TocSidebar — S-002. Inline column when NOT in tocDrawer mode; an overlay drawer below
             1200 (S-006), opened by the top bar's outline button. */}
         {!tocDrawer && (
@@ -180,7 +229,19 @@ function ViewerShell({
             <TocSidebar contentEl={docPaneEl} activeId={activeSection} onActiveChange={setActiveSection} />
           </aside>
         )}
-        <main ref={setDocPaneEl} data-testid="viewer-doc-pane" className="min-w-0 overflow-auto">
+        <main
+          ref={setDocPaneEl}
+          data-testid="viewer-doc-pane"
+          data-doc-width={docWidth}
+          className="min-w-0 overflow-auto"
+        >
+          {doc && (
+            <DocModeToolbar
+              width={docWidth}
+              onWidth={setDocWidth}
+              onMarkupUnavailable={() => toast("Markup mode arrives with commenting")}
+            />
+          )}
           {children}
         </main>
         {/* AnnotationsRail — S-003. Inline column on desktop while the comments toggle keeps it
@@ -240,8 +301,19 @@ function ViewerShell({
           onClick={() => setRailOpen(true)}
         >
           <Icon name="inbox" size={16} />
-          {anno.count}
+          {anno.count + compose.optimistic.length}
         </button>
+      )}
+
+      {/* S-001: the selection popover — floats over a live selection, offering Comment. Only ever
+          rendered for a comment-capable role (C-004) and a real selection (C-003), both enforced in
+          useCompose; mounted here so it overlays the viewer body. */}
+      {compose.popover && (
+        <SelectionPopover
+          rect={compose.popover}
+          onComment={compose.startComment}
+          onDismiss={compose.dismissPopover}
+        />
       )}
     </div>
   );
@@ -260,6 +332,7 @@ function useAnnotations(
   onHighlightTap: () => void,
 ): {
   count: number;
+  refetch: () => Promise<unknown>;
   railProps: {
     annotations: ViewerAnnotation[];
     focusedId: string | null;
@@ -299,6 +372,7 @@ function useAnnotations(
 
   return {
     count: annotations.length,
+    refetch: () => annoQuery.refetch(),
     railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread },
   };
 }

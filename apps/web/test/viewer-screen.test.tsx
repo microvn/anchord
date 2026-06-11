@@ -1,5 +1,5 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
@@ -13,8 +13,11 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 // AS-003 image → renders the image + a zoom control that changes the zoom transform.
 // AS-004 no-access/missing (404) → a not-found state, never the content (existence-hiding, C-002).
 
-// Eden's `{ data, error }` envelope shapes.
-const ok = (body: unknown) => ({ data: body, error: null });
+// Eden's `{ data, error }` envelope shapes. The real client returns treaty's result UNwrapped —
+// `data` is the api-core envelope `{ success, data: <payload>, ... }`, and the screen peels that
+// inner `.data` via unwrapEnvelope. Mirror that here so a regression that drops the unwrap (reading
+// the raw envelope, `.doc` undefined → blank viewer) actually fails a test instead of passing.
+const ok = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 const httpError = (status: number, code?: string) => ({
   data: null,
   error: { status, value: code ? { success: false, error: { code, message: "nope" } } : null },
@@ -25,9 +28,18 @@ const fetchViewerDoc = mock(async () => response);
 // S-003 added the annotations read to this client module; the viewer now mounts the rail, which
 // calls listAnnotations. These S-001 tests only assert the doc surface, so the rail's read returns
 // an empty list (the rail then shows its empty state, irrelevant to the S-001 assertions).
-const listAnnotations = mock(async () => ({ data: { items: [] }, error: null }));
+const listAnnotations = mock(async () => ({ data: { success: true, data: { items: [] } }, error: null }));
 
-mock.module("../src/features/viewer/client", () => ({ fetchViewerDoc, listAnnotations }));
+mock.module("../src/features/viewer/client", () => ({
+  fetchViewerDoc,
+  listAnnotations,
+  // S-001 grew the client surface; use-compose imports these at module eval, so the whole-module
+  // mock must provide them. These tests don't exercise the write path — safe no-op stubs + the
+  // real canComment default (non-viewer → may comment).
+  createAnnotation: mock(async () => ({ data: { success: true, data: { annotationId: "a" } }, error: null })),
+  addComment: mock(async () => ({ data: { success: true, data: { commentId: "c" } }, error: null })),
+  canComment: (role: string | undefined) => role !== "viewer",
+}));
 
 const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
 
@@ -41,6 +53,8 @@ function App() {
       <MemoryRouter initialEntries={["/w/ws-1/d/my-doc"]}>
         <Routes>
           <Route path="/w/:workspaceId/d/:slug" element={<ViewerScreen />} />
+          {/* Bug #3: the top bar's Back button navigates here (workspace home, /w/:workspaceId). */}
+          <Route path="/w/:workspaceId" element={<div data-testid="workspace-home">home</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -70,6 +84,27 @@ describe("ViewerScreen S-001", () => {
     // …NOT inside an iframe.
     expect(screen.queryByTestId("html-sandbox-frame")).toBeNull();
     expect(document.querySelector("iframe")).toBeNull();
+  });
+
+  it("S-001 (DocModeToolbar): Wide↔Focus toggles the doc measure on the docpane", async () => {
+    response = ok({
+      doc: { title: "My MD doc", kind: "markdown", version: 1, status: "published", generalAccess: "restricted" },
+      content: "<h1 id='block-h1-1'>Title</h1><p id='block-p-1'>body</p>",
+    });
+
+    render(<App />);
+
+    await screen.findByTestId("markdown-view");
+    const pane = screen.getByTestId("viewer-doc-pane");
+    const toolbar = screen.getByTestId("doc-mode-toolbar");
+    // Default measure is Wide.
+    expect(pane).toHaveAttribute("data-doc-width", "wide");
+
+    await userEvent.click(within(toolbar).getByText("Focus"));
+    expect(pane).toHaveAttribute("data-doc-width", "focus");
+
+    await userEvent.click(within(toolbar).getByText("Wide"));
+    expect(pane).toHaveAttribute("data-doc-width", "wide");
   });
 
   it("AS-002: an HTML doc renders in a sandboxed iframe with the content URL (not inline html)", async () => {
@@ -137,6 +172,22 @@ describe("ViewerScreen S-001", () => {
     // Click again → rail back.
     await userEvent.click(screen.getByTestId("vt-comments-toggle"));
     expect(screen.getByTestId("viewer-rail-slot")).toBeInTheDocument();
+  });
+
+  it("Bug #3: the top bar shows a Back button that navigates to the workspace home", async () => {
+    response = ok({
+      doc: { title: "My MD doc", kind: "markdown", version: 1, status: "live", generalAccess: "restricted" },
+      content: "<h2>Intro</h2><p>body</p>",
+    });
+
+    render(<App />);
+
+    await screen.findByTestId("markdown-view");
+    const back = screen.getByRole("button", { name: "Back" });
+    expect(back).toBeInTheDocument();
+
+    await userEvent.click(back);
+    expect(screen.getByTestId("workspace-home")).toBeInTheDocument();
   });
 
   it("AS-004: a doc I cannot access (404) shows a not-found state, never its content", async () => {
