@@ -24,13 +24,25 @@ export interface SelectionAnchor {
   segments: { blockId: string; textSnippet: string; offset: number; length: number }[];
 }
 
-/** Nearest ancestor element (incl. self) carrying a data-block-id, walking up from `node`. */
+/** The block id of an element, or null. injectBlockIds (block-id.ts) stamps a plain block as
+ *  `id="block-{tag}-{n}"` and only falls back to `data-block-id` when the element ALREADY has an
+ *  author id. So a block is addressable by EITHER form — must accept both, or markdown (whose
+ *  blocks get the `id` form) never resolves. Mirrors annotation-marks.ts findBlock + the backend
+ *  bridge BLOCK_SELECTOR. */
+function blockIdOf(e: HTMLElement): string | null {
+  const dbi = e.getAttribute?.("data-block-id");
+  if (dbi) return dbi;
+  const id = e.id;
+  return id && id.startsWith("block-") ? id : null;
+}
+
+/** Nearest ancestor element (incl. self) carrying a block id (data-block-id OR id="block-…"). */
 function closestBlock(node: Node | null): HTMLElement | null {
   let el: Node | null = node;
   while (el) {
     if (el.nodeType === 1) {
       const e = el as HTMLElement;
-      if (e.hasAttribute?.("data-block-id")) return e;
+      if (blockIdOf(e)) return e;
     }
     el = el.parentNode;
   }
@@ -92,7 +104,7 @@ export function selectionToAnchor(selection: Selection | null): SelectionAnchor 
 
   const length = raw.length;
   const textSnippet = raw.slice(0, SNIPPET_CAP);
-  const blockId = block.getAttribute("data-block-id")!;
+  const blockId = blockIdOf(block)!;
 
   const segment = { blockId, offset, length, textSnippet };
   return { blockId, textSnippet, offset, length, segments: [segment] };

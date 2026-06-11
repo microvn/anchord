@@ -364,7 +364,10 @@ const { selectionToAnchor } = await import("../src/features/viewer/selection-anc
 
 function selectionOf(html: string, blockId: string, phrase: string): Selection {
   document.body.innerHTML = html;
-  const block = document.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
+  // Resolve by id OR data-block-id — injectBlockIds stamps markdown blocks as id="block-…" and
+  // only uses data-block-id when the element already had an author id.
+  const block = (document.getElementById(blockId) ??
+    document.querySelector(`[data-block-id="${blockId}"]`)) as HTMLElement;
   // Find the text node + index for `phrase` anywhere in the block (walk text nodes).
   const walker = document.createTreeWalker(block, 0x4 /* SHOW_TEXT */);
   let node = walker.nextNode() as Text | null;
@@ -400,6 +403,23 @@ describe("selectionToAnchor (S-001 anchor contract)", () => {
     expect(anchor.segments).toEqual([
       { blockId: "block-p-1", offset: 8, length: 17, textSnippet: "expires after 24h" },
     ]);
+  });
+
+  it('AS-001: resolves a block addressed by id="block-…" (the real injectBlockIds markdown form, not data-block-id)', () => {
+    // REGRESSION: injectBlockIds stamps a plain markdown block as id="block-p-1" (data-block-id
+    // only when the element already has an author id). selectionToAnchor formerly matched
+    // data-block-id ONLY, so EVERY real markdown selection returned null → no popover → commenting
+    // silently dead. The old mock used data-block-id, hiding it. This asserts the id form resolves.
+    const sel = selectionOf(
+      '<p id="block-p-1">Payment expires after 24h unless renewed.</p>',
+      "block-p-1",
+      "expires after 24h",
+    );
+    const anchor = selectionToAnchor(sel)!;
+    expect(anchor).not.toBeNull();
+    expect(anchor.blockId).toBe("block-p-1");
+    expect(anchor.textSnippet).toBe("expires after 24h");
+    expect(anchor.offset).toBe("Payment ".length);
   });
 
   it("AS-001: offset is measured from the start of the block text (mid-block selection)", () => {
