@@ -3,6 +3,30 @@ import { toast } from "sonner";
 import { createAnnotation, addComment, type ViewerAnnotation } from "./client";
 import { selectionToAnchor, type SelectionAnchor } from "./selection-anchor";
 import { placeAnnotations } from "./annotation-marks";
+import { placePopover, isRectOutOfViewport, type RectLike } from "./place-popover";
+
+// MƯỢT TASK 1/2: the popover is now viewport-aware. A live Markdown selection keeps a reference to
+// its DOM Range so scroll/resize can re-read the current selection rect and reposition (or dismiss
+// when it scrolls out). placePopover (pure) does the flip/clamp math; this hook owns the wiring.
+//
+// A fallback popover size used while the popover hasn't been measured yet (happy-dom returns 0 for
+// getBoundingClientRect, so every test path uses this). Roughly the rendered Comment+Dismiss toolbar.
+const DEFAULT_POPOVER_SIZE = { width: 168, height: 40 };
+
+function viewport(): { width: number; height: number } {
+  return {
+    width: typeof window !== "undefined" ? window.innerWidth || 1024 : 1024,
+    height: typeof window !== "undefined" ? window.innerHeight || 768 : 768,
+  };
+}
+
+/** Read the live selection's first range rect (RectLike), or null when there's no live range. */
+function selectionRect(sel: Selection | null): RectLike | null {
+  if (!sel || sel.rangeCount === 0) return null;
+  const r = sel.getRangeAt(0).getBoundingClientRect?.();
+  if (!r) return null;
+  return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+}
 
 // useCompose (S-001): the comment WRITE flow for a Markdown doc, lifted out of viewer-screen so the
 // shell module stays focused. Owns: selection capture → popover → composer → optimistic create.
@@ -36,8 +60,14 @@ export interface ComposeApi {
   cancel: () => void;
   /** S-002: open the compose flow from an externally-supplied anchor (the HTML-sandbox bridge
    *  relays the selection over its port — the parent can't read the opaque iframe's selection).
-   *  Mirrors the Markdown mouseup path: stash the anchor + raise the popover. */
-  beginCompose: (anchor: ComposeAnchor, rect?: { top: number; left: number } | null) => void;
+   *  Mirrors the Markdown mouseup path: stash the anchor + raise the popover. The rect is the
+   *  selection's viewport rect (RectLike); placePopover does the flip/clamp (MƯỢT TASK 1/3). */
+  beginCompose: (anchor: ComposeAnchor, rect?: RectLike | null) => void;
+  /** MƯỢT TASK 3: reposition the open popover from a fresh selection rect relayed by the iframe
+   *  bridge on its in-iframe scroll. No-op when no popover is open. */
+  repositionFromRect: (rect: RectLike) => void;
+  /** MƯỢT TASK 1: the popover reports its measured size so placePopover can flip/clamp correctly. */
+  setPopoverSize: (size: { width: number; height: number }) => void;
 }
 
 /** The anchor shape `beginCompose` accepts (the bridge's `segments` is optional; we normalize). */
@@ -67,37 +97,106 @@ export function useCompose(
   // Hold the anchor the popover was raised for, so Comment uses it even after the DOM selection
   // collapses (a click can clear window.getSelection()).
   const pendingAnchor = useRef<SelectionAnchor | null>(null);
+  // MƯỢT TASK 1: the measured popover size (set by selection-popover via setPopoverSize at render).
+  // Falls back to DEFAULT_POPOVER_SIZE until measured (always, under happy-dom).
+  const popoverSize = useRef(DEFAULT_POPOVER_SIZE);
+  // MƯỢT TASK 1: a getter for the CURRENT selection rect of the live Markdown selection, so the
+  // scroll/resize reposition can re-read it. Set when a Markdown selection raises the popover;
+  // null for the bridge path (the iframe re-posts its own rect — TASK 3).
+  const liveRect = useRef<(() => RectLike | null) | null>(null);
+
+  // Compute the on-screen {top,left} for a selection rect via the pure placePopover (flip + clamp).
+  const positionFor = useCallback((rect: RectLike | null) => {
+    if (!rect) return { top: 0, left: 0 };
+    const { top, left } = placePopover(rect, popoverSize.current, viewport());
+    return { top, left };
+  }, []);
+
+  const setPopoverSize = useCallback((size: { width: number; height: number }) => {
+    if (size.width > 0 && size.height > 0) popoverSize.current = size;
+  }, []);
 
   // C-004: only attach the selection listener for a comment-capable role. A viewer-only role gets
   // no popover (and thus no composer) — the rail stays read-only.
+  //
+  // MƯỢT TASK 2 (responsive): a fine pointer commits on mouseup. A COARSE pointer (touch) has no
+  // reliable mouseup over a drag-select, so on `(pointer: coarse)` we listen to `selectionchange`
+  // (debounced ~380ms — adopted from Plannotator's useAnnotationHighlighter touch path) and commit
+  // the resulting selection the same way. Both paths funnel through `commit`.
   useEffect(() => {
     if (!canCompose || !docPaneEl) return;
-    const onMouseUp = () => {
-      const sel = docPaneEl.ownerDocument.getSelection();
+    const doc = docPaneEl.ownerDocument;
+
+    const commit = () => {
+      const sel = doc.getSelection();
       const anchor = selectionToAnchor(sel);
       if (!anchor) {
         // C-003: empty / whitespace-only (or out-of-block) selection → no popover, nothing created.
         return;
       }
       pendingAnchor.current = anchor;
-      // Position from the selection rect; happy-dom returns zeros under test (fine — we only assert
-      // the popover renders, not pixels). C-005 visual placement is [→MANUAL] + Playwright.
-      let rect = { top: 0, left: 0 };
-      if (sel && sel.rangeCount > 0) {
-        const r = sel.getRangeAt(0).getBoundingClientRect?.();
-        if (r) rect = { top: r.bottom, left: r.left };
-      }
-      setPopover(rect);
+      // Re-read THIS document's live selection rect on demand so scroll/resize can reposition.
+      liveRect.current = () => selectionRect(doc.getSelection());
+      // Position via the pure flip/clamp math. happy-dom returns zeros under test (fine — we assert
+      // the popover renders + the math, not live pixels). C-005 live placement is [→MANUAL].
+      setPopover(positionFor(liveRect.current()));
     };
-    docPaneEl.addEventListener("mouseup", onMouseUp);
-    return () => docPaneEl.removeEventListener("mouseup", onMouseUp);
-  }, [canCompose, docPaneEl]);
+
+    const coarse =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches;
+
+    if (coarse) {
+      // Touch: debounce selectionchange. A collapsed/empty selection is a no-op (C-003) — commit()
+      // already early-returns when selectionToAnchor is null.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const onSelectionChange = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(commit, 380);
+      };
+      doc.addEventListener("selectionchange", onSelectionChange);
+      return () => {
+        if (timer) clearTimeout(timer);
+        doc.removeEventListener("selectionchange", onSelectionChange);
+      };
+    }
+
+    docPaneEl.addEventListener("mouseup", commit);
+    return () => docPaneEl.removeEventListener("mouseup", commit);
+  }, [canCompose, docPaneEl, positionFor]);
+
+  // MƯỢT TASK 1: while the popover is open, reposition on scroll/resize by re-reading the live
+  // selection rect; auto-dismiss when the selection scrolls out of the viewport (closeOnScrollOut —
+  // Plannotator AnnotationToolbar). Capture phase + passive so inner scroll containers count and the
+  // listener never blocks scrolling. Cleaned up when the popover closes or the hook unmounts.
+  useEffect(() => {
+    if (!popover) return;
+    const reposition = () => {
+      const get = liveRect.current;
+      if (!get) return; // bridge path re-posts its own rect (TASK 3) — nothing to re-read here.
+      const rect = get();
+      if (!rect) return;
+      if (isRectOutOfViewport(rect, viewport())) {
+        setPopover(null);
+        pendingAnchor.current = null;
+        return;
+      }
+      setPopover(positionFor(rect));
+    };
+    window.addEventListener("scroll", reposition, { capture: true, passive: true });
+    window.addEventListener("resize", reposition, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", reposition, { capture: true } as EventListenerOptions);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [popover, positionFor]);
 
   // C-004 gate also applies to the bridge path: a viewer-only role never opens a composer even if a
   // (forged or real) selection arrives over the port. The screen only wires the bridge when
   // canCompose is true, but we re-check here so beginCompose can't be driven for a read-only role.
   const beginCompose = useCallback(
-    (anchor: ComposeAnchor, rect?: { top: number; left: number } | null) => {
+    (anchor: ComposeAnchor, rect?: RectLike | null) => {
       if (!canCompose) return;
       // C-003: an empty / whitespace-only snippet is not a selection — never open the composer.
       if (!anchor || anchor.textSnippet.trim().length === 0) return;
@@ -116,14 +215,27 @@ export function useCompose(
         ],
       };
       pendingAnchor.current = normalized;
-      setPopover(rect ?? { top: 0, left: 0 });
+      // Bridge path: the iframe owns the selection; there's no parent-readable Range to re-read on
+      // scroll, so clear liveRect. The iframe re-posts its rect over the port instead (TASK 3).
+      liveRect.current = null;
+      setPopover(rect ? positionFor(rect) : { top: 0, left: 0 });
     },
-    [canCompose],
+    [canCompose, positionFor],
+  );
+
+  // MƯỢT TASK 3: the iframe bridge relays a fresh selection rect on its own in-iframe scroll (the
+  // parent can't see that scroll). Reposition the open popover via the same flip/clamp math.
+  const repositionFromRect = useCallback(
+    (rect: RectLike) => {
+      setPopover((cur) => (cur ? positionFor(rect) : cur));
+    },
+    [positionFor],
   );
 
   const dismissPopover = useCallback(() => {
     setPopover(null);
     pendingAnchor.current = null;
+    liveRect.current = null;
   }, []);
 
   const startComment = useCallback(() => {
@@ -260,7 +372,19 @@ export function useCompose(
     [active, workspaceId, slug, docPaneEl, onSent, onCreated],
   );
 
-  return { popover, quote, optimistic, pending, startComment, dismissPopover, send, cancel, beginCompose };
+  return {
+    popover,
+    quote,
+    optimistic,
+    pending,
+    startComment,
+    dismissPopover,
+    send,
+    cancel,
+    beginCompose,
+    repositionFromRect,
+    setPopoverSize,
+  };
 }
 
 // The create result is `{ annotationId }`, but useApiQuery's peel runs on READS; the write thunks

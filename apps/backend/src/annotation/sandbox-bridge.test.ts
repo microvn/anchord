@@ -242,6 +242,17 @@ test("bridge-serve: the bridge transfers a port and posts selection/place-failed
   expect(script).toContain('"highlight"'); // receives highlight over port1
 });
 
+test("bridge-serve: the bridge re-posts a selection-rect on scroll, rAF-throttled (MƯỢT TASK 3)", () => {
+  const script = bridgeScript("n2");
+  // The new scroll re-anchor message shape.
+  expect(script).toContain('type: "selection-rect"');
+  // rAF-gated (only schedules one frame at a time) and on capture-phase scroll.
+  expect(script).toContain("requestAnimationFrame(postSelectionRect)");
+  expect(script).toContain('addEventListener("scroll"');
+  // It keeps a live pending Range to re-read the current rect on scroll.
+  expect(script).toContain("pendingRange");
+});
+
 test("bridge-serve: injectBridge appends exactly ONE script and preserves block-ids", () => {
   const served = injectBlockIds("<h1>Title</h1><p>Body text here</p>");
   const out = injectBridge(served, "nonce-xyz");

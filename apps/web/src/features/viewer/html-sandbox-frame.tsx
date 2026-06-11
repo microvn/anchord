@@ -32,15 +32,17 @@ export const HtmlSandboxFrame = forwardRef<
     onSelection?: (anchor: BridgeAnchor, rect: { x: number; y: number; width: number; height: number } | null) => void;
     /** S-002: the iframe cleared its selection (anchor null) → dismiss any pending compose. */
     onClearSelection?: () => void;
+    /** MƯỢT TASK 3: the iframe re-posted the live selection rect on its own in-iframe scroll. */
+    onSelectionRect?: (rect: { x: number; y: number; width: number; height: number }) => void;
   }
->(function HtmlSandboxFrame({ contentUrl, onSelection, onClearSelection }, ref) {
+>(function HtmlSandboxFrame({ contentUrl, onSelection, onClearSelection, onSelectionRect }, ref) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const connRef = useRef<BridgeConnection | null>(null);
   // Hold the latest handlers in a ref so the bridge connection (wired once on mount) always calls
   // the current callbacks without re-running the connect effect (which would re-add a window
   // listener and could accept a stale/duplicate handshake).
-  const handlersRef = useRef({ onSelection, onClearSelection });
-  handlersRef.current = { onSelection, onClearSelection };
+  const handlersRef = useRef({ onSelection, onClearSelection, onSelectionRect });
+  handlersRef.current = { onSelection, onClearSelection, onSelectionRect };
 
   // S-002: wire the parent side of the bridge ONCE on mount. Only connect when there's a consumer
   // for selections (the viewer passes onSelection only for a comment-capable role — C-004).
@@ -50,6 +52,10 @@ export const HtmlSandboxFrame = forwardRef<
     const conn = connectBridge(iframe, {
       onSelection: (anchor, rect) => handlersRef.current.onSelection?.(anchor, rect),
       onClearSelection: () => handlersRef.current.onClearSelection?.(),
+      onSelectionRect: (rect) => {
+        if (rect) handlersRef.current.onSelectionRect?.(rect);
+        else handlersRef.current.onClearSelection?.();
+      },
     });
     connRef.current = conn;
     return () => {

@@ -38,6 +38,19 @@ import {
 // not-found / no-access state, NEVER an empty viewer or a "0 comments" shell that would leak the
 // doc's existence. Not-found and no-access are deliberately the same surface.
 
+// MƯỢT TASK 1/3: the iframe bridge sends a selection rect as {x,y,width,height} (iframe-local
+// viewport coords). placePopover wants a RectLike {top,bottom,left,right} — convert here. The
+// popover is position:absolute over the viewer body, so iframe-local top/left is a close-enough
+// anchor for v0 (pixel-exact cross-frame offset is [→MANUAL]/Playwright).
+function frameRectToViewport(rect: { x: number; y: number; width: number; height: number }): {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+} {
+  return { top: rect.y, bottom: rect.y + rect.height, left: rect.x, right: rect.x + rect.width };
+}
+
 export function ViewerScreen() {
   const { workspaceId = "", slug = "" } = useParams<{ workspaceId: string; slug: string }>();
 
@@ -288,13 +301,17 @@ function ViewerShell({
               onSelection={
                 isHtml && canCompose
                   ? (anchor, rect) =>
-                      compose.beginCompose(
-                        anchor,
-                        rect ? { top: rect.y + rect.height, left: rect.x } : null,
-                      )
+                      compose.beginCompose(anchor, rect ? frameRectToViewport(rect) : null)
                   : undefined
               }
               onClearSelection={isHtml && canCompose ? compose.dismissPopover : undefined}
+              // MƯỢT TASK 3: the iframe re-posts its selection rect on its own in-iframe scroll
+              // (the parent can't see that scroll); reposition the open popover via placePopover.
+              onSelectionRect={
+                isHtml && canCompose
+                  ? (rect) => compose.repositionFromRect(frameRectToViewport(rect))
+                  : undefined
+              }
             />
           ) : (
             children
@@ -371,6 +388,7 @@ function ViewerShell({
           rect={compose.popover}
           onComment={compose.startComment}
           onDismiss={compose.dismissPopover}
+          onMeasure={compose.setPopoverSize}
         />
       )}
     </div>

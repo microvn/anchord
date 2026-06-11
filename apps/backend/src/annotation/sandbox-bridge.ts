@@ -313,6 +313,8 @@ function levenshtein(a: string, b: string): number {
  * Protocol (the FE parent must mirror these exact shapes — see route comment in app.ts):
  *  - UP via window.postMessage ONCE on load: `{source:'anchord-bridge', type:'ready', nonce}` with `port2` transferred.
  *  - Over port1, bridge → parent: `{type:'selection', anchor, rect}` (anchor null when empty).
+ *  - Over port1, bridge → parent on in-iframe scroll (rAF-throttled): `{type:'selection-rect', rect}`
+ *    (rect null when the selection scrolled out of view → parent dismisses). MƯỢT TASK 3.
  *  - Over port1, parent → bridge: `{type:'highlight', anchor, annotationId}`.
  *  - Over port1, bridge → parent on placement failure: `{type:'place-failed', annotationId}`.
  *
@@ -430,13 +432,19 @@ export function bridgeScript(nonce: string): string {
   // --- transport: dedicated MessageChannel; NEVER trust window messages from the body ---
   var channel = new MessageChannel();
   var port = channel.port1;
+  // MƯỢT TASK 3: keep the live pending Range so an in-iframe scroll can re-read its CURRENT rect
+  // (the parent can't see the iframe's scroll). Cleared when the selection collapses/clears.
+  var pendingRange = null;
 
   function postSelection(){
     var sel = (document.getSelection && document.getSelection()) || null;
     var anchor = selectionToAnchor(sel, document);
     var rect = null;
     if (anchor && sel && sel.rangeCount > 0){
-      try { var r = sel.getRangeAt(0).getBoundingClientRect(); rect = { x: r.x, y: r.y, width: r.width, height: r.height }; } catch (e) {}
+      pendingRange = sel.getRangeAt(0);
+      try { var r = pendingRange.getBoundingClientRect(); rect = { x: r.x, y: r.y, width: r.width, height: r.height }; } catch (e) {}
+    } else {
+      pendingRange = null;
     }
     port.postMessage({ type: "selection", anchor: anchor, rect: rect });
   }
@@ -453,7 +461,28 @@ export function bridgeScript(nonce: string): string {
   document.addEventListener("mouseup", postSelection, true);
   document.addEventListener("selectionchange", function(){
     var sel = document.getSelection && document.getSelection();
-    if (!sel || sel.isCollapsed) port.postMessage({ type: "selection", anchor: null });
+    if (!sel || sel.isCollapsed) { pendingRange = null; port.postMessage({ type: "selection", anchor: null }); }
+  }, true);
+
+  // MƯỢT TASK 3: on an in-iframe scroll, rAF-throttle a re-post of the live selection's CURRENT
+  // bounding rect so the parent popover tracks the text (technique from Plannotator's bridge-script,
+  // Apache-2.0). Capture phase so inner scroll containers count. If the rect leaves the viewport,
+  // post a null rect → the parent dismisses (closeOnScrollOut).
+  var scrollRaf = 0;
+  function postSelectionRect(){
+    scrollRaf = 0;
+    if (!pendingRange) return;
+    var r;
+    try { r = pendingRange.getBoundingClientRect(); } catch (e) { return; }
+    if (r.bottom < 0 || r.top > (window.innerHeight || 0)){
+      port.postMessage({ type: "selection-rect", rect: null });
+      return;
+    }
+    port.postMessage({ type: "selection-rect", rect: { x: r.x, y: r.y, width: r.width, height: r.height } });
+  }
+  window.addEventListener("scroll", function(){
+    if (!pendingRange) return;
+    if (!scrollRaf) scrollRaf = requestAnimationFrame(postSelectionRect);
   }, true);
 
   // Handshake LAST, after listeners are wired. Transfer port2 to the parent. The parent

@@ -48,6 +48,13 @@ export interface BridgePlaceFailed {
   annotationId: string;
 }
 
+/** MƯỢT TASK 3: a fresh selection rect relayed on the iframe's own in-iframe scroll (rAF-throttled
+ *  in the in-iframe bridge). `rect === null` → the selection scrolled out of view → clear. */
+export interface BridgeSelectionRect {
+  type: "selection-rect";
+  rect: { x: number; y: number; width: number; height: number } | null;
+}
+
 export interface BridgeHandlers {
   /** A real (non-null-anchor) selection arrived over the port → open the composer prefilled. */
   onSelection: (anchor: BridgeAnchor, rect: { x: number; y: number; width: number; height: number } | null) => void;
@@ -55,6 +62,9 @@ export interface BridgeHandlers {
   onClearSelection?: () => void;
   /** The in-iframe bridge could not place a highlight for this annotation (optional). */
   onPlaceFailed?: (annotationId: string) => void;
+  /** MƯỢT TASK 3: the iframe re-posted the live selection's rect on its own scroll → reposition the
+   *  open popover. A null rect means the selection scrolled out of view → dismiss. */
+  onSelectionRect?: (rect: { x: number; y: number; width: number; height: number } | null) => void;
 }
 
 /** A minimal window-message event shape (so the predicate type-checks without lib.dom specifics). */
@@ -140,6 +150,11 @@ export function connectBridge(
           // anchor === null → the iframe cleared its selection; drop any pending compose.
           handlers.onClearSelection?.();
         }
+      } else if (msg.type === "selection-rect") {
+        // MƯỢT TASK 3: a scroll re-post of the live selection rect. A null rect = scrolled out of
+        // view → treat as a clear (dismiss); a rect = reposition the open popover.
+        if (msg.rect) handlers.onSelectionRect?.(msg.rect);
+        else handlers.onClearSelection?.();
       } else if (msg.type === "place-failed" && typeof msg.annotationId === "string") {
         handlers.onPlaceFailed?.(msg.annotationId);
       }

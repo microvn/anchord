@@ -178,6 +178,22 @@ describe("connectBridge (S-002 parent transport)", () => {
     conn.dispose();
   });
 
+  it("MƯỢT TASK 3: a selection-rect over the port reaches onSelectionRect (scroll re-anchor)", async () => {
+    const contentWindow = {} as Window;
+    const onSelectionRect = mock(() => {});
+    const onClearSelection = mock(() => {});
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}), onSelectionRect, onClearSelection });
+    const { ch, ev } = handshake(contentWindow);
+    window.dispatchEvent(ev);
+    // A scroll re-post with a rect repositions; a null rect (scrolled out) clears.
+    ch.port1.postMessage({ type: "selection-rect", rect: { x: 5, y: 6, width: 7, height: 8 } });
+    await waitFor(() => expect(onSelectionRect).toHaveBeenCalledTimes(1));
+    expect(onSelectionRect.mock.calls[0]![0]).toMatchObject({ x: 5, y: 6, width: 7, height: 8 });
+    ch.port1.postMessage({ type: "selection-rect", rect: null });
+    await waitFor(() => expect(onClearSelection).toHaveBeenCalledTimes(1));
+    conn.dispose();
+  });
+
   it("AS-005: a forged window message (source !== contentWindow) never connects / never relays", async () => {
     const contentWindow = {} as Window;
     const onSelection = mock(() => {});

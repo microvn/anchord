@@ -19,12 +19,15 @@ export function DocPane({
   doc,
   onSelection,
   onClearSelection,
+  onSelectionRect,
   htmlFrameRef,
 }: {
   doc: ViewerDocResponse;
   /** S-002: a real selection relayed from the HTML sandbox iframe (gated by role upstream). */
   onSelection?: (anchor: BridgeAnchor, rect: { x: number; y: number; width: number; height: number } | null) => void;
   onClearSelection?: () => void;
+  /** MƯỢT TASK 3: the iframe re-posted the live selection rect on its own in-iframe scroll. */
+  onSelectionRect?: (rect: { x: number; y: number; width: number; height: number }) => void;
   htmlFrameRef?: Ref<HtmlSandboxFrameHandle>;
 }) {
   const { kind } = doc.doc;
@@ -47,6 +50,7 @@ export function DocPane({
       contentUrl={contentUrl}
       onSelection={onSelection}
       onClearSelection={onClearSelection}
+      onSelectionRect={onSelectionRect}
     />
   );
 }
