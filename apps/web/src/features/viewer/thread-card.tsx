@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ViewerAnnotation, AnnotationComment } from "./client";
 
 // ThreadCard (S-003): one annotation rendered as a rail thread — QuoteRef · avatar · author ·
@@ -210,6 +210,23 @@ export function ThreadCard({
   // refetch reconciles them (consistency with S-001's optimistic create, C-011). They live at the
   // SAME flat level — appended to the one reply list, never nested (C-005).
   const [optimisticReplies, setOptimisticReplies] = useState<AnnotationComment[]>([]);
+
+  // Reconcile-on-success (mirrors S-001's create reconcile): when the consumer's refetch lands, the
+  // server thread grows by the real reply. Drop that many optimistic temps from the front so the
+  // reply doesn't render twice (optimistic + real). We track the server reply count we've already
+  // absorbed; a fresh increase clears the matching number of temps. With NO refetch (the pure
+  // component path / a consumer that never re-supplies the annotation) the count never grows, so the
+  // optimistic reply stays — AS-006's flat reply still shows.
+  const serverReplyCount = replies.length;
+  const absorbed = useRef(serverReplyCount);
+  useEffect(() => {
+    if (serverReplyCount > absorbed.current) {
+      const grew = serverReplyCount - absorbed.current;
+      absorbed.current = serverReplyCount;
+      setOptimisticReplies((prev) => prev.slice(grew));
+    }
+  }, [serverReplyCount]);
+
   const allReplies = [...replies, ...optimisticReplies];
 
   const handleReply = onReply

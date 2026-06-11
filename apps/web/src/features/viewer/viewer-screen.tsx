@@ -21,6 +21,7 @@ import { useCompose } from "./use-compose";
 import {
   fetchViewerDoc,
   listAnnotations,
+  addComment,
   canComment,
   type ViewerDocResponse,
   type ListAnnotationsResponse,
@@ -158,7 +159,7 @@ function ViewerShell({
 
   // S-003/S-006: the annotations are read here (lifted above the rail) so the CommentFab can show
   // the count and the highlight-tap can open the rail drawer, while the rail still renders them.
-  const anno = useAnnotations(workspaceId, slug, docPaneEl, hasDoc, () => {
+  const anno = useAnnotations(workspaceId, slug, docPaneEl, hasDoc, canCompose, () => {
     if (drawerMode) setRailOpen(true); // AS-014: tapping a highlight opens the rail drawer
   });
 
@@ -371,6 +372,7 @@ function useAnnotations(
   slug: string | undefined,
   docPaneEl: HTMLElement | null,
   enabled: boolean,
+  canCompose: boolean,
   onHighlightTap: () => void,
 ): {
   count: number;
@@ -380,6 +382,7 @@ function useAnnotations(
     focusedId: string | null;
     unplaceableIds: Set<string>;
     onFocusThread: (id: string) => void;
+    onReply?: (annotation: ViewerAnnotation, body: string) => Promise<boolean>;
   };
 } {
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -412,9 +415,39 @@ function useAnnotations(
     scrollToAnno(docPaneEl, id); // AS-009: scroll to + emphasise the highlight.
   };
 
+  // S-003 (AS-006 / C-005): send a reply to an anchored thread. The reply is a comment whose
+  // parentId is the annotation's FIRST/root comment — flat replies (the read side shapes every
+  // reply as a sibling of the root, never nested, C-005). Identity rides the session cookie; the
+  // body carries no userId (C-001). On success we refetch so the real reply replaces the card's
+  // optimistic temp (mirrors S-001's reconcile-on-success — no duplicate). On a refused/failed
+  // write we return false (the card's onReply=false contract → no ghost reply) + toast the same
+  // error S-001 uses. Gated by canCompose (C-004): a viewer-only role gets no reply affordance.
+  const onReply =
+    canCompose && workspaceId && slug
+      ? async (annotation: ViewerAnnotation, body: string): Promise<boolean> => {
+          const parentId = (annotation.comments ?? [])[0]?.id;
+          try {
+            const res = await addComment(workspaceId, slug, annotation.id, {
+              body,
+              ...(parentId ? { parentId } : {}),
+            });
+            if (res.error) {
+              toast.error("Couldn't post your reply");
+              return false;
+            }
+            // Reconcile: the refetched thread carries the real reply flat under the annotation.
+            await annoQuery.refetch();
+            return true;
+          } catch {
+            toast.error("Couldn't post your reply");
+            return false;
+          }
+        }
+      : undefined;
+
   return {
     count: annotations.length,
     refetch: () => annoQuery.refetch(),
-    railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread },
+    railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread, onReply },
   };
 }
