@@ -10,7 +10,8 @@
     "test:integration": "RUN_INTEGRATION=1 bun test ./test/integration/*.itest.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun src/db/migrate.ts"
+    "db:migrate": "bun src/db/migrate.ts",
+    "db:seed": "bun src/db/seed.ts"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",
@@ -30,6 +31,7 @@
     "@types/markdown-it": "^14.1.2",
     "@types/nodemailer": "^8.0.0",
     "drizzle-kit": "^0.31.10",
+    "happy-dom": "^15.11.7",
     "typescript": "^6.0.3"
   }
 }

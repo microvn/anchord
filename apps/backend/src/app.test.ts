@@ -132,5 +132,10 @@ test("AS-022 / C-009: empty served content does not crash the route", async () =
   const app = appWithContent("", "html");
   const res = await get(app, "/v/v-1");
   expect(res.status).toBe(200);
-  expect(await res.text()).toBe("");
+  // GAP-004: the /v serve path now always appends the in-iframe annotation bridge, so an
+  // empty doc serves the bridge script (not a literally-empty body) — the route still must
+  // not crash. The doc-content portion is empty; only our bridge <script> is present.
+  const body = await res.text();
+  expect(body).toContain("anchord-bridge"); // bridge injected even for empty content
+  expect(body.startsWith("<script")).toBe(true); // nothing before the bridge → content was empty
 });

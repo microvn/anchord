@@ -3,6 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { contentHeaders, sandboxIframe } from "./render/sandbox";
 import { renderMarkdown } from "./render/markdown";
 import { injectBlockIds } from "./annotation/block-id";
+import { injectBridge, generateNonce } from "./annotation/sandbox-bridge";
 import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
 import { viewerDocRoutes, type ViewerDocRoutesDeps } from "./routes/viewer-doc";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
@@ -345,10 +346,28 @@ export function createApp(deps: AppDeps) {
       const viewer = await resolveViewer(request);
       const v = await deps.loadContent!(params.id, viewer);
       if (!v) return new Response("Not found", { status: 404 });
-      // S-006/C-009: the sandboxed /v content also carries positional block-ids so the
-      // annotation bridge inside the iframe can anchor. HTML/SVG get markers; an image
-      // (no block tags) is an inert no-op. Best-effort on malformed (AS-022).
-      return new Response(injectBlockIds(v.content), { headers: contentHeaders() });
+      // S-006/C-009: the sandboxed /v content carries positional block-ids AND the
+      // in-iframe annotation bridge (GAP-004) so the iframe can turn a text selection into
+      // an anchor and relay it to the FE over a dedicated MessageChannel. HTML/SVG get both;
+      // an image (no block tags) is an inert no-op for block-ids but still gets the bridge
+      // script (harmless — it just finds no selectable blocks). Best-effort on malformed.
+      //
+      // The per-request `nonce` (crypto random) is baked into the bridge's `ready` message
+      // and its <script nonce> attribute. The FE parent discovers it from the `ready` message
+      // and trusts it ONLY when event.source === iframe.contentWindow (FE-side check). The
+      // nonce raises the forgery bar but is NOT the guarantee: a body script can scrape the
+      // served DOM for it. The HARD backstop that a forged "create annotation" can never
+      // succeed is server-side re-authorization of the session role on POST .../annotations
+      // (C-001 / api-core C-005), independent of any iframe message.
+      //
+      // CSP: contentHeaders() keeps `sandbox allow-scripts` with NO `script-src` — so the
+      // bridge runs AND the doc's own scripts still run (AS-006/AS-007: isolation by opaque
+      // origin, not stripping). Adding `script-src 'nonce-…'` would also neutralize body
+      // scripts, contradicting AS-006/AS-007 — deferred to a spec decision (S2 signal). The
+      // nonce attribute is present now so that flip is a one-line CSP change later.
+      const nonce = generateNonce();
+      const served = injectBridge(injectBlockIds(v.content), nonce);
+      return new Response(served, { headers: contentHeaders() });
     });
   }
 
