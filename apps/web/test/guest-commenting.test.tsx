@@ -348,7 +348,7 @@ describe("guest name helpers (S-005 — pure)", () => {
 
   it("C-008.T3: sanitizeGuestName strips angle brackets / control chars (charset-limited, inert)", () => {
     expect(sanitizeGuestName("<img src=x onerror=alert(1)>")).not.toMatch(/[<>]/);
-    expect(sanitizeGuestName("Lan ")).toBe("Lan");
+    expect(sanitizeGuestName("Lan\x00\x07")).toBe("Lan");
     // Plain names pass through, trimmed.
     expect(sanitizeGuestName("  Lan  ")).toBe("Lan");
   });
