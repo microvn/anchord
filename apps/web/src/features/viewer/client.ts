@@ -165,14 +165,19 @@ export function createAnnotation(
 /** POST …/docs/:slug/annotations/:id/comments — attach a comment to an annotation (S-001). */
 export function addComment(
   workspaceId: string,
-  slug: string,
+  _slug: string,
   annotationId: string,
   body: AddCommentBody,
 ): Promise<EdenResult<AddCommentResult>> {
+  // The comment endpoint is `/api/w/:workspaceId/annotations/:id/comments` — NOT nested under
+  // `docs/:slug` (the annotation id alone identifies the thread; mirrors setResolution). A stray
+  // `.docs({slug})` here built `/docs/:slug/annotations/:id/comments`, a path the backend has no
+  // route for → Elysia's built-in NotFoundError → (mis-mapped) 500. `_slug` stays in the signature
+  // for call-site symmetry with the doc-scoped create/list calls but is not part of this path.
+  void _slug;
   return treaty.api
     .w({ workspaceId })
-    .docs({ slug })
-    .annotations({ annotationId })
+    .annotations({ id: annotationId })
     .comments.post(body) as Promise<EdenResult<AddCommentResult>>;
 }
 
