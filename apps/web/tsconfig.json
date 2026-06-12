@@ -10,5 +10,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "vite.config.ts", "bunfig.toml"]
+  "include": ["src", "vite.config.ts", "bunfig.toml"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }
