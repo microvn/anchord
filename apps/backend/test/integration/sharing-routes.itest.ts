@@ -258,6 +258,65 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     );
     expect(toggleRes.status).toBe(403);
   });
+
+  test("AS-025/AS-026/C-016: GET …/share reads level+role+toggles+people+link over real PG; password is a boolean, no hash", async () => {
+    // State accumulated by the prior tests: anyone_with_link, link role last set to
+    // "editor", a password hash (PUT link), viewLimit 10, an ACTIVE editor invite
+    // (u_invited_editor) + a PENDING editor invite (pending@invitee.com). Seed one more
+    // pending invite to be explicit about the active+pending mix.
+    await app.handle(
+      req(`/api/w/${WS}/docs/${slug}/share`, { method: "GET" }),
+    ).then(async (res) => {
+      const raw = await res.text();
+      // AS-026 / C-016: the argon2 hash must NOT appear anywhere in the serialized body.
+      expect(res.status).toBe(200);
+      expect(raw).not.toContain("$argon2");
+      expect(raw.toLowerCase()).not.toContain("passwordhash");
+      const json = JSON.parse(raw);
+      const d = json.data;
+      expect(d.level).toBe("anyone_with_link");
+      expect(d.role).toBe("editor");
+      expect(typeof d.guestCommenting).toBe("boolean");
+      expect(d.editorsCanShare).toBe(true);
+      // The link controls: password is a boolean only; viewLimit/viewCount echoed.
+      expect(d.link.hasPassword).toBe(true);
+      expect(d.link).not.toHaveProperty("passwordHash");
+      expect(d.link.viewLimit).toBe(10);
+      expect(typeof d.link.viewCount).toBe("number");
+      expect(d.link.url).toBe(`/d/${slug}`);
+      // People list: the ACTIVE editor (with account name) + a PENDING invite.
+      const active = d.people.find((p: any) => p.email === "editor@itest.local");
+      expect(active.status).toBe("active");
+      expect(active.role).toBe("editor");
+      expect(active.name).toBe("Invited Editor"); // resolved from the bound account
+      const pending = d.people.find((p: any) => p.status === "pending");
+      expect(pending).toBeTruthy();
+      expect(pending.name).toBeUndefined(); // no account → no name
+    });
+  });
+
+  test("AS-027 / C-016: a commenter is REFUSED the share read → 403 (gated like the writes)", async () => {
+    // A non-managing role (commenter) reading the share state is refused, identical to
+    // the management writes' 403. Inject the role resolver as commenter (the real owner
+    // source stays false), reusing the same wired db/loadShareConfig.
+    const commenterApp = createApp({
+      dbCheck: async () => {},
+      sharing: {
+        db: h.db,
+        resolveSession: async () => ({ userId: "u_commenter_itest" }),
+        resolveWorkspaceRole: asMember,
+        resolveDocRole: async () => "commenter",
+        loadShareConfig: createLoadShareConfig(h.db),
+        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      },
+    });
+    const res = await commenterApp.handle(
+      req(`/api/w/${WS}/docs/${slug}/share`, { method: "GET" }),
+    );
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("FORBIDDEN");
+  });
 });
 
 // auth-routes S-002: the OWNER SOURCE resolved against REAL Postgres via createIsDocOwner

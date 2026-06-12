@@ -7,7 +7,8 @@
 // behaviour lives here — handlers resolve :slug → doc, gate OWNER, call the
 // service, and shape the response.
 //
-// Contract (sharing-permissions ## API — all three are owner-only, C-007):
+// Contract (sharing-permissions ## API — all gated by the manage-sharing gate, C-007):
+//   GET  /api/w/:wid/docs/:slug/share → S-006 AS-025/026/027 200 { level, role, guestCommenting, editorsCanShare, people[], link{...} }
 //   PUT  /api/docs/:slug/access  → S-001 AS-001/002/003/018  200 { level, role, guestCommenting }
 //   POST /api/docs/:slug/invites → S-003 AS-007/008          201 { status } active|pending
 //   PUT  /api/docs/:slug/link    → S-004 AS-009..021         200 { link controls }
@@ -48,6 +49,8 @@ import { inviteByEmail, type DocMemberRepo, type EnqueuedInvite, type InviteDeps
 import { createDocMemberRepo, findUserByEmail, createEnqueueInvite } from "../sharing/doc-member-repo";
 import { setPassword } from "../sharing/link-controls";
 import { setLinkControls } from "../sharing/link-controls-repo";
+import { readShareState, type ShareStateRepo } from "../sharing/share-state";
+import { createShareStateRepo } from "../sharing/share-state-repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
 import { createLoadShareConfig } from "../sharing/resolve-doc-role-repo";
 import { MailQueue, type MailTransport } from "../auth/mail-queue";
@@ -86,6 +89,8 @@ export interface SharingRoutesDeps {
   shareRepo?: ShareRepo;
   docMemberRepo?: DocMemberRepo;
   lookupRepo?: DocLookupRepo;
+  /** S-006 read aggregator port (people list + link state). Built from `db` when omitted. */
+  shareStateRepo?: ShareStateRepo;
   /** invite.ts ports — injectable for tests; built from `db`/mail in prod. */
   findUserByEmail?: (email: string) => { id: string } | null;
   enqueueInvite?: (msg: EnqueuedInvite) => void;
@@ -136,6 +141,10 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
   const docMemberRepo =
     deps.docMemberRepo ?? (deps.db ? createDocMemberRepo(deps.db) : need("docMemberRepo"));
   const lookupRepo = deps.lookupRepo ?? (deps.db ? createDocLookupRepo(deps.db) : need("lookupRepo"));
+  // S-006: resolved LAZILY (only the GET …/share route uses it) so existing callers that
+  // wire the write routes without `db`/`shareStateRepo` (route tests) keep working.
+  const shareStateRepo = (): ShareStateRepo =>
+    deps.shareStateRepo ?? (deps.db ? createShareStateRepo(deps.db) : need("shareStateRepo"));
   const loadShareConfig =
     deps.loadShareConfig ?? (deps.db ? createLoadShareConfig(deps.db) : need("loadShareConfig"));
 
@@ -193,6 +202,16 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
     apiEnvelope(new Elysia())
       .use(requireSession({ resolveSession: deps.resolveSession }))
       .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
+
+      // ── GET /api/w/:workspaceId/docs/:slug/share — S-006 (read share state for the dialog) ──
+      // C-016: gated IDENTICALLY to the management writes (requireManageSharing) and
+      // NEVER returns the link password — the aggregator exposes hasPassword only.
+      .get("/api/w/:workspaceId/docs/:slug/share", async ({ params, actor, ws }) => {
+        const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+        // 403 if the caller may not manage sharing (AS-027 / C-016) — same gate as writes.
+        await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
+        return readShareState(doc.id, params.slug, shareStateRepo());
+      })
 
       // ── PUT /api/docs/:slug/access — S-001 (general access + link role + guest) ──
       .group("", (app) =>

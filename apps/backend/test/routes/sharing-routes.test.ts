@@ -27,6 +27,7 @@ import type { DocLookup, DocLookupRepo } from "../../src/routes/versions";
 import type { ShareRepo, ResolvedShareSetting } from "../../src/sharing/share";
 import { createFakeDocMemberStore } from "../../src/sharing/invite";
 import type { EnqueuedInvite } from "../../src/sharing/invite";
+import type { ShareStateRepo, ShareStateRow } from "../../src/sharing/share-state";
 
 const member: SessionResolver = async () => ({ userId: "u_owner" });
 const noSession: SessionResolver = async () => null;
@@ -74,6 +75,30 @@ function fakeShareRepo() {
   return { repo, calls };
 }
 
+// AS-025 fixture: anyone-with-link/commenter, guest ON, editors_can_share ON, one
+// ACTIVE + one PENDING invite, a password-protected link with expiry/view controls.
+// AS-026: the repo shape carries hasPassword (a boolean) only — never a hash.
+const SHARE_STATE_ROW: ShareStateRow = {
+  level: "anyone_with_link",
+  role: "commenter",
+  guestCommenting: true,
+  editorsCanShare: true,
+  people: [
+    { email: "active@acme.com", name: "Active Person", role: "editor", status: "active" },
+    { email: "pending@x.com", role: "viewer", status: "pending" },
+  ],
+  link: {
+    hasPassword: true,
+    expiresAt: new Date("2030-01-01T00:00:00.000Z"),
+    viewLimit: 50,
+    viewCount: 7,
+  },
+};
+
+function fakeShareStateRepo(row: ShareStateRow = SHARE_STATE_ROW): ShareStateRepo {
+  return { async readShareState() { return row; } };
+}
+
 function req(path: string, init: RequestInit = {}) {
   return new Request(`http://localhost${path}`, {
     headers: { "content-type": "application/json" },
@@ -90,6 +115,7 @@ function buildApp(opts: {
   findUserByEmail?: (email: string) => { id: string } | null;
   enqueueInvite?: (msg: EnqueuedInvite) => void;
   members?: ReturnType<typeof createFakeDocMemberStore>;
+  shareStateRepo?: ShareStateRepo;
 }) {
   return createApp({
     dbCheck: async () => {},
@@ -97,6 +123,7 @@ function buildApp(opts: {
       shareRepo: opts.shareRepo ?? fakeShareRepo().repo,
       docMemberRepo: opts.members ?? createFakeDocMemberStore(),
       lookupRepo: fakeLookupRepo(opts.doc === undefined ? VISIBLE_DOC : opts.doc),
+      shareStateRepo: opts.shareStateRepo ?? fakeShareStateRepo(),
       findUserByEmail: opts.findUserByEmail ?? (() => null),
       enqueueInvite: opts.enqueueInvite ?? (() => {}),
       resolveSession: opts.resolveSession ?? member,
@@ -427,5 +454,84 @@ describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
       req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 0 }) }),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /api/w/:workspaceId/docs/:slug/share (S-006 — read share state)", () => {
+  test("AS-025: owner reads full share state → level, role, guestCommenting, editorsCanShare, people[], link controls", async () => {
+    const app = buildApp({ resolveDocRole: asOwner });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/share"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    const d = json.data;
+    // AS-025.T1 level · T2 role · T3 guestCommenting · T4 editorsCanShare
+    expect(d.level).toBe("anyone_with_link");
+    expect(d.role).toBe("commenter");
+    expect(d.guestCommenting).toBe(true);
+    expect(d.editorsCanShare).toBe(true);
+    // AS-025.T5 people[] — each with email/name, role, active|pending
+    expect(d.people).toHaveLength(2);
+    expect(d.people[0]).toEqual({
+      email: "active@acme.com",
+      name: "Active Person",
+      role: "editor",
+      status: "active",
+    });
+    const pending = d.people.find((p: any) => p.status === "pending");
+    expect(pending.email).toBe("pending@x.com");
+    expect(pending.role).toBe("viewer");
+    expect(pending.name).toBeUndefined(); // pending invite has no account name
+    // AS-025.T6 link{ expiresAt, viewLimit, viewCount, url, hasPassword }
+    expect(d.link.hasPassword).toBe(true);
+    expect(new Date(d.link.expiresAt).toISOString()).toBe("2030-01-01T00:00:00.000Z");
+    expect(d.link.viewLimit).toBe(50);
+    expect(d.link.viewCount).toBe(7);
+    expect(d.link.url).toBe("/d/doc-one"); // shareable viewer path
+  });
+
+  test("AS-026: the stored password is NEVER returned — only a hasPassword boolean, no hash", async () => {
+    const app = buildApp({ resolveDocRole: asOwner });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/share"));
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    // No password hash anywhere in the serialized response (argon2 hashes start "$argon2").
+    expect(raw).not.toContain("$argon2");
+    expect(raw.toLowerCase()).not.toContain("passwordhash");
+    const json = JSON.parse(raw);
+    expect(json.data.link.hasPassword).toBe(true);
+    expect(json.data.link).not.toHaveProperty("passwordHash");
+    expect(json.data.link).not.toHaveProperty("password");
+  });
+
+  test("AS-027 / C-016: a commenter (cannot manage) is REFUSED the read → 403 FORBIDDEN", async () => {
+    const app = buildApp({ resolveDocRole: asCommenter, loadShareConfig: shareToggleOn });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/share"));
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("FORBIDDEN");
+  });
+
+  test("AS-027 / C-016: an editor when editors_can_share is OFF is REFUSED → 403", async () => {
+    const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOff });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/share"));
+    expect(res.status).toBe(403);
+  });
+
+  test("C-016: an editor when editors_can_share is ON CAN read (gated identically to writes) → 200", async () => {
+    const app = buildApp({ resolveDocRole: asEditor, loadShareConfig: shareToggleOn });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/share"));
+    expect(res.status).toBe(200);
+  });
+
+  test("no session → 401 UNAUTHENTICATED", async () => {
+    const app = buildApp({ resolveSession: noSession });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/share"));
+    expect(res.status).toBe(401);
+  });
+
+  test("missing/hidden doc → 404 (existence-hiding before the manage gate)", async () => {
+    const app = buildApp({ doc: null });
+    const res = await app.handle(req("/api/w/ws_1/docs/nope/share"));
+    expect(res.status).toBe(404);
   });
 });
