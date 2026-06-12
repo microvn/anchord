@@ -25,8 +25,9 @@ export function SelectionPopover({
   onDismiss,
   onMeasure,
 }: {
-  /** the already-positioned {top,left} (placePopover output). */
-  rect: { top: number; left: number };
+  /** the already-positioned {top,left,centered} (placePopover output). When `centered`, `left` is
+   *  the CENTER x of the selection → apply translateX(-50%) (above-centered, Plannotator). */
+  rect: { top: number; left: number; centered?: boolean };
   onComment: () => void;
   onDismiss: () => void;
   /** MƯỢT TASK 1: report the popover's measured size so the positioner can flip/clamp. */
@@ -52,7 +53,9 @@ export function SelectionPopover({
       aria-label="Selection actions"
       // .selection-popover (prototype): floats over the range; elev surface, line border, r-md.
       className="absolute z-40 flex items-center gap-0.5 rounded-md border border-line bg-elev p-1 shadow-lg"
-      style={{ top: rect.top, left: rect.left }}
+      // centered: `left` is the selection's center x → translateX(-50%) centers the popover over it
+      // (above-centered tooltip, Plannotator center-above, Apache-2.0).
+      style={{ top: rect.top, left: rect.left, transform: rect.centered ? "translateX(-50%)" : undefined }}
     >
       <button
         type="button"
