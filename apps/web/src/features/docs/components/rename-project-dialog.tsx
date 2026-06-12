@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { renameProject } from "@/features/docs/client";
 import { queryKeys } from "@/features/workspaces/query-keys";
-import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
 import { Button } from "@/components/ui/button";
 import {

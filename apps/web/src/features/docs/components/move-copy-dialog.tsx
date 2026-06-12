@@ -17,10 +17,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ShareDialog } from "@/features/sharing/share-dialog";
+import { ShareDialog } from "@/features/sharing/components/share-dialog";
 import type { EffectiveRole } from "@/features/viewer/client";
 import { queryKeys } from "@/features/workspaces/query-keys";
-import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
 import { moveDoc, copyDoc } from "@/features/docs/client";
 import type { DocRow, ProjectRow } from "@/features/docs/types";

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useActiveWorkspace } from "@/features/workspaces/active-workspace";
+import { useActiveWorkspace } from "@/features/workspaces/components/active-workspace";
 import { useWorkspaceDocs } from "@/features/docs/hooks/use-docs";
 import { DocCard } from "./doc-card";
 import { DocList } from "./doc-list";

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { UserMenu } from "./user-menu";
 import { useTheme } from "./theme-provider";
-import { useBootstrap } from "@/features/workspaces/use-bootstrap";
+import { useBootstrap } from "@/features/workspaces/hooks/use-bootstrap";
 import { isCompact, useBreakpoint } from "@/hooks/use-breakpoint";
 import { Icon } from "@/components/icon";
 

@@ -21,7 +21,7 @@ import { Composer } from "./composer";
 import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
 import { useDraggable } from "@/features/viewer/hooks/use-draggable";
 import { useCompose, peelCommentId } from "@/features/viewer/hooks/use-compose";
-import { ShareDialog } from "@/features/sharing/share-dialog";
+import { ShareDialog } from "@/features/sharing/components/share-dialog";
 import { canManageShare } from "@/features/sharing/client";
 import {
   fetchViewerDoc,

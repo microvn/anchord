@@ -40,7 +40,7 @@ mock.module("@/features/docs/client", () => ({
 }));
 
 const { DocsScreen } = await import("@/features/docs/components/docs-screen");
-const { WorkspaceRouteGuard } = await import("@/features/workspaces/active-workspace");
+const { WorkspaceRouteGuard } = await import("@/features/workspaces/components/active-workspace");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

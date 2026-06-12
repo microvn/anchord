@@ -68,7 +68,7 @@ mock.module("@/features/docs/client", () => ({
 
 let bootstrap: unknown;
 const { ProjectsScreen } = await import("@/features/docs/components/projects-screen");
-const { WorkspaceRouteGuard } = await import("@/features/workspaces/active-workspace");
+const { WorkspaceRouteGuard } = await import("@/features/workspaces/components/active-workspace");
 
 function App() {
   bootstrap = env({

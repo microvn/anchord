@@ -11,9 +11,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/icon";
-import { useActiveWorkspaceSafe } from "@/features/workspaces/active-workspace";
+import { useActiveWorkspaceSafe } from "@/features/workspaces/components/active-workspace";
 import { queryKeys } from "@/features/workspaces/query-keys";
-import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
 import { publishDoc } from "@/features/docs/client";
 import { useProjects } from "@/features/docs/hooks/use-docs";
