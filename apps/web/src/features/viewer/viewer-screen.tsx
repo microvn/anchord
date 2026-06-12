@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useApiQuery } from "../../lib/use-api-query";
 import { useViewerLayoutMode } from "../../lib/use-breakpoint";
 import { Icon } from "../../components/icon";
@@ -19,7 +20,7 @@ import { SelectionPopover } from "./selection-popover";
 import { Composer } from "./composer";
 import { useDismissOnOutsideAndEscape } from "./use-dismiss";
 import { useDraggable } from "./use-draggable";
-import { useCompose } from "./use-compose";
+import { useCompose, peelCommentId } from "./use-compose";
 import {
   fetchViewerDoc,
   listAnnotations,
@@ -199,9 +200,11 @@ function ViewerShell({
     slug,
     docPaneEl,
     canCompose,
-    () => {
-      if (drawerMode) setRailOpen(true); // surface the composer in the rail drawer on tablet/mobile
-      void anno.refetch();
+    (real) => {
+      // PERF: reconcile the create WITHOUT a refetch — prepend the real server row into the
+      // react-query cache (newest-first, deduped). The rail re-renders with no network reload.
+      anno.prependAnnotation(real);
+      if (drawerMode) setRailOpen(true); // surface the new thread in the rail drawer on tablet/mobile
     },
     (anchor, annotationId) => {
       // C-001: this fires only AFTER the server-authorized create succeeded — the highlight is a
@@ -484,6 +487,9 @@ function useAnnotations(
 ): {
   count: number;
   refetch: () => Promise<unknown>;
+  /** PERF: prepend a freshly-created real annotation into the cache (newest-first, deduped) so the
+   *  rail re-renders without a refetch. Called from useCompose's create-success reconcile. */
+  prependAnnotation: (real: ViewerAnnotation) => void;
   railProps: {
     annotations: ViewerAnnotation[];
     focusedId: string | null;
@@ -494,14 +500,34 @@ function useAnnotations(
   };
 } {
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  // The cache key for this doc's annotation list (matches useApiQuery below). All post-write
+  // reconciles patch THIS entry directly via setQueryData instead of refetching.
+  const annoKey = ["viewer-annotations", workspaceId, slug] as const;
 
   const annoQuery = useApiQuery<ListAnnotationsResponse>(
-    ["viewer-annotations", workspaceId, slug],
+    annoKey,
     () => listAnnotations(workspaceId ?? "", slug ?? ""),
     { enabled },
   );
 
   const annotations: ViewerAnnotation[] = annoQuery.data?.items ?? [];
+
+  // PERF (create reconcile): prepend the real row into the cached list — newest-first, deduped by id
+  // (a defensive guard so a double-fire can't list the same annotation twice). Only writes when ws +
+  // slug are present (the enabled-gated query); the create-success path always has them.
+  const prependAnnotation = useCallback(
+    (real: ViewerAnnotation) => {
+      if (!workspaceId || !slug) return;
+      queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) => {
+        const items = old?.items ?? [];
+        if (items.some((a) => a.id === real.id)) return old ?? { items };
+        return { ...old, items: [real, ...items] };
+      });
+    },
+    // annoKey is derived from workspaceId+slug; list them so the closure tracks the real deps.
+    [queryClient, workspaceId, slug], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   // Which anchored annotations the FE could NOT place at runtime (GAP-005). BUG #1 (2026-06-12):
   // this used to be derived in a render-time useMemo that called placeAnnotations — a DOM side
@@ -536,14 +562,15 @@ function useAnnotations(
   // S-003 (AS-006 / C-005): send a reply to an anchored thread. The reply is a comment whose
   // parentId is the annotation's FIRST/root comment — flat replies (the read side shapes every
   // reply as a sibling of the root, never nested, C-005). Identity rides the session cookie; the
-  // body carries no userId (C-001). On success we refetch so the real reply replaces the card's
-  // optimistic temp (mirrors S-001's reconcile-on-success — no duplicate). On a refused/failed
-  // write we return false (the card's onReply=false contract → no ghost reply) + toast the same
-  // error S-001 uses. Gated by canCompose (C-004): a viewer-only role gets no reply affordance.
+  // body carries no userId (C-001). On success we APPEND the real reply flat into the cached thread
+  // via setQueryData — no refetch, no network reload (mirrors S-001's create reconcile). On a
+  // refused/failed write we return false (the card's onReply=false contract → no ghost reply, no
+  // cache change) + toast the same error S-001 uses. Gated by canCompose (C-004): a viewer-only role
+  // gets no reply affordance.
   const onReply =
     canCompose && workspaceId && slug
       ? async (annotation: ViewerAnnotation, body: string): Promise<boolean> => {
-          const parentId = (annotation.comments ?? [])[0]?.id;
+          const parentId = (annotation.comments ?? [])[0]?.id ?? null;
           try {
             const res = await addComment(workspaceId, slug, annotation.id, {
               body,
@@ -553,8 +580,24 @@ function useAnnotations(
               toast.error("Couldn't post your reply");
               return false;
             }
-            // Reconcile: the refetched thread carries the real reply flat under the annotation.
-            await annoQuery.refetch();
+            // Reconcile (no refetch): append the real reply flat (parentId = the thread's root
+            // comment id, C-005) to ITS annotation in the cache.
+            const reply: ViewerAnnotation["comments"][number] = {
+              id: peelCommentId(res.data),
+              parentId,
+              authorName: "You",
+              body,
+              createdAt: new Date().toISOString(),
+            };
+            queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) => {
+              if (!old) return old;
+              return {
+                ...old,
+                items: old.items.map((a) =>
+                  a.id === annotation.id ? { ...a, comments: [...a.comments, reply] } : a,
+                ),
+              };
+            });
             return true;
           } catch {
             toast.error("Couldn't post your reply");
@@ -566,10 +609,10 @@ function useAnnotations(
   // S-004 (AS-007/AS-008/C-006): resolve / reopen an anchored thread. Gated by canCompose (C-004):
   // a viewer-only role gets no Resolve control. NOT author-gated — the server authorizes purely on
   // the session role (AS-008). On the toggle we also dim the in-text highlight immediately by
-  // flipping the matching mark's data-resolved flag (the spec's "highlight dims"); the next refetch
-  // re-places marks from the server status, so the dim reflects the SERVER result. On a refused/
-  // failed write we revert the mark, return false (the card rolls its optimistic toggle back), and
-  // toast the same error S-001/S-003 use.
+  // flipping the matching mark's data-resolved flag (the spec's "highlight dims"). On success we
+  // patch the annotation's status in the cache via setQueryData — no refetch, no network reload. On
+  // a refused/failed write we revert the mark, return false (the card rolls its optimistic toggle
+  // back), and toast the same error S-001/S-003 use.
   const dimMark = (annotationId: string, resolved: boolean) => {
     if (!docPaneEl) return;
     const mark = docPaneEl.querySelector<HTMLElement>(`[data-anno="${annotationId}"]`);
@@ -589,8 +632,18 @@ function useAnnotations(
               toast.error("Couldn't update this thread");
               return false;
             }
-            // Reconcile: the refetched annotation carries the server status, re-placing the mark.
-            await annoQuery.refetch();
+            // Reconcile (no refetch): patch the annotation's status in the cache.
+            queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) => {
+              if (!old) return old;
+              return {
+                ...old,
+                items: old.items.map((a) =>
+                  a.id === annotation.id
+                    ? { ...a, status: resolved ? "resolved" : "unresolved" }
+                    : a,
+                ),
+              };
+            });
             return true;
           } catch {
             dimMark(annotation.id, !resolved);
@@ -603,6 +656,7 @@ function useAnnotations(
   return {
     count: annotations.length,
     refetch: () => annoQuery.refetch(),
+    prependAnnotation,
     railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread, onReply, onResolve },
   };
 }

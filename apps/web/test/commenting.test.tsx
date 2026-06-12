@@ -166,35 +166,12 @@ function selectNothing(blockId: string) {
 
 describe("Commenting S-001", () => {
   it("AS-001: selecting a sentence, commenting, and sending creates a block-anchored annotation with a highlight and a top thread", async () => {
-    // The post-send refetch returns the REAL created row (the server's source of truth). The first
-    // read (initial mount) returns empty; once the create succeeds, onSent() refetches and the
-    // server now lists the real annotation. This forces the success path to reconcile the optimistic
-    // temp away — if it lingers, the comment renders TWICE and the count double-counts (the bug).
-    const realAnnotation = {
-      id: "anno-real-1",
-      type: "range",
-      status: "unresolved" as const,
-      isOrphaned: false,
-      anchor: {
-        blockId: "block-p-1",
-        textSnippet: "Payment expires after 24h",
-        offset: 0,
-        length: "Payment expires after 24h".length,
-      },
-      comments: [
-        {
-          id: "cmt-real-1",
-          parentId: null,
-          authorName: "You",
-          body: "Why 24h and not 48h?",
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    };
-    listAnnotations.mockImplementation(async () =>
-      createAnnotation.mock.calls.length > 0 ? okRead({ items: [realAnnotation] }) : okRead({ items: [] }),
-    );
-
+    // PERF (no-refetch reconcile): the success path now PREPENDS the real created row (built from the
+    // server-returned annotationId/commentId) into the react-query cache and clears the optimistic
+    // temp — NO post-write refetch. listAnnotations runs ONCE (the initial mount, returning empty);
+    // the real row appears purely from the cache update. If the optimistic temp lingered the comment
+    // would render TWICE / the count would double-count (the bug this guards). The mock stays on its
+    // default empty `annoResponse` impl — a second listAnnotations call would be a regression.
     await renderViewer();
     expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
 
@@ -250,6 +227,10 @@ describe("Commenting S-001", () => {
 
     // AS-001.T4: the count is EXACTLY 1 — no double-count from a lingering optimistic thread.
     expect(screen.getByTestId("rail-count")).toHaveTextContent("1");
+
+    // NO post-write refetch: listAnnotations ran ONLY for the initial mount. The reconcile happened
+    // entirely via the react-query cache update — a second call would be the old refetch regression.
+    expect(listAnnotations).toHaveBeenCalledTimes(1);
   });
 
   it("BUG #1: selecting text must NOT make existing annotation highlights disappear", async () => {
@@ -364,25 +345,10 @@ describe("Commenting S-001", () => {
   });
 
   it("C-008.T1: the comment body renders inert (escaped plaintext, no HTML injected)", async () => {
-    // The post-send refetch returns the real row carrying the untrusted body, so we assert inertness
-    // on the reconciled (single source of truth) thread, not the transient optimistic one.
+    // PERF (no-refetch): the reconciled real row is built in-memory from the typed body and prepended
+    // into the cache — no refetch. Inertness is asserted on that reconciled (single source of truth)
+    // thread; the untrusted body must render as escaped plaintext, never injected HTML.
     const xss = "<img src=x onerror=alert(1)>";
-    listAnnotations.mockImplementation(async () =>
-      createAnnotation.mock.calls.length > 0
-        ? okRead({
-            items: [
-              {
-                id: "anno-real-1",
-                type: "range",
-                status: "unresolved",
-                isOrphaned: false,
-                anchor: { blockId: "block-p-1", textSnippet: "Payment expires after 24h", offset: 0, length: 25 },
-                comments: [{ id: "cmt-real-1", parentId: null, authorName: "You", body: xss, createdAt: new Date().toISOString() }],
-              },
-            ],
-          })
-        : okRead({ items: [] }),
-    );
 
     await renderViewer();
 

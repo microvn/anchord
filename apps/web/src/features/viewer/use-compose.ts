@@ -37,8 +37,10 @@ function selectionRect(sel: Selection | null): RectLike | null {
 //      gets no popover/composer — a read-only rail.
 //   2. COMPOSE: Comment in the popover opens the composer prefilled with the quote.
 //   3. SEND (AS-001 + C-011): optimistically prepend a thread + place its highlight, then
-//      POST annotation → POST comment. On success keep it (a refetch reconciles). On a refused /
-//      failed write, ROLL BACK — remove the optimistic thread + highlight — and toast an error.
+//      POST annotation → POST comment. On success, BUILD the real annotation from the responses and
+//      PREPEND it into the react-query cache (no refetch — no network reload, no flicker), then clear
+//      the optimistic temp. On a refused / failed write, ROLL BACK — remove the optimistic thread +
+//      highlight — and toast an error.
 
 let optimisticSeq = 0;
 
@@ -89,7 +91,10 @@ export function useCompose(
   slug: string | undefined,
   docPaneEl: HTMLElement | null,
   canCompose: boolean,
-  onSent: () => void,
+  /** PERF (no-refetch reconcile): called on a successful create with the REAL annotation built from
+   *  the server-returned ids. The screen PREPENDS it into the react-query cache (newest-first) so the
+   *  rail re-renders WITHOUT a network reload — replacing the old onSent()→refetch reconcile. */
+  onCreatedAnnotation: (real: ViewerAnnotation) => void,
   /** S-002: called after a successful create with the anchor + the real annotation id, so the
    *  screen can relay a highlight DOWN to the in-iframe bridge (the parent can't draw the mark). */
   onCreated?: (anchor: SelectionAnchor, annotationId: string) => void,
@@ -285,6 +290,15 @@ export function useCompose(
       if (guestIdentity && guestIdentity.guestName.trim().length === 0) return;
 
       const tempId = `optimistic-${++optimisticSeq}`;
+      // Capture ONE ISO time so the optimistic comment and the reconciled real row share it (no
+      // visible timestamp jump when the temp is swapped for the real cache row).
+      const createdAt = new Date().toISOString();
+      // The author attribution is shared by the optimistic temp AND the reconciled real row: a
+      // guest's self-entered name (C-010) or "You" for a member. NOTE: "You" is a placeholder — the
+      // server's real display name only lands on a later genuine read; acceptable for the local echo.
+      const attribution = guestIdentity
+        ? { guestName: guestIdentity.guestName }
+        : { authorName: "You" };
       const optimisticThread: ViewerAnnotation = {
         id: tempId,
         type: "range",
@@ -303,11 +317,9 @@ export function useCompose(
             parentId: null,
             // S-005: a guest's optimistic comment is attributed to its self-entered name (C-010);
             // a member's is "You". Either way it renders inert via ThreadCard (C-008).
-            ...(guestIdentity
-              ? { guestName: guestIdentity.guestName }
-              : { authorName: "You" }),
+            ...attribution,
             body, // inert plaintext when rendered by ThreadCard (C-008)
-            createdAt: new Date().toISOString(),
+            createdAt,
           },
         ],
       };
@@ -326,7 +338,7 @@ export function useCompose(
       setPending(true);
 
       // Drop the optimistic temp thread + unwrap its highlight mark. Shared by the success reconcile
-      // (the real refetched row becomes the single source of truth) and the failure rollback.
+      // (the real cache row becomes the single source of truth) and the failure rollback.
       const clearOptimistic = () => {
         setOptimistic((prev) => prev.filter((a) => a.id !== tempId));
         if (docPaneEl) {
@@ -378,15 +390,39 @@ export function useCompose(
             rollback();
             return;
           }
-          // Success: reconcile. Clear the optimistic temp thread + its highlight mark so the
-          // refetched real row is the SINGLE source of truth — otherwise the comment renders twice
-          // (optimistic + real), the rail count double-counts, and the stale temp mark can collide
-          // / double-wrap the same range as the real annotation's mark. onSent() refetches the real row.
+          // Success: reconcile WITHOUT a refetch. Build the REAL annotation from the server-returned
+          // ids (reusing the optimistic anchor + body + createdAt + attribution) and PREPEND it into
+          // the react-query cache (newest-first). Then clear the optimistic temp thread + its
+          // highlight mark — so the real row is the SINGLE source of truth (no double render, no
+          // double-count, no stale temp mark double-wrapping the same range). The real row's mark is
+          // placed by the existing useAnnotationMarks effect when the annotations array changes.
+          const real: ViewerAnnotation = {
+            id: annotationId,
+            type: "range",
+            status: "unresolved",
+            isOrphaned: false,
+            anchor: {
+              blockId: anchor.blockId,
+              textSnippet: anchor.textSnippet,
+              offset: anchor.offset,
+              length: anchor.length,
+              segments: anchor.segments,
+            },
+            comments: [
+              {
+                id: peelCommentId(commented.data),
+                parentId: null,
+                ...attribution,
+                body,
+                createdAt,
+              },
+            ],
+          };
+          onCreatedAnnotation(real);
           clearOptimistic();
           // S-002: relay the real highlight DOWN to the in-iframe bridge (HTML docs). For a
-          // Markdown doc onCreated is undefined — the highlight is the refetched row's mark instead.
+          // Markdown doc onCreated is undefined — the highlight is the real row's mark instead.
           onCreated?.(anchor, annotationId);
-          onSent();
         } catch {
           // network failure (C-011/AS-013).
           rollback();
@@ -395,7 +431,7 @@ export function useCompose(
         }
       })();
     },
-    [active, workspaceId, slug, docPaneEl, onSent, onCreated],
+    [active, workspaceId, slug, docPaneEl, onCreatedAnnotation, onCreated],
   );
 
   return {
@@ -425,6 +461,21 @@ function peelId(data: unknown): string {
     const inner = obj.data;
     if (inner && typeof inner === "object" && typeof (inner as Record<string, unknown>).annotationId === "string") {
       return (inner as Record<string, string>).annotationId;
+    }
+  }
+  return "";
+}
+
+// Same envelope-defensive peel for the comment create result (`{ commentId }` possibly wrapped in
+// the success envelope). The real id is needed so the prepended cache comment carries the server id
+// (a later genuine read then matches it — no duplicate).
+export function peelCommentId(data: unknown): string {
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    if (typeof obj.commentId === "string") return obj.commentId;
+    const inner = obj.data;
+    if (inner && typeof inner === "object" && typeof (inner as Record<string, unknown>).commentId === "string") {
+      return (inner as Record<string, string>).commentId;
     }
   }
   return "";

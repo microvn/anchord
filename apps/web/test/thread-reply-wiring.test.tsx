@@ -10,7 +10,8 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 // a thread in the rail, click Reply, type, send, and assert:
 //   - addComment was called with { body, parentId } (parentId = the annotation's first/root comment),
 //   - the reply appears FLAT under the thread (exactly one new reply, one reply-list level),
-//   - the post-send refetch reconciles the optimistic temp away (no duplicate reply on success).
+//   - PERF: the reply lands via a react-query CACHE APPEND (no post-write refetch) — listAnnotations
+//     runs ONLY for the initial mount; a second call would be the old refetch regression.
 
 const okEnv = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 const okRead = (body: unknown) => ({ data: body, error: null });
@@ -41,31 +42,12 @@ const baseThread = {
 
 let docResponse: unknown;
 const fetchViewerDoc = mock(async () => docResponse);
-// The refetch reconcile: the FIRST read returns the thread with only its root comment; once a reply
-// has been posted (addComment called), the server now lists the SAME thread plus the real reply flat
-// under it. If the card kept its optimistic temp after this reconcile, the reply would render twice.
+// PERF (no-refetch reconcile): the reply is appended FLAT into the react-query cache from the
+// server-returned commentId — there is NO post-write refetch. listAnnotations therefore serves only
+// the initial mount (the thread with its root comment); the real reply appears purely from the cache
+// append. A second listAnnotations call would be the old refetch regression.
 const addComment = mock(async () => okEnv({ commentId: "cmt-real-reply-1" }));
-const listAnnotations = mock(async () =>
-  addComment.mock.calls.length > 0
-    ? okRead({
-        items: [
-          {
-            ...baseThread,
-            comments: [
-              rootComment,
-              {
-                id: "cmt-real-reply-1",
-                parentId: rootComment.id,
-                authorName: "You",
-                body: "Because the trial window is 24h.",
-                createdAt: new Date().toISOString(),
-              },
-            ],
-          },
-        ],
-      })
-    : okRead({ items: [baseThread] }),
-);
+const listAnnotations = mock(async () => okRead({ items: [baseThread] }));
 
 function canComment(role: string | undefined) {
   return role !== "viewer";
@@ -162,8 +144,8 @@ describe("ViewerScreen reply wiring (S-003)", () => {
     expect(annotationId).toBe("anno-1");
     expect(body).toMatchObject({ body: "Because the trial window is 24h.", parentId: "cmt-root-1" });
 
-    // The reply appears flat under the thread: exactly ONE reply row at one nesting level — the
-    // refetch reconciled the optimistic temp into the single real row (no duplicate-on-success).
+    // The reply appears flat under the thread: exactly ONE reply row at one nesting level — appended
+    // into the cache as a sibling of the root comment (no duplicate-on-success).
     await waitFor(() => {
       const live = screen.getByTestId("thread-card");
       expect(within(live).getAllByTestId("reply")).toHaveLength(1);
@@ -173,5 +155,8 @@ describe("ViewerScreen reply wiring (S-003)", () => {
     expect(maxReplyListDepth()).toBe(1);
     // No error toast on the success path.
     expect(toastError).not.toHaveBeenCalled();
+    // PERF: NO post-write refetch — listAnnotations ran ONLY for the initial mount; the reply landed
+    // via the cache append. A second call would be the old refetch regression.
+    expect(listAnnotations).toHaveBeenCalledTimes(1);
   });
 });

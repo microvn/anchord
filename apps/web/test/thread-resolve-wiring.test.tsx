@@ -10,9 +10,10 @@ import userEvent from "@testing-library/user-event";
 //
 // We mount AnnotationsRail (not the whole ViewerScreen) with a doc-pane element carrying the
 // annotation's highlight mark, and an onResolve closure that mirrors viewer-screen's useAnnotations:
-// it dims the mark, calls the real (mocked) setResolution, and flips the served status so a re-read
-// would reconcile. Asserting at the rail seam keeps the test deterministic — it does not depend on
-// the full doc-load query path (whose module-global client mock is shared across the suite by bun).
+// it dims the mark, calls the real (mocked) setResolution, and — PERF (no-refetch) — PATCHES the
+// served annotation's status in place (the same shape setQueryData applies to the cache), never
+// refetching. Asserting at the rail seam keeps the test deterministic — it does not depend on the
+// full doc-load query path (whose module-global client mock is shared across the suite by bun).
 
 import { AnnotationsRail } from "../src/features/viewer/annotations-rail";
 import type { ViewerAnnotation, SetResolutionResult } from "../src/features/viewer/client";
@@ -76,7 +77,8 @@ function makeOnResolve(docPane: HTMLElement, served: ViewerAnnotation[]) {
       toastError();
       return false;
     }
-    // Reconcile: a real refetch would re-serve the toggled status; mirror it on our served copy.
+    // Reconcile (no refetch): patch the served annotation's status in place — the same in-cache
+    // status flip setQueryData applies in viewer-screen's useAnnotations.
     const idx = served.findIndex((a) => a.id === annotation.id);
     if (idx >= 0) served[idx] = { ...served[idx]!, status: resolved ? "resolved" : "unresolved" };
     return true;
