@@ -1,6 +1,6 @@
 import { Icon } from "@/components/icon";
 import { ThreadCard, DetachedCard } from "./thread-card";
-import type { ViewerAnnotation } from "./client";
+import type { ViewerAnnotation } from "@/features/viewer/client";
 
 // AnnotationsRail (S-003): the right-hand pane. Splits the annotation list into anchored threads
 // (rail threads paired 1:1 to in-text highlights, C-003) and detached/orphaned annotations (the

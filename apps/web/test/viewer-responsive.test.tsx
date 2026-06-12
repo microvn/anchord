@@ -67,7 +67,7 @@ mock.module("@/features/viewer/client", () => ({
   canComment: (role: string | undefined) => role !== "viewer",
 }));
 
-const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/components/viewer-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -23,8 +23,8 @@ mock.module("@/features/viewer/client", () => ({
   addComment: mock(async () => ({ data: {}, error: null })),
 }));
 
-const { useCompose } = await import("@/features/viewer/use-compose");
-const { useDismissOnOutsideAndEscape } = await import("@/features/viewer/use-dismiss");
+const { useCompose } = await import("@/features/viewer/hooks/use-compose");
+const { useDismissOnOutsideAndEscape } = await import("@/features/viewer/hooks/use-dismiss");
 
 const realMatchMedia = window.matchMedia;
 afterEach(() => {

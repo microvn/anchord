@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useActiveWorkspace } from "@/features/workspaces/active-workspace";
-import { useWorkspaceDocs } from "./use-docs";
+import { useWorkspaceDocs } from "@/features/docs/hooks/use-docs";
 import { DocCard } from "./doc-card";
 import { DocList } from "./doc-list";
 import { NewDocButton } from "./new-doc-dialog";
@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
 import { NoResultsState } from "@/components/no-results-state";
-import type { DocRow } from "./types";
+import type { DocRow } from "@/features/docs/types";
 
 // `/w/:id/docs` — the All-docs browser, 1:1 with Anchord-Design's ProjectBrowser
 // (browser.jsx). page-head (Workspace eyebrow + Fraunces title + New-doc) · a browse-bar

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { archiveProject, unarchiveProject, deleteProject } from "./client";
+import { archiveProject, unarchiveProject, deleteProject } from "@/features/docs/client";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { ProjectRow } from "./types";
+import type { ProjectRow } from "@/features/docs/types";
 
 // ProjectCardMoreMenu (workspace-project-ui S-002) — a ⋯ on each proj-card → Rename · Archive
 // (or Unarchive when archived) · Delete. Delete is HIDDEN entirely on the default project

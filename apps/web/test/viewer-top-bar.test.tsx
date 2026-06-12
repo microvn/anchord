@@ -1,8 +1,8 @@
 import { describe, it, expect } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ViewerTopBar } from "@/features/viewer/viewer-top-bar";
-import { MetaStrip, type SpecMeta } from "@/features/viewer/meta-strip";
+import { ViewerTopBar } from "@/features/viewer/components/viewer-top-bar";
+import { MetaStrip, type SpecMeta } from "@/features/viewer/components/meta-strip";
 
 // annotation-core-ui S-005 — Viewer top bar + spec meta. The top bar is a pure presentational
 // component driven by the doc meta the viewer already fetches (S-001) plus a `railVisible` /

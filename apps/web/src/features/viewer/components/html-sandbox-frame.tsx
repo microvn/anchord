@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Icon } from "@/components/icon";
-import { connectBridge, type BridgeAnchor, type BridgeConnection } from "./bridge";
+import { connectBridge, type BridgeAnchor, type BridgeConnection } from "@/features/viewer/bridge";
 
 // HtmlSandboxFrame (S-001/AS-002, C-001/C-008; S-002/AS-004/AS-005, C-002/C-009): renders a
 // kind=html doc inside a sandboxed iframe whose `src` is the backend's /v/:id content route (opaque

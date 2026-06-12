@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { FormatBadge, MetaDot, VersionTag, CommentCount, StatusTag } from "./doc-bits";
 import { DocMoreMenu } from "./move-copy-dialog";
-import { FORMAT_META, type DocRow, type ProjectRow } from "./types";
+import { FORMAT_META, type DocRow, type ProjectRow } from "@/features/docs/types";
 
 // DocCard — the grid tile in the All-docs browser, 1:1 with Anchord-Design's DocCard
 // (.doc-card: top row [format glyph · ver · ⋯], body [title · project · author], foot

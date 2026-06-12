@@ -28,8 +28,8 @@ mock.module("@/features/docs/client", () => ({
 // Stub the toast so a missing Toaster host doesn't error under happy-dom.
 mock.module("sonner", () => ({ toast: { success: mock(() => {}), error: mock(() => {}) } }));
 
-const { DocCard } = await import("@/features/docs/doc-card");
-const { DocList } = await import("@/features/docs/doc-list");
+const { DocCard } = await import("@/features/docs/components/doc-card");
+const { DocList } = await import("@/features/docs/components/doc-list");
 import type { DocRow, ProjectRow } from "@/features/docs/types";
 
 const WORKSPACE = "ws-acme";

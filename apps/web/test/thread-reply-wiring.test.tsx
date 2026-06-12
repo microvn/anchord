@@ -68,7 +68,7 @@ mock.module("sonner", () => ({
   Toaster: () => null,
 }));
 
-const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/components/viewer-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

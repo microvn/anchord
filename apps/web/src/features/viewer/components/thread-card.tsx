@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ViewerAnnotation, AnnotationComment } from "./client";
+import type { ViewerAnnotation, AnnotationComment } from "@/features/viewer/client";
 
 // ThreadCard (S-003): one annotation rendered as a rail thread — QuoteRef · avatar · author ·
 // time · body · flat ReplyList · Resolved badge. Styled 1:1 with Anchord-Design viewer.css

@@ -15,11 +15,11 @@ import { WorkspaceRouteGuard } from "./features/workspaces/active-workspace";
 import { WorkspaceRootRedirect } from "./features/workspaces/workspace-root-redirect";
 import { WorkspaceHome } from "./features/workspaces/workspace-home";
 import { MembersScreen } from "./features/workspaces/members-screen";
-import { DocsScreen } from "./features/docs/docs-screen";
-import { ProjectsScreen } from "./features/docs/projects-screen";
-import { ActivityScreen } from "./features/docs/activity-screen";
-import { SearchScreen } from "./features/docs/search-screen";
-import { ViewerScreen } from "./features/viewer/viewer-screen";
+import { DocsScreen } from "./features/docs/components/docs-screen";
+import { ProjectsScreen } from "./features/docs/components/projects-screen";
+import { ActivityScreen } from "./features/docs/components/activity-screen";
+import { SearchScreen } from "./features/docs/components/search-screen";
+import { ViewerScreen } from "./features/viewer/components/viewer-screen";
 import { Toaster } from "./components/ui/sonner";
 
 // One shared QueryClient for the app's server-state layer (S-002). Its cache-level onError

@@ -32,6 +32,7 @@ import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
 import { LinkControls } from "./link-controls";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
 import type { EffectiveRole } from "@/features/viewer/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
@@ -93,8 +94,12 @@ export function ShareDialog({
     setError(null);
     setForbidden(false);
     void getShareState(workspaceId, slug)
-      .then((res) => {
+      .then((raw) => {
         if (cancelled) return;
+        // Unwrap the api-core envelope ({success,data,…}) — these thunks return the raw Eden result
+        // (not read through useApiQuery, which peels). Without this, `res.data` is the envelope and
+        // `state.people` is undefined → ShareDialog crashes.
+        const res = unwrapEnvelope<ShareState>(raw);
         if (res.error || !res.data) {
           // A refused (403) gated read → the read-only "can't manage" surface (AS-003); any other
           // failure → the generic retryable error (AS network/500).

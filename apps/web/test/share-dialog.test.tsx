@@ -191,7 +191,7 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
   }));
 
   it("AS-019: the ⋯ Share item shows UNCONDITIONALLY (no manager effectiveRole); Share opens the dialog for that doc", async () => {
-    const { DocMoreMenu } = await import("@/features/docs/move-copy-dialog");
+    const { DocMoreMenu } = await import("@/features/docs/components/move-copy-dialog");
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const doc = {
       id: "d1",

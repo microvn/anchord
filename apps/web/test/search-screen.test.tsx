@@ -49,7 +49,7 @@ mock.module("@/features/docs/client", () => ({
   copyDoc: mock(async () => env({})),
 }));
 
-const { SearchScreen } = await import("@/features/docs/search-screen");
+const { SearchScreen } = await import("@/features/docs/components/search-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

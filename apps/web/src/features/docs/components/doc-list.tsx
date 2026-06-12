@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { FormatBadge, FormatTag, MetaDot, VersionTag, CommentCount, StatusTag } from "./doc-bits";
 import { DocMoreMenu } from "./move-copy-dialog";
-import type { DocRow, ProjectRow } from "./types";
+import type { DocRow, ProjectRow } from "@/features/docs/types";
 
 // The "Documents · Recent" list rows on the dashboard + the All-docs list view, 1:1 with
 // Anchord-Design's DocList (.list wrapper of .doc-row). Each row is COLUMNAR

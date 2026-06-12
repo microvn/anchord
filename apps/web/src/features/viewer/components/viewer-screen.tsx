@@ -18,9 +18,9 @@ import { toast } from "sonner";
 import { useAnnotationMarks, scrollToAnno } from "./annotation-marks";
 import { SelectionPopover } from "./selection-popover";
 import { Composer } from "./composer";
-import { useDismissOnOutsideAndEscape } from "./use-dismiss";
-import { useDraggable } from "./use-draggable";
-import { useCompose, peelCommentId } from "./use-compose";
+import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
+import { useDraggable } from "@/features/viewer/hooks/use-draggable";
+import { useCompose, peelCommentId } from "@/features/viewer/hooks/use-compose";
 import { ShareDialog } from "@/features/sharing/share-dialog";
 import { canManageShare } from "@/features/sharing/client";
 import {
@@ -32,7 +32,7 @@ import {
   type ViewerDocResponse,
   type ListAnnotationsResponse,
   type ViewerAnnotation,
-} from "./client";
+} from "@/features/viewer/client";
 
 // ViewerScreen (S-001): the React route `/w/:workspaceId/d/:slug`. It fetches the doc via the
 // workspace-scoped read, then renders it inside the 3-pane viewer shell. The TOC sidebar (S-002),

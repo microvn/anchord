@@ -47,10 +47,10 @@ mock.module("sonner", () => ({
   Toaster: () => null,
 }));
 
-const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/components/viewer-screen");
 // Pure helpers (exported by composer.tsx) for the random-name + sanitize unit tests.
 const { randomGuestName, sanitizeGuestName, GUEST_NAME_MAX } = await import(
-  "@/features/viewer/composer"
+  "@/features/viewer/components/composer"
 );
 
 function client() {

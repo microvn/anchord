@@ -22,8 +22,8 @@ import type { EffectiveRole } from "@/features/viewer/client";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
-import { moveDoc, copyDoc } from "./client";
-import type { DocRow, ProjectRow } from "./types";
+import { moveDoc, copyDoc } from "@/features/docs/client";
+import type { DocRow, ProjectRow } from "@/features/docs/types";
 
 // MoveCopyDialog (workspace-project-ui S-001) — 1:1 with Anchord-Design dialogs2.jsx P10.
 // A Move|Copy toggle (fmt-toggle), a destination project select-list (folder glyph · name ·

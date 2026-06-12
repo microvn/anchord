@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Icon } from "@/components/icon";
-import { useDismissOnOutsideAndEscape } from "./use-dismiss";
+import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
 
 // SelectionPopover (S-001): the floating popover that appears over a live text selection on a
 // rendered Markdown doc. Mirrors the prototype `viewer.jsx` SelectionPopover. v0 surfaces only

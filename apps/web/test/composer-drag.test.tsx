@@ -15,8 +15,8 @@ mock.module("@/features/viewer/client", () => ({
   addComment: mock(async () => ({ data: {}, error: null })),
 }));
 
-const { useDraggable } = await import("@/features/viewer/use-draggable");
-const { Composer } = await import("@/features/viewer/composer");
+const { useDraggable } = await import("@/features/viewer/hooks/use-draggable");
+const { Composer } = await import("@/features/viewer/components/composer");
 
 /** A minimal synthetic React.PointerEvent for the handler (only the members it reads). */
 function pointerDownEvent(x: number, y: number): unknown {

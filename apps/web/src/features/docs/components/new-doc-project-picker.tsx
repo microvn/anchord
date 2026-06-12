@@ -5,7 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { ProjectRow } from "./types";
+import type { ProjectRow } from "@/features/docs/types";
 
 // The project picker for the New-doc dialog (workspace-project-ui S-003). The doc the author
 // publishes lands in the chosen project instead of always the default. The list is the active

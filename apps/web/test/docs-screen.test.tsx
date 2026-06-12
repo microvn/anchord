@@ -39,7 +39,7 @@ mock.module("@/features/docs/client", () => ({
   copyDoc: mock(async () => env({ docId: "d2", slug: "spec-copy", projectId: "p1" })),
 }));
 
-const { DocsScreen } = await import("@/features/docs/docs-screen");
+const { DocsScreen } = await import("@/features/docs/components/docs-screen");
 const { WorkspaceRouteGuard } = await import("@/features/workspaces/active-workspace");
 
 function client() {

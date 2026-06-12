@@ -3,8 +3,8 @@ import { toApiError, type ApiError } from "@/lib/api/api-error";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
 import { queryKeys } from "@/features/workspaces/query-keys";
-import { fetchProjects, fetchProjectDocs, searchDocs } from "./client";
-import type { DocRow, ProjectRow, SearchResultRow } from "./types";
+import { fetchProjects, fetchProjectDocs, searchDocs } from "@/features/docs/client";
+import type { DocRow, ProjectRow, SearchResultRow } from "@/features/docs/types";
 
 // Browse data hooks for the workspace-project surfaces. Keyed by workspaceId (GAP-001) so
 // switching workspace never shows stale data. The backend exposes NO workspace-wide docs

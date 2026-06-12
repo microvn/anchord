@@ -5,7 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { ProjectRow } from "./types";
+import type { ProjectRow } from "@/features/docs/types";
 
 // The search-scope control (workspace-project-ui S-004, GAP-003 accepted design — no prototype).
 // A Select listing "All workspace" plus the active workspace's projects (C-003 — this workspace

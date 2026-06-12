@@ -15,7 +15,7 @@ import userEvent from "@testing-library/user-event";
 // refetching. Asserting at the rail seam keeps the test deterministic — it does not depend on the
 // full doc-load query path (whose module-global client mock is shared across the suite by bun).
 
-import { AnnotationsRail } from "@/features/viewer/annotations-rail";
+import { AnnotationsRail } from "@/features/viewer/components/annotations-rail";
 import type { ViewerAnnotation, SetResolutionResult } from "@/features/viewer/client";
 import type { EdenResult } from "@/lib/api/use-api-query";
 

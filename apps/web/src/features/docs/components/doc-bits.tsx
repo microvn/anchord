@@ -1,5 +1,5 @@
 import { Icon } from "@/components/icon";
-import { FORMAT_META, type DocKind, type DocStatus } from "./types";
+import { FORMAT_META, type DocKind, type DocStatus } from "@/features/docs/types";
 
 // Shared presentational bits for the doc browse surfaces, 1:1 with Anchord-Design's
 // FormatBadge / .doc-fmt / .doc-fmt-tag + the columnar row cells (.doc-ver / .doc-comments /

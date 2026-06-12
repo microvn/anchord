@@ -2,8 +2,8 @@ import type { Ref } from "react";
 import { MarkdownView } from "./markdown-view";
 import { HtmlSandboxFrame, type HtmlSandboxFrameHandle } from "./html-sandbox-frame";
 import { ImageViewer } from "./image-viewer";
-import type { BridgeAnchor } from "./bridge";
-import type { ViewerDocResponse } from "./client";
+import type { BridgeAnchor } from "@/features/viewer/bridge";
+import type { ViewerDocResponse } from "@/features/viewer/client";
 
 // DocPane (S-001, C-001): the center pane of the 3-pane viewer. It picks the render strategy
 // from the doc kind — markdown renders inline in the app theme; html/image render from the

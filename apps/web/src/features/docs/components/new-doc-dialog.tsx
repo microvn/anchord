@@ -15,11 +15,11 @@ import { useActiveWorkspaceSafe } from "@/features/workspaces/active-workspace";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
-import { publishDoc } from "./client";
-import { useProjects } from "./use-docs";
+import { publishDoc } from "@/features/docs/client";
+import { useProjects } from "@/features/docs/hooks/use-docs";
 import { NewDocProjectPicker } from "./new-doc-project-picker";
 import { NewDocMcpPane } from "./new-doc-mcp-pane";
-import type { PublishResult } from "./types";
+import type { PublishResult } from "@/features/docs/types";
 
 // NewDocDialog (render-publish S-001; project picker S-003) — Upload / Paste / via-MCP tabs,
 // 1:1 with Anchord-Design's NewDocDialog. Caps: 5 MB text, 25 MB images (AS-004); unsupported

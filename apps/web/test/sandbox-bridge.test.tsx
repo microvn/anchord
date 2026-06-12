@@ -53,7 +53,7 @@ mock.module("sonner", () => ({
 }));
 
 const { isTrustedReady, connectBridge } = await import("@/features/viewer/bridge");
-const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/components/viewer-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

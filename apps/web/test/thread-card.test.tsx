@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { avatarColor, AVATAR_COLORS } from "@/features/viewer/thread-card";
+import { avatarColor, AVATAR_COLORS } from "@/features/viewer/components/thread-card";
 
 // annotation-core-ui S-003 — the comment-item avatar color. 1:1 with Anchord-Design data.jsx
 // `avatarColor`: a stable per-author color hashed from the name (h = h*31 + charCode, >>>0) into

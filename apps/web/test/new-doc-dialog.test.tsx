@@ -32,7 +32,7 @@ mock.module("@/features/docs/client", () => ({
   copyDoc: mock(async () => env({})),
 }));
 
-const { NewDocDialog } = await import("@/features/docs/new-doc-dialog");
+const { NewDocDialog } = await import("@/features/docs/components/new-doc-dialog");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

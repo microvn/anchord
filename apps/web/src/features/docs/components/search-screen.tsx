@@ -1,5 +1,5 @@
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { useSearch, useProjects } from "./use-docs";
+import { useSearch, useProjects } from "@/features/docs/hooks/use-docs";
 import { SearchScopeControl } from "./search-scope-control";
 import { FormatBadge } from "./doc-bits";
 import { Skeleton } from "@/components/skeleton";

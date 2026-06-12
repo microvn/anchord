@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { renameProject } from "./client";
+import { renameProject } from "@/features/docs/client";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { ProjectRow } from "./types";
+import type { ProjectRow } from "@/features/docs/types";
 
 // RenameProjectDialog (workspace-project-ui S-002 / AS-003) — mirrors the create/rename Dialog
 // pattern (create-workspace-dialog.tsx / rename-field.tsx): a name input + Save. On success it
