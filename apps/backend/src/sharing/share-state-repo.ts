@@ -48,6 +48,7 @@ export function createShareStateRepo(db: DB): ShareStateRepo {
       //    has no userId → no name. ONE query, no per-row N+1.
       const memberRows = await db
         .select({
+          id: docMembers.id,
           email: docMembers.email,
           name: user.name,
           role: docMembers.role,
@@ -58,6 +59,7 @@ export function createShareStateRepo(db: DB): ShareStateRepo {
         .where(eq(docMembers.docId, docId));
 
       const people: SharePerson[] = memberRows.map((m) => ({
+        id: m.id,
         email: m.email,
         ...(m.name ? { name: m.name } : {}),
         role: m.role,

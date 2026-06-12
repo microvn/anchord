@@ -84,8 +84,8 @@ const SHARE_STATE_ROW: ShareStateRow = {
   guestCommenting: true,
   editorsCanShare: true,
   people: [
-    { email: "active@acme.com", name: "Active Person", role: "editor", status: "active" },
-    { email: "pending@x.com", role: "viewer", status: "pending" },
+    { id: "m-active", email: "active@acme.com", name: "Active Person", role: "editor", status: "active" },
+    { id: "m-pending", email: "pending@x.com", role: "viewer", status: "pending" },
   ],
   link: {
     hasPassword: true,
@@ -469,15 +469,17 @@ describe("GET /api/w/:workspaceId/docs/:slug/share (S-006 — read share state)"
     expect(d.role).toBe("commenter");
     expect(d.guestCommenting).toBe(true);
     expect(d.editorsCanShare).toBe(true);
-    // AS-025.T5 people[] — each with email/name, role, active|pending
+    // AS-025.T5 people[] — each with member id, email/name, role, active|pending
     expect(d.people).toHaveLength(2);
     expect(d.people[0]).toEqual({
+      id: "m-active",
       email: "active@acme.com",
       name: "Active Person",
       role: "editor",
       status: "active",
     });
     const pending = d.people.find((p: any) => p.status === "pending");
+    expect(pending.id).toBe("m-pending"); // member id lets the dialog target change/remove (S-007)
     expect(pending.email).toBe("pending@x.com");
     expect(pending.role).toBe("viewer");
     expect(pending.name).toBeUndefined(); // pending invite has no account name

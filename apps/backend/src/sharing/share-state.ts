@@ -17,6 +17,9 @@ import type { GeneralAccessLevel, ShareRole } from "./share";
 
 /** One row of the people list — an invited member (active) or a pending invite. */
 export interface SharePerson {
+  /** The doc_members row id — lets the Share dialog target the change-role / remove member
+   *  actions (S-007 PATCH/DELETE …/members/:id). (AS-025) */
+  id: string;
   email: string;
   /** The account display name when known; absent for a pending (no-account) invite. */
   name?: string;
