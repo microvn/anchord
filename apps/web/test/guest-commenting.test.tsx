@@ -32,7 +32,7 @@ function canComment(role: string | undefined) {
   return role !== "viewer";
 }
 
-mock.module("../src/features/viewer/client", () => ({
+mock.module("@/features/viewer/client", () => ({
   fetchViewerDoc,
   listAnnotations,
   createAnnotation,
@@ -47,10 +47,10 @@ mock.module("sonner", () => ({
   Toaster: () => null,
 }));
 
-const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
 // Pure helpers (exported by composer.tsx) for the random-name + sanitize unit tests.
 const { randomGuestName, sanitizeGuestName, GUEST_NAME_MAX } = await import(
-  "../src/features/viewer/composer"
+  "@/features/viewer/composer"
 );
 
 function client() {

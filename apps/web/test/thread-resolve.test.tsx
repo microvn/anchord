@@ -9,8 +9,8 @@ import userEvent from "@testing-library/user-event";
 // viewer-only role (no onResolve) gets no Resolve control. We render ThreadCard directly with a
 // mocked onResolve so the test asserts the toggle behaviour + render state, not a real round-trip.
 
-import { ThreadCard } from "../src/features/viewer/thread-card";
-import type { ViewerAnnotation } from "../src/features/viewer/client";
+import { ThreadCard } from "@/features/viewer/thread-card";
+import type { ViewerAnnotation } from "@/features/viewer/client";
 
 function thread(overrides: Partial<ViewerAnnotation> = {}): ViewerAnnotation {
   return {

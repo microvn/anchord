@@ -12,7 +12,7 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 
 let bootstrap: unknown;
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap: mock(async () => bootstrap),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
   setActiveWorkspace: mock(async () => env({})),
@@ -29,7 +29,7 @@ let projects: unknown;
 const docsByProject: Record<string, unknown> = {};
 const fetchProjects = mock(async () => projects);
 const fetchProjectDocs = mock(async (_w: string, id: string) => docsByProject[id]);
-mock.module("../src/features/docs/client", () => ({
+mock.module("@/features/docs/client", () => ({
   fetchProjects,
   fetchProjectDocs,
   createProject: mock(async () => env({})),
@@ -39,8 +39,8 @@ mock.module("../src/features/docs/client", () => ({
   copyDoc: mock(async () => env({ docId: "d2", slug: "spec-copy", projectId: "p1" })),
 }));
 
-const { DocsScreen } = await import("../src/features/docs/docs-screen");
-const { WorkspaceRouteGuard } = await import("../src/features/workspaces/active-workspace");
+const { DocsScreen } = await import("@/features/docs/docs-screen");
+const { WorkspaceRouteGuard } = await import("@/features/workspaces/active-workspace");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

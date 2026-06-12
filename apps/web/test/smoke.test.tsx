@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { AppRoutes } from "../src/app";
-import { createQueryClient } from "../src/app/query-client";
-import { ThemeProvider, applyTheme } from "../src/app/theme-provider";
+import { AppRoutes } from "@/app";
+import { createQueryClient } from "@/app/query-client";
+import { ThemeProvider, applyTheme } from "@/app/theme-provider";
 
 // Smoke: the foundation boots — the route table resolves the public /signin route to the
 // real sign-in screen (Phase 1 replaced the placeholder), and the theme provider stamps the

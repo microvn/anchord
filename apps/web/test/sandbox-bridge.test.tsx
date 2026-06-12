@@ -37,7 +37,7 @@ function canComment(role: string | undefined) {
   return role !== "viewer";
 }
 
-mock.module("../src/features/viewer/client", () => ({
+mock.module("@/features/viewer/client", () => ({
   fetchViewerDoc,
   listAnnotations,
   createAnnotation,
@@ -52,8 +52,8 @@ mock.module("sonner", () => ({
   Toaster: () => null,
 }));
 
-const { isTrustedReady, connectBridge } = await import("../src/features/viewer/bridge");
-const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
+const { isTrustedReady, connectBridge } = await import("@/features/viewer/bridge");
+const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

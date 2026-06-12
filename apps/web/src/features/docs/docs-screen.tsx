@@ -1,14 +1,14 @@
 import { useState } from "react";
-import { useActiveWorkspace } from "../workspaces/active-workspace";
+import { useActiveWorkspace } from "@/features/workspaces/active-workspace";
 import { useWorkspaceDocs } from "./use-docs";
 import { DocCard } from "./doc-card";
 import { DocList } from "./doc-list";
 import { NewDocButton } from "./new-doc-dialog";
-import { Icon } from "../../components/icon";
-import { Skeleton } from "../../components/skeleton";
-import { EmptyState } from "../../components/empty-state";
-import { ErrorState } from "../../components/error-state";
-import { NoResultsState } from "../../components/no-results-state";
+import { Icon } from "@/components/icon";
+import { Skeleton } from "@/components/skeleton";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
+import { NoResultsState } from "@/components/no-results-state";
 import type { DocRow } from "./types";
 
 // `/w/:id/docs` — the All-docs browser, 1:1 with Anchord-Design's ProjectBrowser

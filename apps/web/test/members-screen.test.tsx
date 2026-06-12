@@ -24,7 +24,7 @@ const changeMemberRole = mock(async (_w: string, userId: string, role: string) =
 let bootstrap: unknown;
 const fetchBootstrap = mock(async () => bootstrap);
 
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap,
   fetchMembers,
   inviteMember,
@@ -37,8 +37,8 @@ mock.module("../src/features/workspaces/client", () => ({
   rejectInvitation: mock(async () => env({})),
 }));
 
-const { MembersScreen } = await import("../src/features/workspaces/members-screen");
-const { WorkspaceRouteGuard } = await import("../src/features/workspaces/active-workspace");
+const { MembersScreen } = await import("@/features/workspaces/members-screen");
+const { WorkspaceRouteGuard } = await import("@/features/workspaces/active-workspace");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

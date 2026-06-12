@@ -23,7 +23,7 @@ const toastSuccess = mock(() => {});
 const toastError = mock(() => {});
 mock.module("sonner", () => ({ toast: { success: toastSuccess, error: toastError } }));
 
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap: mock(async () => bootstrap),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
   setActiveWorkspace: mock(async () => env({})),
@@ -52,7 +52,7 @@ const archiveProject = mock(async () => env({ id: "p-old", archived: true }));
 const unarchiveProject = mock(async () => env({ id: "p-old", archived: false }));
 const deleteProject = mock(async () => env({ id: "p-scratch", deleted: true }));
 
-mock.module("../src/features/docs/client", () => ({
+mock.module("@/features/docs/client", () => ({
   fetchProjects,
   fetchProjectDocs,
   createProject: mock(async () => env({})),
@@ -67,8 +67,8 @@ mock.module("../src/features/docs/client", () => ({
 }));
 
 let bootstrap: unknown;
-const { ProjectsScreen } = await import("../src/features/docs/projects-screen");
-const { WorkspaceRouteGuard } = await import("../src/features/workspaces/active-workspace");
+const { ProjectsScreen } = await import("@/features/docs/projects-screen");
+const { WorkspaceRouteGuard } = await import("@/features/workspaces/active-workspace");
 
 function App() {
   bootstrap = env({

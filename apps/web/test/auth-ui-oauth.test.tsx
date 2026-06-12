@@ -14,7 +14,7 @@ const socialSignIn = mock(async (_a: { provider: string; callbackURL?: string; e
   error: null,
 }));
 
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   signIn: { email: mock(async () => ({ data: null, error: null })), social: socialSignIn },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({})),
@@ -30,13 +30,13 @@ const env = (body: unknown) => ({ data: { success: true, data: body }, error: nu
 let providersResult: ReturnType<typeof env> = env({ providers: ["github"] });
 const fetchAuthProviders = mock(async () => providersResult);
 
-mock.module("../src/features/auth/client", () => ({
+mock.module("@/features/auth/client", () => ({
   fetchAuthProviders,
   acceptDocInvite: mock(async () => env({ status: "active" })),
 }));
 
-const { SignInScreen } = await import("../src/features/auth/sign-in-screen");
-const { OAuthButtons } = await import("../src/features/auth/oauth-buttons");
+const { SignInScreen } = await import("@/features/auth/sign-in-screen");
+const { OAuthButtons } = await import("@/features/auth/oauth-buttons");
 
 beforeEach(() => {
   socialSignIn.mockClear();

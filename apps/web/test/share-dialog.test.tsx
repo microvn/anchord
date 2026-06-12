@@ -12,11 +12,11 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // Prime the real module into the cache so the `...actual` spread below resolves every export
 // (the C-002 `canManageShare` gate is the REAL pure fn — only the read thunk is mocked).
-import * as sharingClient from "../src/features/sharing/client";
+import * as sharingClient from "@/features/sharing/client";
 
 const getShareState = mock(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
 
-mock.module("../src/features/sharing/client", () => ({
+mock.module("@/features/sharing/client", () => ({
   ...sharingClient,
   getShareState,
 }));
@@ -49,8 +49,8 @@ const LINK_STATE = {
   link: { hasPassword: true, expiresAt: "2026-07-01T00:00:00Z", viewLimit: 50, viewCount: 3, url: "anchord.local/d/web-core?k=9f2a" },
 };
 
-const { ShareDialog } = await import("../src/features/sharing/share-dialog");
-const { canManageShare } = await import("../src/features/sharing/client");
+const { ShareDialog } = await import("@/features/sharing/share-dialog");
+const { canManageShare } = await import("@/features/sharing/client");
 
 beforeEach(() => {
   getShareState.mockClear();
@@ -185,13 +185,13 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
   // The doc-card ⋯ now opens a menu (Share · Move · Copy) instead of MoveCopy directly; Share opens
   // the same ShareDialog for that doc. The docs client is mocked so the card renders standalone.
   const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
-  mock.module("../src/features/docs/client", () => ({
+  mock.module("@/features/docs/client", () => ({
     moveDoc: mock(async () => env({})),
     copyDoc: mock(async () => env({})),
   }));
 
   it("AS-019: the ⋯ Share item shows UNCONDITIONALLY (no manager effectiveRole); Share opens the dialog for that doc", async () => {
-    const { DocMoreMenu } = await import("../src/features/docs/move-copy-dialog");
+    const { DocMoreMenu } = await import("@/features/docs/move-copy-dialog");
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const doc = {
       id: "d1",

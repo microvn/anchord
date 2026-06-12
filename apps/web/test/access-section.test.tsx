@@ -9,12 +9,12 @@ import userEvent from "@testing-library/user-event";
 // optimistic/rollback writes (AS-005/006/008/009); the Link-section reveal half of AS-005 is
 // exercised through the full ShareDialog. Pixel/responsive layout is [→MANUAL].
 
-import * as sharingClient from "../src/features/sharing/client";
+import * as sharingClient from "@/features/sharing/client";
 
 const setAccess = mock(async () => ({ data: OK_RESULT, error: null as unknown }));
 const getShareState = mock(async () => ({ data: RESTRICTED_OWNER_STATE, error: null as unknown }));
 
-mock.module("../src/features/sharing/client", () => ({
+mock.module("@/features/sharing/client", () => ({
   ...sharingClient,
   setAccess,
   getShareState,
@@ -44,8 +44,8 @@ const RESTRICTED_OWNER_STATE = {
   link: { hasPassword: false, url: "anchord.local/d/web-core" },
 };
 
-const { AccessSection } = await import("../src/features/sharing/access-section");
-const { ShareDialog } = await import("../src/features/sharing/share-dialog");
+const { AccessSection } = await import("@/features/sharing/access-section");
+const { ShareDialog } = await import("@/features/sharing/share-dialog");
 
 beforeEach(() => {
   setAccess.mockClear();

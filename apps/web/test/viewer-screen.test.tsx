@@ -30,7 +30,7 @@ const fetchViewerDoc = mock(async () => response);
 // an empty list (the rail then shows its empty state, irrelevant to the S-001 assertions).
 const listAnnotations = mock(async () => ({ data: { success: true, data: { items: [] } }, error: null }));
 
-mock.module("../src/features/viewer/client", () => ({
+mock.module("@/features/viewer/client", () => ({
   fetchViewerDoc,
   listAnnotations,
   // S-001 grew the client surface; use-compose imports these at module eval, so the whole-module
@@ -42,7 +42,7 @@ mock.module("../src/features/viewer/client", () => ({
   canComment: (role: string | undefined) => role !== "viewer",
 }));
 
-const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

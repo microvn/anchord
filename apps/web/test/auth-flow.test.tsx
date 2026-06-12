@@ -43,7 +43,7 @@ const signOutMock = mock(async () => {
   return { data: { success: true }, error: null };
 });
 
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   signIn: { email: signInEmail, social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: signOutMock,
@@ -59,7 +59,7 @@ mock.module("../src/lib/auth-client", () => ({
 // SignInScreen renders OAuthButtons, which reads the enabled-provider list via the auth-ui
 // Eden wrapper. Mock it so the web-core sign-in tests never reach a real backend (no OAuth
 // buttons here — web-core's flow is email+password).
-mock.module("../src/features/auth/client", () => ({
+mock.module("@/features/auth/client", () => ({
   fetchAuthProviders: mock(async () => ({
     data: { success: true, data: { providers: [] } },
     error: null,
@@ -71,9 +71,9 @@ mock.module("../src/features/auth/client", () => ({
 }));
 
 // Imported AFTER the mock is registered so they bind to the mocked auth-client.
-const { SignInScreen } = await import("../src/features/auth/sign-in-screen");
-const { AuthGuard } = await import("../src/app/auth-guard");
-const { signOut } = await import("../src/lib/auth-client");
+const { SignInScreen } = await import("@/features/auth/sign-in-screen");
+const { AuthGuard } = await import("@/app/auth-guard");
+const { signOut } = await import("@/lib/auth-client");
 
 // Phase-1 stub for the (not-yet-built) authenticated shell: a protected element plus a
 // sign-out control, so the guard + sign-out behavior can be asserted without the real shell.

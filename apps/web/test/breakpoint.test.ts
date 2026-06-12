@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { tierForWidth, isCompact, type Breakpoint } from "../src/lib/use-breakpoint";
+import { tierForWidth, isCompact, type Breakpoint } from "@/lib/use-breakpoint";
 
 // AS-010 logic: the ONE breakpoint source. Drive it by width (deterministic — no real
 // layout) and assert the DESIGN.md §Responsive tiers at the canonical widths 1440/768/360,

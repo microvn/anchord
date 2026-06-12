@@ -2,9 +2,9 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useSearch, useProjects } from "./use-docs";
 import { SearchScopeControl } from "./search-scope-control";
 import { FormatBadge } from "./doc-bits";
-import { Skeleton } from "../../components/skeleton";
-import { ErrorState } from "../../components/error-state";
-import { NoResultsState } from "../../components/no-results-state";
+import { Skeleton } from "@/components/skeleton";
+import { ErrorState } from "@/components/error-state";
+import { NoResultsState } from "@/components/no-results-state";
 
 // `/w/:id/search?q=` — search results (workspace-project S-005), 1:1 with Anchord-Design's
 // SearchResults (browser.jsx). A search head (Fraunces "Results for …" + the "searched

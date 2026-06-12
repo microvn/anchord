@@ -16,7 +16,7 @@ let bootstrap: unknown;
 let members: unknown;
 const fetchBootstrap = mock(async () => bootstrap);
 const fetchMembers = mock(async () => members);
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap,
   fetchMembers,
   setActiveWorkspace: mock(async () => env({})),
@@ -37,7 +37,7 @@ const fetchProjectDocs = mock(async (_w: string, projectId: string) => docsByPro
 const createProject = mock(async () => env({ id: "p-new", name: "new" }));
 const searchDocs = mock(async () => env({ results: [] }));
 const publishDoc = mock(async () => env({ docId: "d1", slug: "s1", url: "/d/s1" }));
-mock.module("../src/features/docs/client", () => ({
+mock.module("@/features/docs/client", () => ({
   fetchProjects,
   fetchProjectDocs,
   createProject,
@@ -47,8 +47,8 @@ mock.module("../src/features/docs/client", () => ({
   copyDoc: mock(async () => env({ docId: "d2", slug: "s2", projectId: "p1" })),
 }));
 
-const { WorkspaceHome } = await import("../src/features/workspaces/workspace-home");
-const { WorkspaceRouteGuard } = await import("../src/features/workspaces/active-workspace");
+const { WorkspaceHome } = await import("@/features/workspaces/workspace-home");
+const { WorkspaceRouteGuard } = await import("@/features/workspaces/active-workspace");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

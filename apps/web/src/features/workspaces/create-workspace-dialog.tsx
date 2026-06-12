@@ -4,14 +4,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createWorkspace, setActiveWorkspace } from "./client";
 import { unwrapEnvelope } from "./use-bootstrap";
 import { queryKeys } from "./query-keys";
-import { toApiError } from "../../lib/api-error";
+import { toApiError } from "@/lib/api-error";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "../../components/ui/dialog";
+} from "@/components/ui/dialog";
 
 // S-002 CreateWorkspaceDialog (AS-004): create a workspace; the creator becomes admin and the
 // app SWITCHES into it. On success we refetch the bootstrap (so the new workspace appears in

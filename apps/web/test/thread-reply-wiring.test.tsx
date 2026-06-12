@@ -53,7 +53,7 @@ function canComment(role: string | undefined) {
   return role !== "viewer";
 }
 
-mock.module("../src/features/viewer/client", () => ({
+mock.module("@/features/viewer/client", () => ({
   fetchViewerDoc,
   listAnnotations,
   createAnnotation: mock(async () => okEnv({ annotationId: "a" })),
@@ -68,7 +68,7 @@ mock.module("sonner", () => ({
   Toaster: () => null,
 }));
 
-const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

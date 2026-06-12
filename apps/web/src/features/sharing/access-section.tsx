@@ -1,20 +1,20 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
+} from "@/components/ui/select";
 import {
   setAccess,
   type GeneralAccessLevel,
   type ShareRole,
   type ShareState,
 } from "./client";
-import type { EffectiveRole } from "../viewer/client";
+import type { EffectiveRole } from "@/features/viewer/client";
 
 // AccessSection (sharing-permissions-ui S-002) — the General-access section of the ShareDialog.
 // It owns the editable general-access controls the S-001 shell left as read-only prefill:

@@ -1,13 +1,13 @@
 import { cloneElement, isValidElement, type CSSProperties, type ReactElement, type ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 import { AppHeader } from "./app-header";
-import { isCompact, useBreakpoint } from "../lib/use-breakpoint";
+import { isCompact, useBreakpoint } from "@/lib/use-breakpoint";
 import {
   Sidebar,
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
-} from "../components/ui/sidebar";
+} from "@/components/ui/sidebar";
 
 // AppShell (web-core S-001 chrome, S-003 design-system + responsive, S-004 left sidebar),
 // rebuilt on the shadcn Sidebar PRIMITIVE. `SidebarProvider` owns the collapse↔icon-rail state,

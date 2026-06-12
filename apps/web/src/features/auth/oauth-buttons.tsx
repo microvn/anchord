@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/icon";
-import { signIn } from "../../lib/auth-client";
+import { signIn } from "@/lib/auth-client";
 import { fetchAuthProviders } from "./client";
-import { unwrapEnvelope } from "../workspaces/use-bootstrap";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
 
 // auth-ui S-002 OAuthButtons (AS-006/AS-007) — renders a "Continue with …" button for ONLY
 // the OAuth providers the operator enabled (ENV creds present), read from the GAP-002

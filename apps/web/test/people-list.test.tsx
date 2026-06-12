@@ -6,8 +6,8 @@ import { render, screen, within } from "@testing-library/react";
 // static "Owner" label with no dropdown (C-004); an active non-owner shows an editable role
 // dropdown (viewer|commenter|editor); a pending invitee shows the "Pending" tag.
 
-import { PeopleList } from "../src/features/sharing/people-list";
-import type { SharePerson } from "../src/features/sharing/client";
+import { PeopleList } from "@/features/sharing/people-list";
+import type { SharePerson } from "@/features/sharing/client";
 
 const PEOPLE: SharePerson[] = [
   { userId: "u-own", email: "owner@acme.com", name: "Owner Olu", role: "owner", status: "active" },

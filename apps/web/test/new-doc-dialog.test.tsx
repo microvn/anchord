@@ -22,7 +22,7 @@ mock.module("sonner", () => ({
 let projectsList: { id: string; name: string; isDefault: boolean; archived: boolean }[] = [];
 
 const publishDoc = mock(async () => env({ docId: "d1", slug: "new-doc", url: "/d/new-doc" }));
-mock.module("../src/features/docs/client", () => ({
+mock.module("@/features/docs/client", () => ({
   fetchProjects: mock(async () => env({ projects: projectsList })),
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   createProject: mock(async () => env({})),
@@ -32,7 +32,7 @@ mock.module("../src/features/docs/client", () => ({
   copyDoc: mock(async () => env({})),
 }));
 
-const { NewDocDialog } = await import("../src/features/docs/new-doc-dialog");
+const { NewDocDialog } = await import("@/features/docs/new-doc-dialog");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

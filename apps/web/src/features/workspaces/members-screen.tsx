@@ -6,18 +6,18 @@ import { useMembers, useBootstrap } from "./use-bootstrap";
 import { RenameField } from "./rename-field";
 import { inviteMember, removeMember, changeMemberRole } from "./client";
 import { queryKeys } from "./query-keys";
-import { ErrorState } from "../../components/error-state";
-import { EmptyState } from "../../components/empty-state";
-import { ConfirmDialog } from "../../components/confirm-dialog";
-import { Icon } from "../../components/icon";
+import { ErrorState } from "@/components/error-state";
+import { EmptyState } from "@/components/empty-state";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { Icon } from "@/components/icon";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
-import { initials, avatarColor } from "../../lib/initials";
+} from "@/components/ui/select";
+import { initials, avatarColor } from "@/lib/initials";
 import type { MemberRow, InvitationRow, WorkspaceRole } from "./types";
 
 // S-003 MembersScreen (AS-007..AS-012 / C-002). ADMIN-ONLY management: a non-admin sees a

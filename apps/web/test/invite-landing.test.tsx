@@ -17,7 +17,7 @@ const acceptInvitation = mock(async (_id: string, _t: string) =>
 const rejectInvitation = mock(async (_id: string, _t: string) => env({ rejected: true }));
 const setActiveWorkspace = mock(async (id: string) => env({ activeWorkspaceId: id }));
 
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   acceptInvitation,
   rejectInvitation,
   setActiveWorkspace,
@@ -32,14 +32,14 @@ mock.module("../src/features/workspaces/client", () => ({
 
 // Auth session — the signed-in email drives the AS-015 wrong-account check.
 let sessionEmail = "bob@acme.com";
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   useSession: () => ({ data: { user: { email: sessionEmail } }, isPending: false }),
   signOut: mock(async () => ({})),
   signIn: { email: mock(async () => ({})) },
   authClient: {},
 }));
 
-const { WorkspaceInviteLanding } = await import("../src/features/workspaces/invite-landing");
+const { WorkspaceInviteLanding } = await import("@/features/workspaces/invite-landing");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -1,6 +1,6 @@
 import { QueryClient, QueryCache } from "@tanstack/react-query";
-import { ApiError } from "../lib/api-error";
-import { notifySessionExpired } from "../lib/session-expiry";
+import { ApiError } from "@/lib/api-error";
+import { notifySessionExpired } from "@/lib/session-expiry";
 
 // S-002 / C-002: the single QueryClient every screen shares. Its QueryCache-level onError is
 // the ONE centralized place that reacts to a failed request's session state: an

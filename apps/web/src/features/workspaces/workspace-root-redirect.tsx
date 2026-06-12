@@ -1,7 +1,7 @@
 import { Navigate } from "react-router-dom";
 import { useBootstrap } from "./use-bootstrap";
-import { ErrorState } from "../../components/error-state";
-import { EmptyState } from "../../components/empty-state";
+import { ErrorState } from "@/components/error-state";
+import { EmptyState } from "@/components/empty-state";
 
 // S-001: the app root `/` resolves the landing workspace from the bootstrap (the persisted
 // active workspace, else the first I belong to — C-005) and redirects into its `/w/:id/` path.

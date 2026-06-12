@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { sendVerificationEmail } from "../../lib/auth-client";
+import { sendVerificationEmail } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/icon";
 import { AuthCenter } from "./auth-shell";

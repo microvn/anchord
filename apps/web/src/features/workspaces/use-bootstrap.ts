@@ -1,4 +1,4 @@
-import { useApiQuery, peelEnvelope, type EdenResult } from "../../lib/use-api-query";
+import { useApiQuery, peelEnvelope, type EdenResult } from "@/lib/use-api-query";
 import { queryKeys } from "./query-keys";
 import { fetchBootstrap, fetchMembers } from "./client";
 import type { Bootstrap, MembersDirectory } from "./types";

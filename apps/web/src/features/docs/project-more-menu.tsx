@@ -3,18 +3,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { archiveProject, unarchiveProject, deleteProject } from "./client";
 import { RenameProjectDialog } from "./rename-project-dialog";
-import { queryKeys } from "../workspaces/query-keys";
-import { unwrapEnvelope } from "../workspaces/use-bootstrap";
-import { toApiError } from "../../lib/api-error";
-import { Icon } from "../../components/icon";
-import { ConfirmDialog } from "../../components/confirm-dialog";
+import { queryKeys } from "@/features/workspaces/query-keys";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { toApiError } from "@/lib/api-error";
+import { Icon } from "@/components/icon";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../../components/ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 import type { ProjectRow } from "./types";
 
 // ProjectCardMoreMenu (workspace-project-ui S-002) — a ⋯ on each proj-card → Rename · Archive

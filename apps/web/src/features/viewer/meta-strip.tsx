@@ -1,4 +1,4 @@
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 
 // MetaStrip (S-005, AS-013): a thin strip BELOW the top bar, shown ONLY for spec-type docs on
 // desktop. It mirrors the prototype's `.meta-strip` (viewer-shell.jsx MetaStrip): slug · version ·

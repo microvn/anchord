@@ -14,7 +14,7 @@ import {
   placeAnnotations,
   locateRange,
   type PlaceableAnnotation,
-} from "../src/features/viewer/annotation-marks";
+} from "@/features/viewer/annotation-marks";
 
 function mountDoc(html: string): HTMLElement {
   const root = document.createElement("div");

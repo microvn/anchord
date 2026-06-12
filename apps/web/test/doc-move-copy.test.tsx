@@ -15,7 +15,7 @@ const env = (body: unknown) => ({ data: { success: true, data: body }, error: nu
 
 const moveDoc = mock(async () => env({ docId: "d1", slug: "auth-spec", projectId: "p-pay" }));
 const copyDoc = mock(async () => env({ docId: "d2", slug: "auth-spec-copy", projectId: "p-pay" }));
-mock.module("../src/features/docs/client", () => ({
+mock.module("@/features/docs/client", () => ({
   moveDoc,
   copyDoc,
   fetchProjects: mock(async () => env({ projects: [] })),
@@ -28,9 +28,9 @@ mock.module("../src/features/docs/client", () => ({
 // Stub the toast so a missing Toaster host doesn't error under happy-dom.
 mock.module("sonner", () => ({ toast: { success: mock(() => {}), error: mock(() => {}) } }));
 
-const { DocCard } = await import("../src/features/docs/doc-card");
-const { DocList } = await import("../src/features/docs/doc-list");
-import type { DocRow, ProjectRow } from "../src/features/docs/types";
+const { DocCard } = await import("@/features/docs/doc-card");
+const { DocList } = await import("@/features/docs/doc-list");
+import type { DocRow, ProjectRow } from "@/features/docs/types";
 
 const WORKSPACE = "ws-acme";
 const PROJECTS: ProjectRow[] = [

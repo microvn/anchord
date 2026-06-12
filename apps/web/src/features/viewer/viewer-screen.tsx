@@ -1,12 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApiQuery } from "../../lib/use-api-query";
-import { useViewerLayoutMode } from "../../lib/use-breakpoint";
-import { Icon } from "../../components/icon";
-import { EmptyState } from "../../components/empty-state";
-import { ErrorState } from "../../components/error-state";
-import { Skeleton } from "../../components/skeleton";
+import { useApiQuery } from "@/lib/use-api-query";
+import { useViewerLayoutMode } from "@/lib/use-breakpoint";
+import { Icon } from "@/components/icon";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
+import { Skeleton } from "@/components/skeleton";
 import { DocPane } from "./doc-pane";
 import type { HtmlSandboxFrameHandle } from "./html-sandbox-frame";
 import { DocModeToolbar } from "./doc-mode-toolbar";
@@ -21,8 +21,8 @@ import { Composer } from "./composer";
 import { useDismissOnOutsideAndEscape } from "./use-dismiss";
 import { useDraggable } from "./use-draggable";
 import { useCompose, peelCommentId } from "./use-compose";
-import { ShareDialog } from "../sharing/share-dialog";
-import { canManageShare } from "../sharing/client";
+import { ShareDialog } from "@/features/sharing/share-dialog";
+import { canManageShare } from "@/features/sharing/client";
 import {
   fetchViewerDoc,
   listAnnotations,

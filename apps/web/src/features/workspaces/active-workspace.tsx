@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 import { Navigate, Outlet, useParams } from "react-router-dom";
 import { useBootstrap } from "./use-bootstrap";
-import { ErrorState } from "../../components/error-state";
+import { ErrorState } from "@/components/error-state";
 import type { WorkspaceListItem } from "./types";
 
 // S-001 / C-001: the active workspace is the URL path `/w/:workspaceId/…` (mirroring the

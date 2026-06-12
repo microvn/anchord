@@ -16,7 +16,7 @@ const setActiveWorkspace = mock(async (id: string) => env({ activeWorkspaceId: i
 const createWorkspace = mock(async (_name: string) => env({ id: "ws-new", name: _name }));
 const renameWorkspace = mock(async (_id: string, name: string) => env({ id: _id, name }));
 
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap,
   setActiveWorkspace,
   createWorkspace,
@@ -29,10 +29,10 @@ mock.module("../src/features/workspaces/client", () => ({
   rejectInvitation: mock(async () => env({})),
 }));
 
-const { WorkspaceSwitcher } = await import("../src/features/workspaces/workspace-switcher");
-const { RenameField } = await import("../src/features/workspaces/rename-field");
+const { WorkspaceSwitcher } = await import("@/features/workspaces/workspace-switcher");
+const { RenameField } = await import("@/features/workspaces/rename-field");
 const { WorkspaceRouteGuard, useActiveWorkspace } = await import(
-  "../src/features/workspaces/active-workspace"
+  "@/features/workspaces/active-workspace"
 );
 
 function client() {

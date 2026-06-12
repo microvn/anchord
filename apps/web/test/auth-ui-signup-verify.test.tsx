@@ -30,7 +30,7 @@ const verifyEmail = mock(async (_a: { query: { token: string } }) => ({
   error: null as null | { message?: string },
 }));
 
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   signIn: { email: signInEmail, social: mock(async () => ({})) },
   signUp: { email: signUpEmail },
   signOut: mock(async () => ({})),
@@ -43,14 +43,14 @@ mock.module("../src/lib/auth-client", () => ({
 
 // auth-ui client wrapper — providers read returns no OAuth (so SignUpScreen/SignInScreen
 // render the form alone; OAuth is the S-002 suite's concern).
-mock.module("../src/features/auth/client", () => ({
+mock.module("@/features/auth/client", () => ({
   fetchAuthProviders: mock(async () => ({ data: { success: true, data: { providers: [] } }, error: null })),
   acceptDocInvite: mock(async () => ({ data: { success: true, data: { status: "active" } }, error: null })),
 }));
 
-const { SignUpScreen } = await import("../src/features/auth/sign-up-screen");
-const { SignInScreen } = await import("../src/features/auth/sign-in-screen");
-const { VerifyEmailLanding } = await import("../src/features/auth/verify-email-landing");
+const { SignUpScreen } = await import("@/features/auth/sign-up-screen");
+const { SignInScreen } = await import("@/features/auth/sign-in-screen");
+const { VerifyEmailLanding } = await import("@/features/auth/verify-email-landing");
 
 beforeEach(() => {
   sessionValue = null;

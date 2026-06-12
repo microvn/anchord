@@ -1,14 +1,14 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { signOut, useSession } from "../lib/auth-client";
-import { Icon } from "../components/icon";
-import { initials } from "../lib/initials";
+import { signOut, useSession } from "@/lib/auth-client";
+import { Icon } from "@/components/icon";
+import { initials } from "@/lib/initials";
 import { MENU_ITEM } from "./app-header";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
-} from "../components/ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 
 // UserMenu (S-001 AS-005 sign-out; S-005 AS-018 the header avatar menu). The account avatar
 // anchors the header right edge; its menu offers Settings + Sign out, re-skinned to the

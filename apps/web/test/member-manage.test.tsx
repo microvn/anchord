@@ -10,13 +10,13 @@ import userEvent from "@testing-library/user-event";
 // AS-022 remove → DELETE + row gone, AS-023 refused DELETE → row restored + toast. The owner row
 // has no role dropdown and no Remove control (C-004).
 
-import * as sharingClient from "../src/features/sharing/client";
+import * as sharingClient from "@/features/sharing/client";
 
 const changeMemberRole = mock(async () => ({ data: { role: "editor" }, error: null as unknown }));
 const removeMember = mock(async () => ({ data: { removed: true }, error: null as unknown }));
 const getShareState = mock(async () => ({ data: STATE, error: null as unknown }));
 
-mock.module("../src/features/sharing/client", () => ({
+mock.module("@/features/sharing/client", () => ({
   ...sharingClient,
   changeMemberRole,
   removeMember,
@@ -43,7 +43,7 @@ const STATE = {
   link: { hasPassword: false, url: "anchord.local/d/web-core" },
 };
 
-const { ShareDialog } = await import("../src/features/sharing/share-dialog");
+const { ShareDialog } = await import("@/features/sharing/share-dialog");
 
 beforeEach(() => {
   changeMemberRole.mockClear();

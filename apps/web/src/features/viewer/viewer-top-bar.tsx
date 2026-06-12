@@ -1,5 +1,5 @@
-import { Icon, Brandmark } from "../../components/icon";
-import { useTheme } from "../../app/theme-provider";
+import { Icon, Brandmark } from "@/components/icon";
+import { useTheme } from "@/app/theme-provider";
 import type { ViewerDocKind } from "./client";
 
 // ViewerTopBar (S-005, AS-012): the bar ABOVE the 3-pane viewer body. Mirrors the prototype's

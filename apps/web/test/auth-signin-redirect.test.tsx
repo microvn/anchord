@@ -51,7 +51,7 @@ const getSessionMock = mock(async () => {
   return { data: { user: { email: "a@b.co" } }, error: null };
 });
 
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   signIn: { email: signInEmail, social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({ data: { success: true }, error: null })),
@@ -62,7 +62,7 @@ mock.module("../src/lib/auth-client", () => ({
   authClient: {},
 }));
 
-mock.module("../src/features/auth/client", () => ({
+mock.module("@/features/auth/client", () => ({
   fetchAuthProviders: mock(async () => ({
     data: { success: true, data: { providers: [] } },
     error: null,
@@ -73,8 +73,8 @@ mock.module("../src/features/auth/client", () => ({
   })),
 }));
 
-const { SignInScreen } = await import("../src/features/auth/sign-in-screen");
-const { AuthGuard } = await import("../src/app/auth-guard");
+const { SignInScreen } = await import("@/features/auth/sign-in-screen");
+const { AuthGuard } = await import("@/app/auth-guard");
 
 function ProtectedApp() {
   return (

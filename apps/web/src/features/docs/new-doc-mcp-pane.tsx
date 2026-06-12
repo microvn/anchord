@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 
 // The "via MCP" tab body of the New-doc dialog (render-publish S-001). Shows the workspace's
 // MCP endpoint with a copy button. Extracted from new-doc-dialog.tsx to keep that file under the

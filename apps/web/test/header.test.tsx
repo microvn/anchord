@@ -18,7 +18,7 @@ const env = (body: unknown) => ({ data: { success: true, data: body }, error: nu
 let bootstrap: unknown = env({ userId: "me", workspaces: [], activeWorkspaceId: null });
 const fetchBootstrap = mock(async () => bootstrap);
 
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap,
   setActiveWorkspace: mock(async (id: string) => env({ activeWorkspaceId: id })),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
@@ -34,7 +34,7 @@ mock.module("../src/features/workspaces/client", () => ({
 // bun's mock.module registry is process-global, so this mock MUST export the FULL auth-client
 // surface other test files import (signIn/signUp/verify…), not just signOut — a partial mock
 // would make their imports throw "Export named … not found".
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   signIn: { email: mock(async () => ({ data: null, error: null })), social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({ data: { success: true }, error: null })),
@@ -45,12 +45,12 @@ mock.module("../src/lib/auth-client", () => ({
   authClient: {},
 }));
 
-const { AppHeader } = await import("../src/app/app-header");
-const { AppShell } = await import("../src/app/app-shell");
-const { WorkspaceSidebar } = await import("../src/app/workspace-sidebar");
-const { AppSidebar } = await import("../src/app/app-sidebar");
-const { ThemeProvider } = await import("../src/app/theme-provider");
-const { SidebarProvider } = await import("../src/components/ui/sidebar");
+const { AppHeader } = await import("@/app/app-header");
+const { AppShell } = await import("@/app/app-shell");
+const { WorkspaceSidebar } = await import("@/app/workspace-sidebar");
+const { AppSidebar } = await import("@/app/app-sidebar");
+const { ThemeProvider } = await import("@/app/theme-provider");
+const { SidebarProvider } = await import("@/components/ui/sidebar");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

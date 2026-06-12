@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 
 // TocSidebar (S-002): a collapsible outline derived from the rendered doc's headings (G6 — the FE
 // derives the TOC from h1–h3, no backend outline payload; spec priority badges are dropped for v0).

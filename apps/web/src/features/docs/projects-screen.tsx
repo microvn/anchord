@@ -2,26 +2,26 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useActiveWorkspace } from "../workspaces/active-workspace";
-import { queryKeys } from "../workspaces/query-keys";
-import { unwrapEnvelope } from "../workspaces/use-bootstrap";
-import { toApiError } from "../../lib/api-error";
+import { useActiveWorkspace } from "@/features/workspaces/active-workspace";
+import { queryKeys } from "@/features/workspaces/query-keys";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { toApiError } from "@/lib/api-error";
 import { useProjectsBrowse } from "./use-docs";
 import { createProject } from "./client";
 import { ProjectCardMoreMenu } from "./project-more-menu";
-import { Button } from "../../components/ui/button";
-import { Checkbox } from "../../components/ui/checkbox";
-import { Icon } from "../../components/icon";
-import { Skeleton } from "../../components/skeleton";
-import { EmptyState } from "../../components/empty-state";
-import { ErrorState } from "../../components/error-state";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Icon } from "@/components/icon";
+import { Skeleton } from "@/components/skeleton";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "../../components/ui/dialog";
+} from "@/components/ui/dialog";
 
 // `/w/:id/projects` — the Projects browser, 1:1 with Anchord-Design's ProjectsScreen
 // (browser.jsx). page-head (Workspace eyebrow + Fraunces title + New-project) · a proj-grid

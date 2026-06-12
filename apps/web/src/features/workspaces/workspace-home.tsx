@@ -2,13 +2,13 @@ import { Link } from "react-router-dom";
 import { useActiveWorkspace } from "./active-workspace";
 import { useMembers } from "./use-bootstrap";
 import { RenameField } from "./rename-field";
-import { useWorkspaceDocs } from "../docs/use-docs";
-import { DocList } from "../docs/doc-list";
-import { NewDocButton } from "../docs/new-doc-dialog";
-import { Icon } from "../../components/icon";
-import { Skeleton } from "../../components/skeleton";
-import { EmptyState } from "../../components/empty-state";
-import { ErrorState } from "../../components/error-state";
+import { useWorkspaceDocs } from "@/features/docs/use-docs";
+import { DocList } from "@/features/docs/doc-list";
+import { NewDocButton } from "@/features/docs/new-doc-dialog";
+import { Icon } from "@/components/icon";
+import { Skeleton } from "@/components/skeleton";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
 
 // WorkspaceHome — the `/w/:id/` dashboard, 1:1 with Anchord-Design's Dashboard (screens.jsx).
 // page-head (Workspace eyebrow + Fraunces workspace name + Rename/Members admin actions +

@@ -6,7 +6,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../../components/ui/dialog";
+} from "@/components/ui/dialog";
 import {
   Sheet,
   SheetContent,
@@ -14,10 +14,10 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from "../../components/ui/sheet";
-import { Button } from "../../components/ui/button";
-import { Icon } from "../../components/icon";
-import { useBreakpoint } from "../../lib/use-breakpoint";
+} from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/icon";
+import { useBreakpoint } from "@/lib/use-breakpoint";
 import { toast } from "sonner";
 import {
   getShareState,
@@ -32,7 +32,7 @@ import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
 import { LinkControls } from "./link-controls";
-import type { EffectiveRole } from "../viewer/client";
+import type { EffectiveRole } from "@/features/viewer/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
 // (and the docs-list ⋯ menu), gates LAZILY on the gated `GET …/share` read result (C-002), is a

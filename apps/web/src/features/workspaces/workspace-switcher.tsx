@@ -4,15 +4,15 @@ import { useBootstrap } from "./use-bootstrap";
 import { setActiveWorkspace } from "./client";
 import { workspaceLabel } from "./types";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../../components/ui/dropdown-menu";
-import { SidebarMenu, SidebarMenuItem } from "../../components/ui/sidebar";
+} from "@/components/ui/dropdown-menu";
+import { SidebarMenu, SidebarMenuItem } from "@/components/ui/sidebar";
 
 // S-001 WorkspaceSwitcher — the sidebar's single workspace anchor (C-005). Its TRIGGER is the
 // shadcn sidebar team/workspace-switcher pattern: a SidebarMenuButton (glyph + name + role +

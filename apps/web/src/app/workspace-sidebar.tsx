@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useLocation } from "react-router-dom";
 import { AppSidebar, navDestinations } from "./app-sidebar";
-import { WorkspaceSwitcher } from "../features/workspaces/workspace-switcher";
-import { useBootstrap } from "../features/workspaces/use-bootstrap";
-import { useWorkspaceDocs } from "../features/docs/use-docs";
-import { FORMAT_META } from "../features/docs/types";
-import { NewDocDialog } from "../features/docs/new-doc-dialog";
+import { WorkspaceSwitcher } from "@/features/workspaces/workspace-switcher";
+import { useBootstrap } from "@/features/workspaces/use-bootstrap";
+import { useWorkspaceDocs } from "@/features/docs/use-docs";
+import { FORMAT_META } from "@/features/docs/types";
+import { NewDocDialog } from "@/features/docs/new-doc-dialog";
 
 const RECENT_LIMIT = 6;
 

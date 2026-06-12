@@ -1,4 +1,4 @@
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 import { FORMAT_META, type DocKind, type DocStatus } from "./types";
 
 // Shared presentational bits for the doc browse surfaces, 1:1 with Anchord-Design's

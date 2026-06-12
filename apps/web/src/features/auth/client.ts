@@ -1,5 +1,5 @@
-import { api } from "../../lib/api";
-import type { EdenResult } from "../../lib/use-api-query";
+import { api } from "@/lib/api";
+import type { EdenResult } from "@/lib/use-api-query";
 
 // Typed request thunks for the auth-ui backend reads/writes that are NOT part of
 // better-auth's own /api/auth/* protocol:

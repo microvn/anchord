@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Brandmark, Icon } from "../components/icon";
-import { Button } from "../components/ui/button";
+import { Brandmark, Icon } from "@/components/icon";
+import { Button } from "@/components/ui/button";
 import {
   Sidebar,
   SidebarContent,
@@ -13,7 +13,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from "../components/ui/sidebar";
+} from "@/components/ui/sidebar";
 
 // AppSidebar (web-core S-004): the left workspace-nav frame, rebuilt on the shadcn Sidebar
 // PRIMITIVE (`@/components/ui/sidebar`) instead of a hand-rolled <aside> + shell.css. The

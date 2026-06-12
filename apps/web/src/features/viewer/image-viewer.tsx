@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 
 // ImageViewer (S-001/AS-003, C-001): renders a kind=image doc with zoom in/out. The image is
 // loaded from the sandboxed /v/:id content route (same isolation rationale as the HTML frame —

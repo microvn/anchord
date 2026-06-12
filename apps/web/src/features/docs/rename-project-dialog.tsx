@@ -2,17 +2,17 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { renameProject } from "./client";
-import { queryKeys } from "../workspaces/query-keys";
-import { unwrapEnvelope } from "../workspaces/use-bootstrap";
-import { toApiError } from "../../lib/api-error";
-import { Button } from "../../components/ui/button";
+import { queryKeys } from "@/features/workspaces/query-keys";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { toApiError } from "@/lib/api-error";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "../../components/ui/dialog";
+} from "@/components/ui/dialog";
 import type { ProjectRow } from "./types";
 
 // RenameProjectDialog (workspace-project-ui S-002 / AS-003) — mirrors the create/rename Dialog

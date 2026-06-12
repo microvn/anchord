@@ -10,13 +10,13 @@ import { useRef } from "react";
 // rendered card's inline top/left.
 
 // Keep the network client inert — these tests never write.
-mock.module("../src/features/viewer/client", () => ({
+mock.module("@/features/viewer/client", () => ({
   createAnnotation: mock(async () => ({ data: { annotationId: "a1" }, error: null })),
   addComment: mock(async () => ({ data: {}, error: null })),
 }));
 
-const { useDraggable } = await import("../src/features/viewer/use-draggable");
-const { Composer } = await import("../src/features/viewer/composer");
+const { useDraggable } = await import("@/features/viewer/use-draggable");
+const { Composer } = await import("@/features/viewer/composer");
 
 /** A minimal synthetic React.PointerEvent for the handler (only the members it reads). */
 function pointerDownEvent(x: number, y: number): unknown {

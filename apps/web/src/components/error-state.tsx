@@ -1,4 +1,4 @@
-import { GENERIC_MESSAGE } from "../lib/api-error";
+import { GENERIC_MESSAGE } from "@/lib/api-error";
 import { Button } from "./ui/button";
 import { Icon } from "./icon";
 

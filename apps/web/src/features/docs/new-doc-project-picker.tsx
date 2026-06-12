@@ -4,7 +4,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
+} from "@/components/ui/select";
 import type { ProjectRow } from "./types";
 
 // The project picker for the New-doc dialog (workspace-project-ui S-003). The doc the author

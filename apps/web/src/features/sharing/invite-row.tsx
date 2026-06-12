@@ -1,7 +1,7 @@
 import { useForm, type Resolver } from "react-hook-form";
 import { z } from "zod";
 import { toast } from "sonner";
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 import { invitePerson, type ShareRole, type SharePerson } from "./client";
 
 // InviteRow (sharing-permissions-ui S-003) — invite a person by email + role + optional message.

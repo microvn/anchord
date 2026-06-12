@@ -4,14 +4,14 @@ import { useActiveWorkspace } from "./active-workspace";
 import { renameWorkspace } from "./client";
 import { unwrapEnvelope } from "./use-bootstrap";
 import { queryKeys } from "./query-keys";
-import { toApiError } from "../../lib/api-error";
-import { Icon } from "../../components/icon";
+import { toApiError } from "@/lib/api-error";
+import { Icon } from "@/components/icon";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "../../components/ui/dialog";
+} from "@/components/ui/dialog";
 
 // S-002 RenameField (AS-005, AS-006 / C-002): rename the active workspace. ADMIN-ONLY — a
 // non-admin sees NO rename affordance at all (the component renders null). On success we

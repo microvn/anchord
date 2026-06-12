@@ -38,7 +38,7 @@ function canComment(role: string | undefined) {
   return role !== "viewer";
 }
 
-mock.module("../src/features/viewer/client", () => ({
+mock.module("@/features/viewer/client", () => ({
   fetchViewerDoc,
   listAnnotations,
   createAnnotation,
@@ -56,7 +56,7 @@ mock.module("sonner", () => ({
   Toaster: () => null,
 }));
 
-const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -398,7 +398,7 @@ describe("Commenting S-001", () => {
 // Unit tests for the pure selection→anchor half of the G3 anchor contract (JSDOM-testable per the
 // spec Clarifications). These give AS-001 / AS-002 depth at the function boundary, independent of
 // the React wiring above.
-const { selectionToAnchor } = await import("../src/features/viewer/selection-anchor");
+const { selectionToAnchor } = await import("@/features/viewer/selection-anchor");
 
 function selectionOf(html: string, blockId: string, phrase: string): Selection {
   document.body.innerHTML = html;

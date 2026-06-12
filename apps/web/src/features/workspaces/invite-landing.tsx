@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSession } from "../../lib/auth-client";
+import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Brandmark } from "@/components/icon";
-import { AuthCenter } from "../auth/auth-shell";
+import { AuthCenter } from "@/features/auth/auth-shell";
 import { acceptInvitation, rejectInvitation, setActiveWorkspace } from "./client";
 import { unwrapEnvelope } from "./use-bootstrap";
 import { queryKeys } from "./query-keys";
-import { toApiError } from "../../lib/api-error";
+import { toApiError } from "@/lib/api-error";
 
 // S-004 WorkspaceInviteLanding (AS-013/014/015 / GAP-002 — a DISTINCT route from auth-ui's
 // per-doc invite landing). The invite link is `/invite/workspace/:invitationId?token=…&email=…`.

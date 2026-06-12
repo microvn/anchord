@@ -14,13 +14,13 @@ const acceptDocInvite = mock(async (_id: string, _t: string) =>
   env({ status: "active", docId: "doc-42", role: "commenter" }),
 );
 
-mock.module("../src/features/auth/client", () => ({
+mock.module("@/features/auth/client", () => ({
   acceptDocInvite,
   fetchAuthProviders: mock(async () => env({ providers: [] })),
 }));
 
 let sessionEmail = "bob@acme.com";
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   getSession: mock(async () => ({ data: { user: { email: sessionEmail } }, error: null })),
   useSession: () => ({ data: { user: { email: sessionEmail } }, isPending: false }),
   signOut: mock(async () => ({})),
@@ -31,7 +31,7 @@ mock.module("../src/lib/auth-client", () => ({
   authClient: {},
 }));
 
-const { InviteAcceptLanding } = await import("../src/features/auth/invite-accept-landing");
+const { InviteAcceptLanding } = await import("@/features/auth/invite-accept-landing");
 
 function Landed() {
   const loc = useLocation();

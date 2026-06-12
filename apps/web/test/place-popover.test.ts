@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { placePopover, isRectOutOfViewport, type RectLike } from "../src/features/viewer/place-popover";
+import { placePopover, isRectOutOfViewport, type RectLike } from "@/features/viewer/place-popover";
 
 // MƯỢT TASK 1 — viewport-aware popover positioning (PURE). happy-dom returns 0 for every
 // getBoundingClientRect, so the live wiring is [→MANUAL]/Playwright; the FLIP + CLAMP math is

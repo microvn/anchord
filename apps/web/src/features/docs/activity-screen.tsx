@@ -1,4 +1,4 @@
-import { EmptyState } from "../../components/empty-state";
+import { EmptyState } from "@/components/empty-state";
 
 // `/w/:id/activity` — there is NO activity/notifications endpoint mounted on the backend
 // (the bootstrap + the route files expose none), so this is an honest, clean empty state

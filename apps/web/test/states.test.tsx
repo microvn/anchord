@@ -1,9 +1,9 @@
 import { describe, it, expect, mock, afterEach } from "bun:test";
 import { render, screen, act } from "@testing-library/react";
-import { EmptyState } from "../src/components/empty-state";
-import { NoResultsState } from "../src/components/no-results-state";
-import { ErrorState } from "../src/components/error-state";
-import { Skeleton } from "../src/components/skeleton";
+import { EmptyState } from "@/components/empty-state";
+import { NoResultsState } from "@/components/no-results-state";
+import { ErrorState } from "@/components/error-state";
+import { Skeleton } from "@/components/skeleton";
 
 // web-core S-006 — empty, no-results, loading, and error states. These are the shared
 // presentational primitives every feature screen reuses; C-007 requires the four states to

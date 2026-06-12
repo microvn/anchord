@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useSession } from "../../lib/auth-client";
+import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Brandmark, Icon } from "@/components/icon";
 import { AuthCenter } from "./auth-shell";
 import { acceptDocInvite } from "./client";
-import { unwrapEnvelope } from "../workspaces/use-bootstrap";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
 
 // auth-ui S-003 InviteAcceptLanding (AS-009/AS-010) — the PER-DOC invite accept-link landing.
 // DISTINCT from workspaces-ui's WORKSPACE invite landing: this grants a ROLE ON A DOC and

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
-import { viewerLayoutModeForWidth } from "../src/lib/use-breakpoint";
+import { viewerLayoutModeForWidth } from "@/lib/use-breakpoint";
 
 // annotation-core-ui S-006 — Responsive viewer (AS-014). Two halves:
 //   1. The PURE width→mode mapping (viewerLayoutModeForWidth) — deterministic, no layout, asserts
@@ -18,9 +18,9 @@ let mode = { drawerMode: false, tocDrawer: false };
 const setMode = (m: { drawerMode: boolean; tocDrawer: boolean }) => {
   mode = m;
 };
-mock.module("../src/lib/use-breakpoint", () => ({
+mock.module("@/lib/use-breakpoint", () => ({
   // keep the real pure fns importable, override only the hook
-  ...require("../src/lib/use-breakpoint"),
+  ...require("@/lib/use-breakpoint"),
   useViewerLayoutMode: () => mode,
 }));
 
@@ -55,7 +55,7 @@ const annoResponse = {
 };
 const fetchViewerDoc = mock(async () => docResponse);
 const listAnnotations = mock(async () => annoResponse);
-mock.module("../src/features/viewer/client", () => ({
+mock.module("@/features/viewer/client", () => ({
   fetchViewerDoc,
   listAnnotations,
   // S-001 grew the client surface; use-compose imports these at module eval, so the whole-module
@@ -67,7 +67,7 @@ mock.module("../src/features/viewer/client", () => ({
   canComment: (role: string | undefined) => role !== "viewer",
 }));
 
-const { ViewerScreen } = await import("../src/features/viewer/viewer-screen");
+const { ViewerScreen } = await import("@/features/viewer/viewer-screen");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

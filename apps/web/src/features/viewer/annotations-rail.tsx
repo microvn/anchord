@@ -1,4 +1,4 @@
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 import { ThreadCard, DetachedCard } from "./thread-card";
 import type { ViewerAnnotation } from "./client";
 

@@ -7,10 +7,10 @@ import userEvent from "@testing-library/user-event";
 // the URL to the clipboard + toasts (AS-015); setting a control sends ONLY that control + marks the
 // chip "set", others independent (AS-016/C-001); a refused write reverts the chip + errors (AS-017).
 
-import * as sharingClient from "../src/features/sharing/client";
+import * as sharingClient from "@/features/sharing/client";
 
 const setLinkControls = mock(async () => ({ data: OK_LINK, error: null as unknown }));
-mock.module("../src/features/sharing/client", () => ({ ...sharingClient, setLinkControls }));
+mock.module("@/features/sharing/client", () => ({ ...sharingClient, setLinkControls }));
 
 const toastSuccess = mock(() => {});
 const toastError = mock(() => {});
@@ -21,7 +21,7 @@ mock.module("sonner", () => ({
 const OK_LINK = { hasPassword: true, url: "anchord.local/d/web-core", expiresAt: null, viewLimit: null, viewCount: 0 };
 const UNSET_LINK = { hasPassword: false, url: "anchord.local/d/web-core", expiresAt: null, viewLimit: null, viewCount: 0 };
 
-const { LinkControls } = await import("../src/features/sharing/link-controls");
+const { LinkControls } = await import("@/features/sharing/link-controls");
 
 beforeEach(() => {
   setLinkControls.mockClear();

@@ -8,13 +8,13 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "../../components/ui/dialog";
-import { Button } from "../../components/ui/button";
-import { Icon } from "../../components/icon";
-import { useActiveWorkspaceSafe } from "../workspaces/active-workspace";
-import { queryKeys } from "../workspaces/query-keys";
-import { unwrapEnvelope } from "../workspaces/use-bootstrap";
-import { toApiError } from "../../lib/api-error";
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/icon";
+import { useActiveWorkspaceSafe } from "@/features/workspaces/active-workspace";
+import { queryKeys } from "@/features/workspaces/query-keys";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { toApiError } from "@/lib/api-error";
 import { publishDoc } from "./client";
 import { useProjects } from "./use-docs";
 import { NewDocProjectPicker } from "./new-doc-project-picker";

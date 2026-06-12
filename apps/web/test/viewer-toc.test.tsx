@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 //   and the current scrollTop, it returns the id of the section currently at/above the viewport
 //   top. Pure so it is testable without real layout.
 
-import { TocSidebar, extractHeadings, pickActiveHeading } from "../src/features/viewer/toc-sidebar";
+import { TocSidebar, extractHeadings, pickActiveHeading } from "@/features/viewer/toc-sidebar";
 
 function mountDoc(html: string) {
   const host = document.createElement("div");

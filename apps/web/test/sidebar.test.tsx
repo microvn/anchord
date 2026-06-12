@@ -4,7 +4,7 @@ import { render, screen, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
-import { SidebarProvider } from "../src/components/ui/sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 
 // web-core S-004 — the left workspace-nav sidebar (AS-012..016 + C-006).
 //
@@ -18,7 +18,7 @@ const env = (body: unknown) => ({ data: { success: true, data: body }, error: nu
 let bootstrap: unknown = env({ userId: "me", workspaces: [], activeWorkspaceId: null });
 const fetchBootstrap = mock(async () => bootstrap);
 
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap,
   setActiveWorkspace: mock(async (id: string) => env({ activeWorkspaceId: id })),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
@@ -35,7 +35,7 @@ mock.module("../src/features/workspaces/client", () => ({
 // mock.module registry is process-global, so this mock must export the FULL auth-client surface
 // other test files import (signIn/signUp/verify…), not just signOut — a partial mock would make
 // their imports throw "Export named … not found".
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   signIn: { email: mock(async () => ({ data: null, error: null })), social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({ data: { success: true }, error: null })),
@@ -46,9 +46,9 @@ mock.module("../src/lib/auth-client", () => ({
   authClient: {},
 }));
 
-const { AppSidebar, navDestinations } = await import("../src/app/app-sidebar");
-const { WorkspaceSidebar } = await import("../src/app/workspace-sidebar");
-const { AppShell } = await import("../src/app/app-shell");
+const { AppSidebar, navDestinations } = await import("@/app/app-sidebar");
+const { WorkspaceSidebar } = await import("@/app/workspace-sidebar");
+const { AppShell } = await import("@/app/app-shell");
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

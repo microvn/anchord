@@ -4,9 +4,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
-import { Icon } from "../../components/icon";
-import { initials, avatarColor } from "../../lib/initials";
+} from "@/components/ui/select";
+import { Icon } from "@/components/icon";
+import { initials, avatarColor } from "@/lib/initials";
 import type { SharePerson, ShareRole } from "./client";
 
 // PeopleList (sharing-permissions-ui S-004 + S-006) — renders every shared person as a row: avatar,

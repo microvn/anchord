@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 
 // Composer (S-001 + S-005): the in-rail compose box that appears once the user picks Comment on a
 // selection. Mirrors the prototype `viewer.jsx` Composer: a PendingQuoteRef (the selected quote,

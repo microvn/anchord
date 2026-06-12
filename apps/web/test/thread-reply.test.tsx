@@ -8,8 +8,8 @@ import userEvent from "@testing-library/user-event";
 // INERT (escaped plaintext via React children, C-008). We render ThreadCard directly with a mocked
 // onReply so the test asserts the reply WRITE + flat render, not a real round-trip.
 
-import { ThreadCard } from "../src/features/viewer/thread-card";
-import type { ViewerAnnotation } from "../src/features/viewer/client";
+import { ThreadCard } from "@/features/viewer/thread-card";
+import type { ViewerAnnotation } from "@/features/viewer/client";
 
 function thread(overrides: Partial<ViewerAnnotation> = {}): ViewerAnnotation {
   return {

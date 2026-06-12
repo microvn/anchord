@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Icon } from "../../components/icon";
+import { Icon } from "@/components/icon";
 import { setLinkControls, type ShareLink, type SetLinkInput } from "./client";
 
 // LinkControls (sharing-permissions-ui S-005) — the Link section for an anyone-with-link doc:

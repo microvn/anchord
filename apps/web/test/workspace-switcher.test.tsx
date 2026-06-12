@@ -19,7 +19,7 @@ const fetchBootstrap = mock(async () => bootstrap);
 const setActiveWorkspace = mock(async (_id: string) => env({ activeWorkspaceId: _id }));
 const fetchMembers = mock(async () => env({ members: [], invitations: [] }));
 
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap,
   setActiveWorkspace,
   fetchMembers,
@@ -32,9 +32,9 @@ mock.module("../src/features/workspaces/client", () => ({
   rejectInvitation: mock(async () => env({})),
 }));
 
-const { WorkspaceSwitcher } = await import("../src/features/workspaces/workspace-switcher");
+const { WorkspaceSwitcher } = await import("@/features/workspaces/workspace-switcher");
 const { WorkspaceRouteGuard, useActiveWorkspace } = await import(
-  "../src/features/workspaces/active-workspace"
+  "@/features/workspaces/active-workspace"
 );
 
 function client() {

@@ -4,7 +4,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
+} from "@/components/ui/select";
 import type { ProjectRow } from "./types";
 
 // The search-scope control (workspace-project-ui S-004, GAP-003 accepted design — no prototype).

@@ -7,21 +7,21 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "../../components/ui/dialog";
-import { Button } from "../../components/ui/button";
-import { Icon } from "../../components/icon";
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../../components/ui/dropdown-menu";
-import { ShareDialog } from "../sharing/share-dialog";
-import type { EffectiveRole } from "../viewer/client";
-import { queryKeys } from "../workspaces/query-keys";
-import { unwrapEnvelope } from "../workspaces/use-bootstrap";
-import { toApiError } from "../../lib/api-error";
+} from "@/components/ui/dropdown-menu";
+import { ShareDialog } from "@/features/sharing/share-dialog";
+import type { EffectiveRole } from "@/features/viewer/client";
+import { queryKeys } from "@/features/workspaces/query-keys";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { toApiError } from "@/lib/api-error";
 import { moveDoc, copyDoc } from "./client";
 import type { DocRow, ProjectRow } from "./types";
 

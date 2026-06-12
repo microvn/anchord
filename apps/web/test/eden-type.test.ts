@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { api } from "../src/lib/api";
+import { api } from "@/lib/api";
 
 // Phase 0 guard: the Eden client's type must resolve to the REAL backend `App` type, not
 // `any`. If `import type { App } from "backend"` ever collapsed to `any` (e.g. a stray

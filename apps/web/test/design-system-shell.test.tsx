@@ -11,7 +11,7 @@ import { join } from "node:path";
 // chrome tests. Mock the client so the bootstrap read resolves to an empty workspace set (the
 // S-003 chrome assertions don't depend on its data).
 const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
-mock.module("../src/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/client", () => ({
   fetchBootstrap: mock(async () => env({ userId: "me", workspaces: [], activeWorkspaceId: null })),
   setActiveWorkspace: mock(async () => env({})),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
@@ -25,7 +25,7 @@ mock.module("../src/features/workspaces/client", () => ({
 }));
 
 // Mock the auth client so AppShell's UserMenu (which imports signOut) renders without a backend.
-mock.module("../src/lib/auth-client", () => ({
+mock.module("@/lib/auth-client", () => ({
   signIn: { email: mock(async () => ({ data: null, error: null })), social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({ data: { success: true }, error: null })),
@@ -36,9 +36,9 @@ mock.module("../src/lib/auth-client", () => ({
   authClient: {},
 }));
 
-const { AppShell } = await import("../src/app/app-shell");
+const { AppShell } = await import("@/app/app-shell");
 const { applyTheme, resolveTheme, readSavedTheme, DEFAULT_THEME } = await import(
-  "../src/app/theme-provider"
+  "@/app/theme-provider"
 );
 
 function setWidth(width: number) {
@@ -132,7 +132,7 @@ describe("web-core S-003 — chrome uses the design system (AS-009)", () => {
         .replace(/\/\/[^\n]*/g, ""); // line comments (JS/TS)
 
     const css = readFileSync(join(import.meta.dir, "../src/styles.css"), "utf8");
-    const srcDir = join(import.meta.dir, "../src");
+    const srcDir = join(import.meta.dir, "../src/.");
     const sources: string[] = [css];
     const walk = (dir: string) => {
       for (const ent of readdirSync(dir, { withFileTypes: true })) {

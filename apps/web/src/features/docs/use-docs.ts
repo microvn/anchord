@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { toApiError, type ApiError } from "../../lib/api-error";
-import { useApiQuery } from "../../lib/use-api-query";
-import { unwrapEnvelope } from "../workspaces/use-bootstrap";
-import { queryKeys } from "../workspaces/query-keys";
+import { toApiError, type ApiError } from "@/lib/api-error";
+import { useApiQuery } from "@/lib/use-api-query";
+import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
+import { queryKeys } from "@/features/workspaces/query-keys";
 import { fetchProjects, fetchProjectDocs, searchDocs } from "./client";
 import type { DocRow, ProjectRow, SearchResultRow } from "./types";
 
