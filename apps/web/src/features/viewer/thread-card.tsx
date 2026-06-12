@@ -143,7 +143,7 @@ function ReplyComposer({ onReply }: { onReply: (body: string) => unknown | Promi
           e.stopPropagation();
           setOpen(true);
         }}
-        className="mt-[9px] text-[12px] font-medium text-accent hover:text-accent-strong"
+        className="rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-muted hover:bg-elev hover:text-ink"
       >
         Reply
       </button>
@@ -168,7 +168,7 @@ function ReplyComposer({ onReply }: { onReply: (body: string) => unknown | Promi
   };
 
   return (
-    <div data-testid="reply-composer" className="mt-[9px]" onClick={stop}>
+    <div data-testid="reply-composer" className="w-full" onClick={stop}>
       <textarea
         data-testid="reply-input"
         aria-label="Reply"
@@ -401,7 +401,7 @@ export function ThreadCard({
           their consumer callback is supplied (comment permission or higher) — a viewer-only role
           gets neither (read-only rail). The Resolve toggle is NOT author-gated (AS-008). */}
       {(handleReply || handleResolveToggle) && (
-        <div className="mt-[9px] flex items-center gap-3">
+        <div className="mt-[9px] flex items-start gap-1.5">
           {handleReply && <ReplyComposer onReply={handleReply} />}
           {handleResolveToggle && (
             <button
@@ -409,7 +409,7 @@ export function ThreadCard({
               data-testid="resolve-toggle"
               disabled={toggling}
               onClick={handleResolveToggle}
-              className="text-[12px] font-medium text-subtle hover:text-ink disabled:opacity-50"
+              className="rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:opacity-50"
             >
               {resolved ? "Reopen" : "Resolve"}
             </button>

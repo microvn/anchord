@@ -44,12 +44,12 @@ export function AnnotationsRail({
 
   return (
     <div data-testid="annotations-rail" className="flex h-full flex-col">
-      <div className="flex h-11 flex-none items-center gap-2 border-b border-line px-4">
+      <div className="flex h-11 flex-none items-center gap-2 border-b border-line px-3.5">
         <Icon name="inbox" size={15} />
         <span className="text-[13px] font-semibold text-ink">Comments</span>
         <span
           data-testid="rail-count"
-          className="ml-auto rounded-full bg-sunken px-2 py-0.5 text-[11px] font-medium text-subtle"
+          className="ml-auto font-mono text-[11px] text-subtle"
         >
           {anchored.length}
         </span>
@@ -58,14 +58,14 @@ export function AnnotationsRail({
       {isEmpty ? (
         <div
           data-testid="rail-empty"
-          className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-subtle"
+          className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-[30px] text-center text-muted"
         >
-          <Icon name="inbox" size={24} />
-          <div className="text-[13px] font-medium text-ink">No comments yet</div>
-          <div className="text-[12px]">Comments will appear here.</div>
+          <Icon name="inbox" size={24} className="text-subtle" />
+          <div className="text-[13px] font-semibold text-ink">No comments yet</div>
+          <div className="text-[12px] leading-[1.5]">Comments will appear here.</div>
         </div>
       ) : (
-        <div className="flex-1 space-y-2 overflow-auto p-3">
+        <div className="flex flex-1 flex-col gap-[10px] overflow-auto p-3">
           {composer}
           {anchored.map((a) => (
             <ThreadCard
@@ -82,8 +82,8 @@ export function AnnotationsRail({
           ))}
 
           {detached.length > 0 && (
-            <section data-testid="detached-section" className="space-y-2 pt-2">
-              <div className="flex items-center gap-1.5 px-1 text-[11px] font-medium text-amber">
+            <section data-testid="detached-section" className="flex flex-col gap-[10px] pt-1">
+              <div className="flex items-center gap-[7px] px-0.5 py-1 font-mono text-[11px] font-medium uppercase tracking-[0.06em] text-amber">
                 <Icon name="alert" size={12} />
                 <span data-testid="detached-count">{detached.length} detached</span>
               </div>
