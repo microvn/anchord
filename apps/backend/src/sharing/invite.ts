@@ -57,6 +57,17 @@ export interface DocMemberRepo {
   activate(memberId: string, userId: string): Promise<void>;
   /** True if an ACTIVE row binds userId to docId (concrete isInvited backing). */
   hasActiveMember(docId: string, userId: string): boolean;
+  /**
+   * S-007 (AS-028): change a member's role. Scoped by docId so a member of another
+   * doc can't be touched; returns the updated row, or null when no row matches
+   * (wrong doc / not found — e.g. the owner, who has no doc_members row).
+   */
+  updateRole(memberId: string, docId: string, role: ShareRole): Promise<DocMemberRow | null>;
+  /**
+   * S-007 (AS-029/030): remove an active member or revoke a pending invite. Scoped by
+   * docId; returns whether a row was deleted (false → not a member of this doc → 404).
+   */
+  remove(memberId: string, docId: string): Promise<boolean>;
 }
 
 export interface EnqueuedInvite {
@@ -207,6 +218,18 @@ export function createFakeDocMemberStore(): FakeDocMemberStore {
       return [...items.values()].some(
         (r) => r.status === "active" && r.docId === docId && r.userId === userId,
       );
+    },
+    async updateRole(memberId: string, docId: string, role: ShareRole): Promise<DocMemberRow | null> {
+      const row = items.get(memberId);
+      if (!row || row.docId !== docId) return null;
+      row.role = role;
+      return { ...row };
+    },
+    async remove(memberId: string, docId: string): Promise<boolean> {
+      const row = items.get(memberId);
+      if (!row || row.docId !== docId) return false;
+      items.delete(memberId);
+      return true;
     },
     rows(): DocMemberRow[] {
       return [...items.values()].map((r) => ({ ...r }));

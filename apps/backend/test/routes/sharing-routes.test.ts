@@ -535,3 +535,184 @@ describe("GET /api/w/:workspaceId/docs/:slug/share (S-006 — read share state)"
     expect(res.status).toBe(404);
   });
 });
+
+describe("PATCH/DELETE /api/w/:workspaceId/docs/:slug/members/:memberId (S-007)", () => {
+  // Seed a member store with rows on doc_1 (the VISIBLE_DOC). A row on a DIFFERENT doc
+  // and the absence of any owner row are how AS-032 owner-protection is exercised: the
+  // repo is docId-scoped, so a memberId not on THIS doc → null/false → 404.
+  async function seedMembers() {
+    const members = createFakeDocMemberStore();
+    const active = await members.insert({
+      docId: "doc_1",
+      userId: "u_member",
+      email: "member@acme.com",
+      role: "viewer",
+      message: null,
+      invitedBy: "u_owner",
+      status: "active",
+    });
+    const pending = await members.insert({
+      docId: "doc_1",
+      userId: null,
+      email: "bob@x.com",
+      role: "viewer",
+      message: null,
+      invitedBy: "u_owner",
+      status: "pending",
+    });
+    const otherDoc = await members.insert({
+      docId: "doc_OTHER",
+      userId: "u_other",
+      email: "other@acme.com",
+      role: "editor",
+      message: null,
+      invitedBy: "u_owner",
+      status: "active",
+    });
+    return { members, activeId: active.id, pendingId: pending.id, otherDocId: otherDoc.id };
+  }
+
+  test("AS-028: manager PATCHes an active member viewer→editor → 200 { role: 'editor' }", async () => {
+    const { members, activeId } = await seedMembers();
+    const app = buildApp({ members, resolveDocRole: asOwner });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${activeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role: "editor" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data).toEqual({ role: "editor" });
+    // side effect: the stored row's role is now editor
+    expect(members.rows().find((r) => r.id === activeId)?.role).toBe("editor");
+  });
+
+  test("AS-029: manager DELETEs an active member → 200 { removed: true } + row gone", async () => {
+    const { members, activeId } = await seedMembers();
+    const app = buildApp({ members, resolveDocRole: asOwner });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${activeId}`, { method: "DELETE" }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data).toEqual({ removed: true });
+    expect(members.rows().find((r) => r.id === activeId)).toBeUndefined();
+  });
+
+  test("AS-030: manager DELETEs a PENDING invite (userId null) → 200 + row gone", async () => {
+    const { members, pendingId } = await seedMembers();
+    const app = buildApp({ members, resolveDocRole: asOwner });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${pendingId}`, { method: "DELETE" }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.removed).toBe(true);
+    expect(members.rows().find((r) => r.id === pendingId)).toBeUndefined();
+  });
+
+  test("AS-031: a commenter (cannot manage) → PATCH refused 403, member set unchanged", async () => {
+    const { members, activeId } = await seedMembers();
+    const before = members.rows();
+    const app = buildApp({ members, resolveDocRole: asCommenter, loadShareConfig: shareToggleOn });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${activeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role: "editor" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("FORBIDDEN");
+    expect(members.rows()).toEqual(before); // unchanged
+  });
+
+  test("AS-031: a commenter (cannot manage) → DELETE refused 403, member set unchanged", async () => {
+    const { members, activeId } = await seedMembers();
+    const before = members.rows();
+    const app = buildApp({ members, resolveDocRole: asCommenter, loadShareConfig: shareToggleOn });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${activeId}`, { method: "DELETE" }),
+    );
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("FORBIDDEN");
+    expect(members.rows()).toEqual(before); // unchanged
+  });
+
+  test("AS-032: PATCH a memberId not on THIS doc (owner / other doc) → 404, nothing changed", async () => {
+    const { members, otherDocId } = await seedMembers();
+    const before = members.rows();
+    const app = buildApp({ members, resolveDocRole: asOwner });
+    // a member of doc_OTHER, addressed via doc-one (→ doc_1): repo is docId-scoped → null
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${otherDocId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role: "editor" }),
+      }),
+    );
+    expect(res.status).toBe(404);
+    expect(members.rows()).toEqual(before);
+    // and a wholly-unknown id (the owner has NO member row to target) → also 404
+    const res2 = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/dm_owner_has_no_row`, {
+        method: "PATCH",
+        body: JSON.stringify({ role: "editor" }),
+      }),
+    );
+    expect(res2.status).toBe(404);
+  });
+
+  test("AS-032: DELETE a memberId not on THIS doc (owner / other doc) → 404, nothing changed", async () => {
+    const { members, otherDocId } = await seedMembers();
+    const before = members.rows();
+    const app = buildApp({ members, resolveDocRole: asOwner });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${otherDocId}`, { method: "DELETE" }),
+    );
+    expect(res.status).toBe(404);
+    expect(members.rows()).toEqual(before);
+    const res2 = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/dm_owner_has_no_row`, { method: "DELETE" }),
+    );
+    expect(res2.status).toBe(404);
+  });
+
+  test("AS-028: an invalid role (owner) → 400 VALIDATION_ERROR, no change", async () => {
+    const { members, activeId } = await seedMembers();
+    const before = members.rows();
+    const app = buildApp({ members, resolveDocRole: asOwner });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${activeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role: "owner" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(members.rows()).toEqual(before);
+  });
+
+  test("AS-031: no session → 401 (PATCH gated before any change)", async () => {
+    const { members, activeId } = await seedMembers();
+    const app = buildApp({ members, resolveSession: noSession });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/doc-one/members/${activeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role: "editor" }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test("AS-032: missing/hidden doc → 404 before the manage gate (DELETE)", async () => {
+    const { members, activeId } = await seedMembers();
+    const app = buildApp({ members, doc: null });
+    const res = await app.handle(
+      req(`/api/w/ws_1/docs/nope/members/${activeId}`, { method: "DELETE" }),
+    );
+    expect(res.status).toBe(404);
+  });
+});

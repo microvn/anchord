@@ -12,6 +12,8 @@
 //   PUT  /api/docs/:slug/access  → S-001 AS-001/002/003/018  200 { level, role, guestCommenting }
 //   POST /api/docs/:slug/invites → S-003 AS-007/008          201 { status } active|pending
 //   PUT  /api/docs/:slug/link    → S-004 AS-009..021         200 { link controls }
+//   PATCH  /api/w/:wid/docs/:slug/members/:memberId → S-007 AS-028/031/032 200 { role }
+//   DELETE /api/w/:wid/docs/:slug/members/:memberId → S-007 AS-029/030/031/032 200 { removed: true }
 //
 // EXISTENCE-HIDING (C-006): every route resolves :slug → a VISIBLE doc or 404 FIRST
 // (missing doc OR a doc the caller cannot view both collapse to 404), BEFORE the
@@ -39,7 +41,7 @@ import {
   type WorkspaceRoleResolver,
 } from "../http/auth-gate";
 import { withValidation } from "../http/validate";
-import { ValidationError, ForbiddenError } from "../http/errors";
+import { ValidationError, ForbiddenError, NotFoundError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
 import { canViewDoc, type AccessDeps, type Viewer } from "../sharing/access";
 import { type Role, canManageSharing } from "../sharing/roles";
@@ -73,6 +75,12 @@ const inviteBodySchema = z.object({
   email: z.string().email(),
   role: z.enum(["viewer", "commenter", "editor"]),
   message: z.string().optional(),
+});
+
+// S-007 (AS-028): a member's new role is one of viewer|commenter|editor; "owner" is
+// never an assignable role (C-012/C-017) → an invalid value is a 400 from Zod.
+const memberRoleBodySchema = z.object({
+  role: z.enum(["viewer", "commenter", "editor"]),
 });
 
 const linkBodySchema = z.object({
@@ -320,6 +328,42 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
               viewCount: persisted.viewCount,
             };
           }),
+      )
+
+      // ── PATCH /api/w/:workspaceId/docs/:slug/members/:memberId — S-007 (change a member's role) ──
+      // Gated IDENTICALLY to the other management writes (C-017): existence-hide → 404,
+      // then requireManageSharing → 403 for a non-manager (AS-031). The owner has no
+      // doc_members row, so a non-member memberId (owner / member of another doc) → repo
+      // returns null → 404 (AS-032 owner-protection holds structurally).
+      .group("", (app) =>
+        app
+          .use(withValidation(memberRoleBodySchema))
+          .patch(
+            "/api/w/:workspaceId/docs/:slug/members/:memberId",
+            async ({ params, actor, ws, validBody }) => {
+              const body = validBody as z.infer<typeof memberRoleBodySchema>;
+              const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+              await requireManageSharing(ws.workspaceId, doc.id, actor.userId); // 403 if not a manager
+              const updated = await docMemberRepo.updateRole(params.memberId, doc.id, body.role);
+              if (!updated) throw new NotFoundError(); // not an active member of THIS doc (AS-032)
+              return { role: updated.role };
+            },
+          ),
+      )
+
+      // ── DELETE /api/w/:workspaceId/docs/:slug/members/:memberId — S-007 (remove member / revoke invite) ──
+      // Same gate as PATCH. Removing an active member (AS-029) or a pending invite (AS-030)
+      // is the SAME delete — a pending invite IS a doc_members row. A memberId that isn't a
+      // row of THIS doc (owner / other doc) → repo returns false → 404 (AS-032).
+      .delete(
+        "/api/w/:workspaceId/docs/:slug/members/:memberId",
+        async ({ params, actor, ws }) => {
+          const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+          await requireManageSharing(ws.workspaceId, doc.id, actor.userId); // 403 if not a manager
+          const removed = await docMemberRepo.remove(params.memberId, doc.id);
+          if (!removed) throw new NotFoundError(); // not a member of THIS doc (AS-032)
+          return { removed: true };
+        },
       )
   );
 }

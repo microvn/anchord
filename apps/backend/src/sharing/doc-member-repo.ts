@@ -65,6 +65,26 @@ export function createDocMemberRepo(db: DB): DocMemberRepo {
         "createDocMemberRepo.hasActiveMember is sync and unsupported on the DB impl; use activeRolesFor",
       );
     },
+    async updateRole(memberId, docId, role): Promise<DocMemberRow | null> {
+      // S-007 AS-028: scope by docId so a member of another doc can't be touched.
+      // No matching row (wrong doc / not found — incl. the owner, who has no
+      // doc_members row) → null → the route maps it to 404 (AS-032 owner-protection).
+      const [row] = await db
+        .update(docMembers)
+        .set({ role })
+        .where(and(eq(docMembers.id, memberId), eq(docMembers.docId, docId)))
+        .returning();
+      return row ? rowToMember(row) : null;
+    },
+    async remove(memberId, docId): Promise<boolean> {
+      // S-007 AS-029/030: delete an active member or revoke a pending invite. Scoped by
+      // docId; no row deleted (not a member of THIS doc, incl. the owner) → false → 404.
+      const deleted = await db
+        .delete(docMembers)
+        .where(and(eq(docMembers.id, memberId), eq(docMembers.docId, docId)))
+        .returning({ id: docMembers.id });
+      return deleted.length > 0;
+    },
   };
 }
 
