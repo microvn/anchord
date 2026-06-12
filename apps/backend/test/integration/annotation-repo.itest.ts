@@ -107,6 +107,49 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
     expect(persisted.anchor.textSnippet).toBe("v1 body");
   });
 
+  test("#4 (2026-06-12): listAnnotations returns annotations NEWEST-FIRST (top of the rail)", async () => {
+    const docId = await newDoc(h, '<p id="b1">first second third body</p>');
+    const annRepo = createAnnotationRepo(h.db);
+
+    // Create three annotations in sequence. createdAt defaults to now(); to make the order
+    // deterministic regardless of same-millisecond inserts, force distinct timestamps after insert.
+    const ids: string[] = [];
+    for (const snippet of ["first", "second", "third"]) {
+      const anchor = buildAnchor({
+        blockId: "b1",
+        text: snippet,
+        offset: "first second third body".indexOf(snippet),
+        length: snippet.length,
+      })!;
+      const created = await createAnnotation(
+        { docId, anchor, viewer: { kind: "user", userId: "u1" }, sessionRole: "commenter" },
+        annRepo,
+      );
+      ids.push(created.created ? created.id : "");
+    }
+    // Stamp strictly increasing created_at so "newest" is unambiguous: first < second < third.
+    await h.db
+      .update(annotations)
+      .set({ createdAt: new Date("2026-01-01T00:00:01.000Z") })
+      .where(eq(annotations.id, ids[0]));
+    await h.db
+      .update(annotations)
+      .set({ createdAt: new Date("2026-01-01T00:00:02.000Z") })
+      .where(eq(annotations.id, ids[1]));
+    await h.db
+      .update(annotations)
+      .set({ createdAt: new Date("2026-01-01T00:00:03.000Z") })
+      .where(eq(annotations.id, ids[2]));
+
+    const listed = await listAnnotations(
+      { docId, viewer: { kind: "anon" }, generalAccess: "anyone_with_link", deps: openDeps },
+      annRepo,
+    );
+    expect(listed.allowed).toBe(true);
+    // Newest (third, ids[2]) first → oldest (first, ids[0]) last.
+    expect(listed.annotations.map((a) => a.id)).toEqual([ids[2], ids[1], ids[0]]);
+  });
+
   test("S-003: addReply persists a FLAT comment under the annotation", async () => {
     const docId = await newDoc(h);
     const annRepo = createAnnotationRepo(h.db);

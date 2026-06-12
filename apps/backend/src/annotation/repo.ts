@@ -6,7 +6,7 @@
 // modules; these factories only read and write rows. Integration-verified against a real
 // Postgres in test/integration/annotation-repo.itest.ts.
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { annotations, comments, reanchorLedger } from "../db/schema";
 import type { DB } from "../db/client";
 import type { Anchor } from "./annotation";
@@ -51,7 +51,10 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
         })
         .from(annotations)
         .where(eq(annotations.docId, docId))
-        .orderBy(asc(annotations.createdAt));
+        // #4 (2026-06-12): newest annotation/thread first — a freshly created thread "appears at the
+        // top of the rail" (spec). Only the ANNOTATION ordering is DESC; comments WITHIN a thread
+        // stay ASC (root then replies, top-down) — see listCommentsByDoc below.
+        .orderBy(desc(annotations.createdAt));
       return rows.map((r) => ({
         id: r.id,
         docId: r.docId,
