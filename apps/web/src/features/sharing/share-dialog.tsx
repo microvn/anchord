@@ -17,11 +17,11 @@ import {
 } from "../../components/ui/sheet";
 import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
-import { initials, avatarColor } from "../../lib/initials";
 import { useBreakpoint } from "../../lib/use-breakpoint";
 import { canManageShare, getShareState, type ShareState, type SharePerson } from "./client";
 import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
+import { PeopleList } from "./people-list";
 import type { EffectiveRole } from "../viewer/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
@@ -39,10 +39,6 @@ import type { EffectiveRole } from "../viewer/client";
 // is shown in the top bar (owner/editor); `editorsCanShare` is only knowable once the dialog reads
 // the share state, so an editor whose toggle is OFF opens the dialog but is shown the
 // not-allowed surface, never the management controls.
-
-function roleLabel(role: string): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
 
 export function ShareDialog({
   open,
@@ -312,42 +308,7 @@ function ShareSections({
           onReconcile={reconcile}
           onRollback={rollback}
         />
-        <div data-testid="share-people-list" className="flex flex-col gap-1.5">
-          {people.map((p) => {
-            const name = p.name ?? p.email;
-            return (
-              <div
-                key={p.userId ?? p.email}
-                data-testid={`share-person-${p.email}`}
-                className="flex items-center gap-2.5"
-              >
-                <span
-                  aria-hidden="true"
-                  className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-full font-mono text-[10.5px] font-semibold text-white"
-                  style={{ background: avatarColor(name) }}
-                >
-                  {initials(name)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 truncate text-[13px] font-medium text-ink">
-                    {name}
-                    {p.status === "pending" && (
-                      <span
-                        data-testid={`share-person-pending-${p.email}`}
-                        className="inline-flex h-[18px] items-center gap-[5px] rounded-[6px] bg-amber-bg px-[6px] font-mono text-[10.5px] font-medium tracking-[0.04em] text-amber"
-                      >
-                        <Icon name="clock" size={10} />
-                        Pending
-                      </span>
-                    )}
-                  </div>
-                  <div className="truncate text-[11.5px] text-subtle">{p.email}</div>
-                </div>
-                <span className="flex-none text-[12px] text-muted">{roleLabel(p.role)}</span>
-              </div>
-            );
-          })}
-        </div>
+        <PeopleList people={people} />
       </section>
     </div>
   );
