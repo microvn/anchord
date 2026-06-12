@@ -26,6 +26,11 @@ export type ShareRole = "viewer" | "commenter" | "editor";
 
 /** A person row in the share state — active member or pending invite. */
 export interface SharePerson {
+  /** the doc_members row id — REQUIRED to target the PATCH/DELETE member routes (S-006). The
+   *  share-state read must populate this; see Spec signal S1 (the backend read does not yet carry
+   *  it). Optional on the type so a read without it still compiles; the row controls only persist
+   *  when it is present. */
+  id?: string;
   userId?: string;
   email: string;
   name?: string;
@@ -163,6 +168,48 @@ export function setLinkControls(
     .w({ workspaceId })
     .docs({ slug })
     .link.put(input) as Promise<EdenResult<LinkResult>>;
+}
+
+/** What the backend echoes from a successful member role change (S-007). */
+export interface ChangeMemberRoleResult {
+  role: ShareRole;
+}
+
+/** PATCH /api/w/:workspaceId/docs/:slug/members/:memberId — change an existing member's role
+ *  (sharing-permissions-ui S-006; backend sharing-permissions:S-007). On success the people-list
+ *  row reflects the new role; a refused write rolls back the row (C-005). The owner row never
+ *  reaches this (C-004 / backend C-017). */
+export function changeMemberRole(
+  workspaceId: string,
+  slug: string,
+  memberId: string,
+  role: ShareRole,
+): Promise<EdenResult<ChangeMemberRoleResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .members({ memberId })
+    .patch({ role }) as Promise<EdenResult<ChangeMemberRoleResult>>;
+}
+
+/** What the backend echoes from a successful member removal (S-007). */
+export interface RemoveMemberResult {
+  removed: boolean;
+}
+
+/** DELETE /api/w/:workspaceId/docs/:slug/members/:memberId — remove an active member OR revoke a
+ *  pending invite (the same row delete; backend sharing-permissions:S-007). On success the row
+ *  disappears; a refused write restores it (C-005). The owner row never reaches this (C-004). */
+export function removeMember(
+  workspaceId: string,
+  slug: string,
+  memberId: string,
+): Promise<EdenResult<RemoveMemberResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .members({ memberId })
+    .delete() as Promise<EdenResult<RemoveMemberResult>>;
 }
 
 // --- manage-eligibility gate (C-002) -------------------------------------------------------

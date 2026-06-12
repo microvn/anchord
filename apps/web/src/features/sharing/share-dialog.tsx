@@ -18,7 +18,16 @@ import {
 import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
 import { useBreakpoint } from "../../lib/use-breakpoint";
-import { getShareState, isForbidden, type ShareState, type SharePerson } from "./client";
+import { toast } from "sonner";
+import {
+  getShareState,
+  isForbidden,
+  changeMemberRole,
+  removeMember,
+  type ShareState,
+  type SharePerson,
+  type ShareRole,
+} from "./client";
 import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
@@ -254,13 +263,41 @@ function ShareSections({
   const isLink = level === "anyone_with_link";
 
   // People list is owned here (seeded from the prefill read) so InviteRow (S-003) can optimistically
-  // append a row + reconcile/rollback it (C-005); S-004 formalizes the per-row controls.
+  // append a row + reconcile/rollback it (C-005), and S-006 can optimistically change a role / remove
+  // a person + roll back a refused write.
   const [people, setPeople] = useState<SharePerson[]>(state.people);
   const addOptimistic = (person: SharePerson) =>
     setPeople((prev) => [...prev.filter((p) => p.email !== person.email), person]);
   const reconcile = (email: string, status: SharePerson["status"]) =>
     setPeople((prev) => prev.map((p) => (p.email === email ? { ...p, status } : p)));
   const rollback = (email: string) => setPeople((prev) => prev.filter((p) => p.email !== email));
+
+  // S-006: change a member's role. Optimistically set the new role; on a refused write revert to the
+  // prior role + toast (C-005). Targets the doc_members `id` (the PATCH route needs it — S1).
+  async function onChangeRole(person: SharePerson, role: ShareRole) {
+    if (person.role === role) return;
+    if (!person.id) return; // can't target the member without its id (Spec signal S1)
+    const prevRole = person.role;
+    setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, role } : p)));
+    const res = await changeMemberRole(workspaceId, slug, person.id, role);
+    if (res.error || !res.data) {
+      setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, role: prevRole } : p)));
+      toast.error("Couldn't change that person's role");
+    }
+  }
+
+  // S-006: remove a person (active member or pending invite). Optimistically drop the row; on a
+  // refused write restore it + toast (C-005). Targets the doc_members `id`.
+  async function onRemove(person: SharePerson) {
+    if (!person.id) return; // can't target the member without its id (Spec signal S1)
+    const snapshot = people;
+    setPeople((prev) => prev.filter((p) => p.id !== person.id));
+    const res = await removeMember(workspaceId, slug, person.id);
+    if (res.error || !res.data) {
+      setPeople(snapshot);
+      toast.error("Couldn't remove that person");
+    }
+  }
 
   return (
     <div data-testid="share-sections" className="flex flex-col gap-4 pt-1">
@@ -286,7 +323,7 @@ function ShareSections({
           onReconcile={reconcile}
           onRollback={rollback}
         />
-        <PeopleList people={people} />
+        <PeopleList people={people} onChangeRole={onChangeRole} onRemove={onRemove} />
       </section>
     </div>
   );
