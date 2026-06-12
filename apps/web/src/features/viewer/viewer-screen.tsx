@@ -21,6 +21,8 @@ import { Composer } from "./composer";
 import { useDismissOnOutsideAndEscape } from "./use-dismiss";
 import { useDraggable } from "./use-draggable";
 import { useCompose, peelCommentId } from "./use-compose";
+import { ShareDialog } from "../sharing/share-dialog";
+import { canManageShare } from "../sharing/client";
 import {
   fetchViewerDoc,
   listAnnotations,
@@ -116,6 +118,7 @@ export function ViewerScreen() {
       specMeta={specMeta}
       workspaceId={workspaceId}
       slug={slug}
+      effectiveRole={doc.doc.effectiveRole}
       canCompose={canComment(doc.doc.effectiveRole)}
       // S-005: a logged-out guest session (consumed from the read side) → the composer shows the
       // GuestNameField + name-required gate; the rail badges the guest comment (C-010).
@@ -141,12 +144,15 @@ function ViewerShell({
   children,
   workspaceId,
   slug,
+  effectiveRole,
   canCompose = false,
   guest = false,
 }: {
   title: string;
   /** present only on the success path — drives the S-005 ViewerTopBar identity. */
   doc?: { title: string; kind: ViewerDocResponse["doc"]["kind"]; version: number; status: string };
+  /** the session's effective role on this doc — gates the Share affordance (S-001 / C-002). */
+  effectiveRole?: ViewerDocResponse["doc"]["effectiveRole"];
   /** the full doc read on the success path — rendered into the center pane (DocPane). Absent on
    *  the loading / not-found / error shells (no doc to render). */
   docResponse?: ViewerDocResponse;
@@ -180,6 +186,15 @@ function ViewerShell({
   // via data-doc-width so .doc-prose reflows. The toolbar only mounts on the success path (doc present).
   const [docWidth, setDocWidth] = useState<"wide" | "focus">("wide");
   const hasDoc = Boolean(workspaceId && slug);
+
+  // S-001 (AS-001): the ShareDialog open-state, hosted here so the top bar's Share button opens it.
+  const [shareOpen, setShareOpen] = useState(false);
+  // C-002 (Share affordance gate): only a potential manager (owner, or editor — the editor's
+  // editorsCanShare is re-checked after the dialog reads the share state) is shown the Share button.
+  // A viewer/commenter — or an absent role (conservative) — never gets a Share affordance that opens
+  // the editable dialog (AS-003). canManageShare(role, true) treats owner→true, editor→true (the
+  // toggle is verified post-open), viewer/commenter/absent→false.
+  const canShare = canManageShare(effectiveRole, true);
 
   // S-003/S-006: the annotations are read here (lifted above the rail) so the CommentFab can show
   // the count and the highlight-tap can open the rail drawer, while the rail still renders them.
@@ -254,7 +269,8 @@ function ViewerShell({
           showTocToggle={tocDrawer}
           onBack={workspaceId ? () => navigate(`/w/${workspaceId}`) : undefined}
           onVersion={() => toast("Version history isn't available yet")}
-          onShare={() => toast("Sharing isn't available yet")}
+          onShare={() => setShareOpen(true)}
+          showShare={canShare}
           onOverflow={() => toast("More actions")}
         />
       ) : (
@@ -401,6 +417,20 @@ function ViewerShell({
       {/* #3: the INLINE composer popover — replaces the selection popover at the same anchor once
           the user picks Comment. Mounted here (overlays the viewer body), not in the rail. */}
       {composerNode}
+
+      {/* S-001: the ShareDialog — opened by the top bar's Share button. Only a doc with a
+          workspace + slug can be shared; the dialog reads the share state on open to prefill +
+          re-check editor manage-eligibility (C-002). */}
+      {hasDoc && doc && (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          workspaceId={workspaceId!}
+          slug={slug!}
+          docTitle={doc.title}
+          effectiveRole={effectiveRole}
+        />
+      )}
     </div>
   );
 }

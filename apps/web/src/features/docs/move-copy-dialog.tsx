@@ -10,6 +10,15 @@ import {
 } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu";
+import { ShareDialog } from "../sharing/share-dialog";
+import type { EffectiveRole } from "../viewer/client";
 import { queryKeys } from "../workspaces/query-keys";
 import { unwrapEnvelope } from "../workspaces/use-bootstrap";
 import { toApiError } from "../../lib/api-error";
@@ -194,49 +203,110 @@ export function MoveCopyDialog({
   );
 }
 
-// The ⋯ button on a DocCard / DocList row. 1:1 with the Anchord-Design prototype: it opens the
-// MoveCopyDialog DIRECTLY (the dialog carries the Move|Copy toggle) — there is NO intermediate
-// Move/Copy menu. Self-contained so the grid card and the list row reuse it identically.
+// The ⋯ button on a DocCard / DocList row. sharing-permissions-ui S-001 (AS-019) refactored this
+// from a DIRECT MoveCopyDialog open into a ⋯ DROPDOWN offering Share · Move · Copy (mirroring
+// `ProjectCardMoreMenu`): Share opens the ShareDialog, Move/Copy open the MoveCopyDialog at the
+// matching mode. Self-contained so the grid card and the list row reuse it identically.
 //
-// The wrapper's onClick stops propagation: the kebab and the Radix Dialog are rendered inside the
-// surrounding doc-card <Link>, and Radix portals the dialog to <body> but React still bubbles the
-// portal's events UP THE REACT TREE — so a click inside the dialog (toggle / project / confirm)
-// would otherwise reach the <Link> and navigate. Stopping it here (a React ancestor of the portal)
-// keeps every dialog click from triggering navigation.
+// The wrapper's onClick stops propagation: the kebab + the Radix menu/dialogs render inside the
+// surrounding doc-card <Link>, and Radix portals to <body> but React still bubbles portal events
+// UP THE REACT TREE — so a click inside (menu item / dialog control) would otherwise reach the
+// <Link> and navigate. Stopping it here (a React ancestor of the portal) keeps every portal click
+// from triggering navigation.
 export function DocMoreMenu({
   doc,
   workspaceId,
   projects,
+  effectiveRole,
 }: {
   doc: DocRow;
   workspaceId: string;
   projects: ProjectRow[];
+  /** the caller's effective role on this doc — gates the ShareDialog's manage surface (C-002).
+   *  Absent on a browse row with no role signal → the dialog opens but shows the read-only
+   *  surface (conservative). */
+  effectiveRole?: EffectiveRole;
 }) {
-  const [open, setOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moveMode, setMoveMode] = useState<Mode>("move");
+  const [shareOpen, setShareOpen] = useState(false);
+
+  function openMove(mode: Mode) {
+    setMoveMode(mode);
+    setMoveOpen(true);
+  }
 
   return (
     <span className="contents" onClick={(e) => e.stopPropagation()}>
-      <button
-        type="button"
-        data-testid={`doc-more-${doc.slug}`}
-        aria-label="More actions"
-        title="Move or copy"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setOpen(true);
-        }}
-        className="grid size-7 flex-none place-items-center rounded-md text-subtle hover:bg-elev hover:text-ink"
-      >
-        <Icon name="more" size={16} />
-      </button>
-      {open && (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            data-testid={`doc-more-${doc.slug}`}
+            aria-label="More actions"
+            title="More actions"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            className="grid size-7 flex-none place-items-center rounded-md text-subtle hover:bg-elev hover:text-ink"
+          >
+            <Icon name="more" size={16} />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="border-line bg-surface">
+          <DropdownMenuItem
+            data-testid={`doc-more-share-${doc.slug}`}
+            onSelect={(e) => {
+              e.preventDefault();
+              setShareOpen(true);
+            }}
+          >
+            <Icon name="share" size={15} />
+            Share…
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            data-testid={`doc-more-move-${doc.slug}`}
+            onSelect={(e) => {
+              e.preventDefault();
+              openMove("move");
+            }}
+          >
+            <Icon name="arrowRight" size={15} />
+            Move…
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            data-testid={`doc-more-copy-${doc.slug}`}
+            onSelect={(e) => {
+              e.preventDefault();
+              openMove("copy");
+            }}
+          >
+            <Icon name="copy" size={15} />
+            Copy…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {moveOpen && (
         <MoveCopyDialog
-          open={open}
-          onOpenChange={setOpen}
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
           doc={doc}
           workspaceId={workspaceId}
           projects={projects}
+          initialMode={moveMode}
+        />
+      )}
+      {shareOpen && (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          workspaceId={workspaceId}
+          slug={doc.slug}
+          docTitle={doc.title}
+          effectiveRole={effectiveRole}
         />
       )}
     </span>

@@ -5,11 +5,11 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // workspace-project-ui S-001 — move/copy a doc between projects. The Eden client wrappers
-// (moveDoc/copyDoc) are MOCKED; we assert the ⋯ kebab opens the Move/Copy dialog DIRECTLY (1:1
-// with the prototype — no intermediate menu; the Move|Copy toggle lives inside the dialog),
-// project pick → confirm calls the right wrapper with (workspaceId, slug, targetProjectId), that
-// the destination list offers ONLY this workspace's projects (C-003), and that move vs copy carry
-// their distinct intent (helper copy + which endpoint fires). Pixel/responsive [→MANUAL].
+// (moveDoc/copyDoc) are MOCKED; we assert the ⋯ kebab opens a menu (Share · Move · Copy — refactored
+// by sharing-permissions-ui S-001 / AS-019 from a direct dialog open), choosing Move/Copy opens the
+// MoveCopyDialog at the right mode, project pick → confirm calls the right wrapper with
+// (workspaceId, slug, targetProjectId), that the destination list offers ONLY this workspace's
+// projects (C-003), and that move vs copy carry their distinct intent. Pixel/responsive [→MANUAL].
 
 const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 
@@ -69,8 +69,9 @@ beforeEach(() => {
 describe("workspace-project-ui S-001 — move / copy a doc between projects", () => {
   it("AS-001: Move a doc to another project", async () => {
     renderCard();
-    // The ⋯ kebab opens the dialog directly (no intermediate menu).
+    // The ⋯ kebab opens a menu; choosing Move opens the MoveCopy dialog at the Move mode.
     await userEvent.click(screen.getByTestId("doc-more-auth-spec"));
+    await userEvent.click(await screen.findByTestId("doc-more-move-auth-spec"));
 
     // Move|Copy toggle defaults to Move; the helper line reflects move intent.
     const dialog = await screen.findByTestId("move-copy-dialog");
@@ -88,11 +89,12 @@ describe("workspace-project-ui S-001 — move / copy a doc between projects", ()
 
   it("AS-002: Copy a doc to another project", async () => {
     renderCard();
+    // Choose Copy from the ⋯ menu — the dialog opens at the Copy mode.
     await userEvent.click(screen.getByTestId("doc-more-auth-spec"));
+    await userEvent.click(await screen.findByTestId("doc-more-copy-auth-spec"));
     await screen.findByTestId("move-copy-dialog");
 
-    // Flip the in-dialog toggle to Copy; the helper line reflects copy intent.
-    await userEvent.click(screen.getByTestId("mode-copy"));
+    // The dialog opens in Copy mode; the helper line reflects copy intent.
     expect(screen.getByTestId("move-copy-dialog")).toHaveTextContent(
       /duplicate is created; the original stays/i,
     );
@@ -110,6 +112,7 @@ describe("workspace-project-ui S-001 — move / copy a doc between projects", ()
   it("C-003: the destination list offers only this workspace's projects", async () => {
     renderCard();
     await userEvent.click(screen.getByTestId("doc-more-auth-spec"));
+    await userEvent.click(await screen.findByTestId("doc-more-move-auth-spec"));
     await screen.findByTestId("move-copy-dialog");
 
     // Exactly the two workspace projects are offered — nothing more.
@@ -129,6 +132,7 @@ describe("workspace-project-ui S-001 — move / copy a doc between projects", ()
       </QueryClientProvider>,
     );
     await userEvent.click(screen.getByTestId("doc-more-auth-spec"));
+    await userEvent.click(await screen.findByTestId("doc-more-move-auth-spec"));
     await screen.findByTestId("move-copy-dialog");
     await userEvent.click(await screen.findByTestId("dest-project-p-pay"));
     await userEvent.click(screen.getByTestId("move-copy-confirm"));

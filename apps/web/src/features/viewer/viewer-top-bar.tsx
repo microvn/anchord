@@ -41,6 +41,7 @@ export function ViewerTopBar({
   onToggleRail,
   onVersion,
   onShare,
+  showShare = true,
   onBack,
   onToggleToc,
   showTocToggle = false,
@@ -52,8 +53,11 @@ export function ViewerTopBar({
   onToggleRail: () => void;
   /** opens version history (versioning-diff-ui, not built) — caller passes a placeholder. */
   onVersion: () => void;
-  /** opens the share dialog (sharing-permissions-ui, not built) — caller passes a placeholder. */
+  /** opens the share dialog. */
   onShare: () => void;
+  /** S-001/C-002: show the Share button only for a potential manager (owner/editor). A
+   *  viewer/commenter — or an absent role — gets no Share affordance (AS-003). */
+  showShare?: boolean;
   /** back to workspace — shown only when present (hidden on a public link). */
   onBack?: () => void;
   /** opens the TOC drawer (drawer mode only). */
@@ -101,16 +105,16 @@ export function ViewerTopBar({
       {isLive && (
         <span
           data-testid="vt-live-badge"
-          className="inline-flex flex-none items-center gap-1 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent"
+          className="inline-flex flex-none items-center gap-[5px] font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--green)]"
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--green)]" aria-hidden="true" />
           Live
         </span>
       )}
 
       <span
         data-testid="vt-format-badge"
-        className="flex-none rounded-[5px] border border-line px-1.5 py-px text-[10.5px] font-medium text-subtle"
+        className="flex-none rounded-[4px] bg-accent-soft px-1.5 py-0.5 font-mono text-[11px] font-medium tracking-[0.06em] text-accent-ink"
       >
         {FORMAT_LABEL[doc.kind]}
       </span>
@@ -139,16 +143,21 @@ export function ViewerTopBar({
         <Icon name="inbox" size={16} />
       </button>
 
-      <button
-        type="button"
-        data-testid="vt-share"
-        aria-label="Share"
-        title="Share"
-        className={ICON_BTN}
-        onClick={onShare}
-      >
-        <Icon name="share" size={16} />
-      </button>
+      {/* Share is the doc's primary action — a filled teal button (Anchord-Design `.btn primary sm`),
+          not a bare icon, so it reads as the call-to-action it is. Shown only to a potential
+          manager (C-002 / AS-003): a viewer/commenter never sees it. */}
+      {showShare && (
+        <button
+          type="button"
+          data-testid="vt-share"
+          title="Share"
+          className="inline-flex h-8 flex-none items-center gap-1.5 rounded-md bg-accent px-3 text-[12.5px] font-semibold text-on-accent transition-colors hover:bg-accent-strong"
+          onClick={onShare}
+        >
+          <Icon name="share" size={14} />
+          Share
+        </button>
+      )}
 
       <button
         type="button"
