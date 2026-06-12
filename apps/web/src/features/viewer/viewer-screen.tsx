@@ -18,6 +18,7 @@ import { useAnnotationMarks, scrollToAnno } from "./annotation-marks";
 import { SelectionPopover } from "./selection-popover";
 import { Composer } from "./composer";
 import { useDismissOnOutsideAndEscape } from "./use-dismiss";
+import { useDraggable } from "./use-draggable";
 import { useCompose } from "./use-compose";
 import {
   fetchViewerDoc,
@@ -401,11 +402,16 @@ function ViewerShell({
   );
 }
 
-// InlineComposerPopover (#3, 2026-06-12): the comment composer rendered as a FLOATING popover at the
-// selection — above-centered like the selection popover it replaces (translateX(-50%) when centered).
+// InlineComposerPopover (#3/#2, 2026-06-12): the comment composer rendered as a FLOATING card at the
+// selection. It drops BELOW the selection (prefer:"below" via placePopover) and is DRAGGABLE by its
+// quote-ref header (Plannotator card, Apache-2.0). Before any drag it tracks `anchor` (re-positioned
+// on scroll/resize by useCompose); once dragged it uses the manual absolute position and STOPS
+// auto-repositioning — a manual position wins. Centering (translateX(-50%)) only applies while
+// undragged; a dragged card uses an absolute left.
 // Outside-click + Escape dismiss reuses the same guard as the selection popover (the multi-click
-// guard keeps a triple-click selection alive — Plannotator, Apache-2.0). The Composer inside is
-// unchanged (quote, textarea, Send, guest fields), so all its behavior + data-testids hold.
+// guard keeps a triple-click selection alive). A drag-start on the header stopsPropagation so the
+// single mousedown that powers that guard never reads a drag as an outside click. The Composer inside
+// is unchanged (quote, textarea, Send, guest fields), so all its behavior + data-testids hold.
 function InlineComposerPopover({
   anchor,
   quote,
@@ -422,16 +428,43 @@ function InlineComposerPopover({
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const drag = useDraggable();
   // Dismiss on an outside mousedown / Escape → cancel the compose (same as the selection popover).
   useDismissOnOutsideAndEscape(ref, onCancel);
+
+  // Before any drag: follow the anchor (centered when placePopover says so). After a drag: pin to the
+  // manual absolute position (no centering — left is the real left edge).
+  const dragged = drag.dragged && drag.pos !== null;
+  const top = dragged ? drag.pos!.top : anchor.top;
+  const left = dragged ? drag.pos!.left : anchor.left;
+  const centered = !dragged && anchor.centered;
+
   return (
     <div
       ref={ref}
       data-testid="inline-composer-popover"
       className="absolute z-40 w-[320px] max-w-[88vw]"
-      style={{ top: anchor.top, left: anchor.left, transform: anchor.centered ? "translateX(-50%)" : undefined }}
+      style={{ top, left, transform: centered ? "translateX(-50%)" : undefined }}
     >
-      <Composer quote={quote} pending={pending} guest={guest} onSend={onSend} onCancel={onCancel} />
+      <Composer
+        quote={quote}
+        pending={pending}
+        guest={guest}
+        onSend={onSend}
+        onCancel={onCancel}
+        dragging={drag.dragging}
+        dragHandleProps={{
+          "data-testid": "composer-drag-handle",
+          onPointerDown: (e) => {
+            // Grab from the card's CURRENT absolute top/left. While still centered, the visual left
+            // is `anchor.left - width/2`; once we start dragging we drop centering and pin to that
+            // resolved left so the card doesn't jump on the first move.
+            const width = ref.current?.getBoundingClientRect().width ?? 320;
+            const resolvedLeft = centered ? left - width / 2 : left;
+            drag.onHandlePointerDown(e, { top, left: resolvedLeft });
+          },
+        }}
+      />
     </div>
   );
 }

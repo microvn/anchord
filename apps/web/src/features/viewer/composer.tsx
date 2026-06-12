@@ -75,6 +75,8 @@ export function Composer({
   guest,
   onSend,
   onCancel,
+  dragHandleProps,
+  dragging,
 }: {
   /** the selected text, rendered inert (PendingQuoteRef). */
   quote: string;
@@ -86,6 +88,12 @@ export function Composer({
   /** S-005: a guest passes its self-entered name + optional email up alongside the body (AS-010). */
   onSend: (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => void;
   onCancel: () => void;
+  /** #2 (2026-06-12): when the composer is a draggable inline popover, these props turn the quote-ref
+   *  HEADER row into the drag handle (pointerdown grab — Plannotator-style, Apache-2.0). Absent for a
+   *  non-draggable mount. */
+  dragHandleProps?: React.HTMLAttributes<HTMLDivElement> & { "data-testid"?: string };
+  /** #2: true while a drag is in progress → the handle shows `cursor: grabbing` instead of `grab`. */
+  dragging?: boolean;
 }) {
   const [body, setBody] = useState("");
   // S-005: a random session name is assigned once on open (AS-009); the user may edit or Rename it.
@@ -142,8 +150,16 @@ export function Composer({
         </div>
       )}
 
-      {/* PendingQuoteRef — inert, cancelable. Same .quote-ref look as a thread's quote. */}
-      <div className="mb-[9px] flex items-start gap-1.5">
+      {/* PendingQuoteRef + drag handle (#2): the HEADER row carries the inert quote, a close ✕, and
+          — when mounted as a draggable inline popover — the drag handle. Grab the header (NOT the
+          textarea, NOT the close button) to move the card (Plannotator-style card, Apache-2.0).
+          The close button stopsPropagation so a click on ✕ never starts a drag. */}
+      <div
+        {...dragHandleProps}
+        className={`mb-[9px] flex items-start gap-1.5${
+          dragHandleProps ? (dragging ? " cursor-grabbing select-none" : " cursor-grab select-none") : ""
+        }`}
+      >
         <div
           data-testid="pending-quote"
           className="flex-1 border-l-2 border-accent py-px pl-[9px] text-[12px] italic leading-[1.45] text-muted"
@@ -156,6 +172,7 @@ export function Composer({
           data-testid="composer-cancel"
           aria-label="Cancel"
           onClick={onCancel}
+          onPointerDown={(e) => e.stopPropagation()}
           className="flex-none rounded-[5px] p-0.5 text-subtle hover:bg-sunken hover:text-ink"
         >
           <Icon name="x" size={13} />
