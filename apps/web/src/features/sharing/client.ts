@@ -66,6 +66,38 @@ export function getShareState(
     .share.get() as Promise<EdenResult<ShareState>>;
 }
 
+/** The general-access write payload (S-002). `level` + `role` are always sent; `guestCommenting`
+ *  (only meaningful for anyone-with-link, C-001) and `editorsCanShare` (owner-only, C-003) are
+ *  optional — only included when the corresponding control is the one being changed. */
+export interface SetAccessInput {
+  level: GeneralAccessLevel;
+  role: ShareRole;
+  guestCommenting?: boolean;
+  editorsCanShare?: boolean;
+}
+
+/** What the backend echoes back from a successful access write (mirrors the request). */
+export interface AccessResult {
+  level: GeneralAccessLevel;
+  role: ShareRole;
+  guestCommenting: boolean;
+  editorsCanShare: boolean;
+}
+
+/** PUT /api/w/:workspaceId/docs/:slug/access — set general access + role + guest + editors
+ *  (sharing-permissions-ui S-002; backend sharing-permissions:S-001). The backend re-authorizes
+ *  and 403s a refused write; the caller rolls back optimistically on `error` (C-005). */
+export function setAccess(
+  workspaceId: string,
+  slug: string,
+  input: SetAccessInput,
+): Promise<EdenResult<AccessResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .access.put(input) as Promise<EdenResult<AccessResult>>;
+}
+
 // --- manage-eligibility gate (C-002) -------------------------------------------------------
 // Mirror of backend C-007: the editable ShareDialog is shown only when the session CAN manage
 // sharing — owner always; editor only when `editorsCanShare` is on (from the prefill read);

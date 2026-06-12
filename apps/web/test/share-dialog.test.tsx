@@ -86,8 +86,9 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     expect(screen.getByTestId("share-sec-guest")).toBeInTheDocument();
     expect(screen.getByTestId("share-sec-people")).toBeInTheDocument();
 
-    // Prefilled from the CURRENT state — restricted, not a blank form.
-    expect(screen.getByTestId("share-access-level")).toHaveTextContent(/restricted/i);
+    // Prefilled from the CURRENT state — restricted, not a blank form (S-002 made the access
+    // control editable: the Restricted segment is the active one).
+    expect(screen.getByTestId("share-access-opt-restricted")).toHaveAttribute("data-active", "1");
     // Restricted → no Link section (C-007).
     expect(screen.queryByTestId("share-sec-link")).not.toBeInTheDocument();
     // The title is the doc-scoped "Share doc" header.
@@ -143,13 +144,13 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     renderDialog({ effectiveRole: "owner" });
 
     await screen.findByTestId("share-sections");
-    // level + role from the read
-    expect(screen.getByTestId("share-access-level")).toHaveTextContent(/anyone in workspace|anyone with link/i);
-    expect(screen.getByTestId("share-access-role")).toHaveTextContent(/commenter/i);
+    // level + role from the read (S-002 editable controls: the active segment + role trigger value)
+    expect(screen.getByTestId("share-access-opt-anyone_with_link")).toHaveAttribute("data-active", "1");
+    expect(screen.getByTestId("share-access-role-trigger")).toHaveTextContent(/commenter/i);
     // guest on
-    expect(screen.getByTestId("share-guest-state")).toHaveAttribute("data-on", "1");
-    // editorsCanShare reflected
-    expect(screen.getByTestId("share-editors-can-share-state")).toHaveAttribute("data-on", "0");
+    expect(screen.getByTestId("share-guest-toggle")).toHaveAttribute("data-on", "1");
+    // editorsCanShare reflected (owner → editable toggle carries the prefilled state)
+    expect(screen.getByTestId("share-editors-can-share-toggle")).toHaveAttribute("data-on", "0");
     // Link section present (anyone-with-link) with the URL + a password set
     expect(screen.getByTestId("share-link-url")).toHaveTextContent("anchord.local/d/web-core?k=9f2a");
     expect(screen.getByTestId("share-link-password")).toHaveAttribute("data-on", "1");

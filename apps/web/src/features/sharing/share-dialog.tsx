@@ -20,6 +20,7 @@ import { Icon } from "../../components/icon";
 import { initials, avatarColor } from "../../lib/initials";
 import { useBreakpoint } from "../../lib/use-breakpoint";
 import { canManageShare, getShareState, type ShareState } from "./client";
+import { AccessSection } from "./access-section";
 import type { EffectiveRole } from "../viewer/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
@@ -37,24 +38,6 @@ import type { EffectiveRole } from "../viewer/client";
 // is shown in the top bar (owner/editor); `editorsCanShare` is only knowable once the dialog reads
 // the share state, so an editor whose toggle is OFF opens the dialog but is shown the
 // not-allowed surface, never the management controls.
-
-const ACCESS_LABEL: Record<ShareState["level"], string> = {
-  restricted: "Restricted",
-  anyone_in_workspace: "Anyone in workspace",
-  anyone_with_link: "Anyone with link",
-};
-
-const ACCESS_HINT: Record<ShareState["level"], string> = {
-  restricted: "Only people invited below can open this doc.",
-  anyone_in_workspace: "Everyone in this workspace can open this doc.",
-  anyone_with_link: "Anyone with the link can open this doc — no sign-in needed.",
-};
-
-const ACCESS_ICON: Record<ShareState["level"], "shield" | "members" | "link"> = {
-  restricted: "shield",
-  anyone_in_workspace: "members",
-  anyone_with_link: "link",
-};
 
 function roleLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
@@ -122,6 +105,8 @@ export function ShareDialog({
       loading={loading}
       error={error}
       effectiveRole={effectiveRole}
+      workspaceId={workspaceId}
+      slug={slug}
     />
   );
 
@@ -185,11 +170,15 @@ function ShareDialogBody({
   loading,
   error,
   effectiveRole,
+  workspaceId,
+  slug,
 }: {
   state: ShareState | null;
   loading: boolean;
   error: string | null;
   effectiveRole: EffectiveRole | undefined;
+  workspaceId: string;
+  slug: string;
 }) {
   if (loading || (!state && !error)) {
     return (
@@ -225,73 +214,44 @@ function ShareDialogBody({
     );
   }
 
-  return <ShareSections state={state} />;
+  return (
+    <ShareSections
+      state={state}
+      workspaceId={workspaceId}
+      slug={slug}
+      effectiveRole={effectiveRole}
+    />
+  );
 }
 
-// The editable section scaffolding (shown only to a manager). S-001 builds the SHELL + shows the
-// CURRENT prefilled values; S-002..S-005 fill in the interactive controls.
-function ShareSections({ state }: { state: ShareState }) {
-  const isLink = state.level === "anyone_with_link";
+// The editable section scaffolding (shown only to a manager). S-001 built the SHELL; S-002 mounts
+// the editable General-access controls (AccessSection); S-003..S-005 fill in invite / people / link.
+function ShareSections({
+  state,
+  workspaceId,
+  slug,
+  effectiveRole,
+}: {
+  state: ShareState;
+  workspaceId: string;
+  slug: string;
+  effectiveRole: EffectiveRole | undefined;
+}) {
+  // The selected level is owned here so it can be optimistically updated by AccessSection and drive
+  // the Link section's visibility (C-007) without a re-read. Seeded from the prefill state.
+  const [level, setLevel] = useState<ShareState["level"]>(state.level);
+  const isLink = level === "anyone_with_link";
 
   return (
     <div data-testid="share-sections" className="flex flex-col gap-4 pt-1">
-      {/* General access (S-002 fills the segmented control + role select) */}
-      <section data-testid="share-sec-access" className="flex flex-col gap-1.5">
-        <span className="text-[12px] font-medium text-muted">General access</span>
-        <div className="flex items-center gap-2">
-          <span
-            data-testid="share-access-level"
-            className="rounded-md border border-line bg-sunken px-2.5 py-1 text-[12.5px] font-semibold text-ink"
-          >
-            {ACCESS_LABEL[state.level]}
-          </span>
-          <span
-            data-testid="share-access-role"
-            className="rounded-md border border-line bg-sunken px-2.5 py-1 text-[12.5px] text-ink"
-          >
-            {roleLabel(state.role)}
-          </span>
-        </div>
-        <p className="flex items-center gap-1.5 text-[11.5px] text-subtle">
-          <Icon name={ACCESS_ICON[state.level]} size={13} />
-          {ACCESS_HINT[state.level]}
-        </p>
-      </section>
-
-      {/* Guest commenting (S-002 makes it editable; enabled only for anyone-with-link, C-001) */}
-      <section data-testid="share-sec-guest" className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[13px] font-medium text-ink">Allow guest commenting</div>
-          <div className="text-[11.5px] text-subtle">
-            {isLink
-              ? "Link visitors can comment without an account."
-              : "Available only for Anyone with link."}
-          </div>
-        </div>
-        <span
-          data-testid="share-guest-state"
-          aria-disabled={!isLink}
-          data-on={state.guestCommenting ? "1" : "0"}
-          className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-muted"
-        >
-          {state.guestCommenting ? "On" : "Off"}
-        </span>
-      </section>
-
-      {/* editors_can_share — owner-editable only (S-002, C-003). Shown here read-only as prefill. */}
-      <section
-        data-testid="share-sec-editors-can-share"
-        className="flex items-center justify-between gap-3"
-      >
-        <div className="text-[13px] font-medium text-ink">Editors can change sharing</div>
-        <span
-          data-testid="share-editors-can-share-state"
-          data-on={state.editorsCanShare ? "1" : "0"}
-          className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-muted"
-        >
-          {state.editorsCanShare ? "On" : "Off"}
-        </span>
-      </section>
+      {/* General access + guest + editors_can_share (S-002, AccessSection) */}
+      <AccessSection
+        workspaceId={workspaceId}
+        slug={slug}
+        initial={state}
+        effectiveRole={effectiveRole}
+        onLevelChange={setLevel}
+      />
 
       {/* Link — shown only when anyone-with-link (C-007). S-005 fills Copy + the chips. */}
       {isLink && (
