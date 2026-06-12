@@ -66,6 +66,19 @@ export function getShareState(
     .share.get() as Promise<EdenResult<ShareState>>;
 }
 
+/** Does an Eden error represent a FORBIDDEN (403) response? The lazy manage-gate (C-002, reworked
+ *  2026-06-13) distinguishes a refused gated read (→ read-only "can't manage" surface) from any
+ *  other failure (network/500 → generic retryable error). Eden surfaces the HTTP status on the
+ *  error object (`error.status`); we read it defensively since the runtime shape is `any`. */
+export function isForbidden(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    (error as { status?: unknown }).status === 403
+  );
+}
+
 /** The general-access write payload (S-002). `level` + `role` are always sent; `guestCommenting`
  *  (only meaningful for anyone-with-link, C-001) and `editorsCanShare` (owner-only, C-003) are
  *  optional — only included when the corresponding control is the one being changed. */

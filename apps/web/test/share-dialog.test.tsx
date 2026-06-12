@@ -108,34 +108,43 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     expect((await screen.findByTestId("share-dialog")).getAttribute("data-variant")).toBe("sheet");
   });
 
-  it("AS-003: a commenter is NOT shown the editable dialog (read-only surface, no controls)", async () => {
+  it("AS-003: a REFUSED (403) share read renders the read-only surface (lazy gate), not share-error", async () => {
+    // The gated GET …/share is refused server-side → the dialog shows the "can't manage" surface,
+    // distinct from a generic load error (C-002, reworked 2026-06-13). effectiveRole is irrelevant
+    // to the gate now — the READ result decides.
+    getShareState.mockImplementation(async () => ({ data: null, error: { status: 403 } }));
     renderDialog({ effectiveRole: "commenter" });
     await screen.findByTestId("share-dialog");
-    // No editable sections — the conservative read-only surface instead (C-002).
+    // The forbidden read → read-only surface, never the editable sections, never the generic error.
     await screen.findByTestId("share-readonly");
     expect(screen.queryByTestId("share-sections")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
   });
 
-  it("AS-004: an editor sees the editable dialog only when editorsCanShare is on", async () => {
-    // editorsCanShare ON → editable.
-    getShareState.mockImplementation(async () => ({
-      data: { ...RESTRICTED_OWNER_STATE, editorsCanShare: true },
-      error: null,
-    }));
+  it("AS-004: a SUCCESSFUL share read renders the editable sections regardless of effectiveRole", async () => {
+    // A successful gated read PROVES manage-eligibility (the backend gated it identically to the
+    // writes). The dialog no longer pre-decides from effectiveRole — even a missing/viewer role
+    // shows the editable controls when the read succeeded.
+    getShareState.mockImplementation(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
     const { unmount } = renderDialog({ effectiveRole: "editor" });
     await screen.findByTestId("share-dialog");
     await screen.findByTestId("share-sections");
     expect(screen.queryByTestId("share-readonly")).not.toBeInTheDocument();
     unmount();
 
-    // editorsCanShare OFF → no editable dialog, read-only surface.
-    getShareState.mockImplementation(async () => ({
-      data: { ...RESTRICTED_OWNER_STATE, editorsCanShare: false },
-      error: null,
-    }));
-    renderDialog({ effectiveRole: "editor" });
+    // Even an absent effectiveRole → a successful read still yields editable controls.
+    renderDialog({ effectiveRole: undefined });
     await screen.findByTestId("share-dialog");
-    await screen.findByTestId("share-readonly");
+    await screen.findByTestId("share-sections");
+    expect(screen.queryByTestId("share-readonly")).not.toBeInTheDocument();
+  });
+
+  it("a non-403 read failure (network/500) keeps the generic retryable error surface", async () => {
+    getShareState.mockImplementation(async () => ({ data: null, error: { status: 500 } }));
+    renderDialog({ effectiveRole: "owner" });
+    await screen.findByTestId("share-dialog");
+    await screen.findByTestId("share-error");
+    expect(screen.queryByTestId("share-readonly")).not.toBeInTheDocument();
     expect(screen.queryByTestId("share-sections")).not.toBeInTheDocument();
   });
 
@@ -181,7 +190,7 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
     copyDoc: mock(async () => env({})),
   }));
 
-  it("AS-019: the doc-card ⋯ menu offers Share · Move · Copy; Share opens the dialog for that doc", async () => {
+  it("AS-019: the ⋯ Share item shows UNCONDITIONALLY (no manager effectiveRole); Share opens the dialog for that doc", async () => {
     const { DocMoreMenu } = await import("../src/features/docs/move-copy-dialog");
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const doc = {
@@ -203,7 +212,6 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
             doc={doc}
             workspaceId="ws-acme"
             projects={[{ id: "p-bill", name: "Billing", isDefault: true, archived: false }]}
-            effectiveRole="owner"
           />
         </MemoryRouter>
       </QueryClientProvider>,

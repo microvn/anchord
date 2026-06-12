@@ -18,7 +18,7 @@ import {
 import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
 import { useBreakpoint } from "../../lib/use-breakpoint";
-import { canManageShare, getShareState, type ShareState, type SharePerson } from "./client";
+import { getShareState, isForbidden, type ShareState, type SharePerson } from "./client";
 import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
@@ -26,7 +26,7 @@ import { LinkControls } from "./link-controls";
 import type { EffectiveRole } from "../viewer/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
-// (and the docs-list ⋯ menu), gates on whether the session can manage sharing (C-002), is a
+// (and the docs-list ⋯ menu), gates LAZILY on the gated `GET …/share` read result (C-002), is a
 // centered modal ≥601px and a full-screen sheet ≤600 (AS-002), and on open PREFILLS the current
 // sharing state from GET …/share (AS-018). It renders the section scaffolding (General access ·
 // Guest commenting · Link (when anyone-with-link) · Invite people / People list) showing the
@@ -34,12 +34,13 @@ import type { EffectiveRole } from "../viewer/client";
 // chips) are filled in by S-002..S-005. 1:1 structure with the prototype `ShareDialog` (P16,
 // Anchord-Design/viewer-dialogs.jsx): "Share doc" title, doc-title subtext, a "Done" footer.
 //
-// C-002 (manage gate): the EDITABLE dialog shows only when canManageShare — owner always; editor
-// only when `editorsCanShare` is on (from the prefill read); viewer/commenter never; an ABSENT
-// effectiveRole ⇒ NOT manage (conservative). `effectiveRole` alone decides whether the Share button
-// is shown in the top bar (owner/editor); `editorsCanShare` is only knowable once the dialog reads
-// the share state, so an editor whose toggle is OFF opens the dialog but is shown the
-// not-allowed surface, never the management controls.
+// C-002 (manage gate, LAZY — reworked 2026-06-13): manage-eligibility is the RESULT of the gated
+// `GET …/share` read, not a pre-computed `effectiveRole`. A read that SUCCEEDS proves the caller can
+// manage (the backend gated it identically to the writes, backend C-016) → editable sections. A read
+// REFUSED with 403 → the read-only "you can't manage sharing" surface. Any OTHER failure (network /
+// 500) → the generic retryable error surface. `effectiveRole` stays a prop ONLY so the viewer top bar
+// can hide the Share button for a viewer/commenter as a pre-read hint (that wiring lives in
+// viewer-top-bar/viewer-screen); the dialog itself no longer gates on it.
 
 export function ShareDialog({
   open,
@@ -66,24 +67,33 @@ export function ShareDialog({
   const [state, setState] = useState<ShareState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // C-002 lazy gate: a 403 on the gated read means "can't manage" (read-only surface), distinct
+  // from a generic load error.
+  const [forbidden, setForbidden] = useState(false);
 
   // AS-018: on OPEN, read the full share state to prefill. Reset on close so a re-open re-reads.
   useEffect(() => {
     if (!open) {
       setState(null);
       setError(null);
+      setForbidden(false);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setForbidden(false);
     void getShareState(workspaceId, slug)
       .then((res) => {
         if (cancelled) return;
         if (res.error || !res.data) {
-          setError("Couldn't load sharing settings");
+          // A refused (403) gated read → the read-only "can't manage" surface (AS-003); any other
+          // failure → the generic retryable error (AS network/500).
+          if (isForbidden(res.error)) setForbidden(true);
+          else setError("Couldn't load sharing settings");
           return;
         }
+        // A successful read PROVES manage-eligibility (AS-004) — render the editable sections.
         setState(res.data);
       })
       .catch(() => {
@@ -102,6 +112,7 @@ export function ShareDialog({
       state={state}
       loading={loading}
       error={error}
+      forbidden={forbidden}
       effectiveRole={effectiveRole}
       workspaceId={workspaceId}
       slug={slug}
@@ -167,6 +178,7 @@ function ShareDialogBody({
   state,
   loading,
   error,
+  forbidden,
   effectiveRole,
   workspaceId,
   slug,
@@ -174,14 +186,25 @@ function ShareDialogBody({
   state: ShareState | null;
   loading: boolean;
   error: string | null;
+  forbidden: boolean;
   effectiveRole: EffectiveRole | undefined;
   workspaceId: string;
   slug: string;
 }) {
-  if (loading || (!state && !error)) {
+  if (loading || (!state && !error && !forbidden)) {
     return (
       <div data-testid="share-loading" className="py-6 text-[13px] text-muted">
         Loading sharing settings…
+      </div>
+    );
+  }
+
+  // C-002 (lazy gate): a REFUSED (403) gated read → the read-only "can't manage" surface, distinct
+  // from a generic load error. The read itself is the manage-eligibility decision.
+  if (forbidden) {
+    return (
+      <div data-testid="share-readonly" className="py-6 text-[13px] text-muted">
+        You don&apos;t have permission to manage sharing for this doc.
       </div>
     );
   }
@@ -201,17 +224,7 @@ function ShareDialogBody({
 
   if (!state) return null;
 
-  // C-002: with the prefill read in hand, decide manage-eligibility (editor case needs
-  // editorsCanShare from the read). A non-manager is NEVER shown the editable controls — they see
-  // a read-only "you can't manage sharing" surface instead.
-  if (!canManageShare(effectiveRole, state.editorsCanShare)) {
-    return (
-      <div data-testid="share-readonly" className="py-6 text-[13px] text-muted">
-        You don&apos;t have permission to manage sharing for this doc.
-      </div>
-    );
-  }
-
+  // A successful read proved manage-eligibility (C-002 / AS-004) — render the editable sections.
   return (
     <ShareSections
       state={state}
