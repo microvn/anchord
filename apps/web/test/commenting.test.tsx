@@ -123,6 +123,31 @@ function selectPhrase(blockId: string, phrase: string) {
   });
 }
 
+/** Like selectPhrase but walks all text nodes (the block may contain <mark> children). */
+function selectPhraseDeep(blockId: string, phrase: string) {
+  const view = screen.getByTestId("markdown-view");
+  const block = view.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
+  const walker = document.createTreeWalker(block, 0x4 /* SHOW_TEXT */);
+  let node = walker.nextNode() as Text | null;
+  while (node) {
+    const idx = node.data.indexOf(phrase);
+    if (idx !== -1) {
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + phrase.length);
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      sel.addRange(range);
+      act(() => {
+        block.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true }));
+      });
+      return;
+    }
+    node = walker.nextNode() as Text | null;
+  }
+  throw new Error(`phrase not found: ${phrase}`);
+}
+
 /** Collapse the selection to simulate a 0-character / whitespace-only release. */
 function selectNothing(blockId: string) {
   const view = screen.getByTestId("markdown-view");
@@ -225,6 +250,53 @@ describe("Commenting S-001", () => {
 
     // AS-001.T4: the count is EXACTLY 1 — no double-count from a lingering optimistic thread.
     expect(screen.getByTestId("rail-count")).toHaveTextContent("1");
+  });
+
+  it("BUG #1: selecting text must NOT make existing annotation highlights disappear", async () => {
+    // Repro: a doc with ≥2 existing annotations renders their highlights. Selecting some text (which
+    // raises the selection popover via a re-render) must NOT unwrap/wipe the existing marks. The old
+    // code placed marks BOTH in a render-time useMemo (a DOM side-effect during render) AND in the
+    // post-commit effect; a re-render during a live Selection could unwrap-then-not-rewrap, dropping
+    // every [data-anno] mark. The marks must survive the selection.
+    annoResponse = okRead({
+      items: [
+        {
+          id: "anno-x1",
+          type: "range",
+          status: "unresolved",
+          isOrphaned: false,
+          anchor: { blockId: "block-p-1", textSnippet: "Payment expires after 24h", offset: 0, length: 25 },
+          comments: [{ id: "cx1", parentId: null, authorName: "A", body: "first", createdAt: new Date().toISOString() }],
+        },
+        {
+          id: "anno-x2",
+          type: "range",
+          status: "unresolved",
+          isOrphaned: false,
+          anchor: { blockId: "block-p-2", textSnippet: "Query keys", offset: 0, length: 10 },
+          comments: [{ id: "cx2", parentId: null, authorName: "B", body: "second", createdAt: new Date().toISOString() }],
+        },
+      ],
+    });
+
+    await renderViewer();
+
+    // Both highlights placed initially.
+    const view = screen.getByTestId("markdown-view");
+    await waitFor(() => {
+      expect(view.querySelectorAll("[data-anno]")).toHaveLength(2);
+    });
+
+    // Now select some OTHER text → the popover opens (a re-render happens). Walk to a text node that
+    // contains the phrase (block-p-2's leading "Query keys" is already wrapped in a mark, so the
+    // remaining plain text sits in a later sibling text node).
+    selectPhraseDeep("block-p-2", "embed the workspace id");
+    await screen.findByTestId("selection-popover");
+
+    // The pre-existing highlights must STILL be present (the bug wiped them).
+    expect(view.querySelectorAll("[data-anno]")).toHaveLength(2);
+    expect(view.querySelector('[data-anno="anno-x1"]')!.textContent).toBe("Payment expires after 24h");
+    expect(view.querySelector('[data-anno="anno-x2"]')!.textContent).toBe("Query keys");
   });
 
   it("AS-002 / C-003: an empty / whitespace-only selection shows no popover and creates nothing", async () => {

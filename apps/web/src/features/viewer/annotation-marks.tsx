@@ -277,17 +277,31 @@ export function placeAnnotations(
  * Hook: place marks against the live doc element, keep focus/resolved styling in sync, and wire
  * click-on-mark → focus its thread (AS-008). Re-runs when the content element, the annotations,
  * or the focused id changes.
+ *
+ * BUG #1 (2026-06-12): placing marks must happen in EXACTLY ONE place — this POST-COMMIT effect.
+ * The screen previously ALSO called placeAnnotations inside a render-time useMemo (to derive the
+ * unplaceable ids), a DOM side-effect during render. We now report the unplaceable ids FROM this
+ * effect (via onUnplaceable) so the screen no longer needs that side-effecting memo. The effect's
+ * deps (`contentEl`, `annotations`) are stable across a selection re-render — react-query keeps the
+ * annotations array referentially stable — so selecting text triggers NO re-place.
  */
 export function useAnnotationMarks(
   contentEl: HTMLElement | null,
   annotations: PlaceableAnnotation[],
   focusedId: string | null,
   onFocusAnno: (id: string) => void,
+  /** Reports which annotations couldn't be anchored at runtime (GAP-005), lifted out of a
+   *  render-time memo into this post-commit effect (BUG #1). */
+  onUnplaceable?: (ids: string[]) => void,
 ): void {
   // Place / re-place marks when the content or the annotation set changes.
   useEffect(() => {
     if (!contentEl) return;
-    placeAnnotations(contentEl, annotations);
+    const { unplaceable } = placeAnnotations(contentEl, annotations);
+    onUnplaceable?.(unplaceable);
+    // onUnplaceable is intentionally omitted from deps: it's a setter-wrapper the caller memoizes;
+    // re-placing on every identity change of it would defeat the single-place guarantee.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentEl, annotations]);
 
   // Click-on-mark → focus its thread (event delegation on the content element).
