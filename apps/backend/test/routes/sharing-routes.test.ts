@@ -612,7 +612,7 @@ describe("PATCH/DELETE /api/w/:workspaceId/docs/:slug/members/:memberId (S-007)"
     expect(members.rows().find((r) => r.id === pendingId)).toBeUndefined();
   });
 
-  test("AS-031: a commenter (cannot manage) → PATCH refused 403, member set unchanged", async () => {
+  test("AS-031 / C-017: a commenter (cannot manage) → PATCH refused 403, member set unchanged", async () => {
     const { members, activeId } = await seedMembers();
     const before = members.rows();
     const app = buildApp({ members, resolveDocRole: asCommenter, loadShareConfig: shareToggleOn });
