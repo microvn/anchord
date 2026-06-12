@@ -98,6 +98,34 @@ export function setAccess(
     .access.put(input) as Promise<EdenResult<AccessResult>>;
 }
 
+/** The invite write payload (S-003). `message` is optional. `role` is never `owner` (C-004). */
+export interface InvitePersonInput {
+  email: string;
+  role: ShareRole;
+  message?: string;
+}
+
+/** What the backend returns from a successful invite (201). `status` says whether the invitee
+ *  already has an account (`active`) or is a no-account pending invite (`pending`, AS-011). */
+export interface InviteResult {
+  status: "active" | "pending";
+}
+
+/** POST /api/w/:workspaceId/docs/:slug/invites — invite a person by email + role + optional
+ *  message (sharing-permissions-ui S-003; backend sharing-permissions:S-003). On 201 the row is
+ *  added active or pending; a refused write (403/400/network) rolls back the optimistic row (C-005).
+ *  A malformed email is rejected inline BEFORE this is ever called (C-006). */
+export function invitePerson(
+  workspaceId: string,
+  slug: string,
+  input: InvitePersonInput,
+): Promise<EdenResult<InviteResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .invites.post(input) as Promise<EdenResult<InviteResult>>;
+}
+
 // --- manage-eligibility gate (C-002) -------------------------------------------------------
 // Mirror of backend C-007: the editable ShareDialog is shown only when the session CAN manage
 // sharing — owner always; editor only when `editorsCanShare` is on (from the prefill read);

@@ -19,8 +19,9 @@ import { Button } from "../../components/ui/button";
 import { Icon } from "../../components/icon";
 import { initials, avatarColor } from "../../lib/initials";
 import { useBreakpoint } from "../../lib/use-breakpoint";
-import { canManageShare, getShareState, type ShareState } from "./client";
+import { canManageShare, getShareState, type ShareState, type SharePerson } from "./client";
 import { AccessSection } from "./access-section";
+import { InviteRow } from "./invite-row";
 import type { EffectiveRole } from "../viewer/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
@@ -242,6 +243,15 @@ function ShareSections({
   const [level, setLevel] = useState<ShareState["level"]>(state.level);
   const isLink = level === "anyone_with_link";
 
+  // People list is owned here (seeded from the prefill read) so InviteRow (S-003) can optimistically
+  // append a row + reconcile/rollback it (C-005); S-004 formalizes the per-row controls.
+  const [people, setPeople] = useState<SharePerson[]>(state.people);
+  const addOptimistic = (person: SharePerson) =>
+    setPeople((prev) => [...prev.filter((p) => p.email !== person.email), person]);
+  const reconcile = (email: string, status: SharePerson["status"]) =>
+    setPeople((prev) => prev.map((p) => (p.email === email ? { ...p, status } : p)));
+  const rollback = (email: string) => setPeople((prev) => prev.filter((p) => p.email !== email));
+
   return (
     <div data-testid="share-sections" className="flex flex-col gap-4 pt-1">
       {/* General access + guest + editors_can_share (S-002, AccessSection) */}
@@ -292,18 +302,18 @@ function ShareSections({
         </section>
       )}
 
-      {/* Invite people / People list (S-003 fills the invite field; S-004 the row controls) */}
+      {/* Invite people / People list (S-003 invite field + optimistic row; S-004 the row controls) */}
       <section data-testid="share-sec-people" className="flex flex-col gap-2">
         <span className="text-[12px] font-medium text-muted">Invite people</span>
-        <div
-          data-testid="share-invite-row"
-          className="flex items-center gap-2 rounded-md border border-line bg-sunken px-2.5 py-2 text-[12.5px] text-subtle"
-        >
-          <Icon name="mail" size={15} />
-          Invite by email address…
-        </div>
+        <InviteRow
+          workspaceId={workspaceId}
+          slug={slug}
+          onOptimisticAdd={addOptimistic}
+          onReconcile={reconcile}
+          onRollback={rollback}
+        />
         <div data-testid="share-people-list" className="flex flex-col gap-1.5">
-          {state.people.map((p) => {
+          {people.map((p) => {
             const name = p.name ?? p.email;
             return (
               <div
