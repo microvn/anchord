@@ -126,7 +126,7 @@ export function apiEnvelope<T extends Elysia<any, any, any, any, any, any>>(app:
       };
       return envelope;
     })
-    .onError({ as: "scoped" }, ({ request, path, set, error }) => {
+    .onError({ as: "scoped" }, ({ request, path, set, error, code: elysiaCode }) => {
       const requestId = getOrCreateRequestId(request.headers);
       set.headers["x-request-id"] = requestId;
 
@@ -142,6 +142,25 @@ export function apiEnvelope<T extends Elysia<any, any, any, any, any, any>>(app:
         message = error.message;
         details = error.details;
         field = error.field;
+      } else if (elysiaCode === "NOT_FOUND") {
+        // Elysia's BUILT-IN NotFoundError (an unmatched route) is NOT our DomainError, so it
+        // would otherwise fall through to INTERNAL 500 — masking a route mismatch as a server
+        // crash (this is exactly what hid the FE/BE comment-path mismatch). Map it to a clean 404.
+        statusCode = 404;
+        code = "NOT_FOUND";
+        message = "Not found";
+      } else if (elysiaCode === "VALIDATION" || elysiaCode === "PARSE") {
+        // Elysia's own request validation/parse failures → 400 (our handlers use ValidationError,
+        // a DomainError, for domain validation; this catches the framework-level ones).
+        statusCode = 400;
+        code = "VALIDATION_ERROR";
+        message = "Invalid request";
+      } else {
+        // A genuinely UNEXPECTED error → 500. The client envelope below deliberately leaks no
+        // message/stack (AS-002), but a silent 500 with no server-side trace is an ops blackhole —
+        // ALWAYS log the real error + stack to stderr, keyed by requestId so it correlates with
+        // the response the caller saw.
+        console.error(`[api] 500 INTERNAL ${request.method} ${path} req=${requestId}\n`, error);
       }
 
       set.status = statusCode;
