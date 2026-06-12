@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "./zod-resolver";
 import { Link } from "react-router-dom";
 import { z } from "zod";
-import { signUp } from "@/lib/auth-client";
+import { signUp } from "@/lib/api/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

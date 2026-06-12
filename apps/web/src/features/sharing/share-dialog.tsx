@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/icon";
-import { useBreakpoint } from "@/lib/use-breakpoint";
+import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { toast } from "sonner";
 import {
   getShareState,

@@ -14,7 +14,7 @@ const socialSignIn = mock(async (_a: { provider: string; callbackURL?: string; e
   error: null,
 }));
 
-mock.module("@/lib/auth-client", () => ({
+mock.module("@/lib/api/auth-client", () => ({
   signIn: { email: mock(async () => ({ data: null, error: null })), social: socialSignIn },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({})),

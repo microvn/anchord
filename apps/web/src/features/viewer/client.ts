@@ -1,5 +1,5 @@
 import { api } from "@/lib/api";
-import type { EdenResult } from "@/lib/use-api-query";
+import type { EdenResult } from "@/lib/api/use-api-query";
 
 // Typed request thunk for the in-app viewer's doc read (render-publish S-005):
 //   GET /api/w/:workspaceId/docs/:slug

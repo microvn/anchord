@@ -25,7 +25,7 @@ mock.module("@/features/workspaces/client", () => ({
 }));
 
 // Mock the auth client so AppShell's UserMenu (which imports signOut) renders without a backend.
-mock.module("@/lib/auth-client", () => ({
+mock.module("@/lib/api/auth-client", () => ({
   signIn: { email: mock(async () => ({ data: null, error: null })), social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({ data: { success: true }, error: null })),

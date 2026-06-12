@@ -32,7 +32,7 @@ mock.module("@/features/workspaces/client", () => ({
 
 // Auth session — the signed-in email drives the AS-015 wrong-account check.
 let sessionEmail = "bob@acme.com";
-mock.module("@/lib/auth-client", () => ({
+mock.module("@/lib/api/auth-client", () => ({
   useSession: () => ({ data: { user: { email: sessionEmail } }, isPending: false }),
   signOut: mock(async () => ({})),
   signIn: { email: mock(async () => ({})) },

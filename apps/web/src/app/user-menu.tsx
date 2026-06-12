@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { signOut, useSession } from "@/lib/auth-client";
+import { signOut, useSession } from "@/lib/api/auth-client";
 import { Icon } from "@/components/icon";
 import { initials } from "@/lib/initials";
 import { MENU_ITEM } from "./app-header";

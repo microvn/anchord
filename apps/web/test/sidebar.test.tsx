@@ -35,7 +35,7 @@ mock.module("@/features/workspaces/client", () => ({
 // mock.module registry is process-global, so this mock must export the FULL auth-client surface
 // other test files import (signIn/signUp/verify…), not just signOut — a partial mock would make
 // their imports throw "Export named … not found".
-mock.module("@/lib/auth-client", () => ({
+mock.module("@/lib/api/auth-client", () => ({
   signIn: { email: mock(async () => ({ data: null, error: null })), social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({ data: { success: true }, error: null })),

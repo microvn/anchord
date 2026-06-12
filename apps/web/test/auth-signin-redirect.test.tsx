@@ -51,7 +51,7 @@ const getSessionMock = mock(async () => {
   return { data: { user: { email: "a@b.co" } }, error: null };
 });
 
-mock.module("@/lib/auth-client", () => ({
+mock.module("@/lib/api/auth-client", () => ({
   signIn: { email: signInEmail, social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: mock(async () => ({ data: { success: true }, error: null })),

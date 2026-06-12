@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createWorkspace, setActiveWorkspace } from "./client";
 import { unwrapEnvelope } from "./use-bootstrap";
 import { queryKeys } from "./query-keys";
-import { toApiError } from "@/lib/api-error";
+import { toApiError } from "@/lib/api/api-error";
 import {
   Dialog,
   DialogContent,

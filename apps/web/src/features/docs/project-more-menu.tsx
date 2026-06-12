@@ -5,7 +5,7 @@ import { archiveProject, unarchiveProject, deleteProject } from "./client";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
-import { toApiError } from "@/lib/api-error";
+import { toApiError } from "@/lib/api/api-error";
 import { Icon } from "@/components/icon";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {

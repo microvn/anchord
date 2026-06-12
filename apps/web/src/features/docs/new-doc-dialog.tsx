@@ -14,7 +14,7 @@ import { Icon } from "@/components/icon";
 import { useActiveWorkspaceSafe } from "@/features/workspaces/active-workspace";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
-import { toApiError } from "@/lib/api-error";
+import { toApiError } from "@/lib/api/api-error";
 import { publishDoc } from "./client";
 import { useProjects } from "./use-docs";
 import { NewDocProjectPicker } from "./new-doc-project-picker";

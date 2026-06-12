@@ -73,3 +73,12 @@ export function useBreakpoint(): Breakpoint {
 
   return tier;
 }
+
+// Merged from the former mobile hook (web-structure S-002 / AS-016): the two
+// hooks were overlapping viewport concerns, so the thin `useIsMobile` wrapper now lives with
+// its single source of truth instead of in a separate file. The shadcn Sidebar primitive asks
+// this whether to render as an off-canvas Sheet (compact) vs an inline rail (desktop/laptop).
+// "Compact" (tablet + mobile) is exactly the tier set where the shell shows the drawer.
+export function useIsMobile(): boolean {
+  return isCompact(useBreakpoint());
+}

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { onSessionExpired } from "@/lib/session-expiry";
-import { signOut } from "@/lib/auth-client";
+import { signOut } from "@/lib/api/auth-client";
 
 // S-002 / AS-008: the in-tree half of session-expiry handling. The QueryClient's cache
 // onError (outside the React tree) publishes a "session expired" signal; this component

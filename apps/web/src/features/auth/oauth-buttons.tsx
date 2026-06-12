@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/icon";
-import { signIn } from "@/lib/auth-client";
+import { signIn } from "@/lib/api/auth-client";
 import { fetchAuthProviders } from "./client";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
 

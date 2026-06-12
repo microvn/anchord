@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
-import { viewerLayoutModeForWidth } from "@/lib/use-breakpoint";
+import { viewerLayoutModeForWidth } from "@/hooks/use-breakpoint";
 
 // annotation-core-ui S-006 — Responsive viewer (AS-014). Two halves:
 //   1. The PURE width→mode mapping (viewerLayoutModeForWidth) — deterministic, no layout, asserts
@@ -18,9 +18,9 @@ let mode = { drawerMode: false, tocDrawer: false };
 const setMode = (m: { drawerMode: boolean; tocDrawer: boolean }) => {
   mode = m;
 };
-mock.module("@/lib/use-breakpoint", () => ({
+mock.module("@/hooks/use-breakpoint", () => ({
   // keep the real pure fns importable, override only the hook
-  ...require("@/lib/use-breakpoint"),
+  ...require("@/hooks/use-breakpoint"),
   useViewerLayoutMode: () => mode,
 }));
 

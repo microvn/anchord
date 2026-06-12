@@ -43,7 +43,7 @@ const signOutMock = mock(async () => {
   return { data: { success: true }, error: null };
 });
 
-mock.module("@/lib/auth-client", () => ({
+mock.module("@/lib/api/auth-client", () => ({
   signIn: { email: signInEmail, social: mock(async () => ({})) },
   signUp: { email: mock(async () => ({ data: { user: {} }, error: null })) },
   signOut: signOutMock,
@@ -73,7 +73,7 @@ mock.module("@/features/auth/client", () => ({
 // Imported AFTER the mock is registered so they bind to the mocked auth-client.
 const { SignInScreen } = await import("@/features/auth/sign-in-screen");
 const { AuthGuard } = await import("@/app/auth-guard");
-const { signOut } = await import("@/lib/auth-client");
+const { signOut } = await import("@/lib/api/auth-client");
 
 // Phase-1 stub for the (not-yet-built) authenticated shell: a protected element plus a
 // sign-out control, so the guard + sign-out behavior can be asserted without the real shell.

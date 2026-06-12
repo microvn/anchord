@@ -4,7 +4,7 @@ import { useActiveWorkspace } from "./active-workspace";
 import { renameWorkspace } from "./client";
 import { unwrapEnvelope } from "./use-bootstrap";
 import { queryKeys } from "./query-keys";
-import { toApiError } from "@/lib/api-error";
+import { toApiError } from "@/lib/api/api-error";
 import { Icon } from "@/components/icon";
 import {
   Dialog,

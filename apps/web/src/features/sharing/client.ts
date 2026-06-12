@@ -1,5 +1,5 @@
 import { api } from "@/lib/api";
-import type { EdenResult } from "@/lib/use-api-query";
+import { peelEnvelope, type EdenResult } from "@/lib/api/use-api-query";
 import type { EffectiveRole } from "@/features/viewer/client";
 
 // Typed request thunks for the sharing-permissions backend (the producer is already built). This
@@ -17,6 +17,19 @@ import type { EffectiveRole } from "@/features/viewer/client";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const treaty = api as any;
+
+// These thunks are called DIRECTLY (not via useApiQuery), so — unlike screens that read through
+// useApiQuery — they must PEEL the api-core success envelope themselves. The server wraps every
+// /api/* body as `{ success, data: <payload>, … }`; without peeling, callers read `res.data.success`
+// instead of the payload (e.g. `state.people` is undefined → ShareDialog crashes). `peel` strips the
+// one envelope layer on success and passes a refused/failed result through untouched. (Component
+// tests mock this module returning an already-unwrapped payload — peelEnvelope is a no-op on a body
+// with no `success` key, so the mocks are unaffected.)
+async function peel<T>(p: Promise<EdenResult<unknown>>): Promise<EdenResult<T>> {
+  const res = await p;
+  if (res.error || res.data == null) return { data: null, error: res.error };
+  return { data: peelEnvelope(res.data) as T, error: null };
+}
 
 /** The general-access level a doc is shared at (mirrors `docs.general_access`). */
 export type GeneralAccessLevel = "restricted" | "anyone_in_workspace" | "anyone_with_link";
@@ -65,10 +78,7 @@ export function getShareState(
   workspaceId: string,
   slug: string,
 ): Promise<EdenResult<ShareState>> {
-  return treaty.api
-    .w({ workspaceId })
-    .docs({ slug })
-    .share.get() as Promise<EdenResult<ShareState>>;
+  return peel<ShareState>(treaty.api.w({ workspaceId }).docs({ slug }).share.get());
 }
 
 /** Does an Eden error represent a FORBIDDEN (403) response? The lazy manage-gate (C-002, reworked
@@ -110,10 +120,7 @@ export function setAccess(
   slug: string,
   input: SetAccessInput,
 ): Promise<EdenResult<AccessResult>> {
-  return treaty.api
-    .w({ workspaceId })
-    .docs({ slug })
-    .access.put(input) as Promise<EdenResult<AccessResult>>;
+  return peel<AccessResult>(treaty.api.w({ workspaceId }).docs({ slug }).access.put(input));
 }
 
 /** The invite write payload (S-003). `message` is optional. `role` is never `owner` (C-004). */
@@ -138,10 +145,7 @@ export function invitePerson(
   slug: string,
   input: InvitePersonInput,
 ): Promise<EdenResult<InviteResult>> {
-  return treaty.api
-    .w({ workspaceId })
-    .docs({ slug })
-    .invites.post(input) as Promise<EdenResult<InviteResult>>;
+  return peel<InviteResult>(treaty.api.w({ workspaceId }).docs({ slug }).invites.post(input));
 }
 
 /** The link-controls write payload (S-005). Each control is optional + independent (C-001 backend):

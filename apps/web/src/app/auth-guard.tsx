@@ -1,5 +1,5 @@
 import { Navigate, Outlet } from "react-router-dom";
-import { useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/api/auth-client";
 
 // AuthGuard (S-001, C-001/AS-004): the protected-route gate. Identity comes from the
 // server session (cookie) via better-auth's useSession — we never read a client token.

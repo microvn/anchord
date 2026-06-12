@@ -1,7 +1,7 @@
 import { cloneElement, isValidElement, type CSSProperties, type ReactElement, type ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 import { AppHeader } from "./app-header";
-import { isCompact, useBreakpoint } from "@/lib/use-breakpoint";
+import { isCompact, useBreakpoint } from "@/hooks/use-breakpoint";
 import {
   Sidebar,
   SidebarInset,

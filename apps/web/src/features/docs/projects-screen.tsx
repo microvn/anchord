@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useActiveWorkspace } from "@/features/workspaces/active-workspace";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
-import { toApiError } from "@/lib/api-error";
+import { toApiError } from "@/lib/api/api-error";
 import { useProjectsBrowse } from "./use-docs";
 import { createProject } from "./client";
 import { ProjectCardMoreMenu } from "./project-more-menu";

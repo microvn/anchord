@@ -1,5 +1,5 @@
 import { api } from "@/lib/api";
-import type { EdenResult } from "@/lib/use-api-query";
+import type { EdenResult } from "@/lib/api/use-api-query";
 
 // Typed request thunks for the workspace-project backend routes
 // (`/api/w/:id/projects`, `…/projects/:id/docs`, `…/docs`, `…/search`).

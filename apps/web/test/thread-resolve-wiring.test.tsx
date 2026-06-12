@@ -17,7 +17,7 @@ import userEvent from "@testing-library/user-event";
 
 import { AnnotationsRail } from "@/features/viewer/annotations-rail";
 import type { ViewerAnnotation, SetResolutionResult } from "@/features/viewer/client";
-import type { EdenResult } from "@/lib/use-api-query";
+import type { EdenResult } from "@/lib/api/use-api-query";
 
 const okEnv = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 

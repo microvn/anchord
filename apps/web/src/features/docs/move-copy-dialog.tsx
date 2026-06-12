@@ -21,7 +21,7 @@ import { ShareDialog } from "@/features/sharing/share-dialog";
 import type { EffectiveRole } from "@/features/viewer/client";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
-import { toApiError } from "@/lib/api-error";
+import { toApiError } from "@/lib/api/api-error";
 import { moveDoc, copyDoc } from "./client";
 import type { DocRow, ProjectRow } from "./types";
 

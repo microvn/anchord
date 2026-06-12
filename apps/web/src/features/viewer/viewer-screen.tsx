@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApiQuery } from "@/lib/use-api-query";
-import { useViewerLayoutMode } from "@/lib/use-breakpoint";
+import { useApiQuery } from "@/lib/api/use-api-query";
+import { useViewerLayoutMode } from "@/hooks/use-breakpoint";
 import { Icon } from "@/components/icon";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";

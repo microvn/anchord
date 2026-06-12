@@ -30,7 +30,7 @@ const verifyEmail = mock(async (_a: { query: { token: string } }) => ({
   error: null as null | { message?: string },
 }));
 
-mock.module("@/lib/auth-client", () => ({
+mock.module("@/lib/api/auth-client", () => ({
   signIn: { email: signInEmail, social: mock(async () => ({})) },
   signUp: { email: signUpEmail },
   signOut: mock(async () => ({})),

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { renameProject } from "./client";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/use-bootstrap";
-import { toApiError } from "@/lib/api-error";
+import { toApiError } from "@/lib/api/api-error";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
