@@ -131,6 +131,19 @@ export interface VersionsRoutesDeps {
    * the conservative concrete impls in index.ts.
    */
   accessDeps: AccessDeps;
+  /**
+   * annotation-core S-005 / C-012: re-anchor the doc's annotations onto a newly-created
+   * version. The route FIRES this (does not await) after a successful append/restore so it
+   * runs OFF the publish path — it must not gate the 201, and its failure can't break a
+   * successful publish. The concrete impl (index.ts) loads annotations + content, runs the
+   * matcher, applies carried/detached, persists the ledger, and reports a summary. Optional:
+   * absent in tests that don't exercise re-anchor.
+   */
+  reanchorOnNewVersion?: (input: {
+    docId: string;
+    version: number;
+    newContentHtml: string;
+  }) => Promise<unknown> | unknown;
 }
 
 const versionBodySchema = z.object({
@@ -194,6 +207,27 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
     return enforceReadAccess({ doc, allowed });
   }
 
+  /**
+   * C-012: FIRE re-anchor for a newly-created version WITHOUT awaiting it — re-anchor runs
+   * off the publish path, so it never gates the response and a rejection can't break a
+   * successful publish. Skipped for a doc's FIRST version (`previousVersion === null`): there
+   * is no prior content whose annotations could need re-anchoring.
+   */
+  function fireReanchor(
+    docId: string,
+    version: number,
+    previousVersion: number | null,
+    newContentHtml: string,
+  ): void {
+    if (!deps.reanchorOnNewVersion || previousVersion === null) return;
+    void Promise.resolve(deps.reanchorOnNewVersion({ docId, version, newContentHtml })).catch(
+      () => {
+        // Swallowed by design (C-012): re-anchor is best-effort and must not surface into the
+        // request. The concrete impl logs / alerts on its own (the >25%-detached summary).
+      },
+    );
+  }
+
   /** Gate an editor-only write on the caller's doc-scoped role → 403 if too low. */
   async function requireEditor(docId: string, userId: string): Promise<void> {
     const role = await deps.resolveDocRole(docId, userId);
@@ -229,6 +263,8 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
               doc.kind,
             );
             set.status = 201;
+            // C-012: re-anchor the doc's annotations onto the new content (fire-and-forget).
+            fireReanchor(doc.id, result.version, result.previousVersion, content);
             return { version: result.version, previousVersion: result.previousVersion };
           }),
       )
@@ -281,6 +317,11 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
             throw new NotFoundError(`Version ${target} not found`);
           }
           set.status = 201;
+          // C-012: a restore append-copies version `target`'s content as the new current
+          // version → re-anchor annotations against THAT content (fire-and-forget). Read the
+          // restored content back (cheap) so the route stays decoupled from version.ts.
+          const restored = await lookupRepo.getVersionContent(doc.id, target);
+          fireReanchor(doc.id, result.version, result.previousVersion, restored?.content ?? "");
           return { version: result.version, previousVersion: result.previousVersion };
         },
       )

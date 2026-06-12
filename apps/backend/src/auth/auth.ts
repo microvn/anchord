@@ -20,6 +20,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import type { DB } from "../db/client";
+import { newId } from "../db/id";
 import * as schema from "../db/schema";
 import { MIN_PASSWORD_LENGTH } from "./password";
 import { activatePendingInvites, type PendingInviteRepo } from "./invite";
@@ -192,6 +193,10 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
   return betterAuth({
     secret: opts.secret,
     baseURL: opts.baseURL,
+    // ID strategy (C-007 + project-wide): better-auth's user/session/account/verification
+    // ids come from the SAME snowflake generator as every domain table (src/db/id.ts), so
+    // the whole system uses time-ordered string ids — no uuid anywhere.
+    advanced: { database: { generateId: () => newId() } },
     ...(opts.trustedOrigins ? { trustedOrigins: opts.trustedOrigins } : {}),
     ...(emailVerification ? { emailVerification } : {}),
     database: drizzleAdapter(db, { provider: "pg", schema }),

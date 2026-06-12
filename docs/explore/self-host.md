@@ -2,137 +2,137 @@
 
 _2026-06-07_
 
-**Feature:** `docker compose up` một dòng để tự host anchord; data nằm trên hạ tầng
-của bạn; không telemetry, không phone-home. Lý do tồn tại của dự án.
+**Feature:** one-line `docker compose up` to self-host anchord; data lives on your own
+infrastructure; no telemetry, no phone-home. The reason this project exists.
 
-**Trigger:** Operator cài instance (first-run setup ở cụm workspace), cấu hình qua
+**Trigger:** Operator installs an instance (first-run setup in the workspace cluster), configures via
 env/config.
 
-**UI expectation:** Hầu như không — là vận hành. First-run wizard (cụm workspace)
+**UI expectation:** Almost none — it's operations. First-run wizard (workspace cluster)
 + settings (provider toggle, branding, SMTP). **[N] NEW**.
 
 ---
 
-### Quyết định (đã chốt trong phiên explore)
+### Decisions
 
-**1. Storage = content trong Postgres + ảnh trên volume.**
-- HTML/MD (content version) lưu trong Postgres.
-- Ảnh binary lưu trên **named volume** (path cấu hình được), không nhồi vào DB →
-  DB gọn dù nhiều version.
-- Object store S3-compatible → thêm sau (v0.5+), không trừu tượng hoá sớm ở v0.
+**1. Storage = content in Postgres + images on a volume.**
+- HTML/MD (content version) stored in Postgres.
+- Binary images stored on a **named volume** (configurable path), not crammed into the DB →
+  the DB stays small even with many versions.
+- S3-compatible object store → add later (v0.5+), don't abstract early in v0.
 
-**2. SMTP = optional + degrade mượt.**
-- Chưa cấu hình SMTP → instance vẫn chạy: bỏ email verify (hoặc invite bằng link
-  copy tay), notify chỉ in-app. Đúng tinh thần "một dòng".
-- Gỡ luôn open question của auth: instance nội bộ không SMTP vẫn dùng được.
+**2. SMTP = optional + degrade gracefully.**
+- SMTP not configured → the instance still runs: drop email verify (or invite via a manually
+  copied link), notify only in-app. True to the "one-line" spirit.
+- Also removes auth's open question: an internal instance with no SMTP is still usable.
 
-**3. No telemetry (mặc định, v0).**
-- Không phone-home, không analytics. (uselink có analyticsApi — anchord bỏ hẳn.)
+**3. No telemetry (default, v0).**
+- No phone-home, no analytics. (uselink has analyticsApi — anchord drops it entirely.)
 
-**4. Dedup version theo content_hash (đề xuất giữ).**
-- Version trùng nội dung (vd restore append-copy) lưu blob một lần theo
-  content_hash → kiềm storage cho lịch sử version. (Assumption, xác nhận lúc build.)
+**4. Dedup versions by content_hash (proposal, keep).**
+- Versions with identical content (e.g. restore append-copy) store the blob once by
+  content_hash → keep storage in check across version history. (Assumption, confirm at build time.)
 
-**5. Single-binary = v1, đã pha loãng vì Postgres.**
-- v0: `docker compose up` (app + Postgres + 1 volume ảnh).
-- v1: `bun --compile` ra binary app (nhúng SPA) NHƯNG vẫn cần Postgres chạy kèm —
-  không phải một-file-all-in-one như Vaultwarden/SQLite. Vẫn giá trị (1 binary app,
-  no node_modules) nhưng honest: không phải "một file".
+**5. Single-binary = v1, already diluted by Postgres.**
+- v0: `docker compose up` (app + Postgres + 1 image volume).
+- v1: `bun --compile` produces an app binary (embedding the SPA) BUT still needs Postgres running
+  alongside — not a one-file-all-in-one like Vaultwarden/SQLite. Still valuable (1 app binary,
+  no node_modules) but honest: not "one file".
 
 **6. Backup story.**
-- Backup = `pg_dump` (hoặc snapshot volume Postgres) + volume ảnh. Document rõ cho
-  operator. (Không phải "copy 1 file" như SQLite — đánh đổi đã biết.)
+- Backup = `pg_dump` (or snapshot the Postgres volume) + the image volume. Document it clearly for
+  the operator. (Not "copy one file" like SQLite — a known trade-off.)
 
 ---
 
 ### Happy path
 
-1. Operator: `git clone` + `cp .env.example .env` (đặt APP_SECRET, optional SMTP/
+1. Operator: `git clone` + `cp .env.example .env` (set APP_SECRET, optional SMTP/
    OAuth) → `docker compose up`.
-2. compose dựng Postgres + app + volume ảnh; app chạy migration lúc boot
-   (drizzle-orm migrator), mở port.
-3. Mở browser → first-run setup (cụm workspace): tạo admin + workspace.
-4. Dùng ngay; không SMTP thì verify tắt, notify in-app.
+2. compose brings up Postgres + app + image volume; the app runs migrations at boot
+   (drizzle-orm migrator), opens the port.
+3. Open the browser → first-run setup (workspace cluster): create admin + workspace.
+4. Use it right away; with no SMTP, verify is off, notify is in-app.
 
 ### Unhappy paths
 
-- **Thiếu APP_SECRET:** app từ chối khởi động, báo rõ (đã có trong env schema phác).
-- **Postgres chưa healthy:** app chờ healthcheck (depends_on condition) rồi mới
-  migrate/serve.
-- **Volume ảnh không ghi được (permission):** báo lỗi rõ lúc publish ảnh, không
+- **Missing APP_SECRET:** the app refuses to start, reports it clearly (already in the sketched env schema).
+- **Postgres not healthy yet:** the app waits for the healthcheck (depends_on condition) before it
+  migrates/serves.
+- **Image volume not writable (permission):** a clear error when publishing an image, no
   crash.
-- **Upgrade version:** migration mới chạy lúc boot; nếu fail → app không serve,
-  log rõ (không chạy nửa vời).
+- **Version upgrade:** new migrations run at boot; if they fail → the app won't serve,
+  log it clearly (no half-done startup).
 
 ### Business rules
 
-- Mặc định không gửi bất kỳ dữ liệu nào ra ngoài instance.
-- Mọi tính năng phụ thuộc email phải degrade được khi thiếu SMTP.
-- Migration tự chạy lúc boot, idempotent.
+- By default, send no data whatsoever outside the instance.
+- Every email-dependent feature must degrade when SMTP is missing.
+- Migrations run automatically at boot, idempotent.
 
 ### Input validation (config)
 
-- APP_SECRET: bắt buộc, min 16 ký tự (đã có trong `src/config/env.ts` phác).
-- DATABASE_URL: bắt buộc, đúng định dạng postgres://.
-- SMTP_*: optional; nếu set thì validate đủ host/port/user.
-- Provider OAuth (GitHub/Google): optional; set client id/secret thì bật provider.
+- APP_SECRET: required, min 16 characters (already in the sketched `src/config/env.ts`).
+- DATABASE_URL: required, valid postgres:// format.
+- SMTP_*: optional; if set, validate that host/port/user are complete.
+- OAuth provider (GitHub/Google): optional; set client id/secret to enable the provider.
 
 ### Data impact
 
-- Postgres: toàn bộ bảng (better-auth + app). Volume `anchord_db` cho Postgres.
-- Volume mới `anchord_assets` cho ảnh; path cấu hình `ASSETS_DIR`.
-- Bảng/blob dedup theo content_hash (nếu làm).
+- Postgres: all tables (better-auth + app). Volume `anchord_db` for Postgres.
+- New volume `anchord_assets` for images; path configured by `ASSETS_DIR`.
+- Table/blob dedup by content_hash (if done).
 
 ### Out of scope (v0 — defer)
 
 - Single-binary `bun --compile` → v1.
-- Object store S3-compatible → v0.5+.
+- S3-compatible object store → v0.5+.
 - Helm chart / k8s manifest → v2.
 - Auto-update / migration rollback UI → v2.
-- Multi-instance / HA → v2 (ngược mô hình single small instance).
+- Multi-instance / HA → v2 (against the single small instance model).
 
 ### Decision rationale
 
-- Ảnh trên volume (không trong DB): nhiều version × 25MB ảnh nhồi DB sẽ phình +
-  backup nặng; tách ra giữ DB lean, vẫn "data trên máy bạn".
-- SMTP optional: ép SMTP lúc first-run phá trải nghiệm "một dòng"; degrade mượt giữ
-  rào vào thấp nhất.
-- Postgres (đã chốt từ trước) đánh đổi giấc mơ single-file; chấp nhận vì workload
-  multi-writer cần MVCC — ghi nhận honest, không bán quá lời về single-binary.
-- No telemetry: chính là wedge "tin về data"; bật telemetry sẽ phá luận điểm bán hàng.
+- Images on a volume (not in the DB): many versions × 25MB images crammed into the DB would bloat
+  it + make backups heavy; splitting them out keeps the DB lean, still "data on your machine".
+- SMTP optional: forcing SMTP at first-run breaks the "one-line" experience; graceful degrade keeps
+  the barrier to entry as low as possible.
+- Postgres (locked earlier) trades away the single-file dream; accepted because a multi-writer
+  workload needs MVCC — recorded honestly, no overselling the single-binary.
+- No telemetry: that's exactly the "trust about data" wedge; turning on telemetry would break the sales argument.
 
-### Assumptions (cần xác nhận)
+### Assumptions (to confirm)
 
-- Dedup content theo content_hash được làm ở v0 (hay defer?).
-- Ảnh trên local volume; chưa cần S3 ở v0.
-- Migration chạy lúc boot qua drizzle-orm migrator (đã phác `src/db/migrate.ts`).
+- Dedup content by content_hash done in v0 (or defer?).
+- Images on a local volume; no need for S3 in v0.
+- Migrations run at boot via the drizzle-orm migrator (already sketched `src/db/migrate.ts`).
 
 ### Open questions
 
-- Backup tool/đường dẫn khuyến nghị (script `pg_dump` + tar volume ảnh) có ship kèm
-  không, hay chỉ document?
-- Reset/seed cho dev vs prod khác nhau thế nào?
-- Giới hạn tổng storage/quota trên instance (chống một workspace ngốn hết đĩa)?
-  → liên quan retention version của versioning-diff.
-- Health/readiness endpoint cho reverse-proxy (đã có `/health` phác) — đủ chưa?
+- A recommended backup tool/path (script `pg_dump` + tar the image volume) — ship it
+  or just document it?
+- How do reset/seed differ for dev vs prod?
+- Cap total storage/quota on an instance (prevent one workspace eating the whole disk)?
+  → related to versioning-diff's version retention.
+- Health/readiness endpoint for the reverse-proxy (already sketched `/health`) — is it enough?
 
 ### Complexity signal: **low-medium**
 
-Phần lớn là compose + config + degrade logic. Đáng lưu ý: volume ảnh + backup
-story + migration-on-boot. Single-binary v1 mới là phần khó (defer).
+Mostly compose + config + degrade logic. Worth noting: image volume + backup
+story + migration-on-boot. Single-binary v1 is the hard part (defer).
 
 ### Cross-cluster dependencies
 
-- **render-publish / versioning-diff:** ảnh trên volume; dedup version; cap size.
-- **auth:** APP_SECRET (session), OAuth provider env, SMTP cho verify/invite.
-- **workspace-project:** first-run setup; SMTP cho notify; branding/provider toggle
-  trong workspace settings.
+- **render-publish / versioning-diff:** images on a volume; dedup versions; cap size.
+- **auth:** APP_SECRET (session), OAuth provider env, SMTP for verify/invite.
+- **workspace-project:** first-run setup; SMTP for notify; branding/provider toggle
+  in workspace settings.
 - **mcp-roundtrip:** expose `/mcp`, rate-limit, token storage.
-- **annotation-core:** content (kèm block_id) serve từ content-route, ảnh từ volume.
+- **annotation-core:** content (with block_id) served from the content-route, images from the volume.
 
 ## UI sketches
 
-Cụm self-host gần như không có UI riêng — vận hành qua `docker compose` + env/config
-(CLI). Màn người-dùng duy nhất là **First-run setup**, sketch ở `auth` UI sketches
-(panel phải: workspace name + admin + provider toggle + SMTP configured ✓). Còn lại
-là config file, không phải screen.
+The self-host cluster has almost no UI of its own — operated via `docker compose` + env/config
+(CLI). The only user-facing screen is **First-run setup**, sketched in `auth` UI sketches
+(right panel: workspace name + admin + provider toggle + SMTP configured ✓). The rest
+is a config file, not a screen.

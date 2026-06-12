@@ -48,6 +48,13 @@ function baseName(filename: string | undefined): string | undefined {
 
 const FALLBACK = "Untitled";
 
+/** Capitalize the first character of a derived title (AS-003): "flow" → "Flow", "release notes" →
+ *  "Release notes". Only the first char — the rest is left as-is so "Payment Spec v2" / "iOS" are
+ *  untouched. Applied to AUTO-DERIVED titles only; an author's explicit editedTitle is never forced. */
+function upperFirst(s: string): string {
+  return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 /**
  * Derive a suggested title from the artifact. Always returns a trimmed, non-empty
  * string (falls back to "Untitled"). This is a suggestion the author edits before
@@ -70,5 +77,6 @@ export function deriveTitle(
   }
 
   const trimmed = candidate?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : FALLBACK;
+  // AS-003: the auto-derived suggestion always leads with a capital letter.
+  return trimmed && trimmed.length > 0 ? upperFirst(trimmed) : FALLBACK;
 }

@@ -2,159 +2,159 @@
 
 _2026-06-07_
 
-**Feature:** Mô hình chia sẻ kiểu Google Docs cho doc: 4 role, 3 mức general-access,
-guest commenting, invite by email, và control trên link (password/expiry/view-limit).
-Quyết định "ai mở được link, ai làm được gì".
+**Feature:** Google-Docs-style sharing model for a doc: 4 roles, 3 general-access levels,
+guest commenting, invite by email, and link controls (password/expiry/view-limit).
+Decides "who can open the link, who can do what".
 
-**Trigger:** Owner/editor mở hộp "Share" trên doc → đặt general-access + role, mời
-email, bật/tắt guest commenting, đặt password/expiry/limit.
+**Trigger:** Owner/editor opens the "Share" box on a doc → set general-access + role, invite
+emails, toggle guest commenting on/off, set password/expiry/limit.
 
-**UI expectation:** Hộp Share kiểu Google Docs: danh sách người + role, dropdown
-general-access, ô mời email + role + lời nhắn, khu vực link (copy, password,
-expiry, view-limit). Toàn bộ **[N] NEW**.
+**UI expectation:** Google-Docs-style Share box: people + role list, general-access
+dropdown, invite field for email + role + message, link area (copy, password,
+expiry, view-limit). Entirely **[N] NEW**.
 
 ---
 
-### Quyết định (đã chốt trong phiên explore)
+### Decisions
 
-**1. Share model = 1 general-access + control trên link (Google Docs).**
-Mỗi doc một thiết lập general-access duy nhất, KHÔNG nhiều named link. Password/
-expiry/view-limit gắn vào link của doc.
+**1. Share model = 1 general-access + link controls (Google Docs).**
+Each doc has a single general-access setting, NOT multiple named links. Password/
+expiry/view-limit attach to the doc's link.
 
-**2. Ba mức general-access (kèm role cho link):**
-- `restricted` — chỉ người được mời cụ thể.
-- `anyone_with_link` — ai có link đều truy cập; chọn role cho link (viewer/
-  commenter). + sub-toggle guest commenting.
-- `anyone_in_workspace` — mọi member workspace; chọn role.
+**2. Three general-access levels (with a role for the link):**
+- `restricted` — only specifically invited people.
+- `anyone_with_link` — anyone with the link gets access; pick a role for the link (viewer/
+  commenter). + guest commenting sub-toggle.
+- `anyone_in_workspace` — every workspace member; pick a role.
 
-**3. Anonymous view + tên ngẫu nhiên.**
-- `anyone_with_link` cho **xem ẩn danh, không cần account**.
-- Người ẩn danh được gán **tên ngẫu nhiên** (vd "Cá Heo Ẩn Danh"); nếu chủ động
-  đổi tên thì cập nhật. Comment khi doc bật guest commenting (nhập tên + email
-  optional, vẫn không cần account).
+**3. Anonymous view + random name.**
+- `anyone_with_link` allows **anonymous viewing, no account needed**.
+- Anonymous people are assigned a **random name** (e.g. "Anonymous Dolphin"); if they choose to
+  rename themselves it updates. They can comment when the doc has guest commenting on (enter name + optional
+  email, still no account needed).
 
-**4. Link controls — cả 3, đều optional.**
-- Password (optional): nhập đúng mới vào.
-- Expiry (optional): quá hạn → link hết hiệu lực.
-- View-limit (optional): tổng lượt mở; vượt → link hết hiệu lực.
-- Hết hiệu lực → trang "Link không còn khả dụng" (+ nút request access nếu owner bật, v0.5).
+**4. Link controls — all 3, all optional.**
+- Password (optional): correct entry required to get in.
+- Expiry (optional): past the deadline → link stops working.
+- View-limit (optional): total opens; exceeded → link stops working.
+- Stopped working → "Link no longer available" page (+ request-access button if the owner enables it, v0.5).
 
 **5. Invite by email = pending invite + email.**
-- Mời email + role + lời nhắn → gửi email; nếu chưa có account → lời mời **treo**
-  gắn email; họ sign up bằng email đó → tự nhận role. Couples cụm **auth**.
+- Invite email + role + message → send email; if no account → the invite is **pending**,
+  keyed to the email; they sign up with that email → automatically get the role. Couples the **auth** cluster.
 
-**6. 4 role + năng lực (doc-level):**
-| Role | Xem | Comment/reply/resolve | Tạo version / sửa content | Share / xoá / transfer |
+**6. 4 roles + capabilities (doc-level):**
+| Role | View | Comment/reply/resolve | Create version / edit content | Share / delete / transfer |
 |---|---|---|---|---|
 | viewer | ✅ | ❌ | ❌ | ❌ |
 | commenter | ✅ | ✅ | ❌ | ❌ |
 | editor | ✅ | ✅ | ✅ | ❌ |
 | owner | ✅ | ✅ | ✅ | ✅ |
 
-**7. Precedence = role cao nhất thắng.**
-Nếu một người vừa được invite (editor) vừa rơi vào general-access (commenter) →
-nhận editor.
+**7. Precedence = highest role wins.**
+If a person is both invited (editor) and falls under general-access (commenter) →
+they get editor.
 
 ---
 
 ### Happy path
 
-1. Owner mở Share trên "Payment Spec", đặt general-access = anyone_with_link, role
-   = commenter, bật guest commenting, đặt expiry 7 ngày.
-2. Copy link gửi cho reviewer ngoài (không có account).
-3. Reviewer mở link → xem được ngay, hệ thống gán tên "Mèo Ẩn Danh"; bôi đen text
-   comment → nhập tên thật "Lan" + email → comment lưu với guestName "Lan".
-4. Owner mời thêm `bob@x.com` role editor + lời nhắn "review giúp phần refund" →
-   Bob chưa có account → nhận email mời; Bob sign up → vào doc với role editor.
+1. Owner opens Share on "Payment Spec", sets general-access = anyone_with_link, role
+   = commenter, enables guest commenting, sets a 7-day expiry.
+2. Copy the link and send it to an external reviewer (no account).
+3. Reviewer opens the link → views it right away, the system assigns the name "Anonymous Cat"; selects
+   text to comment → enters their real name "Lan" + email → comment saved with guestName "Lan".
+4. Owner additionally invites `bob@x.com` with role editor + message "please review the refund part" →
+   Bob has no account → receives the invite email; Bob signs up → enters the doc with the editor role.
 
 ### Unhappy paths
 
-- **Quá hạn:** sau 7 ngày, mở link → "Link không còn khả dụng". (v0 chưa có request
-  access.)
-- **Sai password:** nhập sai → báo lỗi, không lộ nội dung.
-- **Restricted + người lạ:** doc restricted, người không được mời mở link → "Bạn
-  không có quyền truy cập" (v0 chưa có request access).
-- **Viewer cố comment:** UI không hiện ô comment; API từ chối nếu cố gọi.
+- **Expired:** after 7 days, opening the link → "Link no longer available". (No request
+  access in v0.)
+- **Wrong password:** wrong entry → error shown, content not leaked.
+- **Restricted + stranger:** doc restricted, uninvited person opens the link → "You
+  do not have access" (no request access in v0).
+- **Viewer tries to comment:** UI shows no comment box; API denies if they try to call it.
 
 ### Business rules
 
-- Một general-access setting/doc; link controls optional độc lập nhau.
-- Role cao nhất thắng khi nhiều nguồn quyền.
-- Guest commenting chỉ khả dụng khi general-access = anyone_with_link.
-- Invite treo gắn theo email, kích hoạt khi account email đó tồn tại.
+- One general-access setting per doc; link controls optional and independent of each other.
+- Highest role wins across multiple access sources.
+- Guest commenting is only available when general-access = anyone_with_link.
+- A pending invite is keyed by email, activates when an account for that email exists.
 
 ### Input validation
 
-- Email mời: đúng format; role ∈ {viewer, commenter, editor, owner}.
-- Password link: min 4 ký tự (assumption).
-- Expiry: ngày tương lai. View-limit: số nguyên > 0.
-- guestName: không rỗng khi guest comment; email optional đúng format.
+- Invite email: valid format; role ∈ {viewer, commenter, editor, owner}.
+- Link password: min 4 characters (assumption).
+- Expiry: a future date. View-limit: integer > 0.
+- guestName: non-empty when a guest comments; email optional and valid format.
 
-### Permissions (về chính việc share)
+### Permissions (about sharing itself)
 
-- **Đổi general-access / mời / đặt link controls / transfer:** owner. Editor có
-  thể mời ở mức ≤ role mình? (assumption: chỉ owner quản share ở v0).
-- **Xem ai đang có quyền:** owner/editor.
+- **Change general-access / invite / set link controls / transfer:** owner. Can an editor
+  invite at a level ≤ their own role? (assumption: only the owner manages sharing in v0).
+- **See who currently has access:** owner/editor.
 
 ### Data impact
 
-- `docs.general_access` (enum, đã có trong schema phác).
-- Bảng mới: `doc_shares` / `doc_members` (userId|email pending, role, message,
+- `docs.general_access` (enum, already in the sketched schema).
+- New tables: `doc_shares` / `doc_members` (userId|email pending, role, message,
   invitedBy) + `share_links` (docId, role, passwordHash?, expiresAt?, viewLimit?,
   viewCount).
-- `comments.guestName` (đã có); thêm cơ chế tên ngẫu nhiên cho anon viewer (có thể
-  chỉ là session-level, không cần lưu nếu chưa comment).
-- Pending invite cần được auth pick up khi sign up (couples auth).
+- `comments.guestName` (already there); add a random-name mechanism for anon viewers (could
+  be session-level only, no need to persist unless they comment).
+- Pending invite needs to be picked up by auth at sign up (couples auth).
 
 ### Out of scope (v0 — defer)
 
-- Request access + owner duyệt → v0.5.
-- Transfer ownership → v0.5 (đưa vào bảng nhưng UI defer).
-- Nhiều named share-link/doc → v0.5+.
-- Project/workspace default share settings, project role override → cụm
-  workspace-project (v0.5).
-- Chặn copy/download cho viewer → v2.
-- Editor được mời người khác → v0 chỉ owner quản share.
+- Request access + owner approval → v0.5.
+- Transfer ownership → v0.5 (put it in the table but defer the UI).
+- Multiple named share-links per doc → v0.5+.
+- Project/workspace default share settings, project role override → the
+  workspace-project cluster (v0.5).
+- Block copy/download for viewers → v2.
+- Editor inviting others → v0 is owner-only for sharing.
 
 ### Decision rationale
 
-- Single general-access thay vì multi-link: đơn giản, đúng Google Docs; multi-link
-  thêm gánh quản lý/revoke chưa cần ở v0.
-- Anon view + tên ngẫu nhiên: đúng wedge "gửi cho người không có account"; tên
-  ngẫu nhiên cho trải nghiệm comment liền mạch trước khi người ta tự xưng tên.
-- Pending invite: cho phép mời người mới (không chỉ người có sẵn account) — cần cho
-  cộng tác thật; chấp nhận coupling với auth.
-- Cả 3 link control: §4.3 đánh v0; đều optional nên không ép phức tạp khi không dùng.
+- Single general-access instead of multi-link: simpler, matches Google Docs; multi-link
+  adds management/revoke overhead not needed in v0.
+- Anon view + random name: matches the "send to someone without an account" wedge; a random
+  name gives a seamless commenting experience before people name themselves.
+- Pending invite: allows inviting new people (not just those with an existing account) — needed for
+  real collaboration; accept the coupling with auth.
+- All 3 link controls: §4.3 marks v0; all optional so they don't force complexity when unused.
 
-### Assumptions (cần xác nhận)
+### Assumptions (need confirmation)
 
-- Chỉ owner quản lý share ở v0 (editor không mời người).
-- Anon name ngẫu nhiên là session-level, chỉ persist khi guest comment.
-- Password link min 4 ký tự; expiry tính theo ngày.
+- Only the owner manages sharing in v0 (editors don't invite people).
+- The random anon name is session-level, only persisted when a guest comments.
+- Link password min 4 characters; expiry measured in days.
 
 ### Open questions
 
-- View-limit đếm tổng lượt mở hay unique viewer? (đề xuất: tổng lượt mở, đơn giản).
-- anyone_in_workspace ở v0 single-workspace gần như = mọi member — có khác biệt
-  thực tế nào với anyone_with_link nội bộ không? Xác nhận khi workspace cluster rõ.
-- Pending invite hết hạn sau bao lâu? Có cần không?
-- Password lưu hash (bcrypt/argon2) — chốt cùng auth.
+- Does view-limit count total opens or unique viewers? (proposal: total opens, simpler).
+- anyone_in_workspace in a v0 single-workspace is nearly = every member — is there any real
+  difference from internal anyone_with_link? Confirm once the workspace cluster is clear.
+- How long until a pending invite expires? Is it needed?
+- Password stored as a hash (bcrypt/argon2) — decide alongside auth.
 
 ### Complexity signal: **medium**
 
-Mô hình rõ (Google Docs), nhưng nhiều mặt: roles × access × link controls × guest
-× pending invite, và coupling với auth (pending) + workspace (anyone_in_workspace).
+The model is clear (Google Docs), but it has many facets: roles × access × link controls × guest
+× pending invite, and coupling with auth (pending) + workspace (anyone_in_workspace).
 
 ### Cross-cluster dependencies
 
-- **auth:** pending invite kích hoạt khi sign up; password hashing chung.
-- **annotation-core:** role quyết định ai comment/resolve/moderate; guest toggle
-  bật/tắt guest commenting; guestName.
-- **render-publish / versioning-diff:** general-access quyết định ai mở `/d/:slug`;
-  role editor+ mới tạo version.
+- **auth:** pending invite activates at sign up; shared password hashing.
+- **annotation-core:** role decides who can comment/resolve/moderate; the guest toggle
+  turns guest commenting on/off; guestName.
+- **render-publish / versioning-diff:** general-access decides who opens `/d/:slug`;
+  only editor+ can create a version.
 - **workspace-project:** anyone_in_workspace; default share settings + project role
   override (v0.5); workspace member directory.
-- **mcp-roundtrip:** agent publish/pull có thể cần token/role tương ứng.
+- **mcp-roundtrip:** agent publish/pull may need a corresponding token/role.
 
 ## UI sketches
 
@@ -167,12 +167,12 @@ password/expiry/view-limit) /S-005 (roles+precedence C-002) · C-003 (guest togg
 │ ⚓ Share        annotation-core         ✕ │
 │ GENERAL ACCESS                            │
 │ [Restricted][anyone-in-workspace][⬤anyone-with-link] [Commenter▾]│
-│ Guest commenting (tên+email)        ●──○  │ ← C-003
+│ Guest commenting (name+email)       ●──○  │ ← C-003
 │ LINK  [ …/d/annotation-core      ] [Copy] │
 │ (🔒 password)(⏲ expiry 7d)(view-limit off)│ ← S-004
 │ INVITE [ email… ][Editor▾] [Invite]       │ ← S-003 pending
-│ PEOPLE  ⬤HG Hoàng — owner                  │
+│ PEOPLE  ⬤HG Hoang — owner                  │
 │         ▢bob@x.com — editor · pending      │
-│         ⬤Lan — commenter (role cao nhất thắng, C-002)│
+│         ⬤Lan — commenter (highest role wins, C-002)│
 └──────────────────────────────────────────┘   (mobile: full-screen sheet)
 ```

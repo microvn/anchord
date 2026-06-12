@@ -10,6 +10,13 @@ import { ErrorState } from "../../components/error-state";
 import { EmptyState } from "../../components/empty-state";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { Icon } from "../../components/icon";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 import { initials, avatarColor } from "../../lib/initials";
 import type { MemberRow, InvitationRow, WorkspaceRole } from "./types";
 
@@ -255,25 +262,23 @@ function MemberRowView({
             {member.role === "admin" ? "Admin" : "Member"}
           </span>
         ) : (
-          // AS-010: change role. A styled native <select> (the prototype's `.role-select`)
-          // keeps full select semantics for keyboard + tests while matching the chrome.
-          <div className="relative inline-flex h-[30px] min-w-[96px] items-center rounded-[6px] border border-line bg-surface px-[9px] text-[12.5px] text-ink hover:border-subtle">
-            <select
+          // AS-010: change role via the shadcn Select (the prototype's `.role-select` chrome).
+          <Select
+            value={member.role}
+            onValueChange={(v) => void onRole(v as WorkspaceRole)}
+          >
+            <SelectTrigger
               data-testid={`role-${member.userId}`}
               aria-label={`Role for ${member.name || member.email}`}
-              value={member.role}
-              onChange={(e) => void onRole(e.target.value as WorkspaceRole)}
-              className="w-full cursor-pointer appearance-none bg-transparent pr-4 text-ink outline-none"
+              className="min-w-[96px]"
             >
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-            </select>
-            <Icon
-              name="chevDown"
-              size={13}
-              className="pointer-events-none absolute right-[9px] text-subtle"
-            />
-          </div>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="member">Member</SelectItem>
+              <SelectItem value="admin">Admin</SelectItem>
+            </SelectContent>
+          </Select>
         )}
       </div>
 

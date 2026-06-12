@@ -1,0 +1,23 @@
+[x] AS-001 — move a doc to another project → doc-move-copy.test.tsx "AS-001: Move…"  | owner: S-001
+[x] AS-002 — copy a doc to another project → doc-move-copy.test.tsx "AS-002: Copy…"  | owner: S-001
+[x] AS-003 — rename a project → project-manage.test.tsx "AS-003"                     | owner: S-002
+[x] AS-004 — archive hides from default browse → project-manage.test.tsx "AS-004"    | owner: S-002
+[x] AS-005 — unarchive restores → project-manage.test.tsx "AS-005"                   | owner: S-002
+[x] AS-006 — delete empty after confirming → project-manage.test.tsx "AS-006"        | owner: S-002
+[x] AS-007 — default no Delete; non-empty refused → project-manage.test.tsx "AS-007" | owner: S-002
+[x] AS-008 — publish into a chosen non-default project → new-doc-dialog.test.tsx "AS-008" | owner: S-003
+[x] AS-009 — default project pre-selected → new-doc-dialog.test.tsx "AS-009"          | owner: S-003
+[x] AS-010 — search scoped to a project → search-screen.test.tsx "AS-010"            | owner: S-004
+[x] AS-011 — switching scope to whole workspace broadens → search-screen.test.tsx "AS-011" | owner: S-004
+[x] C-001  — delete requires confirm; cancel unchanged → "AS-006" + "C-001: cancelling…"  | owner: S-002 (AS-006, AS-007)
+[x] C-002  — default/non-empty cannot be deleted → "AS-007…no Delete" + "AS-007…refused"  | owner: S-002 (AS-007)
+[x] C-003  — move/copy offer only active-workspace projects → doc-move-copy.test.tsx "C-003…" (S-003 extends w/ AS-008 picker) | owner: S-001/S-003 (AS-001, AS-002, AS-008)
+[~] C-005  — DESIGN.md + responsive (visual [→MANUAL], inherits web-core shell)      | owner: cross (AS-001, AS-013)
+[ ] AS-012 — notifications: unread count                                             | owner: S-005 (DEFERRED — GAP-001)
+[ ] AS-013 — notifications: list newest-first                                        | owner: S-005 (DEFERRED — GAP-001)
+[ ] AS-014 — notifications: click marks read + opens target                          | owner: S-005 (DEFERRED — GAP-001)
+[ ] AS-015 — notifications: mark all read clears count                               | owner: S-005 (DEFERRED — GAP-001)
+[ ] AS-016 — notifications: empty state                                              | owner: S-005 (DEFERRED — GAP-001)
+[ ] AS-017 — notifications: failed load does not break the bell                      | owner: S-005 (DEFERRED — GAP-001)
+[ ] AS-018 — AccessIndicator reflects general_access                                 | owner: S-006 (DEFERRED — GAP-002)
+[ ] C-004  — unread badge = unread count; no faked count                             | owner: S-005 (DEFERRED — GAP-001)

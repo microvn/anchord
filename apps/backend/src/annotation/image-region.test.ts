@@ -26,6 +26,9 @@ function fakeRepo(seed: AnnotationRow[] = []): AnnotationRepo & { inserted: NewA
     async listByDoc(_docId: string) {
       return seed;
     },
+    async listCommentsByDoc(_docId: string) {
+      return [];
+    },
   };
 }
 

@@ -116,7 +116,7 @@ function buildApp(opts: {
       commentRepo: fakeCommentRepo(opts.commentSeed),
       // Unused-by-these-tests repos: stub the comment list only; the reply path needs
       // commentRepo. The other annotation repos are not exercised here.
-      annotationRepo: { async insertAnnotation() { return { id: "x" }; }, async listByDoc() { return []; } },
+      annotationRepo: { async insertAnnotation() { return { id: "x" }; }, async listByDoc() { return []; }, async listCommentsByDoc() { return []; } },
       guestCommentRepo: { async listByAnnotation() { return []; }, async insertComment() { return { id: "g" }; } },
       resolutionRepo: { async setAnnotationStatus() {} },
       suggestionRepo: {

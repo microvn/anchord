@@ -15,6 +15,17 @@ if (!(globalThis as { happyDOM?: unknown }).happyDOM) {
   GlobalRegistrator.register({ url: "http://localhost:3000" });
 }
 
+// Radix UI primitives (Select, DropdownMenu, …) call DOM APIs happy-dom doesn't implement.
+// Shim the three Radix Select needs so it can open/select under bun test: pointer-capture
+// probing, scrollIntoView (focus-into-view on the active option), and a no-op releasePointer.
+if (typeof Element !== "undefined") {
+  const el = Element.prototype as unknown as Record<string, unknown>;
+  el.hasPointerCapture ??= () => false;
+  el.setPointerCapture ??= () => {};
+  el.releasePointerCapture ??= () => {};
+  el.scrollIntoView ??= () => {};
+}
+
 import { afterEach, expect } from "bun:test";
 
 const matchers = await import("@testing-library/jest-dom/matchers");

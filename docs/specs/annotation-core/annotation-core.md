@@ -1,123 +1,129 @@
 # Spec: annotation-core
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-07
+**Last updated:** 2026-06-12
 **Status:** Draft
 
 ## Overview
 
-Chọn vùng text (HTML/Markdown) hoặc vùng ảnh trên doc đã render → để lại comment ở
-cột lề phải; thread reply phẳng, resolve/reopen, suggestion. Anchor neo theo block
-(bền qua version, tự giải duplicate-quote); khi version mới ra đời, annotation
-re-anchor, không khớp thì vào danh sách detached. Trái tim sản phẩm.
+Select a text range (HTML/Markdown) or an image region on a rendered doc → leave a
+comment in the right-hand margin; flat reply threads, resolve/reopen, suggestions.
+The anchor is block-scoped (durable across versions, self-resolving for
+duplicate-quotes); when a new version is created, annotations re-anchor, and those
+that don't match go into a detached list. The heart of the product.
 
-_Ships cùng `versioning-diff` (sibling): cụm kia định nghĩa **trigger** version mới;
-cụm này định nghĩa **thuật toán** matching + model annotation. Xem `## Linked Fields`._
+_Ships alongside `versioning-diff` (sibling): that cluster defines the **trigger** for
+a new version; this cluster defines the matching **algorithm** + the annotation model.
+See `## Linked Fields`._
 
 ## Data Model
 
-- **annotations** (neo vào **doc**, không vào version): `id`, `doc_id`, `type`
+- **annotations** (anchored to the **doc**, not to a version): `id`, `doc_id`, `type`
   (range | multi_range | block | doc), `anchor` (jsonb: `block_id`, `text_snippet`,
   `offset`, `length`, `segments[]`), `is_orphaned` (bool), `status` (unresolved |
-  resolved), `created_at`.
-- **comments**: `id`, `annotation_id`, `parent_id` (1 tầng, flat), `author_id`
-  (nullable), `guest_name` (nullable), `body`, `created_at`.
-- Content serve qua content-route (`render-publish`) được inject `data-block-id`
-  ổn định cho block element; viewer HTML chạy bridge inject (postMessage).
+  resolved), `dismissed_at` (nullable — set when a detached annotation is dismissed, S-008/C-013;
+  dismissed annotations are excluded from the active list, not hard-deleted), `created_at`.
+- **comments**: `id`, `annotation_id`, `parent_id` (one level, flat), `author_id`
+  (nullable), `guest_name` (nullable), `guest_email` (nullable — the optional email a
+  guest may supply with a comment, AS-017), `body`, `created_at`.
+- Content served via the content-route (`render-publish`) gets a stable
+  `data-block-id` injected for each block element; the HTML viewer runs an injected
+  bridge (postMessage).
 
 ## Stories
 
 ### S-001: Create a text annotation (P0)
 
-**Description:** Là người có quyền comment, tôi bôi đen một đoạn text trên doc và
-để lại comment; comment hiện ở cột lề, neo vào đoạn đó theo block.
-**Source:** docs/explore/annotation-core.md#quyết-định (mục 1 model, mục 2 transport).
+**Description:** As someone with comment permission, I select a text range on a doc
+and leave a comment; the comment shows in the margin column, anchored to that range
+by block.
+**Source:** docs/explore/annotation-core.md#decisions (item 1 model, item 2 transport).
 
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
-- `files:` unknown (dự kiến reuse bridge Plannotator + `src/anchor/*` + margin UI)
+- `files:` unknown (expected to reuse the Plannotator bridge + `src/anchor/*` + margin UI)
 - `autonomous:` true
-- `verify:` bôi đen 1 câu trong doc HTML → ô comment hiện ở cột lề; lưu → mark vàng trên text + thread.
+- `verify:` select a sentence in the HTML doc → comment box shows in the margin; save → yellow mark on the text + thread.
 
 **Acceptance Scenarios:**
 
-AS-001: Tạo annotation text trên doc HTML (viewer sandbox)
-- **Given:** người nhận quyền commenter mở doc HTML render trong viewer
-- **When:** bôi đen một câu rồi nhập comment và lưu
-- **Then:** tạo annotation neo theo block (block_id + text_snippet + offset/length);
-  mark highlight hiện trên text; thread hiện ở cột lề thẳng hàng
-- **Data:** câu "Thanh toán hết hạn sau 24h" trong block thứ 7
+AS-001: Create a text annotation on an HTML doc (viewer sandbox)
+- **Given:** a user with commenter permission opens the rendered HTML doc in the viewer
+- **When:** they select a sentence, enter a comment, and save
+- **Then:** a block-anchored annotation is created (block_id + text_snippet + offset/length);
+  a highlight mark shows on the text; the thread shows aligned in the margin column
+- **Data:** the sentence "Payment expires after 24h" in the 7th block
 
-AS-002: Tạo annotation text trên doc Markdown (render app)
-- **Given:** người nhận mở doc Markdown render trong app
-- **When:** bôi đen một đoạn và comment
-- **Then:** tạo annotation neo theo block tương tự; mark + thread hiện
-- **Data:** đoạn trong danh sách bullet
+AS-002: Create a text annotation on a Markdown doc (app render)
+- **Given:** the user opens the rendered Markdown doc in the app
+- **When:** they select a range and comment
+- **Then:** a block-anchored annotation is created the same way; mark + thread show
+- **Data:** a range inside a bullet list
 
-AS-003: Quote trùng ở hai block neo đúng block được chọn
-- **Given:** doc có cùng cụm từ "see below" xuất hiện ở hai block khác nhau
-- **When:** người dùng bôi đen cụm đó ở block thứ hai
-- **Then:** annotation neo vào block thứ hai (theo block_id), không nhầm sang block đầu
-- **Data:** "see below" ở block 3 và block 9; chọn ở block 9
+AS-003: A duplicate quote in two blocks anchors to the chosen block
+- **Given:** the doc has the same phrase "see below" appearing in two different blocks
+- **When:** the user selects that phrase in the second block
+- **Then:** the annotation anchors to the second block (by block_id), not mistakenly to the first
+- **Data:** "see below" in block 3 and block 9; selected in block 9
 
-AS-004: Selection rỗng/chỉ whitespace bị bỏ qua
-- **Given:** người dùng đang xem doc
-- **When:** "bôi đen" mà không chọn ký tự thực (rỗng/whitespace)
-- **Then:** không tạo annotation, không hiện ô comment
-- **Data:** selection 0 ký tự
+AS-004: Empty/whitespace-only selections are ignored
+- **Given:** the user is viewing a doc
+- **When:** they "select" without picking any real characters (empty/whitespace)
+- **Then:** no annotation is created, no comment box appears
+- **Data:** a 0-character selection
 
-AS-020: postMessage giả mạo từ body doc không tạo annotation [harden C2]
-- **Given:** doc HTML không tin cậy chứa script tự gọi `parent.postMessage({...annotation...})`
-- **When:** render trong iframe sandbox và script chạy
-- **Then:** parent bỏ qua (chỉ nhận qua kênh bridge tin cậy + re-authorize server-side);
-  KHÔNG tạo annotation từ message giả mạo
-- **Data:** `<script>parent.postMessage(...)</script>` trong body
+AS-020: A forged postMessage from the doc body does not create an annotation [harden C2]
+- **Given:** an untrusted HTML doc contains a script that calls `parent.postMessage({...annotation...})` itself
+- **When:** it renders in the sandboxed iframe and the script runs
+- **Then:** the parent ignores it (only accepts via the trusted bridge channel + re-authorizes server-side);
+  it does NOT create an annotation from the forged message
+- **Data:** `<script>parent.postMessage(...)</script>` in the body
 
-AS-021: Người không có quyền doc không đọc được annotation [harden H2]
-- **Given:** doc restricted, người X không được mời
-- **When:** X cố đọc annotation/comment của doc (qua UI hoặc API)
-- **Then:** từ chối; không trả nội dung annotation/comment
-- **Data:** X ngoài quyền doc
+AS-021: A user without doc permission cannot read annotations [harden H2]
+- **Given:** a restricted doc; user X is not invited
+- **When:** X tries to read the doc's annotations/comments (via UI or API)
+- **Then:** denied; no annotation/comment content is returned
+- **Data:** X outside the doc's permissions
 
 ### S-002: Create an image-region annotation (P0)
 
-**Description:** Là người có quyền comment, tôi đánh dấu một điểm hoặc một vùng trên
-ảnh và để lại comment; dấu bám đúng vị trí trên ảnh gốc.
-**Source:** docs/explore/annotation-core.md#quyết-định (mục 4 image-region).
+**Description:** As someone with comment permission, I mark a point or a region on an
+image and leave a comment; the mark stays at the correct position on the original image.
+**Source:** docs/explore/annotation-core.md#decisions (item 4 image-region).
 
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
-- `files:` unknown (dự kiến image annotation layer trên viewer ảnh của render-publish)
+- `files:` unknown (expected to be an image annotation layer on render-publish's image viewer)
 - `autonomous:` true
 
 **Acceptance Scenarios:**
 
-AS-005: Pin một điểm trên ảnh (click)
-- **Given:** người nhận mở doc ảnh
-- **When:** click vào một điểm trên ảnh và comment
-- **Then:** tạo annotation type image-region (point) lưu toạ độ normalized 0..1 theo
-  ảnh gốc; pin + thread hiện
-- **Data:** click tại ~ (0.4, 0.6)
+AS-005: Pin a point on an image (click)
+- **Given:** the user opens an image doc
+- **When:** they click a point on the image and comment
+- **Then:** an image-region (point) annotation is created storing normalized 0..1 coordinates
+  relative to the original image; pin + thread show
+- **Data:** click at ~ (0.4, 0.6)
 
-AS-006: Khoanh một vùng trên ảnh (drag)
-- **Given:** người nhận mở doc ảnh
-- **When:** kéo tạo một hình chữ nhật và comment
-- **Then:** tạo annotation image-region (box) lưu toạ độ normalized; vùng + thread hiện
+AS-006: Box a region on an image (drag)
+- **Given:** the user opens an image doc
+- **When:** they drag to create a rectangle and comment
+- **Then:** an image-region (box) annotation is created storing normalized coordinates; region + thread show
 - **Data:** box (0.1,0.1)–(0.5,0.4)
 
-AS-007: Dấu bám đúng vị trí khi zoom/đổi kích thước
-- **Given:** một annotation pin đã tạo trên ảnh
-- **When:** người dùng zoom in/out hoặc mở trên màn hình kích thước khác
-- **Then:** pin vẫn nằm đúng điểm trên ảnh gốc (toạ độ normalized không trôi)
-- **Data:** zoom 200% rồi 50%
+AS-007: The mark stays in place across zoom/resize
+- **Given:** a pin annotation already created on an image
+- **When:** the user zooms in/out or opens it on a screen of a different size
+- **Then:** the pin stays at the correct point on the original image (normalized coordinates don't drift)
+- **Data:** zoom 200% then 50%
 
 ### S-003: Reply in a thread (P1)
 
-**Description:** Là người trong cuộc, tôi trả lời một comment; reply hiện phẳng dưới
-annotation đó.
-**Source:** docs/explore/annotation-core.md#quyết-định (mục 5 threading flat).
+**Description:** As a participant, I reply to a comment; the reply shows flat under
+that annotation.
+**Source:** docs/explore/annotation-core.md#decisions (item 5 threading flat).
 
 **Execution:**
 - `depends_on:` S-001
@@ -127,17 +133,17 @@ annotation đó.
 
 **Acceptance Scenarios:**
 
-AS-008: Reply phẳng dưới annotation
-- **Given:** một annotation đã có comment đầu
-- **When:** người khác bấm Reply và nhập nội dung
-- **Then:** reply hiện phẳng dưới annotation (một tầng, không lồng sâu)
-- **Data:** comment gốc + 1 reply
+AS-008: Flat reply under an annotation
+- **Given:** an annotation that already has a first comment
+- **When:** another person clicks Reply and enters content
+- **Then:** the reply shows flat under the annotation (one level, not deeply nested)
+- **Data:** original comment + 1 reply
 
 ### S-004: Resolve / reopen an annotation (P1)
 
-**Description:** Là người có quyền comment, tôi đánh dấu một annotation là đã xử lý
-hoặc mở lại.
-**Source:** docs/explore/annotation-core.md#quyết-định (mục 6 resolve).
+**Description:** As someone with comment permission, I mark an annotation as resolved
+or reopen it.
+**Source:** docs/explore/annotation-core.md#decisions (item 6 resolve).
 
 **Execution:**
 - `depends_on:` S-001
@@ -147,24 +153,24 @@ hoặc mở lại.
 
 **Acceptance Scenarios:**
 
-AS-009: Resolve rồi reopen
-- **Given:** một annotation đang unresolved
-- **When:** người dùng bấm resolve, sau đó reopen
-- **Then:** status đổi resolved (mark mờ đi) rồi quay lại unresolved
-- **Data:** toggle hai lần
+AS-009: Resolve then reopen
+- **Given:** an annotation that is unresolved
+- **When:** the user clicks resolve, then reopen
+- **Then:** status changes to resolved (mark dims) then back to unresolved
+- **Data:** toggle twice
 
-AS-010: Người có quyền comment đều resolve được
-- **Given:** một annotation tạo bởi người A; người B có quyền commenter
-- **When:** người B bấm resolve
-- **Then:** annotation chuyển resolved (không chỉ người tạo mới resolve được)
-- **Data:** B ≠ tác giả annotation
+AS-010: Anyone with comment permission can resolve
+- **Given:** an annotation created by user A; user B has commenter permission
+- **When:** user B clicks resolve
+- **Then:** the annotation becomes resolved (resolving isn't limited to the creator)
+- **Data:** B ≠ the annotation's author
 
 ### S-005: Re-anchor across versions (P0)
 
-**Description:** Khi một version mới được tạo (từ `versioning-diff`), annotation của
-version trước được neo lại vào nội dung mới; khớp thì theo sang, không khớp thì vào
-danh sách detached.
-**Source:** docs/explore/annotation-core.md#quyết-định (mục 1 re-anchor), #unhappy-paths.
+**Description:** When a new version is created (from `versioning-diff`), annotations from
+the previous version are re-anchored to the new content; matches carry over, non-matches
+go into the detached list.
+**Source:** docs/explore/annotation-core.md#decisions (item 1 re-anchor), #unhappy-paths.
 
 **Execution:**
 - `depends_on:` S-001
@@ -174,38 +180,38 @@ danh sách detached.
 
 **Acceptance Scenarios:**
 
-AS-011: Khớp chính xác → theo sang version mới
-- **Given:** annotation neo ở block_id "block-7" với text_snippet còn nguyên ở
-  version mới
-- **When:** version mới được tạo
-- **Then:** annotation neo lại đúng vị trí trong block-7 ở version mới
-- **Data:** block-7 không đổi nội dung
+AS-011: Exact match → carries to the new version
+- **Given:** an annotation anchored at block_id "block-7" whose text_snippet is intact
+  in the new version
+- **When:** the new version is created
+- **Then:** the annotation re-anchors to the correct position in block-7 in the new version
+- **Data:** block-7 content unchanged
 
-AS-012: Khớp fuzzy khi text đổi nhẹ → vẫn theo sang
-- **Given:** block-7 còn tồn tại nhưng text_snippet đổi nhẹ ("24h" → "48 giờ")
-- **When:** version mới được tạo
-- **Then:** matcher fuzzy trong block-7 vẫn neo được; annotation hiện trên version mới
-- **Data:** thay đổi nhỏ trong cùng block
+AS-012: Fuzzy match when text changes slightly → still carries over
+- **Given:** block-7 still exists but text_snippet changed slightly ("24h" → "48 hours")
+- **When:** the new version is created
+- **Then:** the fuzzy matcher within block-7 still anchors it; the annotation shows on the new version
+- **Data:** a small change within the same block
 
-AS-013: Mất block → annotation thành detached
-- **Given:** block-7 bị xoá hẳn ở version mới
-- **When:** version mới được tạo
-- **Then:** annotation đánh `is_orphaned`, vào danh sách "detached" để relocate/resolve;
-  không bị mất
-- **Data:** block-7 không còn ở version mới
+AS-013: Lost block → annotation becomes detached
+- **Given:** block-7 is fully deleted in the new version
+- **When:** the new version is created
+- **Then:** the annotation is marked `is_orphaned`, goes into the "detached" list to relocate/resolve;
+  it is not lost
+- **Data:** block-7 no longer exists in the new version
 
-AS-018: multi_range mất một segment → cả annotation detached
-- **Given:** một annotation type multi_range bắc qua block-3 và block-9
-- **When:** version mới xoá hẳn block-9 (block-3 còn khớp)
-- **Then:** cả annotation đánh `is_orphaned`, vào detached (không neo nửa vời chỉ
-  phần còn khớp)
-- **Data:** 1/2 segment mất block
+AS-018: multi_range losing one segment → the whole annotation detaches
+- **Given:** a multi_range annotation spanning block-3 and block-9
+- **When:** the new version fully deletes block-9 (block-3 still matches)
+- **Then:** the whole annotation is marked `is_orphaned`, goes to detached (no partial anchoring
+  of just the still-matching part)
+- **Data:** 1 of 2 segments loses its block
 
 ### S-006: Suggestion annotation (P1)
 
-**Description:** Là người review, tôi tạo một suggestion (xoá / thay thế) lên một
-đoạn; nó là annotation có loại đề xuất, không tự sửa nội dung doc.
-**Source:** docs/explore/annotation-core.md#quyết-định (mục 7 suggestion).
+**Description:** As a reviewer, I create a suggestion (delete / replace) on a range;
+it's a suggestion-type annotation that does not edit the doc content itself.
+**Source:** docs/explore/annotation-core.md#decisions (item 7 suggestion).
 
 **Execution:**
 - `depends_on:` S-001
@@ -215,33 +221,33 @@ AS-018: multi_range mất một segment → cả annotation detached
 
 **Acceptance Scenarios:**
 
-AS-014: Tạo suggestion thay thế
-- **Given:** người review chọn một đoạn text
-- **When:** chọn "suggest replace" và nhập nội dung thay thế
-- **Then:** tạo annotation loại suggestion (replace, from→to) với status mặc định;
-  nội dung doc KHÔNG đổi
+AS-014: Create a replace suggestion
+- **Given:** the reviewer selects a text range
+- **When:** they choose "suggest replace" and enter the replacement content
+- **Then:** a suggestion-type annotation is created (replace, from→to) with the default status;
+  the doc content does NOT change
 - **Data:** replace "24h" → "48h"
 
-AS-015: Accept/reject chỉ đổi status, không tự sửa content
-- **Given:** một suggestion đang chờ
-- **When:** tác giả bấm accept (hoặc reject)
-- **Then:** status suggestion đổi accepted/rejected; nội dung doc vẫn nguyên (việc
-  áp thay đổi do agent làm qua MCP rồi republish — `mcp-roundtrip`)
-- **Data:** accept một suggestion replace
+AS-015: Accept/reject only changes status, doesn't edit content itself
+- **Given:** a pending suggestion
+- **When:** the author clicks accept (or reject)
+- **Then:** the suggestion status changes to accepted/rejected; the doc content stays intact
+  (applying the change is done by an agent via MCP then republished — `mcp-roundtrip`)
+- **Data:** accept a replace suggestion
 
-AS-022: Suggestion stale khi `from` không còn khớp [harden H5]
-- **Given:** suggestion "replace 24h→48h" pin against_version 3; tác giả republish v4
-  trong đó "24h" đã bị viết lại
-- **When:** accept (hoặc agent áp qua MCP)
-- **Then:** verify `from`="24h" không còn khớp tại anchor → đánh `stale`, KHÔNG
-  auto-apply; hiển thị khác pending
-- **Data:** v4 không còn "24h"
+AS-022: Suggestion goes stale when `from` no longer matches [harden H5]
+- **Given:** the suggestion "replace 24h→48h" pinned to against_version 3; the author republishes v4
+  in which "24h" has been rewritten
+- **When:** accept (or an agent applies it via MCP)
+- **Then:** verify `from`="24h" no longer matches at the anchor → mark `stale`, do NOT
+  auto-apply; display differently from pending
+- **Data:** v4 no longer contains "24h"
 
 ### S-007: Guest commenting (P1)
 
-**Description:** Là người mở link không có account, tôi xem với một tên ngẫu nhiên;
-khi comment tôi nhập tên (và email tuỳ chọn).
-**Source:** docs/explore/annotation-core.md#quyết-định (mục 8 guest), sharing-permissions.
+**Description:** As someone who opens a link without an account, I view under a random
+name; when I comment I enter a name (and an optional email).
+**Source:** docs/explore/annotation-core.md#decisions (item 8 guest), sharing-permissions.
 
 **Execution:**
 - `depends_on:` S-001
@@ -251,161 +257,253 @@ khi comment tôi nhập tên (và email tuỳ chọn).
 
 **Acceptance Scenarios:**
 
-AS-016: Người ẩn danh được gán tên ngẫu nhiên
-- **Given:** doc bật anyone-with-link + guest commenting
-- **When:** người không đăng nhập mở link
-- **Then:** được gán tên ngẫu nhiên (vd "Mèo Ẩn Danh") cho phiên xem
-- **Data:** không có account
+AS-016: An anonymous user is assigned a random name
+- **Given:** the doc has anyone-with-link + guest commenting enabled
+- **When:** a logged-out user opens the link
+- **Then:** they are assigned a random name (e.g. "Anonymous Cat") for the viewing session
+- **Data:** no account
 
-AS-017: Guest comment với tên + email tuỳ chọn
-- **Given:** người ẩn danh muốn comment
-- **When:** bôi đen text, nhập tên "Lan" + email tuỳ chọn rồi gửi
-- **Then:** comment lưu với `guest_name` "Lan" (author_id rỗng)
-- **Data:** tên "Lan", email optional
+AS-017: Guest comments with a name + optional email
+- **Given:** an anonymous user wants to comment
+- **When:** they select text, enter the name "Lan" + an optional email, then submit
+- **Then:** the comment is stored with `guest_name` "Lan" (author_id empty)
+- **Data:** name "Lan", email optional
 
-AS-019: HTML trong comment body / guest_name render trơ [harden C3]
-- **Given:** một guest gửi comment body hoặc guest_name chứa HTML/script
-- **When:** owner mở doc, thread render ở app origin
-- **Then:** nội dung render escaped/sanitize, script KHÔNG chạy; guest_name quá dài bị cắt
-- **Data:** body = `<img src=x onerror=...>`, guest_name dài bất thường
+AS-019: HTML in the comment body / guest_name renders inert [harden C3]
+- **Given:** a guest submits a comment body or guest_name containing HTML/script
+- **When:** the owner opens the doc and the thread renders at the app origin
+- **Then:** the content renders escaped/sanitized, the script does NOT run; an over-long guest_name is truncated
+- **Data:** body = `<img src=x onerror=...>`, an unusually long guest_name
+
+### S-008: Dismiss or re-attach a detached annotation (P1)
+
+**Description:** As someone with comment permission, I clear up a detached (orphaned) annotation:
+dismiss it (it leaves the active list) or re-attach it to a range I select in the current version
+(clears `is_orphaned`, sets a fresh anchor) — so the detached list doesn't accumulate forever.
+**Source:** annotation-core-ui:S-004 (AS-016 dismiss / AS-017 re-attach) consumes these; G8 decision 2026-06-11 (build both in v0). Prototype: `viewer.jsx` DetachedSection Re-attach/Dismiss.
+
+**Execution:**
+- `depends_on:` S-005
+- `parallel_safe:` false
+- `files:` unknown (expected the annotation routes + repo: a dismiss flag + an anchor-update path)
+- `autonomous:` true
+- `verify:` an orphaned annotation → dismiss → it no longer appears in the doc's active annotations; or re-attach to a selected range → it returns anchored (is_orphaned false) at that range.
+
+**Acceptance Scenarios:**
+
+AS-023: Dismiss a detached annotation
+- **Given:** a doc with an annotation marked `is_orphaned`, and I have comment permission
+- **When:** I dismiss it
+- **Then:** it is removed from the doc's active annotation list (kept as dismissed, not hard-deleted) and does not reappear on subsequent reads
+- **Data:** 1 orphaned annotation, commenter
+
+AS-024: Re-attach a detached annotation to a new range
+- **Given:** an `is_orphaned` annotation; I select a range in the current version
+- **When:** I re-attach the annotation onto that range
+- **Then:** `is_orphaned` is cleared and the annotation's anchor is set to the new block/snippet/offset; it returns as an anchored annotation
+- **Data:** re-attach onto a sentence in a current block
+
+AS-025: Re-attach/dismiss without comment permission is refused
+- **Given:** an orphaned annotation on a doc where I am viewer-only
+- **When:** I try to dismiss or re-attach it
+- **Then:** the request is refused; the annotation is unchanged
+- **Data:** viewer role
 
 ## Constraints & Invariants
 
-- C-001: Anchor block-scoped — `block_id` là **positional hint** (`block-{tag}-{n}`,
-  inject server-side lúc serve/publish, counter tuần tự theo loại tag; element có sẵn
-  id → thêm `data-block-id`); `text_snippet` chỉ cần unique trong block, neo theo
-  block_id; tự giải duplicate-quote. Độ bền qua version KHÔNG dựa block_id ổn định mà
-  dựa text_snippet+offset+fuzzy+orphan (C-002). (AS-001, AS-003)
-- C-002: Re-anchor khi version mới: block_id → snippet exact → fuzzy → không thấy =
-  `is_orphaned` (detached); không bao giờ mất annotation. multi_range mất bất kỳ
-  segment nào → cả annotation detached (không neo nửa vời). (AS-011, AS-012, AS-013, AS-018)
-- C-003: Suggestion KHÔNG bao giờ tự sửa content; chỉ đổi status; áp thay đổi qua
-  MCP round-trip. (AS-014, AS-015)
-- C-004: Thread phẳng một tầng (reply dưới annotation, không lồng sâu). (AS-008)
-- C-005: Resolve là toggle; ai có quyền comment trở lên đều resolve/reopen được. (AS-009, AS-010)
-- C-006: Image-region lưu toạ độ normalized 0..1 theo ảnh gốc, bền khi zoom/đổi màn hình. (AS-005, AS-006, AS-007)
-- C-007: Anon viewer được gán tên ngẫu nhiên; guest comment bắt buộc có tên. (AS-016, AS-017)
-- C-008 [harden C3]: comment `body` và `guest_name` là untrusted; render escaped/sanitize
-  (dompurify hoặc plaintext-only) ở app origin; `guest_name` giới hạn độ dài + charset.
-  HTML trong body/tên render trơ. (AS-019)
-- C-009 [harden C2]: bridge do app phục vụ (KHÔNG nằm trong body không tin cậy), chạy
-  qua kênh riêng (MessageChannel/nonce), KHÔNG validate bằng origin (opaque="null").
-  Mọi message từ iframe là *hint* untrusted; parent re-authorize việc ghi annotation
-  server-side theo role phiên. postMessage giả mạo từ body doc KHÔNG tạo annotation. (AS-020)
-- C-010 [harden H2]: đọc annotation/comment được authorize theo role hiệu lực của
-  người đọc trên doc cha; người không có quyền doc không đọc được annotation của nó. (AS-021)
-- C-011 [harden H5]: suggestion pin `against_version` + exact `from` span; lúc accept
-  (và lúc agent áp qua MCP) verify `from` còn khớp tại anchor, không khớp → đánh
-  `stale`, KHÔNG auto-apply; stale hiển thị khác pending. (AS-022)
-- C-012 [harden H1/M1, gated by C1]: KHI re-anchor được chốt (xem GAP-002), nó phải:
-  chạy async (không gate publish), idempotent theo `(annotation_id, version_id)`
-  (ledger, không mutate `anchor` in-place), phát summary mỗi publish (carried/fuzzy/
-  detached) + alert khi tỉ lệ detached vượt ngưỡng (vd >25%). (GAP-002)
+- C-001: Block-scoped anchor — `block_id` is a **positional hint** (`block-{tag}-{n}`,
+  injected server-side at serve/publish time, a sequential counter per tag type; an element
+  that already has an id → add `data-block-id`); `text_snippet` only needs to be unique within
+  the block, anchored by block_id; self-resolves duplicate-quotes. Durability across versions
+  does NOT rely on a stable block_id but on text_snippet+offset+fuzzy+orphan (C-002). (AS-001, AS-003)
+- C-002: Re-anchor on a new version: block_id → snippet exact → fuzzy → not found =
+  `is_orphaned` (detached); annotations are never lost. multi_range losing any
+  segment → the whole annotation detaches (no partial anchoring). (AS-011, AS-012, AS-013, AS-018)
+- C-003: A suggestion NEVER edits content itself; it only changes status; the change is applied
+  via an MCP round-trip. (AS-014, AS-015)
+- C-004: Threads are flat, one level (reply under the annotation, not deeply nested). (AS-008)
+- C-005: Resolve is a toggle; anyone with comment permission or higher can resolve/reopen. (AS-009, AS-010)
+- C-006: Image-region stores normalized 0..1 coordinates relative to the original image, durable across zoom/screen changes. (AS-005, AS-006, AS-007)
+- C-007: Anonymous viewers are assigned a random name; guest comments require a name. (AS-016, AS-017)
+- C-008 [harden C3]: comment `body` and `guest_name` are untrusted; render escaped/sanitized
+  (DOMPurify or plaintext-only) at the app origin; `guest_name` is limited in length + charset.
+  HTML in the body/name renders inert. (AS-019)
+- C-009 [harden C2]: the bridge is served by the app (NOT contained in the untrusted body), runs
+  over a dedicated channel (MessageChannel/nonce), and does NOT validate by origin (opaque="null").
+  Every message from the iframe is an untrusted *hint*; the parent re-authorizes the annotation write
+  server-side by the session role. A forged postMessage from the doc body does NOT create an annotation. (AS-020)
+  (Residual same-realm handshake race + the realm-isolation fix: see C-014 + GAP-005.)
+- C-010 [harden H2]: reading annotations/comments is authorized by the reader's effective role on
+  the parent doc; a user without doc permission cannot read its annotations. (AS-021)
+- C-011 [harden H5]: a suggestion pins `against_version` + the exact `from` span; at accept time
+  (and when an agent applies it via MCP) verify `from` still matches at the anchor; if not → mark
+  `stale`, do NOT auto-apply; stale displays differently from pending. (AS-022)
+- C-013: A detached (`is_orphaned`) annotation can be DISMISSED (soft — leaves the active list, kept
+  not hard-deleted) or RE-ATTACHED to a new range (clears `is_orphaned`, sets a fresh anchor); both
+  require comment permission or higher; a viewer-only caller is refused. (AS-023, AS-024, AS-025)
+- C-012 [harden H1/M1, gated by C1]: WHEN re-anchor is finalized (see GAP-002), it must:
+  run async (not gate publish), be idempotent by `(annotation_id, version_id)`
+  (a ledger, not mutating `anchor` in-place), emit a summary per publish (carried/fuzzy/
+  detached) + alert when the detached rate exceeds a threshold (e.g. >25%). (GAP-002)
+- C-014 [bridge realm decision, 2026-06-11]: the `/v` sandbox CSP stays `sandbox allow-scripts`
+  with NO `script-src` directive, so the untrusted doc's OWN scripts execute (render-publish
+  AS-006/AS-007). Consequence: the injected bridge runs in the SAME JS realm as the doc body, so
+  the bridge channel is **defense-in-depth, not the authorization boundary** — server-side re-authz
+  (C-009) is. The bridge `<script>` carries a per-request nonce that is INERT under this CSP (no
+  `script-src` to enforce it); it is forward-compat plumbing only. Do NOT add `script-src 'nonce-…'`
+  to "harden" it — that would block the doc's body scripts and break AS-006/AS-007. The real
+  isolation upgrade, if ever needed, is nested-iframe realm separation (GAP-005), never a CSP flip. (AS-020, GAP-005)
 
 ## Linked Fields
 
-- **"version mới được tạo" (event)** — produced by `versioning-diff:S-001/S-003`.
-  Consumed by annotation-core:S-005 (AS-011/012/013) để chạy re-resolve. ✔ producer
-  có AS tạo version ở cả update lẫn restore.
-- **anchor descriptor + kết quả matching (carry | orphaned)** — produced by
+- **"new version created" (event)** — produced by `versioning-diff:S-001/S-003`.
+  Consumed by annotation-core:S-005 (AS-011/012/013) to run re-resolve. ✔ the producer
+  has an AS that creates a version on both update and restore.
+- **anchor descriptor + matching result (carry | orphaned)** — produced by
   annotation-core (Data Model + S-005). Consumed by `versioning-diff:S-005`
-  (AS-009/010) để hiển thị carry-forward + detached list. ✔ model + thuật toán định
-  nghĩa ở đây; sibling tiêu thụ kết quả.
+  (AS-009/010) to display carry-forward + the detached list. ✔ the model + algorithm are
+  defined here; the sibling consumes the result.
 
 ## UI Notes
 
-Từ `docs/explore/annotation-core.md` §UI sketches. Greenfield → tất cả `[N]`. Component
-names only. Dark-operator (`DESIGN.md`), chrome lùi sau doc+comment. Precedence: AS > Tree.
+From `docs/explore/annotation-core.md` §UI sketches. Greenfield → everything `[N]`. Component
+names only. Dark-operator (`DESIGN.md`), chrome recedes behind doc+comment. Precedence: AS > Tree.
 
-- `DocViewer` `[N]` *(3-pane; là màn cốt lõi, chrome dùng chung với render-publish)*
+- `DocViewer` `[N]` *(3-pane; the core screen, chrome shared with render-publish)*
   - `ViewerTopBar`: title · `LiveBadge` · `FormatBadge` · versionLabel · undo/redo · `PreviewEditToggle` · `CommentsButton` · `ShareButton` · `ThemeToggle` · `OverflowMenu`
-  - `SpecMetaStrip` *(chỉ doc dạng spec: tags · stories · AS · Draft · url)*
+  - `SpecMetaStrip` *(spec-type docs only: tags · stories · AS · Draft · url)*
   - `TocSidebar` *(collapsible)*
     - `TocSearch`
-    - `NavGroup` → `NavItem` *(scroll-spy active; `PriorityBadge` P0/P1/P2 nếu là spec)*
+    - `NavGroup` → `NavItem` *(scroll-spy active; `PriorityBadge` P0/P1/P2 if a spec)*
   - `DocPane`
     - `DocModeToolbar`: Select·Markup · Wide·Focus
-    - `DocTitle` *(Fraunces)* + rendered content (qua DocRenderFrame)
-    - `SelectionPopover` *(nổi trên đoạn bôi đen)*: comment · suggest · resolve · react · dismiss
-    - `AnnotationHighlight` *(mark trên text; trạng thái active/resolved)*
+    - `DocTitle` *(Fraunces)* + rendered content (via DocRenderFrame)
+    - `SelectionPopover` *(floats over the selected range)*: comment · suggest · resolve · react · dismiss
+    - `AnnotationHighlight` *(mark on the text; active/resolved state)*
   - `AnnotationsRail`
     - `RailHeader` *(count)*
-    - `CommentThread`: `QuoteRef` · `Avatar` · name · time · body · `ReplyList` *(flat, 1 tầng)* · badge (`SuggestBadge`/`ResolvedBadge`)
-    - `DetachedSection` *(amber; annotation `is_orphaned`)*
-    - `Composer`: textarea · `GuestNameField` *(khi guest)* · sendButton
-  - *Mobile (<600): `TocSidebar` + `AnnotationsRail` → drawer/bottom-sheet; `CommentFab` (count) mở rail; tap highlight mở thread.*
-- `ImageRegionLayer` `[N]` *(trên ImageViewer)*: `RegionPin` *(click=point)* · `RegionBox` *(drag)* — toạ độ normalized 0..1
+    - `CommentThread`: `QuoteRef` · `Avatar` · name · time · body · `ReplyList` *(flat, one level)* · badge (`SuggestBadge`/`ResolvedBadge`)
+    - `DetachedSection` *(amber; `is_orphaned` annotations)*
+    - `Composer`: textarea · `GuestNameField` *(when guest)* · sendButton
+  - *Mobile (<600): `TocSidebar` + `AnnotationsRail` → drawer/bottom-sheet; `CommentFab` (count) opens the rail; tapping a highlight opens the thread.*
+- `ImageRegionLayer` `[N]` *(over ImageViewer)*: `RegionPin` *(click=point)* · `RegionBox` *(drag)* — normalized 0..1 coordinates
+
+## API
+
+HTTP contract for this cluster. Follows `api-core` (envelope C-001, error→status C-003,
+auth gate C-005, validation C-007, existence-hiding C-006). Server re-authorizes every write
+by session role (C-009 here = api-core C-005); a forged client role/postMessage is ignored.
+
+| Method · Path | Serves | Auth | Request | Success | Errors |
+|---|---|---|---|---|---|
+| `POST /api/w/:workspaceId/docs/:slug/annotations` | S-001 (AS-001/002/003), S-002 (AS-005/006) | session/guest with comment role | `{ type, anchor }` (Zod; text or image-region) | 201 `{ annotationId }` | 400 VALIDATION_ERROR (empty selection AS-004), 403 FORBIDDEN (viewer, AS-020 forged role), 404 (no-access doc, AS-021/C-006) |
+| `GET /api/w/:workspaceId/docs/:slug/annotations` | S-001 (AS-021 read-authz) | session (viewer+) | pagination query | 200 `{ items, pagination }` | 404 (no-access → indistinguishable, C-006) |
+| `POST /api/w/:workspaceId/annotations/:id/comments` | S-003 (AS-008 reply), S-007 (AS-016/017/019 guest) | session OR guest (name required) | `{ body, parentId?, guestName?, guestEmail? }` (Zod; body+name sanitized C-008) | 201 `{ commentId }` | 400 VALIDATION_ERROR (empty body/name), 403 FORBIDDEN |
+| `PATCH /api/w/:workspaceId/annotations/:id/resolution` | S-004 (AS-009/010) | session (commenter+) | `{ resolved }` (Zod) | 200 `{ status }` | 403 FORBIDDEN (viewer) |
+| `POST /api/w/:workspaceId/docs/:slug/suggestions` | S-006 (AS-014) | session (commenter+) | `{ anchor, from, to, againstVersion }` (Zod) | 201 `{ suggestionId }` | 400, 403 |
+| `PATCH /api/w/:workspaceId/suggestions/:id` | S-006 (AS-015/022) | session (owner) | `{ decision }` accept\|reject (Zod) | 200 `{ status }` (accepted\|rejected\|stale) | 403 FORBIDDEN, 409 CONFLICT (stale `from` AS-022) |
+| `POST /api/w/:workspaceId/annotations/:id/dismiss` | S-008 (AS-023) | session (commenter+) | — | 200 `{ dismissed: true }` | 403 FORBIDDEN (viewer, AS-025), 404 (no-access) |
+| `POST /api/w/:workspaceId/annotations/:id/reattach` | S-008 (AS-024) | session (commenter+) | `{ anchor }` (Zod; the new range) | 200 `{ isOrphaned: false }` | 400 (anchor doesn't match), 403 FORBIDDEN (viewer, AS-025), 404 |
+
+All routes are workspace-scoped under `/api/w/:workspaceId/…` (workspaces S-006 path-scoping);
+`:workspaceId` is path-mandatory and the membership gate runs before any handler.
+
+Anon session name (S-007 AS-016) is assigned client-/session-side on link open (see
+`sharing-permissions` anon identity), not a write endpoint. Re-anchor (S-005) is the matcher
+triggered by `versioning-diff`'s version-create, not a route.
 
 ## What Already Exists
 
 ### System Impact & Technical Risks
 
-- Repo greenfield. Reuse hợp pháp: Plannotator `html-viewer` (bridge-script /
-  postMessage / mark rendering, MIT/Apache) — reuse transport, THAY matcher
-  exact-substring bằng block-scoped + fuzzy. uselink: chỉ học model (block anchor,
-  orphan/unorphan), không lấy code.
-- Schema đổi so với bản phác cũ: `annotations` neo vào **doc** (không vào version) +
-  cột `anchor jsonb` (block model) + `is_orphaned` + `status`.
-- Risk (high): bridge cross-origin + block_id engine + re-anchor fuzzy + ràng buộc
-  hai chiều với `versioning-diff`. Là nơi quyết định sản phẩm sống/chết.
+- Greenfield repo. Legitimate reuse: Plannotator `html-viewer` (bridge-script /
+  postMessage / mark rendering, MIT/Apache) — reuse the transport, REPLACE the
+  exact-substring matcher with block-scoped + fuzzy. uselink: only learn from the model
+  (block anchor, orphan/unorphan), don't take code.
+- Schema changes vs the old sketch: `annotations` anchored to the **doc** (not to a version) +
+  an `anchor jsonb` column (block model) + `is_orphaned` + `status`.
+- Risk (high): cross-origin bridge + block_id engine + re-anchor fuzzy + the two-way
+  constraint with `versioning-diff`. This is where the product lives or dies.
 
 ## Not in Scope
 
-- Trigger tạo version + diff + restore — `versioning-diff`.
-- Bật/tắt guest commenting, role quyết định ai comment/moderate — `sharing-permissions`.
-- Pull annotations / áp suggestion / reply-resolve qua agent — `mcp-roundtrip`.
-- Reply lồng nhiều tầng — v0 flat.
-- Reactions/emoji trên comment — v0.5.
-- Auto-apply suggestion vào content — không làm (mô hình bất biến).
-- Real-time presence / con trỏ người khác — v2.
-- Moderation nâng cao (xoá bất kỳ) — v0.5; v0 chỉ owner/editor (cụm sharing).
+- Version create trigger + diff + restore — `versioning-diff`.
+- Toggling guest commenting, the role deciding who can comment/moderate — `sharing-permissions`.
+- Pulling annotations / applying suggestions / reply-resolve via an agent — `mcp-roundtrip`.
+- Multi-level nested replies — v0 is flat.
+- Reactions/emoji on comments — v0.5.
+- Auto-applying suggestions into content — not doing it (immutable model).
+- Real-time presence / other people's cursors — v2.
+- Advanced moderation (deleting anything) — v0.5; v0 is owner/editor only (sharing cluster).
 
 ## Gaps
 
-- GAP-001 (status: open): ngưỡng fuzzy trong block — bao nhiêu thì coi khớp vs
-  orphan (cân nhắc diff-match-patch). Source: "ngưỡng 'fuzziness' bao nhiêu".
-- GAP-002 (status: RESOLVED → C-001, qua điều tra uselink 2026-06-07): block_id =
-  **positional, inject server-side lúc publish**. Bằng chứng: so `draft_content` vs
-  `published_content` của doc uselink thật — published thêm `id="block-{tag}-{n}"`
-  (counter tuần tự theo từng loại tag, theo thứ tự DOM; element đã có id thì thêm
-  `data-block-id`). block_id KHÔNG phải identity ổn định cỡ CRDT (reviewer C1 framing
-  sai); nó là **hint rẻ**, độ bền đến từ text_snippet+offset+fuzzy+orphan. → re-anchor
-  GIỮ trong v0, S-005 unblock. Còn lại chỉ là ngưỡng fuzzy (GAP-001).
-- GAP-003 (status: resolved → AS-018): `multi_range` mất bất kỳ segment nào → cả
-  annotation detached (không neo nửa vời). (Quyết định 2026-06-07.)
-- GAP-004 (status: deferred): công adapt `HtmlBlock`/`useHtmlAnnotation` Plannotator
-  (giả định srcdoc) sang src+content-route — đo lúc build. Source: "Reuse HtmlBlock
-  … cần adapt … bao nhiêu công".
+- GAP-001 (status: open): the fuzzy threshold within a block — how much counts as a match vs
+  orphan (consider diff-match-patch). Source: "what 'fuzziness' threshold".
+- GAP-002 (status: RESOLVED → C-001, via uselink investigation 2026-06-07): block_id =
+  **positional, injected server-side at publish time**. Evidence: comparing `draft_content` vs
+  `published_content` of a real uselink doc — published adds `id="block-{tag}-{n}"`
+  (a sequential counter per tag type, in DOM order; an element that already has an id gets
+  `data-block-id`). block_id is NOT a CRDT-grade stable identity (reviewer C1's framing
+  was wrong); it's a **cheap hint**, durability comes from text_snippet+offset+fuzzy+orphan. → re-anchor
+  STAYS in v0, S-005 unblocked. What's left is just the fuzzy threshold (GAP-001).
+- GAP-003 (status: resolved → AS-018): `multi_range` losing any segment → the whole
+  annotation detaches (no partial anchoring). (Decided 2026-06-07.)
+- GAP-004 (status: resolved — 2026-06-11, commit `0c49d53`): the effort to adapt Plannotator's
+  `HtmlBlock`/`useHtmlAnnotation` (assumes srcdoc) to src+content-route — measured at build time.
+  Outcome: did NOT reuse Plannotator's srcdoc transport; built a purpose-made in-iframe bridge
+  script served into the `/v` content (selection→anchor walk over `[data-block-id],[id^="block-"]`,
+  relayed to the parent over a transferred MessagePort; parent draws highlights by sending the
+  anchor back). Measured effort = M. The trust model is C-009 + the new C-014. Source: "Reuse
+  HtmlBlock … needs adapting … how much effort".
+- GAP-005 (status: deferred — owner: backend, v0.x): the served bridge runs in the SAME JS realm
+  as the untrusted doc body (the `/v` CSP keeps body scripts running, C-014), so a hostile body
+  script can race the bridge handshake — nuisance/DoS, NOT an annotation-create (server re-authz,
+  C-009, is the boundary). The only fix that closes the race while keeping body scripts running is
+  nested-iframe realm isolation (trusted bridge in an outer frame, untrusted doc in an inner
+  sandboxed iframe). SES/`lockdown`, ShadowRealm, and a `script-src` nonce CSP were all evaluated
+  and rejected (researched 2026-06-11): SES is same-realm taming Figma abandoned, ShadowRealm has
+  no DOM, a nonce CSP would block the very body scripts AS-006/AS-007 require. Invest only if the
+  bridge ever carries trust the server cannot re-check. Source: build 2026-06-11 + security research.
 
 ## Clarifications — 2026-06-07
 
-- **Anchor block-scoped (uselink) thay vì nodePath/indexOf toàn doc (Plannotator
-  nguyên si):** bền qua version + tự giải duplicate-quote; model production đã chứng
-  minh.
-- **Reuse bridge Plannotator nhưng thay matcher:** lấy phần UI khó (select→mark→
-  margin) mà vẫn đạt độ bền anchord cần.
-- **Suggestion không auto-edit:** content nguồn ở file tác giả + version bất biến;
-  áp text-edit lên HTML đáng tin rất khó; round-trip MCP đúng tinh thần "agent kéo
-  feedback về sửa".
-- **Thread flat:** cột lề hẹp, lồng sâu khó đọc; Google Docs cũng flat.
-- **doc-level annotation:** feedback theo doc, re-resolve mỗi version (chốt chung
-  với versioning-diff).
-- **multi_range orphan = all-or-nothing:** mất bất kỳ segment nào → cả annotation
-  detached, tránh hiển thị nửa vời (chọn an toàn/đơn giản hơn neo phần còn khớp).
-- **block_id = positional hint (xác nhận từ uselink):** so draft vs published_content
-  của uselink cho thấy block_id là `block-{tag}-{n}` inject lúc publish, KHÔNG ổn định
-  qua chỉnh sửa. Độ bền re-anchor đến từ text_snippet+fuzzy+orphan. Bác bỏ lo ngại
-  /mf-challenge C1 "cần identity cỡ CRDT" — không cần. block_id implement tầm thường.
+- **Block-scoped anchor (uselink) instead of whole-doc nodePath/indexOf (vanilla
+  Plannotator):** durable across versions + self-resolves duplicate-quotes; a proven
+  production model.
+- **Reuse the Plannotator bridge but swap the matcher:** take the hard UI part (select→mark→
+  margin) while still reaching the durability anchord needs.
+- **Suggestions don't auto-edit:** the source content lives in the author's file + an immutable
+  version; applying text-edits onto trusted HTML is very hard; the MCP round-trip matches the
+  "agent pulls feedback back to edit" spirit.
+- **Flat threads:** the margin column is narrow, deep nesting is hard to read; Google Docs is flat too.
+- **doc-level annotation:** feedback is per-doc, re-resolved each version (decided jointly
+  with versioning-diff).
+- **multi_range orphan = all-or-nothing:** losing any segment → the whole annotation
+  detaches, avoiding a half-shown state (the safer/simpler choice over anchoring the still-matching part).
+- **block_id = positional hint (confirmed from uselink):** comparing uselink's draft vs published_content
+  shows block_id is `block-{tag}-{n}` injected at publish time, NOT stable across edits.
+  Re-anchor durability comes from text_snippet+fuzzy+orphan. Refutes the /mf-challenge C1 concern
+  "needs a CRDT-grade identity" — it doesn't. block_id is trivial to implement.
+- **(2026-06-12) `POST …/annotations/:id/comments` creates a TOP-LEVEL comment when `parentId` is
+  absent, and a flat reply when present.** S-001's first comment on a new annotation is top-level
+  (parent null); S-003's reply carries the root comment's id (flattened, C-004). The handler must
+  branch on `parentId` — it cannot route every comment through the reply path (a reply requires an
+  existing parent; the first comment has none). Build note: this was initially mis-handled (every
+  comment routed as a reply → `parent_not_found`), now fixed.
+- **(2026-06-12) The annotation list is ordered NEWEST-FIRST** (the rail shows the newest thread at
+  the top, AS-001); comments WITHIN a thread stay creation-order (root then replies) so a thread
+  reads top-down.
 
 ## Spec Sizing Notes
 
-Stories=7 (đúng soft target). AS=22 (trên soft target 20, trong khoảng overage ≤30).
+Stories=8 (target 7, within G7 overage ≤10). AS=25 (target 20, within G7 overage ≤30).
 
-Overage do hardening từ /mf-challenge (không phải bloat — mỗi AS một atom an toàn):
-- AS-019 (XSS render trơ), AS-020 (postMessage giả mạo), AS-021 (read-authZ),
-  AS-022 (suggestion stale) — bốn AS bảo mật, mỗi cái một atom riêng.
-Hard cap 30 chưa chạm. Nếu re-anchor (S-005) bị defer xuống v0.5 (đang park), AS
-giảm lại dưới 20.
+The overage comes from /mf-challenge hardening + the 2026-06-11 detached-management add (not bloat — each AS one atom):
+- AS-019 (XSS renders inert), AS-020 (forged postMessage), AS-021 (read-authZ),
+  AS-022 (stale suggestion) — four security ASes.
+- S-008 detached management: AS-023 (dismiss), AS-024 (re-attach), AS-025 (authz refuse) — three atoms.
+The hard cap of 30 isn't reached.
 
 ## Change Log
 
@@ -414,5 +512,11 @@ giảm lại dưới 20.
 | 2026-06-07 | Initial creation (from docs/explore/annotation-core.md) | -- |
 | 2026-06-07 | GAP-003 resolved → AS-018 (multi_range all-or-nothing detach) | -- |
 | 2026-06-07 | /mf-challenge harden: C-008..C-012 + AS-019..022 (XSS, postMessage trust, read-authZ, suggestion stale, re-anchor robustness); GAP-002 → Critical, S-005 parked | -- |
-| 2026-06-07 | GAP-002 RESOLVED qua điều tra uselink (draft vs published_content): block_id = positional `block-{tag}-{n}` inject lúc publish; S-005 unblock, re-anchor giữ v0 | -- |
+| 2026-06-07 | GAP-002 RESOLVED via uselink investigation (draft vs published_content): block_id = positional `block-{tag}-{n}` injected at publish; S-005 unblocked, re-anchor stays in v0 | -- |
 | 2026-06-07 | + ## UI Notes (Component Tree from explore §UI sketches) — Minor | -- |
+| 2026-06-08 | + ## API (HTTP contract: annotations/comments/resolution/suggestions; per api-core) — Minor | -- |
+| 2026-06-08 | Minor: Data Model — add `comments.guest_email` (nullable) for AS-017 optional guest email | -- |
+| 2026-06-11 | Minor: ## API paths corrected to workspace-scoped `/api/w/:workspaceId/…` (matches real routes after workspaces S-006 path-scoping; the table was stale) — annotation-core-ui:GAP-001 / runtime audit | -- |
+| 2026-06-11 | Major: + S-008 (dismiss / re-attach a detached annotation, AS-023/024/025) + C-013 + `dismissed_at` (Data Model) + API rows (dismiss/reattach); annotation-core-ui prerequisite #3. ImageViewer contract (#4) is FE-side (suggest-image C-006), no backend change. Snapshot 2026-06-11.md | -- |
+| 2026-06-11 | Major: GAP-004 RESOLVED — built the in-iframe sandbox bridge served into `/v` (commit `0c49d53`), effort M; + C-014 (CSP `sandbox allow-scripts` stays / nonce inert / bridge is defense-in-depth — never add `script-src`); + GAP-005 (nested-iframe realm isolation deferred; SES/ShadowRealm/CSP rejected). Surfaced by /mf-build of annotation-core-ui-commenting S-002. Snapshot 2026-06-11.md | -- |
+| 2026-06-12 | Minor (Clarifications): `…/annotations/:id/comments` creates a top-level comment when `parentId` absent / a flat reply when present (build fix: was routed reply-only → parent_not_found); annotation list ordered newest-first (comments within a thread stay creation-order) | commits `6801e53`,`7ae892e` |

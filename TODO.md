@@ -71,3 +71,59 @@ Worked example (the exact intent):
 **Data model sketch (when built):** `notification_preferences` per-user keyed (category, channel);
 `notifications.emailed_at` (de-dupe marker); a per-recipient pending-email buffer
 (items + window_expires_at + count).
+
+---
+
+## Eden end-to-end typing collapses to `/health` (conditional route mounting)
+
+**Status:** deferred (works at runtime; cast is centralized). **Source:** workspaces-ui build (S2).
+
+`createApp(deps)` mounts each data-route group conditionally (`if (deps.x) app.use(...)`), so
+`export type App = typeof app` only statically exposes the unconditionally-mounted routes
+(`/health`). Eden Treaty `treaty<App>` therefore can't type the `/api/w/:id/…` routes — the FE
+reaches them through one typed wrapper (`apps/web/src/features/workspaces/client.ts`) with a
+localized cast. This defeats the locked "end-to-end type safety (Eden)" goal for every FE feature.
+
+Fix (when picked up): mount route groups unconditionally so `typeof app` widens to the full surface
+(move the deps-presence guard inside handlers, or assemble the `App` type from the route modules
+directly). Keep the cast centralized in `client.ts` until then — subsequent FE features route
+through it, so the debt stays in one file, not multiplied.
+
+## Workspace invite mismatch is a uniform 404 (existence-hiding) vs the "not for you" UX
+
+**Status:** accepted for v0. **Source:** workspaces-ui AS-015 (S2).
+
+`POST /api/invitations/:id/accept|reject` require `{token}` and return a uniform 404 on
+email-mismatch (existence-hiding — correct security posture). So the FE's "this invite isn't for
+you" (AS-015) is a client-side pre-check comparing the session email to an `email` param carried in
+the invite link, not an authoritative server signal. Acceptable for v0; revisit if we want a
+server-authoritative mismatch response without leaking invite existence.
+
+---
+
+## Annotation editor: pinpoint mode + Markup/Redline types (steal Plannotator, FE)
+
+**Status:** deferred — needs spec first (`/mf-plan` on `annotation-core-ui-suggest-image`).
+**Source:** Plannotator engine adoption, 2026-06-11/12 (select-mode engine A+B already landed:
+commits `4528194`, `148f73c`, `bae51c0`).
+
+The select-mode text engine (Comment type) is built + hardened. Remaining annotation surface,
+modelled on Plannotator's **2 modes × types** taxonomy:
+
+- **pinpoint mode (NEW):** pick a whole rendered element dev-tools-style (hover → element outlined →
+  click), anchored to the block by block-id — NOT a text sub-range. Works on md/html (whole block)
+  and on images (point/box region). The image case = `suggest-image` S-003/S-004 (already specced,
+  unbuilt); the **md/html element-picker is new** (no spec yet). Steal from Plannotator
+  `packages/ui/utils/blockTargeting.ts` + the hover-outline overlay (Apache-2.0, keep NOTICE).
+- **Markup type (NEW):** highlight-only annotation (no comment thread) — not in any current spec;
+  add as a new SelectionPopover action + a new annotation kind. Needs a `/mf-plan` line.
+- **Redline type = our existing "Suggest"** (propose a text replace) — `suggest-image` S-001/S-002,
+  unbuilt. Rename Suggest→Redline if we adopt Plannotator's vocabulary.
+- **Label type: DROPPED** (product decision 2026-06-11) — do not build.
+
+Do NOT copy Plannotator's `nodePath` anchor model or `@plannotator/web-highlighter` (whole-doc
+position-based, fragile across reflow). Keep our block-scoped anchor. Our MessageChannel+nonce
+bridge is more secure than theirs — keep it. Adopt only the targeting/UX techniques.
+
+When picked up: `/mf-plan docs/specs/annotation-core/annotation-core-ui-suggest-image.md` to add
+pinpoint mode + Markup, fold in Redline=Suggest, drop Label; then `/mf-build`.

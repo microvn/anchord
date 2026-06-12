@@ -1,11 +1,14 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { newId } from "./id";
 
 // Minimal foundational schema for the runnable skeleton: docs + immutable versions
 // (owned by render-publish). Feature clusters extend this (annotations, shares,
 // api_tokens, notifications, better-auth tables) in their own builds.
 
-const id = () => uuid("id").primaryKey().defaultRandom();
+// Snowflake string id, generated in JS ($defaultFn) — no Postgres gen_random_uuid(), so the
+// schema stays portable (SQLite-ready). Every id + FK column is `text` (see src/db/id.ts).
+const id = () => text("id").primaryKey().$defaultFn(() => newId());
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
 export const docKind = pgEnum("doc_kind", ["html", "markdown", "image"]);
@@ -40,7 +43,7 @@ export const docs = pgTable(
     // publisher's default project (C-009 / the MCP-missing-projectId fallback). On a
     // project delete the FK is set null (we block delete of a non-empty project, but
     // set-null keeps the doc reachable if a project ever vanishes another way).
-    projectId: uuid("project_id").references((): any => projects.id, { onDelete: "set null" }),
+    projectId: text("project_id").references((): any => projects.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -67,7 +70,7 @@ export const projects = pgTable(
   "projects",
   {
     id: id(),
-    workspaceId: uuid("workspace_id")
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
@@ -87,7 +90,7 @@ export const docVersions = pgTable(
   "doc_versions",
   {
     id: id(),
-    docId: uuid("doc_id")
+    docId: text("doc_id")
       .notNull()
       .references(() => docs.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
@@ -128,7 +131,7 @@ export const shareLinks = pgTable(
   "share_links",
   {
     id: id(),
-    docId: uuid("doc_id")
+    docId: text("doc_id")
       .notNull()
       .unique() // C-001: one general-access config per doc
       .references(() => docs.id, { onDelete: "cascade" }),
@@ -169,7 +172,7 @@ export const docMembers = pgTable(
   "doc_members",
   {
     id: id(),
-    docId: uuid("doc_id")
+    docId: text("doc_id")
       .notNull()
       .references(() => docs.id, { onDelete: "cascade" }),
     // Bound to a user once an account exists; NULL while the invite is pending.
@@ -232,7 +235,7 @@ export const annotations = pgTable(
   "annotations",
   {
     id: id(),
-    docId: uuid("doc_id")
+    docId: text("doc_id")
       .notNull()
       .references(() => docs.id, { onDelete: "cascade" }),
     type: annotationType("type").notNull(),
@@ -265,10 +268,10 @@ export const reanchorLedger = pgTable(
   "reanchor_ledger",
   {
     id: id(),
-    annotationId: uuid("annotation_id")
+    annotationId: text("annotation_id")
       .notNull()
       .references(() => annotations.id, { onDelete: "cascade" }),
-    versionId: uuid("version_id").notNull(),
+    versionId: text("version_id").notNull(),
     status: reanchorLedgerStatus("status").notNull(),
     // The re-anchored anchor when carried; NULL when orphaned.
     anchor: jsonb("anchor"),
@@ -284,11 +287,11 @@ export const comments = pgTable(
   "comments",
   {
     id: id(),
-    annotationId: uuid("annotation_id")
+    annotationId: text("annotation_id")
       .notNull()
       .references(() => annotations.id, { onDelete: "cascade" }),
     // Self-FK for a flat reply (S-003, C-004 — one level). NULL = top comment.
-    parentId: uuid("parent_id").references((): any => comments.id, { onDelete: "cascade" }),
+    parentId: text("parent_id").references((): any => comments.id, { onDelete: "cascade" }),
     // The signed-in author; NULL for a guest comment (S-007), which carries guestName.
     authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
     guestName: text("guest_name"),
@@ -328,7 +331,7 @@ export const notifications = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     type: notificationType("type").notNull(),
     // Deep-link target — the annotation (thread) id that received the reply.
-    refId: uuid("ref_id").notNull(),
+    refId: text("ref_id").notNull(),
     read: boolean("read").notNull().default(false),
     createdAt: createdAt(),
   },
@@ -361,7 +364,7 @@ export const workspaceMembers = pgTable(
   "workspace_members",
   {
     id: id(),
-    workspaceId: uuid("workspace_id")
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     // better-auth user.id is TEXT (not uuid) — C-007 of auth-routes applies here too.
@@ -399,7 +402,7 @@ export const workspaceInvitations = pgTable(
   "workspace_invitations",
   {
     id: id(),
-    workspaceId: uuid("workspace_id")
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     email: text("email").notNull(),

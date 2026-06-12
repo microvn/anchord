@@ -125,9 +125,11 @@ describe("/api/search route glue (workspace-project S-005)", () => {
     expect(res.status).toBe(400);
   });
 
-  test("invalid projectId (not a uuid) → 400 VALIDATION_ERROR", async () => {
+  // Ids are opaque snowflake strings now (no uuid format) — the validation layer only rejects an
+  // EMPTY projectId; any non-empty value is structurally valid and scoped downstream by the repo.
+  test("empty projectId → 400 VALIDATION_ERROR", async () => {
     const app = buildApp(asUser("u_x"), fakeRepo([]));
-    const res = await app.handle(req("/api/w/ws_1/search?q=x&projectId=not-a-uuid"));
+    const res = await app.handle(req("/api/w/ws_1/search?q=x&projectId="));
     expect(res.status).toBe(400);
   });
 

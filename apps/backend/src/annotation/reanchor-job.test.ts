@@ -1,0 +1,183 @@
+import { test, expect } from "bun:test";
+import {
+  runReanchorForNewVersion,
+  DETACHED_ALERT_THRESHOLD,
+  type ReanchorAnnotationReader,
+  type ReanchorApplyRepo,
+  type ReanchorJobLedger,
+  type ReanchorSummary,
+} from "./reanchor-job";
+import type { Anchor } from "./annotation";
+import type { ReanchorLedgerEntry } from "./reanchor";
+
+// annotation-core S-005 / C-012 — the re-anchor JOB (the integration glue around the pure
+// matcher reanchorForVersion). The matcher behaviour (AS-011/012/013/018, C-002) is covered
+// in reanchor.test.ts. THESE tests cover C-012's integration half: apply carried/detached to
+// the annotations table, persist the (annotation_id, version_id) ledger, idempotent re-run,
+// and the per-publish summary + >25%-detached alert. Pure ports, no DB.
+
+const doc = (paras: string[]) => paras.map((p) => `<p>${p}</p>`).join("");
+const SEVEN = [
+  "intro one",
+  "intro two",
+  "intro three",
+  "intro four",
+  "intro five",
+  "intro six",
+  "Payment expires after 24h",
+];
+
+/** A fake annotation reader. `type` defaults to "range"; pass "suggestion" to exercise the filter. */
+function reader(rows: { id: string; anchor: Anchor; type?: string }[]): ReanchorAnnotationReader {
+  return { async listByDoc() { return rows.map((r) => ({ id: r.id, anchor: r.anchor, type: r.type ?? "range" })); } };
+}
+
+/** A fake apply repo that records what was carried / detached. */
+function applyRepo() {
+  const carried: { id: string; anchor: Anchor }[] = [];
+  const detached: string[] = [];
+  const repo: ReanchorApplyRepo = {
+    async applyCarried(id, anchor) { carried.push({ id, anchor }); },
+    async markDetached(id) { detached.push(id); },
+  };
+  return { repo, carried, detached };
+}
+
+/** A fake ledger backed by a Map — mirrors the real DrizzleReanchorLedgerRepo contract. */
+function ledger() {
+  const store = new Map<string, ReanchorLedgerEntry>();
+  const key = (a: string, v: string) => `${a}::${v}`;
+  const persisted: ReanchorLedgerEntry[] = [];
+  const repo: ReanchorJobLedger = {
+    getEntry(a, v) { return store.get(key(a, v)); },
+    async loadEntries() { /* cache already shared via `store` */ },
+    async persistEntry(entry) {
+      const k = key(entry.annotationId, entry.versionId);
+      const existed = store.has(k);
+      store.set(k, entry);
+      if (!existed) persisted.push(entry);
+      return !existed; // ON CONFLICT DO NOTHING semantics
+    },
+  };
+  return { repo, store, persisted };
+}
+
+test("C-012: carried annotations get applyCarried(new anchor) + detached get markDetached", async () => {
+  const carriedAnchor: Anchor = { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 };
+  const lostAnchor: Anchor = { blockId: "block-p-99", textSnippet: "gone", offset: 0, length: 4 };
+  const r = reader([{ id: "a1", anchor: carriedAnchor }, { id: "a2", anchor: lostAnchor }]);
+  const apply = applyRepo();
+  const led = ledger();
+
+  const summary = await runReanchorForNewVersion(
+    { annotations: r, apply: apply.repo, ledger: led.repo },
+    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+  );
+
+  // a1 carried with a recomputed anchor; a2 detached (never lost).
+  expect(apply.carried.map((c) => c.id)).toEqual(["a1"]);
+  expect(apply.carried[0]?.anchor.blockId).toBe("block-p-7");
+  expect(apply.detached).toEqual(["a2"]);
+  // Ledger persisted one row per (annotation, version).
+  expect(led.persisted).toHaveLength(2);
+  expect(summary.total).toBe(2);
+  expect(summary.carried).toBe(1);
+  expect(summary.detached).toBe(1);
+});
+
+test("C-012: re-run for the same versionId is idempotent — no duplicate ledger rows", async () => {
+  const r = reader([
+    { id: "a1", anchor: { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 } },
+    { id: "a2", anchor: { blockId: "block-p-99", textSnippet: "gone", offset: 0, length: 4 } },
+  ]);
+  const apply = applyRepo();
+  const led = ledger();
+  const input = { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) };
+
+  const first = await runReanchorForNewVersion({ annotations: r, apply: apply.repo, ledger: led.repo }, input);
+  const second = await runReanchorForNewVersion({ annotations: r, apply: apply.repo, ledger: led.repo }, input);
+
+  // Same summary; ledger persisted exactly twice total (once per annotation), not four times.
+  expect(second).toEqual(first);
+  expect(led.persisted).toHaveLength(2);
+});
+
+test("C-012: detached rate over the threshold raises the alert; under does not", async () => {
+  // 3 of 4 annotations orphan → 75% > 25% → alert.
+  const carriedAnchor: Anchor = { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 };
+  const lost = (n: number): Anchor => ({ blockId: `block-p-${90 + n}`, textSnippet: "gone", offset: 0, length: 4 });
+  const high = reader([
+    { id: "a1", anchor: carriedAnchor },
+    { id: "a2", anchor: lost(1) },
+    { id: "a3", anchor: lost(2) },
+    { id: "a4", anchor: lost(3) },
+  ]);
+  const hi = await runReanchorForNewVersion(
+    { annotations: high, apply: applyRepo().repo, ledger: ledger().repo },
+    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+  );
+  expect(hi.detachedRate).toBeGreaterThan(DETACHED_ALERT_THRESHOLD);
+  expect(hi.alert).toBe(true);
+
+  // 1 of 4 orphans → 25%, NOT strictly over 25% → no alert.
+  const low = reader([
+    { id: "b1", anchor: carriedAnchor },
+    { id: "b2", anchor: carriedAnchor },
+    { id: "b3", anchor: carriedAnchor },
+    { id: "b4", anchor: lost(1) },
+  ]);
+  const lo = await runReanchorForNewVersion(
+    { annotations: low, apply: applyRepo().repo, ledger: ledger().repo },
+    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+  );
+  expect(lo.detachedRate).toBeCloseTo(0.25, 5);
+  expect(lo.alert).toBe(false);
+});
+
+test("C-012: the per-publish summary is reported via onSummary", async () => {
+  const seen: ReanchorSummary[] = [];
+  await runReanchorForNewVersion(
+    {
+      annotations: reader([{ id: "a1", anchor: { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 } }]),
+      apply: applyRepo().repo,
+      ledger: ledger().repo,
+      onSummary: (s) => seen.push(s),
+    },
+    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+  );
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.versionId).toBe("doc_1:2");
+  expect(seen[0]?.carried).toBe(1);
+});
+
+test("C-012: suggestion-type annotations are excluded from re-anchor (separate C-011 lifecycle)", async () => {
+  const apply = applyRepo();
+  const summary = await runReanchorForNewVersion(
+    {
+      annotations: reader([
+        { id: "a1", type: "range", anchor: { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 } },
+        { id: "s1", type: "suggestion", anchor: { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 } },
+      ]),
+      apply: apply.repo,
+      ledger: ledger().repo,
+    },
+    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+  );
+  // Only the range annotation is considered; the suggestion is untouched.
+  expect(summary.total).toBe(1);
+  expect(apply.carried.map((c) => c.id)).toEqual(["a1"]);
+  expect(apply.detached).toEqual([]);
+});
+
+test("C-012: edge — a doc with zero annotations does no work and never alerts", async () => {
+  const apply = applyRepo();
+  const led = ledger();
+  const summary = await runReanchorForNewVersion(
+    { annotations: reader([]), apply: apply.repo, ledger: led.repo },
+    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+  );
+  expect(summary).toMatchObject({ total: 0, carried: 0, detached: 0, detachedRate: 0, alert: false });
+  expect(apply.carried).toEqual([]);
+  expect(apply.detached).toEqual([]);
+  expect(led.persisted).toEqual([]);
+});

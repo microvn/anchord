@@ -1,0 +1,27 @@
+[x] AS-001 — signup creates the user's own "default" workspace as admin + default project      | owner: S-001
+[x] AS-002 — a new account does NOT auto-join an existing workspace as member                   | owner: S-001
+[x] C-001  — each account auto-gets "default" (admin) + default project; never joins existing     | owner: S-001
+[x] AS-003 — creating a workspace makes me its admin; appears in my list                        | owner: S-002
+[x] AS-004 — admin renames the workspace                                                        | owner: S-002
+[x] AS-005 — a non-admin cannot rename                                                          | owner: S-002
+[x] AS-006 — bootstrap lists my workspaces + role + active (admin-qualified)                    | owner: S-003
+[x] AS-007 — data is scoped to the active workspace (only its projects/docs)                    | owner: S-003
+[x] AS-008 — accessing a workspace I don't belong to is refused (existence-hiding)              | owner: S-003
+[x] C-005  — active-workspace scope in the path /api/w/:id/, not server-side current             | owner: S-003
+[x] AS-009 — admin invites a member by email → pending + email                                  | owner: S-004
+[x] AS-010 — accepting an invite joins the workspace                                            | owner: S-004
+[x] AS-011 — rejecting an invite leaves no membership                                           | owner: S-004
+[x] AS-012 — an invite link used by a different email is refused                                | owner: S-004
+[x] AS-013 — only an admin can invite                                                           | owner: S-004
+[x] C-004  — invite by email, pending until acted; accepting email must match; reject = no member | owner: S-004
+[x] AS-014 — admin removes a member                                                             | owner: S-005
+[x] AS-015 — admin promotes a member to admin (admin transfer)                              | owner: S-005
+[x] AS-016 — the last admin cannot be removed or demoted                                        | owner: S-005
+[x] AS-017 — a non-admin cannot remove or change roles                                          | owner: S-005
+[x] AS-021 — admin sees the workspace member list (members + pending)                           | owner: S-005
+[x] C-003  — only admin invites/removes/changes-role; ≥1 admin always                            | owner: S-005
+[x] AS-018 — a member of one workspace cannot read another's data                               | owner: S-006
+[x] AS-019 — anyone_in_workspace resolves only within the doc's workspace                       | owner: S-006
+[x] AS-020 — a workspace member reaches that workspace's anyone_in_workspace docs               | owner: S-006
+[x] C-002  — caller accesses a workspace's data only as a member; isWorkspaceMember scoped       | owner: S-006
+[N/A] C-006 — per-doc share orthogonal; resolveDocPermission owned by sharing-permissions        | owner: —

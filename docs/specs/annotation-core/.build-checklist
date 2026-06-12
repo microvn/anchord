@@ -1,0 +1,56 @@
+# Checklist — annotation-core-ui-commenting (controller-owned, Phase 0.6)
+
+## S-001 — Comment on a selected text range (Markdown)  [DONE]
+[x] AS-001.T1 — block-anchored annotation created with anchor {blockId, textSnippet, offset, length}   | owner: S-001 | commenting.test.tsx:"AS-001…" + selectionToAnchor tests
+[x] AS-001.T2 — a highlight marks the selected sentence on send                                          | owner: S-001 | commenting.test.tsx:"AS-001…" ([data-anno])
+[x] AS-001.T3 — a thread with the quote + comment appears at the TOP of the rail (exactly one, post-fix)  | owner: S-001 | commenting.test.tsx:"AS-001…" (1 thread-card)
+[x] AS-001.T4 — the annotation count increments (exactly 1, no double-count, post-fix)                    | owner: S-001 | commenting.test.tsx:"AS-001…" (rail-count==1)
+[x] AS-002    — empty / whitespace-only selection: no popover, no annotation                              | owner: S-001 | commenting.test.tsx:"AS-002 / C-003" + selectionToAnchor null cases
+[x] AS-003    — viewer-only role: no popover/composer, rail is read-only                                  | owner: S-001 | commenting.test.tsx:"AS-003 / C-004"
+[x] AS-013.T1 — refused/failed write removes the optimistic highlight + thread (no ghost)                 | owner: S-001 | commenting.test.tsx:"AS-013 / C-011"
+[x] AS-013.T2 — an error is shown ("couldn't save your comment")                                          | owner: S-001 | commenting.test.tsx:"AS-013 / C-011" (toast.error)
+[x] C-003     — empty/whitespace selection never creates an annotation                                    | owner: S-001 | selectionToAnchor collapsed+whitespace+no-block
+[x] C-004     — compose affordance only for comment-permission+ role (viewer read-only)                   | owner: S-001 | commenting.test.tsx:"AS-003 / C-004"
+[x] C-008.T1  — comment body rendered inert (escaped plaintext, not HTML/markdown)                        | owner: S-001 | commenting.test.tsx:"C-008.T1"
+[x] C-008.T2  — pending quoted snippet (PendingQuoteRef/QuoteRef) rendered inert                          | owner: S-001 | commenting.test.tsx:"C-008.T2"
+[x] C-008.T4  — "Markdown supported" hint removed; neutral hint instead ("Plain text only")               | owner: S-001 | commenting.test.tsx:"C-008.T4"
+[x] C-011     — creation optimistic, rolls back on refused/failed write                                   | owner: S-001 | commenting.test.tsx:"AS-013 / C-011"
+
+## S-002 — Comment on an HTML doc via the sandbox bridge  [DONE — checkpoint approved 2026-06-11, posture (d)]
+[x] AS-004    — selection inside the iframe relays over trusted bridge, comment creates annotation+highlight+thread | owner: S-002 | sandbox-bridge.test.tsx:"AS-004: selecting inside the sandbox relays…" + connectBridge AS-004
+[x] AS-005    — forged postMessage from doc body is ignored, no annotation created                        | owner: S-002 | sandbox-bridge.test.tsx:"AS-005: a forged postMessage…" + isTrustedReady AS-005 (security review: PASS)
+[x] C-001     — annotation write treated as untrusted hint client-side; re-authz is server-side           | owner: S-002 | sandbox-bridge.test.tsx AS-005 (zero createAnnotation from window msg); create only via authorized client send
+[x] C-002     — bridge uses a dedicated channel, does not trust by origin (opaque null)                    | owner: S-002 | isTrustedReady tests (port required, source-only, first-ready-binds)
+[x] C-009     — iframe src set once from /v/:id on mount, never from user input                            | owner: S-002 | sandbox-bridge.test.tsx:"C-009: the iframe src is set once…"
+[~] HARDEN    — body-script handshake race (nuisance/DoS, NOT an authz break) — fix = nested-iframe realm isolation (M); deferred to v0.x. Real boundary is C-001. Researched 2026-06-11 (SES/ShadowRealm/CSP all rejected). → backend annotation-core spec | owner: S-002
+
+## S-003 — Reply in a thread  [DONE — wired end-to-end]
+[x] AS-006    — a reply shows flat under the annotation (one level, not nested deeper)                     | owner: S-003 | thread-reply.test.tsx:"AS-006…" (component) + thread-reply-wiring.test.tsx:"AS-006…" (live rail → addComment{body,parentId})
+[x] C-005     — replies are flat — one level, never deeper                                                 | owner: S-003 | thread-reply.test.tsx:"C-005: a reply to a reply still renders flat" (maxReplyListDepth===1)
+
+## S-004 — Resolve / reopen a thread  [DONE — wired end-to-end]
+[x] AS-007    — Resolve then Reopen toggles status (dimmed + Resolved badge, highlight dims)               | owner: S-004 | thread-resolve.test.tsx:"AS-007…" + thread-resolve-wiring.test.tsx:"AS-007: resolving in the live rail…"; highlight-dim [→MANUAL] for opacity, data-resolved asserted
+[x] AS-008    — a non-author commenter can resolve (not author-only)                                       | owner: S-004 | thread-resolve.test.tsx:"AS-008: a non-author commenter can resolve"
+[x] C-006     — resolve is a toggle; anyone with comment perm can resolve/reopen; resolved renders dimmed  | owner: S-004 | thread-resolve.test.tsx:"C-006: a viewer-only role … gets NO Resolve control" + refused-write rollback
+
+## S-005 — Guest commenting  [DONE — wired end-to-end]
+[x] AS-009    — guest shown a random display name on open, with a Rename control                           | owner: S-005
+[x] AS-010    — guest comments with a name (email optional), stored under the guest name                   | owner: S-005
+[x] AS-011    — send blocked until guest provides a name ("name required" hint)                            | owner: S-005
+[x] AS-012.T1 — comment body / guest name with HTML renders inert (script does not run)                   | owner: S-005
+[x] AS-012.T2 — an over-long guest name is truncated                                                       | owner: S-005
+[x] C-007     — guest assigned random name on open; name required to comment; email optional              | owner: S-005
+[x] C-008.T3  — guest name rendered inert + length/charset-limited                                        | owner: S-005
+[x] C-010     — guest comment visibly attributed as a guest (display label, not identity)                  | owner: S-005
+
+## Open gaps (visible, not silently dropped)
+[x] GAP-001   — RESOLVED: backend bridge script (commit 0c49d53) + injectBlockIds both built; S-002 end-to-end | owner: S-002
+[x] GAP-002   — RESOLVED: built a custom in-iframe bridge over the /v src-route (not Plannotator srcdoc); effort measured = M | owner: S-002
+
+## Out of scope (declared) — never tick
+[N/A] doc rendering / reading existing annotations / rail layout — annotation-core-ui (shell)              | owner: —
+[N/A] suggestions + image-region annotations — annotation-core-ui-suggest-image                            | owner: —
+[N/A] re-attach / dismiss of a detached annotation — deferred (needs backend re-attach surface)            | owner: —
+[N/A] guest-commenting toggle + role model — sharing-permissions                                           | owner: —
+[N/A] server-side bridge script + block-id injection + write re-authz — annotation-core (backend)          | owner: —
+[N/A] GAP-004 — guest rate-limit/moderation — deferred to sharing-permissions/backend                      | owner: —

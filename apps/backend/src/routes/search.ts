@@ -30,7 +30,8 @@ import type { DB } from "../db/client";
 /** Query schema: q is required + non-empty; projectId optional uuid. Unknown keys stripped. */
 export const searchQuerySchema = z.object({
   q: z.string().min(1, "search query is required"),
-  projectId: z.string().uuid().optional(),
+  // Snowflake string id (src/db/id.ts), not a uuid — validate as a non-empty string.
+  projectId: z.string().min(1).optional(),
 });
 
 export interface SearchRoutesDeps {

@@ -1,0 +1,346 @@
+# Spec: workspace-project-ui
+
+**Created:** 2026-06-10
+**Last updated:** 2026-06-10
+**Status:** Draft
+
+## Overview
+
+The frontend for the workspace-project cluster — the consumer side of `workspace-project`
+(backend). The backend ships projects (create/rename/archive/unarchive/delete), doc move/copy,
+project-scoped search, and reply notifications, but several have **no UI** yet: project
+management controls, doc move/copy, a project picker on publish, search scoping, and the
+in-app notification center. This spec covers exactly those missing surfaces. Browse, create-
+project, whole-workspace search, and the doc grid/list already exist (see What Already Exists)
+and are out of scope here.
+
+Builds on `web-core` (shell, router, typed client) and the active-workspace context from
+`workspaces-ui` (every call is path-scoped `/api/w/:workspaceId/…` and TanStack-Query-keyed by
+`workspaceId`). Design source: the Anchord-Design prototype (canonical where it exists).
+
+## Data Model
+
+No persistent data — a client. Reads/writes the workspace-project backend over the Eden typed
+client and re-reads workspace-keyed queries. Client state is per-dialog (move/copy target,
+rename draft, notification open/unread).
+
+## Stories
+
+### S-001: Move or copy a doc between projects (P1)
+
+**Description:** As someone with access to a doc, I open its "more" menu and move it to another
+project, or copy it (a clean duplicate), choosing the destination from the projects in this
+workspace.
+**Source:** workspace-project:S-004 (AS-008 move, AS-013 copy); audit gap-list A.4/A.5 (endpoints exist, no UI). Prototype: `MoveCopyDialog` (P10), `DocCard` kebab `onMore`.
+
+**Execution:**
+- `depends_on:` none (builds on the existing doc grid/list + Eden client)
+- `parallel_safe:` false (adds `moveDoc`/`copyDoc` to the shared `features/docs/client.ts` + a kebab on the shared `doc-card`/`doc-list`)
+- `files:` `apps/web/src/features/docs/{client.ts,doc-card.tsx,doc-list.tsx}`, new `apps/web/src/features/docs/move-copy-dialog.tsx`
+- `autonomous:` true
+- `verify:` open a doc's ⋯ menu → Move → pick another project → the doc appears under the target project; Copy → a new doc is created in the target, the original stays.
+
+**Acceptance Scenarios:**
+
+AS-001: Move a doc to another project
+- **Given:** doc "Auth Spec" is in project "Billing"; this workspace also has project "Payments"
+- **When:** I open the doc's ⋯ menu, choose Move, pick "Payments", and confirm Move
+- **Then:** the doc now shows under "Payments" (its project label updates) and is no longer under "Billing"
+- **Data:** Billing → Payments
+
+AS-002: Copy a doc to another project
+- **Given:** doc "Auth Spec" is in project "Billing"
+- **When:** I open the doc's ⋯ menu, choose Copy, pick "Payments", and confirm Copy
+- **Then:** a new doc is created under "Payments" and the original "Auth Spec" stays in "Billing" unchanged
+- **Data:** copy Billing → Payments
+
+### S-002: Manage a project — rename, archive, delete (P1)
+
+**Description:** As a member, I rename a project, archive/unarchive it, and delete an empty
+project, from a per-project "more" menu; the default project is protected and destructive
+actions ask for confirmation.
+**Source:** workspace-project:S-003 (create/rename/archive/delete; AS-007 archive); audit gap-list A.1/A.2/A.3 (endpoints exist, no UI). No prototype for these controls — designed consistent with the system (see UI Notes, flagged in Clarifications).
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false (adds project mutations to the shared `features/docs/client.ts` + controls on `projects-screen.tsx`)
+- `files:` `apps/web/src/features/docs/{client.ts,projects-screen.tsx,use-docs.ts}`, new `apps/web/src/features/docs/rename-project-dialog.tsx`; reuses `components/confirm-dialog.tsx`, `components/ui/{dropdown-menu,select}.tsx`
+- `autonomous:` true
+- `verify:` a project's ⋯ menu offers Rename/Archive/Delete; rename updates the name; archive removes it from the default browse and a "Show archived" toggle brings it back to unarchive; deleting an empty project (after confirm) removes it; the default project offers no delete.
+
+**Acceptance Scenarios:**
+
+AS-003: Rename a project
+- **Given:** a project named "Billing"
+- **When:** I open its ⋯ menu, choose Rename, enter "Payments Ops", and save
+- **Then:** the project shows as "Payments Ops" in the projects browse
+- **Data:** "Billing" → "Payments Ops"
+
+AS-004: Archive a project hides it from the default browse
+- **Given:** an active project "Old Specs"
+- **When:** I archive it from its ⋯ menu
+- **Then:** "Old Specs" disappears from the default projects browse
+- **Data:** archive "Old Specs"
+
+AS-005: Unarchive a project from the archived view
+- **Given:** "Old Specs" is archived
+- **When:** I turn on "Show archived" and choose Unarchive on it
+- **Then:** "Old Specs" appears again in the default browse
+- **Data:** unarchive "Old Specs"
+
+AS-006: Delete an empty project after confirming
+- **Given:** an empty project "Scratch" (no docs)
+- **When:** I choose Delete from its ⋯ menu and confirm in the dialog
+- **Then:** "Scratch" is removed from the projects browse
+- **Data:** empty project "Scratch"
+
+AS-007: The default project offers no delete, and a non-empty delete is refused
+- **Given:** the auto-created default project (and a non-empty project "Billing")
+- **When:** I open the default project's ⋯ menu / try to delete "Billing"
+- **Then:** the default project shows no Delete control; deleting "Billing" is refused with a reason (it still has docs) and the project stays
+- **Data:** default project + non-empty "Billing"
+
+### S-003: Publish a doc into a chosen project (P1)
+
+**Description:** As someone publishing a doc, I pick which project it lands in (defaulting to my
+default project) instead of always the default.
+**Source:** workspace-project:AS-005 (publish into a project); render-publish publish accepts `projectId`; audit gap-list A.6 (route accepts `projectId`, FE never sets it). Prototype `NewDocDialog` currently hardcodes "the default project" — picker designed (flagged).
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false (edits the shared `new-doc-dialog.tsx`)
+- `files:` `apps/web/src/features/docs/new-doc-dialog.tsx`, `apps/web/src/features/docs/client.ts` (already accepts `projectId`); reuses `components/ui/select.tsx`
+- `autonomous:` true
+- `verify:` the New-doc dialog shows a project picker defaulting to the default project; publishing into a chosen non-default project lands the doc there.
+
+**Acceptance Scenarios:**
+
+AS-008: Publish into a chosen non-default project
+- **Given:** the New-doc dialog with content ready and this workspace has projects "Default" and "Billing"
+- **When:** I select "Billing" as the project and publish
+- **Then:** the new doc is created in "Billing"
+- **Data:** publish into "Billing"
+
+AS-009: The default project is pre-selected
+- **Given:** the New-doc dialog is opened
+- **When:** I do not change the project and publish
+- **Then:** the doc lands in my default project (the picker defaulted to it)
+- **Data:** publish without changing the picker
+
+### S-004: Scope search to the current project (P1)
+
+**Description:** As a user inside a project, I can scope a search to that project instead of the
+whole workspace, and switch back to whole-workspace.
+**Source:** workspace-project:AS-010 (search scoped to a project); `searchDocs` already accepts `projectId`; audit gap-list A.7 (no scope UI). No prototype scope control — designed (flagged).
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false (edits the shared `search-screen.tsx` + `use-docs.ts` search hook)
+- `files:` `apps/web/src/features/docs/{search-screen.tsx,use-docs.ts,client.ts}`
+- `autonomous:` true
+- `verify:` searching while a project scope is selected returns only that project's accessible docs; clearing the scope broadens to the whole workspace.
+
+**Acceptance Scenarios:**
+
+AS-010: Search scoped to a single project
+- **Given:** I am searching with the scope set to project "Billing"; "invoice" matches a doc in "Billing" and a doc in "Payments" I can access
+- **When:** I search "invoice"
+- **Then:** only the matching "Billing" doc is returned
+- **Data:** scope = "Billing"
+
+AS-011: Switching scope to the whole workspace broadens results
+- **Given:** the same search "invoice" while scoped to "Billing"
+- **When:** I switch the scope to the whole workspace
+- **Then:** matching accessible docs from all projects are returned (including the "Payments" one)
+- **Data:** scope = whole workspace
+
+### S-005: In-app notification center (P0)
+
+**Description:** As a user, I see a bell with an unread count, open a panel listing my
+notifications (who did what, on which doc, when), click one to mark it read and open its target,
+and clear all with "Mark all read".
+**Source:** workspace-project:S-006 (AS-011 reply notifies in-app); audit gap-list B.8 (rows written, no read endpoint, bell/activity are placeholders). Prototype: `NotificationsMenu` (shell.jsx) — canonical. **Backend producer for reading notifications does not yet exist (GAP-001).**
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false (replaces the placeholder bell in the shared `app-header.tsx` + wires `activity-screen.tsx`)
+- `files:` `apps/web/src/app/app-header.tsx`, `apps/web/src/features/docs/activity-screen.tsx`, new `apps/web/src/features/notifications/{notifications-menu.tsx,client.ts,use-notifications.ts}`
+- `autonomous:` true
+- `verify:` the bell shows the unread count; opening lists notifications newest-first; clicking one marks it read and navigates to its doc; "Mark all read" zeroes the count; with none, an empty state shows.
+- **BLOCKED until GAP-001:** needs backend `GET /api/w/:workspaceId/notifications` (+ mark-read / mark-all-read). Add it to `workspace-project.md` (Mode C) before building.
+
+**Acceptance Scenarios:**
+
+AS-012: The bell shows the unread count
+- **Given:** I have 2 unread notifications
+- **When:** the app loads
+- **Then:** the bell shows a "2" unread badge
+- **Data:** 2 unread
+
+AS-013: Opening the panel lists notifications newest-first
+- **Given:** I have notifications from a reply and a publish
+- **When:** I open the bell
+- **Then:** I see each as "who · action · target · time", most recent first
+- **Data:** 1 reply + 1 publish notification
+
+AS-014: Clicking a notification marks it read and opens its target
+- **Given:** an unread notification about a reply on "Auth Spec"
+- **When:** I click it
+- **Then:** it is marked read (unread count drops by one) and the app opens "Auth Spec"
+- **Data:** reply notification → doc "Auth Spec"
+
+AS-015: Mark all read clears the unread count
+- **Given:** I have 2 unread notifications
+- **When:** I choose "Mark all read"
+- **Then:** the unread badge disappears and all items show as read
+- **Data:** 2 unread → 0
+
+AS-016: Empty state when there are no notifications
+- **Given:** I have no notifications
+- **When:** I open the bell
+- **Then:** I see a "You're all caught up" empty state and no unread badge
+- **Data:** 0 notifications
+
+AS-017: A failed notifications load does not break the bell
+- **Given:** the notifications request fails
+- **When:** I open the bell
+- **Then:** the panel shows an error/retry (or quiet empty), the bell is still usable, and no count is faked
+- **Data:** load error
+
+### S-006: Show a doc's access on its card (P2)
+
+**Description:** As a user browsing docs, each doc card shows an access indicator (Restricted /
+Workspace / Link) so I can tell at a glance who can see it.
+**Source:** Prototype `AccessIndicator` (browser.jsx) + spec UI Notes (DocCard). audit gap-list C.9. **The browse/list payload does not yet carry the access level (GAP-002).**
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false (edits shared `doc-bits.tsx`/`doc-card.tsx` + the `DocRow` type)
+- `files:` `apps/web/src/features/docs/{doc-bits.tsx,doc-card.tsx,types.ts}`
+- `autonomous:` true
+- **BLOCKED until GAP-002:** the doc-list payload must include `generalAccess`; produced by `sharing-permissions`/`workspace-project` browse.
+
+**Acceptance Scenarios:**
+
+AS-018: The card's access indicator reflects the doc's general access
+- **Given:** a doc shared anyone-in-workspace, and another that is restricted
+- **When:** I view them in the browse grid
+- **Then:** the first shows a "Workspace" indicator and the second shows "Restricted" (matching `general_access`)
+- **Data:** one anyone_in_workspace doc + one restricted doc
+
+## Constraints & Invariants
+
+- C-001: Destructive actions in this cluster (delete a project) show a confirmation dialog and
+  only mutate on explicit confirm; cancelling leaves state unchanged. (AS-006, AS-007)
+- C-002: The auto-created default project cannot be deleted (no Delete control); a non-empty
+  project cannot be deleted (refused with a reason). The backend also enforces both. (AS-007)
+- C-003: Move/copy destinations and the publish project picker offer ONLY projects in the active
+  workspace; nothing crosses a workspace boundary. (AS-001, AS-002, AS-008)
+- C-004: The unread badge equals the number of unread notifications; opening a notification or
+  "Mark all read" reduces it; no count is faked when the read endpoint is unavailable. (AS-012, AS-014, AS-015, AS-017)
+- C-005: Every screen uses the DESIGN.md dark-operator system (teal-only accent) and is
+  responsive (dialogs/menus reflow on tablet/mobile; tap targets ≥40px). (AS-001, AS-013; responsive/pixel visual is [→MANUAL], inheriting web-core's shell + tokens)
+
+## Linked Fields
+
+workspace-project-ui is the **consumer**; `workspace-project` (backend) is the producer.
+
+- move / copy a doc — consumed by S-001; produced by `workspace-project:S-004` (AS-008 move, AS-013 copy) on the `/docs/:slug/move` + `/copy` endpoints. ✔.
+- rename / archive / unarchive / delete project — consumed by S-002; produced by `workspace-project:S-003` projects routes (rename PATCH, archive/unarchive, delete-with-guards). ✔.
+- publish `projectId` — consumed by S-003; produced by the publish endpoint (`render-publish`/`workspace-project`), which already accepts `projectId`. ✔.
+- search `projectId` — consumed by S-004; produced by `workspace-project:AS-010` search endpoint (accepts `projectId`). ✔.
+- notifications list + mark-read — consumed by S-005 on the bell (read on app load + open) and the activity feed. **Producer MISSING** — no `GET /notifications` or mark-read endpoint exists. ✘ → GAP-001.
+- doc `generalAccess` on browse/list rows — consumed by S-006 (AccessIndicator on the browse grid). Produced by the browse/list payload (`workspace-project`/`sharing-permissions`), which does **not** currently include the field. ✘ → GAP-002.
+
+## UI Notes
+
+Design source: the Anchord-Design prototype. Precedence: AS / Constraints > Prototype > this Tree.
+Canonical prototype components are reused 1:1; the three surfaces with no prototype are designed
+consistent with the system and flagged in Clarifications.
+
+Build targets `[N]`:
+- `MoveCopyDialog` `[N]` *(1:1 with prototype dialogs2.jsx P10)* — Move|Copy toggle (`fmt-toggle`) · `ProjectSelectList` (destination projects, Default badge + check on the selected) · helper line ("The doc leaves its current project." / "A duplicate is created; the original stays put.")
+  - opened from `DocCardMoreMenu` `[N]` — a `⋯` button on `DocCard`/`DocList` rows → Move / Copy items
+- `RenameProjectDialog` `[N]` *(mirrors the existing RenameField/RenameWorkspace dialog)* — name input + Save
+- `ProjectCardMoreMenu` `[N]` — a `⋯` on each `proj-card` → Rename · Archive/Unarchive · Delete *(Delete hidden on the default project per C-002; Delete opens `ConfirmDialog`)*
+- `ProjectsArchivedToggle` `[N]` — a "Show archived" control on the Projects screen surfacing archived projects with an Unarchive action
+- `NewDocProjectPicker` `[N]` — a project `Select` inside `NewDocDialog`, defaulted to the default project *(replaces the hardcoded "into the default project")*
+- `SearchScopeControl` `[N]` — a scope toggle on the search screen: "All workspace" | "In <project>"
+- `NotificationsMenu` `[N]` *(1:1 with prototype shell.jsx)* — bell + unread count pill · panel (340px): header "Notifications" + "Mark all read" · `NotificationItem` (avatar · "who action target" · time · unread dot) · empty "You're all caught up." · footer "View all notifications" (→ activity feed)
+- `ActivityFeed` `[N]` — the `/w/:id/activity` screen wired to the same notifications source (full list)
+- `AccessIndicator` `[N]` *(1:1 with prototype browser.jsx)* — icon + label per `general_access` (Restricted / Workspace / Link) on `DocCard`
+
+> Prototype URL/source: `Anchord-Design/{dialogs2.jsx,shell.jsx,browser.jsx}` (canonical on conflict for the components it defines).
+
+## What Already Exists
+
+### UI Inventory
+
+| Component | Path | Reuse plan |
+|---|---|---|
+| `ProjectsScreen` (browse + create) | `apps/web/src/features/docs/projects-screen.tsx` | reuse; add `ProjectCardMoreMenu` + archived toggle (S-002) |
+| `DocsScreen` / `DocGrid` / `DocList` | `apps/web/src/features/docs/{docs-screen,doc-list}.tsx` | reuse; add `⋯` more-menu to cards/rows (S-001) |
+| `DocCard` + `doc-bits` (FormatBadge/VersionTag/CommentCount/StatusTag) | `apps/web/src/features/docs/{doc-card,doc-bits}.tsx` | reuse; add `AccessIndicator` (S-006) |
+| `NewDocDialog` | `apps/web/src/features/docs/new-doc-dialog.tsx` | reuse; add `NewDocProjectPicker` (S-003) |
+| `SearchScreen` (whole-workspace search) | `apps/web/src/features/docs/search-screen.tsx` | reuse; add `SearchScopeControl` (S-004) |
+| `app-header` notifications bell (placeholder) | `apps/web/src/app/app-header.tsx` | replace placeholder with `NotificationsMenu` (S-005) |
+| `activity-screen` (placeholder empty) | `apps/web/src/features/docs/activity-screen.tsx` | wire to notifications source (S-005) |
+| `ConfirmDialog` | `apps/web/src/components/confirm-dialog.tsx` | reuse for delete-project confirm (S-002) |
+| `Select`, `DropdownMenu`, `Dialog` | `apps/web/src/components/ui/{select,dropdown-menu,dialog}.tsx` | reuse for pickers / more-menus / dialogs |
+| `client.ts` typed doc/project client | `apps/web/src/features/docs/client.ts` | extend with `renameProject`/`archiveProject`/`unarchiveProject`/`deleteProject`/`moveDoc`/`copyDoc` |
+
+### System Impact & Technical Risks
+
+- Backend for S-001..S-004 already exists and is integration-tested (projects routes, doc-move/copy, project-scoped search). These stories are pure FE wiring to existing endpoints — low risk.
+- S-005 has NO backend read endpoint (rows are written by `notifyOnReply` but never readable) → GAP-001 blocks it.
+- S-006 needs the browse/list payload to carry the access level, which it currently does not → GAP-002 blocks it.
+- The new mutations add to the shared `features/docs/client.ts` and several shared screens, so `parallel_safe: false` across the cluster.
+
+## Not in Scope
+
+- Browse, create-project, whole-workspace search, doc grid/list, GridListToggle, filter chips — already built (see What Already Exists).
+- The backend notifications read/mark-read endpoint itself — belongs in `workspace-project.md` (backend), tracked as GAP-001; this spec only consumes it.
+- Adding the access field to the browse payload — belongs in `workspace-project`/`sharing-permissions`, tracked as GAP-002.
+- Notification preferences / digest / coalescing — deferred post-v0 (workspace-project Not in Scope).
+- Transfer doc ownership / admin takeover share UX — workspace-project C-007 (separate, deferred).
+
+## Gaps
+
+- GAP-001 (status: deferred — owner: product, decided 2026-06-10): S-005 needs a backend endpoint
+  to LIST a user's notifications and to mark them read (and mark-all-read). The `notifications`
+  table is written by `notifyOnReply` but no read endpoint exists. **Deferred:** S-005 is NOT in
+  this build pass; add the endpoint to `workspace-project.md` (Mode C) first, then build S-005.
+  Source: audit gap-list B.8 ("notifications written but never readable via API").
+- GAP-002 (status: deferred — owner: product, decided 2026-06-10): S-006 (AccessIndicator) needs
+  the doc browse/list payload to include the doc's `general_access`. `DocRow` does not currently
+  carry it. **Deferred:** S-006 is NOT in this build pass; add `generalAccess` to the browse
+  payload (`workspace-project`/`sharing-permissions`) first, then build S-006.
+  Source: audit gap-list C.9 / FE audit ("DocRow has no access field").
+- GAP-003 (status: resolved — decided 2026-06-10): project rename/archive/delete controls, the
+  New-doc project picker, and the search-scope control have no prototype; the designed placements
+  (more-menu + dialogs + Select, per UI Notes) are ACCEPTED as the build target. Source: Clarifications.
+
+## Clarifications — 2026-06-10
+
+- **Prototype-canonical where it exists.** `MoveCopyDialog`, `NotificationsMenu`, and
+  `AccessIndicator` are taken 1:1 from the prototype. The un-prototyped surfaces (project
+  rename/archive/delete, New-doc project picker, search-scope) are designed to match the system
+  (existing `DropdownMenu`/`ConfirmDialog`/`Select` + the prototype's `proj-select-list`); see GAP-003.
+- **Doc ⋯ opens the dialog directly (corrected 2026-06-11).** Matching the prototype, the doc `⋯`
+  kebab opens `MoveCopyDialog` directly — the Move|Copy toggle lives INSIDE the dialog; there is NO
+  intermediate Move/Copy menu. (An earlier build added a `DropdownMenu` submenu nested in the doc-card
+  `<Link>`; Radix portals the menu to `<body>` but React still bubbles its events up the React tree to
+  the `<Link>`, so selecting an item navigated instead of opening the dialog. Removed.) The kebab + the
+  dialog are wrapped so their clicks never reach the surrounding card `<Link>`.
+- **Build sequencing (decided 2026-06-10).** This build pass ships S-001..S-004 (move/copy,
+  project management, project picker, search scope) — all backed by existing endpoints. **S-005
+  (notifications) and S-006 (access indicator) are DEFERRED** pending their backend producers
+  (GAP-001, GAP-002); they remain specced so they're ready once the backend lands. GAP-003's
+  designed controls are accepted.
+
+## Change Log
+
+| Date | Change | Ref |
+|------|--------|-----|
+| 2026-06-10 | Initial creation — FE for workspace-project missing surfaces (move/copy, project mgmt, project picker, search scope, notifications, access indicator) | -- |
+| 2026-06-10 | Clarifications resolved: GAP-003 accepted (designed controls); GAP-001 + GAP-002 deferred (S-005/S-006 wait on backend producers); build pass = S-001..S-004 | -- |

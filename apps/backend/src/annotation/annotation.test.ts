@@ -7,14 +7,19 @@ import {
   type AnnotationRepo,
   type AnnotationRow,
   type NewAnnotation,
+  type ViewerComment,
 } from "./annotation";
 import type { AccessDeps, Viewer } from "../sharing/access";
 
 // annotation-core S-001 — anchor model + create-path SERVER re-auth (C-009/AS-020) +
 // read authz (C-010/AS-021). Pure logic against a fake repo (mirrors access.test.ts).
 
-// A recording fake repo: captures what was inserted, serves a canned list.
-function fakeRepo(seed: AnnotationRow[] = []): AnnotationRepo & { inserted: NewAnnotation[] } {
+// A recording fake repo: captures what was inserted, serves a canned annotation list +
+// a canned comment list (S-003 read attaches each annotation's thread).
+function fakeRepo(
+  seed: AnnotationRow[] = [],
+  commentSeed: (ViewerComment & { annotationId: string })[] = [],
+): AnnotationRepo & { inserted: NewAnnotation[] } {
   const inserted: NewAnnotation[] = [];
   return {
     inserted,
@@ -24,6 +29,9 @@ function fakeRepo(seed: AnnotationRow[] = []): AnnotationRepo & { inserted: NewA
     },
     async listByDoc(_docId: string) {
       return seed;
+    },
+    async listCommentsByDoc(_docId: string) {
+      return commentSeed;
     },
   };
 }
@@ -192,5 +200,46 @@ test("C-010: an authorized reader gets the doc's annotations", async () => {
   );
 
   expect(res.allowed).toBe(true);
-  expect(res.annotations).toEqual([row]);
+  // S-003: every annotation now carries its (possibly empty) comment thread.
+  expect(res.annotations).toEqual([{ ...row, comments: [] }]);
+});
+
+test("S-003: list attaches each annotation's comments[] thread (authorName | guestName)", async () => {
+  const row: AnnotationRow = {
+    id: "ann-1",
+    docId: "doc-ok",
+    type: "range",
+    anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 },
+    isOrphaned: false,
+    status: "unresolved",
+  };
+  const root: ViewerComment & { annotationId: string } = {
+    annotationId: "ann-1",
+    id: "c-root",
+    parentId: null,
+    authorName: "Demo Author",
+    body: "the root comment",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+  const reply: ViewerComment & { annotationId: string } = {
+    annotationId: "ann-1",
+    id: "c-reply",
+    parentId: "c-root",
+    guestName: "A Guest",
+    body: "a guest reply",
+    createdAt: "2026-01-01T00:01:00.000Z",
+  };
+  const repo = fakeRepo([row], [root, reply]);
+
+  const res = await listAnnotations(
+    { docId: "doc-ok", viewer: stranger, generalAccess: "anyone_with_link", deps: deps() },
+    repo,
+  );
+
+  expect(res.allowed).toBe(true);
+  // The thread is attached, in creation order, with the annotationId stripped (it's the grouping key).
+  expect(res.annotations[0].comments).toEqual([
+    { id: "c-root", parentId: null, authorName: "Demo Author", body: "the root comment", createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "c-reply", parentId: "c-root", guestName: "A Guest", body: "a guest reply", createdAt: "2026-01-01T00:01:00.000Z" },
+  ]);
 });

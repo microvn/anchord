@@ -2,167 +2,168 @@
 
 _2026-06-07_
 
-**Feature:** Mỗi lần nộp content mới tạo một version bất biến; xem lịch sử,
-restore version cũ, và diff giữa hai version. Là nền cho "anchor bền qua version"
-của annotation.
+**Feature:** Each new content submission creates an immutable version; view history,
+restore an old version, and diff between two versions. This is the foundation for the
+annotation "anchors durable across versions" capability.
 
-**Trigger:** Tác giả nộp content mới (upload/paste/MCP) → version mới. Restore và
-diff là hành động tay trên UI lịch sử version.
+**Trigger:** The author submits new content (upload/paste/MCP) → new version. Restore and
+diff are manual actions in the version-history UI.
 
-**UI expectation:** Panel "Version history" trên trang doc: danh sách v1..vN
-(thời gian, người publish), nút Restore từng version, nút "Compare" chọn 2 version
-→ màn diff. Toàn bộ **[N] NEW**.
+**UI expectation:** A "Version history" panel on the doc page: list of v1..vN
+(time, publisher), a Restore button per version, a "Compare" button to pick 2 versions
+→ the diff screen. All **[N] NEW**.
 
 ---
 
-### Quyết định (đã chốt trong phiên explore)
+### Decisions
 
-**1. Cái gì tạo version — chỉ content.**
-Mỗi lần nộp content mới (upload/paste/MCP update) = một version bất biến mới,
-append, không ghi đè. **Title là metadata mutable trên doc, KHÔNG version hoá.**
-Không có draft/autosave ở v0 (mô hình async, publish-based — không có live editor).
+**1. What creates a version — only content.**
+Each new content submission (upload/paste/MCP update) = a new immutable version,
+appended, not overwritten. **Title is mutable metadata on the doc, NOT versioned.**
+No draft/autosave in v0 (async, publish-based model — no live editor).
 
-**2. Restore = append-copy (kiểu git revert).**
-Restore version cũ → tạo version MỚI copy nội dung version được chọn. Lịch sử
-append-only, không mất gì, không có khái niệm "xoá version sau". "Current" luôn là
-version mới nhất.
+**2. Restore = append-copy (git-revert style).**
+Restoring an old version → creates a NEW version that copies the selected version's
+content. The history is append-only, nothing is lost, there is no concept of "deleting a
+later version". "Current" is always the newest version.
 
-**3. Anchor carry-forward = re-anchor + detached list. (CRUX của sản phẩm)**
-Khi version N+1 ra đời, annotation từ version N **tự động neo lại** vào content
-mới qua content-hash/fuzzy match:
-- Khớp → annotation theo sang version mới (feedback theo doc).
-- Không khớp → vào danh sách **"detached"** để tác giả/reviewer relocate hoặc
+**3. Anchor carry-forward = re-anchor + detached list. (the product's CRUX)**
+When version N+1 is created, annotations from version N are **automatically re-anchored**
+to the new content via content-hash/fuzzy match:
+- Match → the annotation follows to the new version (feedback follows the doc).
+- No match → goes into the **"detached"** list for the author/reviewer to relocate or
   resolve.
-- **Phân vai:** cụm versioning-diff định nghĩa *trigger* (version mới → chạy
-  re-anchor cho annotation của version trước) và *hành vi*. *Thuật toán* matching
-  + model dữ liệu annotation (annotation thuộc doc hay thuộc version) thuộc cụm
-  **annotation-core**. Đây là điểm khớp bắt buộc giữa hai cụm.
+- **Role split:** the versioning-diff cluster defines the *trigger* (new version → run
+  re-anchor for the previous version's annotations) and the *behavior*. The matching
+  *algorithm* + the annotation data model (whether an annotation belongs to the doc or to
+  a version) belong to the **annotation-core** cluster. This is the mandatory seam between
+  the two clusters.
 
-**4. Diff = two-level (theo research 2026), điều chỉnh cho sandbox.**
+**4. Diff = two-level (per 2026 research), adapted for the sandbox.**
 - **HTML:** source/text line-diff (`@pierre/diffs`) **+** rendered side-by-side
-  = hai iframe sandbox cạnh nhau (A | B). KHÔNG merge-inline-diff trong app origin
-  (vi phạm model sandbox — HTML không tin cậy không chạy ở origin tin cậy).
-- **Markdown:** line-diff source (đọc tốt vì MD là plain text) + rendered
-  side-by-side (bonus rẻ).
-- **Ảnh:** side-by-side. Overlay/swipe → defer.
-- Chọn **2 version bất kỳ** để so, không chỉ liền kề.
-- Tránh approach "HTML→MD→diff→ngược" (HtmlDiff đã deprecated, kết quả sai).
+  = two sandboxed iframes next to each other (A | B). NO merge-inline-diff in the app origin
+  (violates the sandbox model — untrusted HTML does not run in a trusted origin).
+- **Markdown:** source line-diff (reads well since MD is plain text) + rendered
+  side-by-side (a cheap bonus).
+- **Images:** side-by-side. Overlay/swipe → defer.
+- Pick **any 2 versions** to compare, not just adjacent ones.
+- Avoid the "HTML→MD→diff→back" approach (HtmlDiff is deprecated, gives wrong results).
 - Defer: DOM-aware structural diff, inline merged rich-diff.
 
 ---
 
 ### Happy path
 
-1. Tác giả mở doc "Payment Spec" (đang ở v2), bấm "Version history" → thấy v1, v2.
-2. Re-upload `spec.html` đã sửa → hệ thống tạo **v3** (bất biến), current = v3.
-3. Annotation từ v2 chạy re-anchor: 5/6 comment khớp → theo sang v3; 1 comment
-   không khớp → vào "detached (1)".
-4. Tác giả bấm "Compare v2 ↔ v3" → màn diff: cột source highlight dòng đổi + dưới
-   là hai iframe render v2 | v3 cạnh nhau.
+1. The author opens doc "Payment Spec" (at v2), clicks "Version history" → sees v1, v2.
+2. Re-uploads the edited `spec.html` → the system creates **v3** (immutable), current = v3.
+3. Annotations from v2 run re-anchor: 5/6 comments match → follow to v3; 1 comment
+   doesn't match → goes into "detached (1)".
+4. The author clicks "Compare v2 ↔ v3" → diff screen: a source column highlights changed
+   lines + below it two iframes render v2 | v3 side-by-side.
 
 ### Unhappy paths
 
-- **Restore:** tác giả thấy v3 sai, bấm "Restore v1" → tạo **v4 = copy nội dung
-  v1**. Current = v4. v2/v3 vẫn còn trong lịch sử. Annotation re-anchor từ v3 sang
-  v4 như mọi version mới.
-- **Diff hai version giống hệt:** chọn so 2 version trùng nội dung → màn diff báo
-  "Không có khác biệt", rendered side-by-side vẫn hiện.
-- **Detached nhiều:** sửa lớn khiến đa số comment không khớp → danh sách detached
-  dài; tác giả xử lý ở UI annotation (cụm annotation-core), không mất comment.
+- **Restore:** the author sees v3 is wrong, clicks "Restore v1" → creates **v4 = copy of v1
+  content**. Current = v4. v2/v3 remain in the history. Annotations re-anchor from v3 to
+  v4 like any new version.
+- **Diffing two identical versions:** comparing 2 versions with identical content → the diff
+  screen reports "No differences", the rendered side-by-side still shows.
+- **Many detached:** a large edit makes most comments not match → a long detached list; the
+  author handles it in the annotation UI (annotation-core cluster), no comment is lost.
 
 ---
 
 ### Business rules
 
-- Version đánh số tự tăng v1, v2, v3… liên tục, không tái sử dụng số.
-- Version bất biến: content + content_hash + người publish + thời điểm, không sửa
-  sau khi tạo.
-- Current = version số lớn nhất. Restore không xoá, chỉ append.
-- Re-anchor chạy đồng bộ ngay khi version mới được tạo (hoặc job ngay sau) — chi
-  tiết ở annotation-core.
+- Versions are numbered with a continuously incrementing counter v1, v2, v3…, no number reuse.
+- Versions are immutable: content + content_hash + publisher + timestamp, not edited
+  after creation.
+- Current = the highest-numbered version. Restore does not delete, only appends.
+- Re-anchor runs synchronously as soon as the new version is created (or as a job right
+  after) — details in annotation-core.
 
 ### Input validation
 
-- Compare: phải chọn đúng 2 version; không cho so version với chính nó (hoặc cho
-  nhưng báo "không khác biệt").
-- Restore: version đích phải tồn tại và thuộc doc.
+- Compare: exactly 2 versions must be selected; comparing a version with itself is not
+  allowed (or allowed but reports "no differences").
+- Restore: the target version must exist and belong to the doc.
 
 ### Permissions
 
-- **Xem history + diff:** ai xem được doc (theo general-access của cụm sharing).
-- **Tạo version mới / restore:** role editor/owner (chi tiết role do cụm sharing).
-  Viewer/commenter không tạo/restore version.
+- **View history + diff:** anyone who can view the doc (per the sharing cluster's general-access).
+- **Create new version / restore:** editor/owner role (role details owned by the sharing cluster).
+  Viewers/commenters cannot create/restore versions.
 
 ### Data impact
 
-- `doc_versions` (đã phác schema): `version int`, `content text`, `content_hash`,
+- `doc_versions` (schema sketched): `version int`, `content text`, `content_hash`,
   `published_by`, `created_at`, unique (doc_id, version).
-- Title nằm trên `docs` (mutable), không trên version.
-- Re-anchor cần model annotation tham chiếu version — quyết định ở annotation-core
-  (annotation thuộc doc + lưu anchor resolved theo từng version, HAY annotation
-  thuộc version + carry-forward tạo bản sao). Ảnh hưởng schema `annotations`.
+- Title lives on `docs` (mutable), not on the version.
+- Re-anchor needs the annotation model to reference versions — decided in annotation-core
+  (annotation belongs to the doc + stores the resolved anchor per version, OR annotation
+  belongs to the version + carry-forward creates a copy). Affects the `annotations` schema.
 
 ### Out of scope (v0 — defer)
 
-- Nhãn/tên tuỳ chỉnh cho version + "commit message" khi publish → assumption: chỉ
-  auto-number ở v0.
-- Link ghim tới một version cụ thể (`/d/:slug@v2`) → v0 share link = latest. Defer.
-- Overlay/swipe cho image diff; DOM-aware structural diff; inline merged rich-diff.
-- Prune/retention version cũ → giữ tất cả ở v0 (xem open question storage).
-- Real-time / live editor → v2 (mô hình async, không có draft).
+- Custom labels/names for versions + a "commit message" on publish → assumption:
+  auto-number only in v0.
+- Link pinned to a specific version (`/d/:slug@v2`) → v0 share link = latest. Defer.
+- Overlay/swipe for image diff; DOM-aware structural diff; inline merged rich-diff.
+- Prune/retention of old versions → keep all in v0 (see the storage open question).
+- Real-time / live editor → v2 (async model, no draft).
 
 ### Decision rationale
 
-- Append-copy thay vì pointer-move: lịch sử append-only dễ suy luận, không mơ hồ
-  "current ở đâu", an toàn cho self-host (không bao giờ mất bản cũ).
-- Chỉ content tạo version: tránh version rác từ sửa title, nhẹ storage.
-- Two-level diff thay vì inline rich-diff: inline đòi render HTML merge ở app
-  origin → phá sandbox. Side-by-side hai iframe giữ được cách ly mà vẫn thấy thay
-  đổi hiển thị.
-- Re-anchor + detached: đúng yêu cầu "anchor bền qua version" của design doc §4.2,
-  là payoff differentiator; detached list đảm bảo không bao giờ mất feedback im lặng.
+- Append-copy instead of pointer-move: an append-only history is easy to reason about, no
+  ambiguity over "where is current", safe for self-host (never loses an old copy).
+- Only content creates a version: avoids junk versions from title edits, lighter on storage.
+- Two-level diff instead of inline rich-diff: inline requires rendering merged HTML in the
+  app origin → breaks the sandbox. Two side-by-side iframes keep isolation while still
+  showing the displayed changes.
+- Re-anchor + detached: meets the "anchors durable across versions" requirement of the design
+  doc §4.2, the payoff differentiator; the detached list ensures feedback is never silently lost.
 
-### Assumptions (cần xác nhận)
+### Assumptions (need confirmation)
 
-- v0 share link trỏ latest; không ghim version.
-- Không có version note/message ở v0.
-- Re-anchor chạy đồng bộ lúc tạo version (đủ nhanh cho doc ≤5MB); nếu chậm →
-  chuyển job nền (đo lúc build).
+- v0 share link points to latest; no version pinning.
+- No version note/message in v0.
+- Re-anchor runs synchronously at version creation (fast enough for docs ≤5MB); if slow →
+  move to a background job (measure at build time).
 
 ### Open questions
 
-- **Storage growth (self-host):** giữ tất cả version × tối đa 5MB HTML/25MB ảnh có
-  thể phình DB nhanh. Có cần nén content, dedup theo content_hash (version trùng
-  nội dung chỉ lưu 1 lần), hay prune? → couples cụm **self-host**.
-- Model annotation cho re-anchor (thuộc doc vs thuộc version) → chốt ở
-  **annotation-core**, ảnh hưởng ngược schema version.
-- @pierre/diffs xử HTML thô tốt tới đâu (token-level hay line-level), có cần
-  pre-normalize HTML trước khi diff không.
-- Ảnh diff side-by-side: cần resize đồng cỡ hay giữ nguyên?
+- **Storage growth (self-host):** keeping all versions × up to 5MB HTML/25MB images could
+  bloat the DB fast. Do we need to compress content, dedup by content_hash (versions with
+  identical content stored once), or prune? → couples the **self-host** cluster.
+- The annotation model for re-anchor (belongs to doc vs belongs to version) → settled in
+  **annotation-core**, feeds back into the version schema.
+- How well @pierre/diffs handles raw HTML (token-level or line-level), whether we need to
+  pre-normalize the HTML before diffing.
+- Image diff side-by-side: do we need to resize to the same dimensions or keep them as-is?
 
 ### Complexity signal: **medium-high**
 
-Version + restore + diff bản thân là medium. Phần đẩy lên high là *trigger
-re-anchor* và sự phụ thuộc hai chiều với annotation-core về model dữ liệu — phải
-chốt cùng nhau khi /mf-plan, không tách rời.
+Version + restore + diff on their own are medium. What pushes it to high is the *re-anchor
+trigger* and the two-way dependency with annotation-core over the data model — they must be
+settled together during /mf-plan, not separately.
 
 ### Cross-cluster dependencies
 
-- **annotation-core:** thuật toán re-anchor + model annotation (doc vs version) —
-  ràng buộc hai chiều, quyết định cùng lúc.
-- **render-publish:** version sinh ra từ content nộp ở cụm đó; iframe sandbox tái
-  dùng cho rendered side-by-side.
-- **sharing-permissions:** ai xem history/diff, ai được tạo version/restore.
-- **mcp-roundtrip:** MCP update doc = tạo version mới (map vào trigger ở đây).
-- **self-host:** chiến lược storage/retention cho lịch sử version.
+- **annotation-core:** the re-anchor algorithm + annotation model (doc vs version) —
+  a two-way constraint, decided at the same time.
+- **render-publish:** versions originate from content submitted in that cluster; the sandbox
+  iframe is reused for the rendered side-by-side.
+- **sharing-permissions:** who views history/diff, who may create a version/restore.
+- **mcp-roundtrip:** an MCP doc update = creating a new version (maps onto the trigger here).
+- **self-host:** the storage/retention strategy for version history.
 
 ## UI sketches
 
 Dark-operator (`DESIGN.md`). Greenfield → `[N]` NEW.
 
 **Version history + diff** `[N]` ← S-002 (history) /S-003 (restore append-copy)
-/S-004 (diff two-level: source line-diff + rendered side-by-side). Ví dụ = diff
-thật v1→v2 của annotation-core sau /mf-challenge (18→22 AS).
+/S-004 (diff two-level: source line-diff + rendered side-by-side). Example = a real
+v1→v2 diff of annotation-core after /mf-challenge (18→22 AS).
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │ ⚓ annotation-core                       [Restore v1] [History]  │
@@ -170,7 +171,7 @@ thật v1→v2 của annotation-core sau /mf-challenge (18→22 AS).
 │ VERSIONS │ Compare v1 ↔ v2 · 2 changes                          │
 │  v2 cur  │ ┌── source diff (Geist Mono) ──────────────────────┐ │
 │ ▸v1  3h◀ │ │   C-001: anchor block-scoped                     │ │
-│          │ │ + block_id là positional hint (inject publish)   │ │ ←teal
+│          │ │ + block_id is a positional hint (inject publish) │ │ ←teal
 │          │ │ + C-008..C-012 harden                            │ │
 │          │ └──────────────────────────────────────────────────┘ │
 │          │ ┌ v1 rendered ─┐ ┌ v2 rendered ─┐ (≤760: stacked)   │

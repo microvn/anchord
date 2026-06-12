@@ -1,0 +1,284 @@
+# Spec: web-structure
+
+**Created:** 2026-06-13
+**Last updated:** 2026-06-13
+**Status:** Active
+
+## Overview
+
+A structural refactor of `apps/web` — no behaviour change, no new screen. It applies the
+feature-based organization principles from `temple-live-stream/FRONTEND_TECHNICAL_GUIDE.md`,
+**adapted to anchord's real stack** (Vite + React Router + Eden treaty + better-auth +
+React Query), and explicitly rejecting the parts of that guide that assume a different stack
+(Next.js App Router, axios, Zustand global stores). The goal is consistency: one home for
+the API-infra layer, one home for global hooks, internal sub-layering for the two largest
+features, and a written convention doc so the borrowed guide is never mistaken for law.
+
+The "system boundary" for this refactor is the **repository structure plus the green state
+of `bun typecheck` and `bun test`** — every story is observable as a concrete file tree and
+a passing check, and every story is an independently committable step.
+
+This is orthogonal to `web-core` (which owns the FE runtime behaviour). web-structure only
+moves and standardizes existing code; it adds no feature.
+
+## Data Model
+
+No persistent data. The "model" being changed is the source tree of `apps/web/src` and its
+import graph. Current shape (pre-refactor):
+
+- `src/app/` — shell, providers, guards, query-client (the FE "core").
+- `src/components/` — shared primitives + `ui/` (shadcn-style radix wrappers).
+- `src/features/{auth,docs,sharing,viewer,workspaces}/` — feature folders, currently **flat**
+  (components, hooks, service `client.ts`, and types live at one level).
+- `src/hooks/` — one global hook (`use-mobile.ts`).
+- `src/lib/` — mixed: API infra (`api.ts`, `api-error.ts`, `auth-client.ts`, `use-api-query.ts`),
+  a hook (`use-breakpoint.ts`), session logic (`session-expiry.ts`), pure utils (`utils.ts`,
+  `initials.ts`).
+- `tsconfig.json` already declares `paths: { "@/*": ["./src/*"] }` — but only 27 files use it;
+  47 files use deep `../..` relative imports (305 relative-import lines total).
+- Tests live in `apps/web/test/` (centralized, not co-located) and import production code via
+  `../src/...`; several use `mock.module("../src/features/<feature>/client", …)`.
+
+Feature sizes (file count): viewer 21, docs 16, workspaces 13, auth 11, sharing 6.
+`types.ts` present in docs + workspaces; absent in auth, sharing, viewer.
+
+## Stories
+
+### S-001: Cross-module imports go through the `@/` alias (P0)
+
+**Description:** As a developer reading any file in `apps/web/src`, I see cross-module
+imports written as `@/lib/api`, `@/features/docs/client`, etc., never as `../../lib/api`,
+so the import's target is legible without counting directory hops.
+**Source:** user request "folder structure tương đối kém … học FRONTEND_TECHNICAL_GUIDE.md"; guide §1.4 (Module Import Aliases — "DON'T use relative paths"); tsconfig already declares `@/*`.
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false
+- `files:` all of `apps/web/src/**/*.ts(x)` and `apps/web/test/**/*.ts(x)` (import-statement edits); `apps/web/tsconfig.json` / `bunfig.toml` only if bun-test needs a path-resolution flag to honour `@/` (see AS-015)
+- `autonomous:` true
+- `verify:` `cd apps/web && bun typecheck && bun test` — both green; `grep -rE "from ['\"]\.\./\.\." apps/web/src` returns nothing; tests reference `@/…` not `../src/…`
+
+**Acceptance Scenarios:**
+
+AS-001: All deep cross-module imports converted
+- **Given:** `apps/web/src` has 47 files importing via `../..` deep relative paths
+- **When:** the import migration is applied
+- **Then:** no file in `apps/web/src` imports another module via a `../..` path; those imports read as `@/…`
+- **Data:** e.g. `src/features/docs/client.ts` `import { api } from "../../lib/api"` → `from "@/lib/api"`
+
+AS-002: Same-directory imports stay relative
+- **Given:** a file imports a sibling in the same folder (e.g. `./types`, `./doc-card`)
+- **When:** the migration runs
+- **Then:** same-directory `./sibling` imports are left as relative; they are NOT rewritten to `@/…`
+- **Data:** `src/features/docs/doc-list.tsx` `import { DocCard } from "./doc-card"` is unchanged
+
+AS-003: Checks stay green after migration (no broken path)
+- **Given:** the migration has rewritten every cross-module import
+- **When:** `bun typecheck` and `bun test` run in `apps/web`
+- **Then:** both pass with zero errors — no unresolved import, no path typo
+- **Data:** full suite (44 test files)
+
+AS-004: The backend `App` type import is preserved as a type-only import
+- **Given:** `src/lib/api.ts` imports `import type { App } from "backend"` (what gives Eden its end-to-end types)
+- **When:** the migration runs
+- **Then:** that import stays a `type` import of the `backend` workspace package; it is not rewritten to an `@/` path into backend source
+- **Data:** `import type { App } from "backend"` byte-for-byte unchanged
+
+AS-015: Test files reach source through `@/`, including inside `mock.module`
+- **Given:** `apps/web/test/` files import production code via `../src/…` and several call `mock.module("../src/features/<feature>/client", …)`
+- **When:** the migration converts test imports to `@/…` (and `mock.module` targets to `@/…`)
+- **Then:** `bun test` resolves the alias for BOTH static imports and `mock.module` targets — every mock still intercepts its module and the full suite passes; if bun-test does not honour `@/` out of the box, the minimal config to enable path resolution is applied in this story
+- **Data:** `mock.module("../src/features/docs/client", …)` → `mock.module("@/features/docs/client", …)` and the docs-screen test still mocks the client
+
+### S-002: One home for API infra, one home for global hooks (P1)
+
+**Description:** As a developer, I find the API-infra layer grouped together and every global
+(non-feature) hook in a single `src/hooks/` directory, instead of both being scattered through
+`src/lib/`.
+**Source:** user request Phase 2; guide §1.1 (separates `core/request` infra from `lib/utils`) + §1.3 equivalent (global hooks directory).
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` `src/lib/{api,api-error,auth-client,use-api-query,session-expiry,utils,initials}.ts`, `src/lib/use-breakpoint.ts`, `src/hooks/use-mobile.ts`, every importer of those, and the tests that import/mock them (`test/breakpoint.test.ts`, any mocking `@/lib/*`)
+- `autonomous:` true
+- `verify:` `cd apps/web && bun typecheck && bun test` green; `src/lib/api/` exists with the infra + `use-api-query`; `src/hooks/` holds the merged responsive hook; util files remain at `src/lib/` root
+
+**Acceptance Scenarios:**
+
+AS-005: API-infra files grouped under `lib/api/` (including `use-api-query`)
+- **Given:** `api.ts`, `api-error.ts`, `auth-client.ts`, `use-api-query.ts` live flat in `src/lib/`
+- **When:** the consolidation runs
+- **Then:** all four live under `src/lib/api/` (`use-api-query` ships with the infra it wraps, not in `src/hooks/`); every importer references the new location via `@/lib/api/…`; typecheck green
+- **Data:** `src/features/*/client.ts` import `@/lib/api`; `EdenResult` resolves from `@/lib/api/use-api-query`
+
+AS-006: Pure utilities stay at `src/lib/` root
+- **Given:** `utils.ts`, `initials.ts`, `session-expiry.ts` are pure helpers / session logic
+- **When:** the consolidation runs
+- **Then:** they remain at `src/lib/` root (NOT moved into a `lib/utils/` subfolder and NOT mixed into `lib/api/`); their importers resolve and typecheck is green
+- **Data:** `@/lib/utils`, `@/lib/initials`, `@/lib/session-expiry` still resolve at the root path
+
+AS-016: `use-mobile` and `use-breakpoint` are merged into one responsive hook in `src/hooks/`
+- **Given:** `src/hooks/use-mobile.ts` and `src/lib/use-breakpoint.ts` both expose viewport/responsive state
+- **When:** the consolidation runs
+- **Then:** they become a single responsive hook under `src/hooks/`; every importer of either old hook is updated to the merged one; `test/breakpoint.test.ts` (and any importer of `use-mobile`) is updated; `bun test` green
+- **Data:** former `use-mobile` callers and `use-breakpoint` callers both import the one merged hook from `@/hooks/…`
+
+AS-008: A file move with no importer left behind (boundary)
+- **Given:** any infra/hook file is moved or merged in this story
+- **When:** the suite runs after the move
+- **Then:** no production file and no test file still references an old path — there is no dangling import anywhere in `apps/web`
+- **Data:** `grep -r "lib/use-breakpoint\|hooks/use-mobile\|lib/api-error\b" apps/web/src apps/web/test` returns nothing
+
+### S-003: The two largest features are sub-layered (P1)
+
+**Description:** As a developer opening `features/viewer` (21 files) or `features/docs`
+(16 files), I see UI components under `components/` and hooks under `hooks/`, with the
+service (`client.ts`) and `types.ts` at the feature root — so I can tell logic from UI at a
+glance. Small features stay flat.
+**Source:** user request Phase 3; guide §1.2 (feature internal layering: components/hooks/services/types).
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` `src/features/viewer/**`, `src/features/docs/**`, importers of moved files, and tests mocking/importing `../src/features/{viewer,docs}/*`
+- `autonomous:` true
+- `verify:` `cd apps/web && bun typecheck && bun test` green; `features/viewer/components/` + `features/viewer/hooks/` exist; `features/viewer/client.ts` still at root
+
+AS-009: `viewer` gains `components/` + `hooks/`, service stays at root
+- **Given:** `features/viewer` has 21 flat files (UI `.tsx`, `use-*.ts` hooks, `client.ts`, helpers)
+- **When:** the sub-layering runs
+- **Then:** UI components sit under `features/viewer/components/`, `use-*` hooks under `features/viewer/hooks/`, while `client.ts` stays at the feature root; tests that import or mock viewer files are updated; suite green
+- **Data:** `viewer/thread-card.tsx` → `viewer/components/thread-card.tsx`; `viewer/use-compose.ts` → `viewer/hooks/use-compose.ts`; `viewer/client.ts` unchanged path
+
+AS-010: `docs` sub-layered the same way
+- **Given:** `features/docs` has 16 flat files
+- **When:** the sub-layering runs
+- **Then:** docs UI under `components/`, hooks (`use-docs.ts`) under `hooks/`, `client.ts` + `types.ts` at root; `test/docs-screen.test.tsx` mock path for `client` updated; suite green
+- **Data:** `mock.module("../src/features/docs/client", …)` stays valid (client unmoved) — UI imports updated
+
+AS-011: Small features are left flat (no over-engineering)
+- **Given:** `sharing` (6 files), `auth` (11), `workspaces` (13) are below the sub-layer threshold
+- **When:** S-003 completes
+- **Then:** those feature folders remain flat — no `components/`/`hooks/` subfolders are introduced for them
+- **Data:** `features/sharing/` still lists its files at one level
+
+AS-012: Local prop types stay with their component; only shared types are gathered
+- **Given:** some types are single-component prop interfaces, others are domain types reused across the feature
+- **When:** types are organized during sub-layering
+- **Then:** a prop type used by exactly one component stays co-located in that component file; a type used by 2+ files is the kind that belongs in `types.ts` — types are not bulk-moved
+- **Data:** a `Props` interface used once is NOT relocated to `types.ts`
+
+### S-004: Consistent feature contract + a written convention doc (P2)
+
+**Description:** As a developer or OSS contributor, every feature exposes the same shape
+(a `client.ts` service and a `types.ts`), and a `FRONTEND.md` documents anchord's actual
+conventions so the borrowed Next.js/Zustand/axios guide is not mistaken for the rule.
+**Source:** user request Phase 4; guide §9 (Code Style & Conventions) adapted to the anchord stack.
+
+**Execution:**
+- `depends_on:` S-002, S-003
+- `parallel_safe:` false
+- `files:` `src/features/{auth,sharing,viewer}/types.ts` (new), feature files that define shared types, `apps/web/FRONTEND.md` (new)
+- `autonomous:` true
+- `verify:` `cd apps/web && bun typecheck && bun test` green; `apps/web/FRONTEND.md` exists; `auth/sharing/viewer` each have `types.ts`
+
+AS-013: Features missing `types.ts` gain one (only if they have shared types)
+- **Given:** `auth`, `sharing`, `viewer` have no `types.ts`; their shared types sit inline
+- **When:** the standardization runs
+- **Then:** each of those features that actually has cross-file shared types gets a `types.ts` exporting them, with importers updated; a feature with no shared type is left as-is rather than given an empty file
+- **Data:** shared types currently inline in `viewer` components are re-exported from `viewer/types.ts`
+
+AS-014: `FRONTEND.md` documents the adapted conventions
+- **Given:** the borrowed guide assumes Next.js + axios + Zustand
+- **When:** `apps/web/FRONTEND.md` is written
+- **Then:** it states anchord's real conventions — Eden treaty (not axios), React Query for server state (no Zustand store), React Router (not App Router), kebab-case file naming, the `@/` alias rule, same-dir-relative rule, feature layering threshold, and the `client.ts`+`types.ts` contract
+- **Data:** the doc names each of those points explicitly
+
+### S-005: Feature tests live with their feature; infra tests stay central (P1)
+
+**Description:** As a developer changing a feature, I find its tests inside that feature's
+folder (not in a distant flat `test/` directory), so a feature's code and its tests move,
+review, and reason together. Tests for the app-root shell, shared primitives, and the
+API/hook infra layer stay in the central `test/` directory.
+**Source:** user request "test nên nằm cùng feature sẽ dễ quản lý hơn … trừ test cho app root layer cho infra".
+
+**Execution:**
+- `depends_on:` S-003
+- `parallel_safe:` false
+- `files:` `apps/web/test/*.test.tsx` (feature tests move out), target `src/features/<feature>/…`, `apps/web/bunfig.toml` (only if discovery needs a glob change — see AS-018)
+- `autonomous:` true
+- `verify:` `cd apps/web && bun typecheck && bun test` green; feature `.test.*` files live under `src/features/<feature>/`; `test/setup.ts` and infra tests remain in `test/`
+
+**Acceptance Scenarios:**
+
+AS-017: Each feature's tests move into that feature's folder
+- **Given:** `test/` holds feature tests (e.g. `docs-screen`, `viewer-screen`, `share-dialog`, `members-screen`, `auth-flow`) flat
+- **When:** the co-location runs
+- **Then:** each feature test moves under its `src/features/<feature>/` directory (next to the code it covers); `bun test` discovers them via its recursive `*.test.*` glob and the full suite stays green
+- **Data:** `test/docs-screen.test.tsx` → `src/features/docs/…/docs-screen.test.tsx`; `test/share-dialog.test.tsx` → `src/features/sharing/share-dialog.test.tsx`
+
+AS-018: Infra / app-root tests and the test harness stay central
+- **Given:** `test/setup.ts` (preloaded by `bunfig.toml`) plus app-root / shared-primitive / infra tests (`smoke`, `design-system-shell`, `header`, `sidebar`, `states`, `breakpoint`, `eden-type`) are not owned by any one feature
+- **When:** the co-location runs
+- **Then:** those stay in `test/`; `bunfig.toml` still preloads `./test/setup.ts` (the preload path is unchanged); no app-root test is pushed into a feature
+- **Data:** `bunfig.toml` `preload = ["./test/setup.ts"]` unchanged; `test/eden-type.test.ts` stays put
+
+AS-019: A co-located test still mocks its subject after the move (boundary)
+- **Given:** a moved feature test mocked its module via `mock.module("@/features/<feature>/client", …)`
+- **When:** the test runs from its new co-located path
+- **Then:** the mock still intercepts the module and the test passes — co-location does not break `mock.module` resolution; the test imports its subject as a sibling (`./`) or via `@/`
+- **Data:** `src/features/docs/…/docs-screen.test.tsx` still mocks the docs `client` and passes
+
+## Constraints & Invariants
+
+- C-001: After EACH story, `bun typecheck` and `bun test` (run in `apps/web`) are both green; each story is a standalone commit. (AS-003, AS-008, AS-010, AS-016, AS-017)
+- C-002: No file is renamed to PascalCase — kebab-case file naming is preserved throughout. (AS-009, AS-010, AS-014)
+- C-003: No Zustand store is added; React Query remains the server-state layer and `useState` the local-state layer. (AS-014)
+- C-004: Eden treaty stays the API client — no axios is introduced. (AS-005, AS-014)
+- C-005: Any file move (source OR test) MUST update every matching import and `mock.module(...)` path within the SAME story — no dangling reference may survive a story. Tests reference source via `@/…` (after S-001); feature tests live under their feature and infra/app-root tests stay in `test/` (after S-005). (AS-008, AS-010, AS-015, AS-017, AS-019)
+- C-008: `bunfig.toml` keeps preloading `./test/setup.ts`; the test harness/setup file is never moved out of `test/`. (AS-018)
+- C-006: Cross-module imports use the `@/` alias; same-directory sibling imports stay relative (`./x`). (AS-001, AS-002)
+- C-007: The `import type { App } from "backend"` in `lib/api.ts` stays a type-only import of the workspace package; it is never aliased into backend source (doing so collapses Eden's end-to-end types to `any`). (AS-004)
+
+## What Already Exists
+
+### System Impact & Technical Risks
+
+- **Service layer already exists.** Each feature has a `client.ts` of typed Eden request thunks — this is the guide's "service layer", already implemented. The refactor keeps it, does not rebuild it.
+- **Envelope type already exists.** `EdenResult` (in `lib/use-api-query`) is anchord's API-response envelope. No new envelope is introduced.
+- **`@/` alias already declared** in `tsconfig.json` — S-001 only adopts it; no tsconfig change needed for src. (Whether bun-test resolves `@/` for the `test/` dir is a separate question — see Gaps.)
+- **Risk — test/src coupling.** Tests are centralized in `test/` and import via `../src/...` with `mock.module` on feature `client.ts`. Moving files (S-002, S-003) breaks these unless updated in lockstep. This is the main risk surface; C-005 pins the mitigation.
+- **Risk — viewer breadth.** `viewer` is the largest feature (21 files) and the most test-covered (sandbox bridge, selection anchor, composer drag). Sub-layering it (S-003) touches the most importers; keep the move mechanical (path-only).
+
+## Not in Scope
+
+- Renaming files to PascalCase — rejected; kebab-case is consistent and the rename is churn with no value.
+- Introducing Zustand global stores — rejected; React Query + local state is the deliberate choice.
+- Switching Eden → axios — rejected; Eden is type-safe end-to-end.
+- Sub-layering small features (`sharing`, `auth`, `workspaces`) — deferred; sub-folders for ≤13 files is over-engineering. Revisit if a feature grows past ~20 files.
+- Changing any runtime behaviour, route, or API call — explicitly none.
+- Migrating the repo to Vitest, or co-locating the infra/app-root tests — out of scope; `bun test` stays the runner and infra tests stay central (S-005).
+
+## Gaps
+
+- GAP-001 (status: resolved → AS-015): tests adopt `@/` too, including `mock.module` targets; if bun-test doesn't honour `@/` natively, the path-resolution config is part of S-001.
+- GAP-002 (status: resolved → AS-005): `use-api-query.ts` lives in `src/lib/api/` with the infra it wraps.
+- GAP-003 (status: resolved → AS-016): `use-mobile` + `use-breakpoint` are merged into one responsive hook in `src/hooks/`.
+- GAP-004 (status: resolved → AS-006): pure utils stay at `src/lib/` root; no `lib/utils/` subfolder.
+
+## Clarifications — 2026-06-13
+
+- Test imports adopt `@/` in the same pass as source (not left on `../src/…`). The risk is bun-test path resolution inside `mock.module`; S-001 owns proving it and applying any needed config. (→ AS-015)
+- `use-api-query` is treated as part of the API-infra layer (`lib/api/`), not as a generic global hook, because it wraps `EdenResult`/`api`. (→ AS-005)
+- `use-mobile` and `use-breakpoint` are merged outright into a single responsive hook — they were overlapping viewport concerns. (→ AS-016)
+- Pure utils (`utils`, `initials`, `session-expiry`) stay at `lib/` root; three files don't justify a `lib/utils/` subfolder. (→ AS-006)
+- Tests co-locate with their feature (S-005, added after initial draft); only app-root/shared/infra tests and `test/setup.ts` stay central. This reverses the initial draft's "co-location out of scope" decision.
+
+## Change Log
+
+| Date | Change | Ref |
+|------|--------|-----|
+| 2026-06-13 | Initial creation | -- |
+| 2026-06-13 | Resolved GAP-001..004 → AS-015/005/016/006; tests adopt `@/`, `use-api-query`→`lib/api/`, hooks merged, utils stay at `lib/` root | clarify |
+| 2026-06-13 | Added S-005 (co-locate feature tests; infra/app-root tests stay central) per user follow-up; updated C-005, added C-008 | user |

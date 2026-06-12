@@ -2,141 +2,141 @@
 
 _2026-06-07_
 
-**Feature:** Đăng ký/đăng nhập đa phương thức, operator bật/tắt provider qua
-config. Auth = *cách* đăng nhập (tách khỏi roles/share = *cái* phân quyền sau đó).
+**Feature:** Multi-method sign up / sign in, operator toggles providers via
+config. Auth = *how* you sign in (separate from roles/share = *what* you're allowed to do afterward).
 
-**Trigger:** Người dùng đăng ký/đăng nhập; hoặc nhận pending-invite (cụm sharing)
-rồi sign up bằng email được mời.
+**Trigger:** A user signs up / signs in; or receives a pending-invite (sharing cluster)
+then signs up with the invited email.
 
-**UI expectation:** Trang sign-in/sign-up với nút email+pw + nút GitHub + Google;
-chỉ hiện provider nào operator bật. Toàn bộ **[N] NEW**.
+**UI expectation:** A sign-in/sign-up page with an email+pw button + GitHub + Google buttons;
+only show providers the operator enabled. Everything is **[N] NEW**.
 
 ---
 
-### Quyết định (đã chốt trong phiên explore, research-backed)
+### Decisions
 
-**1. Thư viện = better-auth.**
-- Tích hợp chính thức Elysia + Bun + Drizzle adapter (trúng cả stack).
-- DB session (cookie httpOnly), revoke được — hợp self-host (logout/cấm phiên).
-- Email+pw + OAuth built-in + SSO plugin (OIDC/SAML) cho v0.5; operator toggle
-  provider qua config.
-- Lucia đã maintenance mode (loại); Auth.js thiên Next (loại).
-- Bonus: better-auth v1.5 có OAuth 2.1 Provider plugin hỗ trợ **MCP agent** → dùng
-  cho auth agent ở cụm mcp-roundtrip.
+**1. Library = better-auth.**
+- Official Elysia + Bun + Drizzle adapter integration (hits the whole stack).
+- DB session (httpOnly cookie), revocable — fits self-host (logout/session ban).
+- Email+pw + OAuth built-in + SSO plugin (OIDC/SAML) for v0.5; operator toggles
+  providers via config.
+- Lucia is in maintenance mode (excluded); Auth.js leans Next (excluded).
+- Bonus: better-auth v1.5 has an OAuth 2.1 Provider plugin supporting the **MCP agent** → used
+  for the auth agent in the mcp-roundtrip cluster.
 
-**2. Method set v0 = email+password, GitHub OAuth, Google OAuth.**
-- **Magic link DỜI xuống v0.5** (design doc xếp v0, đã trim).
-- Google KÉO LÊN v0 (design doc xếp v0.5).
-- v0.5+: magic link, GitLab, OIDC/SAML SSO (qua SSO plugin).
+**2. v0 method set = email+password, GitHub OAuth, Google OAuth.**
+- **Magic link MOVED down to v0.5** (the design doc placed it in v0, trimmed).
+- Google PULLED UP to v0 (the design doc placed it in v0.5).
+- v0.5+: magic link, GitLab, OIDC/SAML SSO (via the SSO plugin).
 
-**3. Account linking = auto-link nếu email đã verify.**
-- Các provider cùng email *đã verified* → gộp 1 account (liền mạch). CHỈ link khi
-  email verified (better-auth có setting) — tránh lỗ hổng chiếm tài khoản qua email
-  chưa xác thực.
+**3. Account linking = auto-link if the email is verified.**
+- Providers with the same *verified* email → merge into 1 account (seamless). ONLY link when
+  the email is verified (better-auth has a setting) — avoids the account-takeover hole via an
+  unverified email.
 
-**4. Operator toggle provider qua config.**
-- Bật/tắt từng provider (email/GitHub/Google) bằng env/config; UI chỉ hiện provider
-  đang bật.
+**4. Operator toggles providers via config.**
+- Enable/disable each provider (email/GitHub/Google) via env/config; the UI only shows enabled
+  providers.
 
 ---
 
 ### Happy path
 
-1. User mở /sign-in, bấm "Continue with GitHub" → OAuth → quay về, better-auth tạo
-   user + session cookie → vào app.
-2. User khác đăng ký email+pw → nhận email verify → bấm link → account active.
-3. User có pending-invite (email `bob@x.com`, role editor) sign up bằng đúng email
-   đó → invite kích hoạt, Bob vào doc với role editor (cụm sharing).
-4. User trước đó dùng GitHub, nay đăng nhập Google cùng email đã verified → auto
-   link vào cùng account.
+1. User opens /sign-in, clicks "Continue with GitHub" → OAuth → returns, better-auth creates
+   user + session cookie → enters the app.
+2. Another user signs up email+pw → receives a verify email → clicks the link → account active.
+3. A user with a pending-invite (email `bob@x.com`, editor role) signs up with exactly that
+   email → invite activates, Bob enters the doc with the editor role (sharing cluster).
+4. A user who previously used GitHub now signs in with Google using the same verified email → auto
+   link into the same account.
 
 ### Unhappy paths
 
-- **Email chưa verify cố link provider khác:** không auto-link (chống chiếm tài
-  khoản); buộc verify hoặc giữ account riêng.
-- **Provider bị operator tắt:** nút không hiện; nếu cố gọi callback → từ chối.
-- **OAuth callback lỗi/từ chối:** quay về sign-in với thông báo lỗi, không tạo
-  phiên.
-- **Đăng nhập sai mật khẩu nhiều lần:** rate-limit (better-auth hỗ trợ) → tạm khoá
-  thử lại (assumption ngưỡng).
+- **Unverified email tries to link another provider:** no auto-link (account-takeover
+  protection); forces verification or keeps accounts separate.
+- **Provider disabled by the operator:** button hidden; if a callback is forced → rejected.
+- **Failed/denied OAuth callback:** return to sign-in with an error message, no session
+  created.
+- **Wrong password several times:** rate-limit (better-auth supports it) → retries temporarily
+  locked (threshold is an assumption).
 
 ### Business rules
 
-- Session DB-backed, cookie httpOnly; logout xoá session.
-- Email từ OAuth provider coi như verified (provider đã xác thực); email+pw phải
-  verify trước khi auto-link.
-- Pending-invite khớp theo email lúc account email đó trở nên tồn tại + verified.
+- DB-backed session, httpOnly cookie; logout deletes the session.
+- An email from an OAuth provider is treated as verified (the provider already verified it); email+pw must
+  be verified before auto-link.
+- A pending-invite matches by email when an account for that email becomes existing + verified.
 
 ### Input validation
 
-- Email đúng format, unique theo account.
-- Password: min độ dài + chính sách (assumption: min 8, không yêu cầu ký tự đặc
-  biệt cứng nhắc — theo NIST). Hash bằng better-auth (scrypt/argon2 mặc định).
+- Email in valid format, unique per account.
+- Password: min length + policy (assumption: min 8, no rigid special-character requirement
+  — per NIST). Hashed by better-auth (scrypt/argon2 default).
 
 ### Permissions
 
-- Auth không có "role" — chỉ xác thực danh tính. Phân quyền là cụm sharing +
+- Auth has no "role" — it only authenticates identity. Authorization is the sharing cluster +
   workspace (workspace admin/member; doc roles).
-- **First-run / instance admin** (self-host): user đầu tiên thành admin workspace
-  → thuộc cụm **workspace-project**, ghi nhận coupling.
+- **First-run / instance admin** (self-host): the first user becomes workspace admin
+  → belongs to the **workspace-project** cluster, note the coupling.
 
 ### Data impact
 
-- **better-auth tự quản schema auth:** `user`, `session`, `account`,
-  `verification`. → Bảng `users` tôi phác ban đầu NHƯỜNG cho better-auth.
-- Bảng app (`workspaces`, `workspace_members`, `docs`, `annotations`, `comments`)
-  tham chiếu `user.id` của better-auth.
-- Pending-invite (bảng `doc_members`/`doc_shares` ở cụm sharing) phải được auth
-  pick up lúc sign up.
+- **better-auth manages the auth schema:** `user`, `session`, `account`,
+  `verification`. → The `users` table I originally sketched YIELDS to better-auth.
+- App tables (`workspaces`, `workspace_members`, `docs`, `annotations`, `comments`)
+  reference better-auth's `user.id`.
+- The pending-invite (the `doc_members`/`doc_shares` table in the sharing cluster) must be
+  picked up by auth at sign up.
 
 ### Out of scope (v0 — defer)
 
 - Magic link → v0.5.
 - GitLab OAuth → v0.5.
-- OIDC/SAML SSO (cắm IdP riêng) → v0.5, qua better-auth SSO plugin (lợi thế
-  self-host cốt lõi nhưng không phải v0).
-- 2FA/passkey → v2 (better-auth có plugin sẵn khi cần).
-- OAuth 2.1 Provider cho MCP agent → cụm mcp-roundtrip quyết định có dùng không.
+- OIDC/SAML SSO (plug in your own IdP) → v0.5, via the better-auth SSO plugin (a core
+  self-host advantage but not v0).
+- 2FA/passkey → v2 (better-auth has a plugin ready when needed).
+- OAuth 2.1 Provider for MCP agent → the mcp-roundtrip cluster decides whether to use it.
 
 ### Decision rationale
 
-- better-auth thay vì tự ráp: tổ hợp email+pw/OAuth/(SSO sau) tự viết dễ sai bảo
-  mật; better-auth là lựa chọn 2026 cho TS, hợp Bun/Elysia/Drizzle, DB session.
-- DB session thay vì JWT: cần revoke/logout/cấm phiên cho self-host; JWT khó thu
-  hồi.
-- Auto-link chỉ khi verified: cân bằng liền mạch vs chống account takeover.
-- Trim magic link khỏi v0: giảm bề mặt + phụ thuộc SMTP sớm; email+pw + 2 OAuth đã
-  đủ vào cửa.
+- better-auth instead of rolling our own: hand-writing the email+pw/OAuth/(SSO later) combo is
+  easy to get wrong security-wise; better-auth is the 2026 choice for TS, fits Bun/Elysia/Drizzle, DB session.
+- DB session instead of JWT: need revoke/logout/session ban for self-host; JWT is hard to
+  revoke.
+- Auto-link only when verified: balances seamlessness vs account-takeover protection.
+- Trim magic link from v0: reduces surface + early SMTP dependency; email+pw + 2 OAuth is
+  enough to get in the door.
 
-### Assumptions (cần xác nhận)
+### Assumptions (need confirmation)
 
-- Yêu cầu verify email cho đăng ký email+pw; email OAuth coi như verified.
-- Password min 8 ký tự (NIST-style, không quy tắc cứng nhắc).
-- Rate-limit đăng nhập bật (ngưỡng chốt lúc build).
+- Require email verification for email+pw sign-up; OAuth email treated as verified.
+- Password min 8 characters (NIST-style, no rigid rules).
+- Sign-in rate-limit enabled (threshold decided at build).
 
 ### Open questions
 
-- **SMTP/email sending:** verify email + invite email + notify reply đều cần gửi
-  mail. Operator self-host cấu hình SMTP thế nào, provider mặc định gì (hay tắt
-  được)? → couples **self-host** + **workspace-project (notify)**. Magic link đã
-  trim nên áp lực email giảm, nhưng verify + invite vẫn cần.
-- Nếu operator tắt hết OAuth và chưa cấu hình SMTP → email verify không gửi được;
-  có cần chế độ "không cần verify" cho instance nội bộ?
-- First-run admin: user đầu tiên auto-thành instance admin? → workspace cluster.
+- **SMTP/email sending:** verify email + invite email + notify reply all need to send
+  mail. How does the self-host operator configure SMTP, what's the default provider (or can it be
+  disabled)? → couples **self-host** + **workspace-project (notify)**. Magic link is
+  trimmed so email pressure drops, but verify + invite are still needed.
+- If the operator disables all OAuth and hasn't configured SMTP → email verify can't send;
+  do we need a "no verification needed" mode for internal instances?
+- First-run admin: does the first user auto-become the instance admin? → workspace cluster.
 
 ### Complexity signal: **low-medium**
 
-better-auth gánh phần nặng. Phức tạp còn lại: cấu hình provider toggle, reconcile
-schema better-auth với bảng app, và pick-up pending-invite. SMTP là ẩn số phụ thuộc
-self-host.
+better-auth carries the heavy part. The remaining complexity: provider-toggle config, reconciling
+the better-auth schema with the app tables, and picking up the pending-invite. SMTP is the unknown depending
+on self-host.
 
 ### Cross-cluster dependencies
 
-- **sharing-permissions:** pending-invite kích hoạt lúc sign up; password hashing
-  (link password) có thể tái dùng tiện ích better-auth.
+- **sharing-permissions:** pending-invite activates at sign up; password hashing
+  (link password) can reuse better-auth utilities.
 - **workspace-project:** first-run instance admin; user → workspace member.
-- **mcp-roundtrip:** OAuth 2.1 Provider / token cho agent publish-pull.
-- **self-host:** cấu hình SMTP + provider env; secret APP_SECRET cho session.
+- **mcp-roundtrip:** OAuth 2.1 Provider / token for the agent publish-pull.
+- **self-host:** SMTP config + provider env; APP_SECRET secret for the session.
 
 ## UI sketches
 
@@ -144,17 +144,17 @@ Dark-operator (`DESIGN.md`). Greenfield → `[N]` NEW.
 
 **Sign in + First-run setup** `[N]` ← S-001 (email+pw) /S-002 (GitHub/Google)
 /S-004 (provider toggle) · workspace-project S-001 (first-run admin) · self-host
-(SMTP bắt buộc C-008)
+(SMTP mandatory C-008)
 ```
 ┌─────────────────────────────┬─────────────────────────────┐
 │ Sign in                     │ First-run setup             │
-│ anchord · self-hosted       │ User đầu = instance admin    │
+│ anchord · self-hosted       │ First user = instance admin  │
 │ Email   [ you@team.com    ] │ Workspace [ microvn       ]  │
 │ Password[ ········        ] │ Admin email[ hoang@…      ]  │
 │        [    Sign in    ]    │ Email+password      ●──○ on  │
-│ ─────── hoặc ───────        │ GitHub OAuth        ●──○ on  │ ←S-004
+│ ─────── or ─────────        │ GitHub OAuth        ●──○ on  │ ←S-004
 │ [ Continue with GitHub  ]   │ Google OAuth        ●──○ on  │
-│ [ Continue with Google  ]   │ SMTP (bắt buộc)  configured✓ │ ←self-host
+│ [ Continue with Google  ]   │ SMTP (required)  configured✓ │ ←self-host
 │                             │     [ Create workspace ]     │
 └─────────────────────────────┴─────────────────────────────┘ (≤760: stacked)
 ```

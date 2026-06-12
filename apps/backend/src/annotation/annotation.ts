@@ -80,6 +80,26 @@ export interface AnnotationRow {
   status: "unresolved" | "resolved";
 }
 
+/**
+ * One comment in an annotation's thread, shaped for the viewer read (S-003): the
+ * annotation-core-ui list contract is `{ id, parentId, authorName|guestName, body, createdAt }`
+ * (annotation-core-ui.md §Read). A session comment carries `authorName` (resolved from the user),
+ * a guest comment carries `guestName`; exactly one is present.
+ */
+export interface ViewerComment {
+  id: string;
+  parentId: string | null;
+  authorName?: string;
+  guestName?: string;
+  body: string;
+  createdAt: string;
+}
+
+/** An annotation plus its flat comment thread — what the viewer read (S-003) returns. */
+export interface AnnotationWithComments extends AnnotationRow {
+  comments: ViewerComment[];
+}
+
 /** What createAnnotation hands the repo to persist. */
 export interface NewAnnotation {
   docId: string;
@@ -95,6 +115,11 @@ export interface NewAnnotation {
 export interface AnnotationRepo {
   insertAnnotation(input: NewAnnotation): Promise<{ id: string }>;
   listByDoc(docId: string): Promise<AnnotationRow[]>;
+  /**
+   * Every comment on the doc's annotations (S-003 read), each tagged with its `annotationId`
+   * so the domain can group threads. One query for the whole doc — no per-annotation N+1.
+   */
+  listCommentsByDoc(docId: string): Promise<(ViewerComment & { annotationId: string })[]>;
 }
 
 export interface CreateAnnotationInput {
@@ -156,7 +181,7 @@ export interface ListAnnotationsInput {
 }
 
 export type ListAnnotationsResult =
-  | { allowed: true; annotations: AnnotationRow[] }
+  | { allowed: true; annotations: AnnotationWithComments[] }
   | { allowed: false; annotations: [] };
 
 /**
@@ -177,6 +202,20 @@ export async function listAnnotations(
     return { allowed: false, annotations: [] };
   }
 
-  const annotations = await repo.listByDoc(docId);
+  const [rows, allComments] = await Promise.all([
+    repo.listByDoc(docId),
+    repo.listCommentsByDoc(docId),
+  ]);
+
+  // Group comments by annotation (creation order is preserved by the repo's ORDER BY), stripping
+  // the grouping key so each thread matches the viewer contract `{ id, parentId, …, createdAt }`.
+  const threads = new Map<string, ViewerComment[]>();
+  for (const { annotationId, ...comment } of allComments) {
+    const thread = threads.get(annotationId);
+    if (thread) thread.push(comment);
+    else threads.set(annotationId, [comment]);
+  }
+
+  const annotations = rows.map((row) => ({ ...row, comments: threads.get(row.id) ?? [] }));
   return { allowed: true, annotations };
 }

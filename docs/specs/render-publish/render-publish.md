@@ -1,247 +1,375 @@
 # Spec: render-publish
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-07
+**Last updated:** 2026-06-11
 **Status:** Draft
 
 ## Overview
 
-Nhận artifact (HTML / Markdown / ảnh) qua upload hoặc paste, lưu thành doc có slug
-bất biến + version đầu tiên, và render an toàn cho người nhận đọc qua một link.
-HTML "chạy thật" trong sandbox cách ly; Markdown render đẹp theo theme app; ảnh
-xem được với zoom/pan. Là cửa vào của anchord — chưa có doc thì chưa annotate được.
+Accept an artifact (HTML / Markdown / image) via upload or paste, store it as a doc
+with an immutable slug + a first version, and render it safely for a recipient to read
+through a link. HTML "runs for real" in an isolated sandbox; Markdown renders nicely in
+the app theme; images are viewable with zoom/pan. This is the front door of anchord —
+without a doc there's nothing to annotate.
 
-_Ships cùng các cụm khác; xem `docs/explore/README.md`. Publish qua MCP nằm ở
-`mcp-roundtrip` nhưng tạo cùng artifact (doc+slug+v1) theo model danh tính ở đây._
+_Ships alongside the other clusters; see `docs/explore/README.md`. Publish via MCP lives
+in `mcp-roundtrip` but produces the same artifact (doc+slug+v1) following the identity
+model defined here._
 
 ## Data Model
 
-- **docs**: `id`, `slug` (bất biến, sinh một lần), `kind` (html | markdown | image),
-  `title` (mutable metadata), `general_access` (do cụm sharing dùng), timestamps.
-- **doc_versions**: `id`, `doc_id`, `version` (int, từ 1), `content` (HTML/MD text;
-  ảnh lưu trên volume, xem self-host), `content_hash`, `published_by`, `created_at`.
+- **docs**: `id`, `slug` (immutable, generated once), `kind` (html | markdown | image),
+  `title` (mutable metadata), `general_access` (used by the sharing cluster), timestamps.
+  - `status` (AS-016) is NOT a stored column here — the viewer derives `status: "published"` for any
+    doc served (it has ≥1 version). A real draft/published lifecycle, if added, belongs to versioning-diff.
+- **doc_versions**: `id`, `doc_id`, `version` (int, starting at 1), `content` (HTML/MD text;
+  images stored on a volume, see self-host), `content_hash`, `published_by`, `created_at`.
   Unique (doc_id, version).
-- Block-id injection + cột `anchor` cho annotation thuộc cụm `annotation-core`.
+- Block-id injection + the `anchor` column for annotation belong to the `annotation-core` cluster.
 
 ## Stories
 
 ### S-001: Publish an artifact (P0)
 
-**Description:** Là tác giả đã đăng nhập, tôi upload một file hoặc paste nội dung
-để xuất bản nó thành một doc có link chia sẻ, với tiêu đề tự suy mà sửa được.
-**Source:** docs/explore/render-publish.md#feature, #happy-path, #quyết-định (mục
-3 mô hình danh tính, mục 5 title), #business-rules (cap size, content-type).
+**Description:** As a logged-in author, I upload a file or paste content to publish it
+as a doc with a shareable link, with an inferred title I can edit.
+**Source:** docs/explore/render-publish.md#feature, #happy-path, #decisions (item
+3 identity model, item 5 title), #business-rules (size cap, content-type).
 
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
-- `files:` unknown (dự kiến `src/routes/publish.*`, `src/services/publish.*`, `src/db/schema`)
+- `files:` unknown (expected `src/routes/publish.*`, `src/services/publish.*`, `src/db/schema`)
 - `autonomous:` true
-- `verify:` publish một file .html hợp lệ → nhận link, mở link thấy version 1; thử file 8MB → bị từ chối.
+- `verify:` publish a valid .html file → get a link, open it and see version 1; try an 8MB file → rejected.
 
 **Acceptance Scenarios:**
 
-AS-001: Publish file HTML hợp lệ
-- **Given:** tác giả đã đăng nhập, ở màn "New doc"
-- **When:** upload `spec.html` (1.2MB), bấm Publish
-- **Then:** tạo doc với slug bất biến + version 1; trả về link `/d/:slug`; mở link
-  thấy nội dung render
-- **Data:** file HTML 1.2MB, có thẻ `<title>Payment Spec v2</title>`
+AS-001: Publish a valid HTML file
+- **Given:** a logged-in author, on the "New doc" screen
+- **When:** they upload `spec.html` (1.2MB) and click Publish
+- **Then:** a doc is created with an immutable slug + version 1; returns a link `/d/:slug`; opening
+  the link shows the rendered content
+- **Data:** a 1.2MB HTML file with a `<title>Payment Spec v2</title>` tag
 
-AS-002: Publish bằng paste, chọn format Markdown
-- **Given:** tác giả ở màn "New doc", chọn paste + format = Markdown
-- **When:** dán nội dung Markdown và Publish
-- **Then:** tạo doc kind=markdown + version 1 + link
-- **Data:** chuỗi Markdown có H1 "Release Notes"
+AS-002: Publish via paste, format set to Markdown
+- **Given:** the author is on the "New doc" screen, selects paste + format = Markdown
+- **When:** they paste Markdown content and Publish
+- **Then:** a doc is created with kind=markdown + version 1 + a link
+- **Data:** a Markdown string with an H1 "Release Notes"
 
-AS-003: Tiêu đề tự suy và sửa được trước khi publish
-- **Given:** đang upload `spec.html` có `<title>Payment Spec v2</title>`
-- **When:** ô title được điền sẵn "Payment Spec v2"; tác giả sửa thành "Payment Spec" rồi Publish
-- **Then:** doc lưu title "Payment Spec"
-- **Data:** title gốc "Payment Spec v2" → sửa "Payment Spec"
+AS-003: Title is inferred and editable before publishing
+- **Given:** uploading `spec.html` containing `<title>Payment Spec v2</title>`
+- **When:** the title field is pre-filled with "Payment Spec v2"; the author edits it to "Payment Spec" then Publishes
+- **Then:** the doc stores the title "Payment Spec"
+- **Data:** original title "Payment Spec v2" → edited to "Payment Spec"
 
-AS-004: Artifact vượt giới hạn bị từ chối
-- **Given:** tác giả ở màn "New doc"
-- **When:** upload `dashboard.html` 8MB
-- **Then:** từ chối trước khi lưu với thông báo nêu kích thước thực tế và giới hạn;
-  không tạo doc nào
-- **Data:** HTML 8.1MB (cap 5MB)
+AS-004: An over-limit artifact is rejected
+- **Given:** the author is on the "New doc" screen
+- **When:** they upload an 8MB `dashboard.html`
+- **Then:** rejected before saving, with a message stating the actual size and the limit;
+  no doc is created
+- **Data:** 8.1MB HTML (5MB cap)
 
-AS-005: Nội dung không khớp loại khai báo bị từ chối
-- **Given:** tác giả ở màn "New doc"
-- **When:** upload file đuôi `.html` nhưng nội dung sniff ra là binary
-- **Then:** từ chối, không publish; báo nội dung không phải HTML/Markdown/ảnh hợp lệ
-- **Data:** file `report.html` chứa bytes nhị phân
+AS-005: Content not matching the declared type is rejected
+- **Given:** the author is on the "New doc" screen
+- **When:** they upload a file with a `.html` extension but content that sniffs as binary
+- **Then:** rejected, not published; reports the content is not valid HTML/Markdown/image
+- **Data:** a `report.html` file containing binary bytes
+
+AS-014: Empty artifact is rejected
+- **Given:** the author is on the "New doc" screen
+- **When:** they upload/paste an empty artifact (0 bytes, or whitespace only)
+- **Then:** rejected, no doc is created; reports the content is empty
+- **Data:** empty string "" and whitespace-only "   \n"
+
+AS-015: Ambiguous paste (no format, no extension) defaults to Markdown
+- **Given:** the author pastes text content with no format selected and no filename to infer the kind from
+- **When:** they publish
+- **Then:** the doc is created with kind = markdown (safe default for ambiguous text)
+- **Data:** paste "a plain text paragraph", no declared format, no filename
 
 ### S-002: Render HTML live & isolated (P0)
 
-**Description:** Là người nhận, tôi mở doc HTML và thấy nó chạy thật (chart/tab/
-toggle hoạt động), trong khi nội dung đó không thể chạm tới phiên đăng nhập hay dữ
-liệu của app.
-**Source:** docs/explore/render-publish.md#quyết-định (mục 1 render mode), #happy-path.
+**Description:** As a recipient, I open an HTML doc and see it run for real (charts/tabs/
+toggles work), while that content can't reach the app's login session or data.
+**Source:** docs/explore/render-publish.md#decisions (item 1 render mode), #happy-path.
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
-- `files:` unknown (dự kiến content-route serve + viewer iframe + CSP header)
+- `files:` unknown (expected content-route serve + viewer iframe + CSP header)
 - `autonomous:` true
-- `verify:` mở doc HTML có tab widget → click tab đổi nội dung; thử script đọc cookie app → không lấy được.
+- `verify:` open an HTML doc with a tab widget → clicking a tab changes the content; try a script that reads the app cookie → can't get it.
 
 **Acceptance Scenarios:**
 
-AS-006: HTML interactive chạy thật trong viewer
-- **Given:** một doc HTML đã publish chứa widget tab dùng JavaScript
-- **When:** người nhận mở link và click sang tab khác
-- **Then:** nội dung tab đổi (JS chạy thật trong viewer)
-- **Data:** HTML có 2 tab + script chuyển tab
+AS-006: Interactive HTML runs for real in the viewer
+- **Given:** a published HTML doc containing a tab widget that uses JavaScript
+- **When:** the recipient opens the link and clicks to another tab
+- **Then:** the tab content changes (JS actually runs in the viewer)
+- **Data:** HTML with 2 tabs + a tab-switching script
 
-AS-007: Nội dung HTML bị cách ly khỏi app
-- **Given:** một doc HTML đã publish chứa script cố đọc cookie/đăng nhập của app
-- **When:** người nhận mở link
-- **Then:** script không đọc được cookie/dữ liệu/giao diện của app (origin cách ly);
-  phần còn lại của app không bị ảnh hưởng
-- **Data:** HTML có `<script>` cố truy cập storage/cookie của trang cha
+AS-007: HTML content is isolated from the app
+- **Given:** a published HTML doc containing a script that tries to read the app's cookie/login
+- **When:** the recipient opens the link
+- **Then:** the script can't read the app's cookies/data/UI (isolated origin);
+  the rest of the app is unaffected
+- **Data:** HTML with a `<script>` that tries to access the parent page's storage/cookie
 
-AS-008: HTML hỏng cấu trúc vẫn render best-effort
-- **Given:** một doc HTML có thẻ không đóng / sai cấu trúc
-- **When:** người nhận mở link
-- **Then:** viewer vẫn render best-effort, không làm sập trang
-- **Data:** HTML thiếu thẻ đóng `</div>`
+AS-008: Structurally broken HTML still renders best-effort
+- **Given:** an HTML doc with unclosed / malformed tags
+- **When:** the recipient opens the link
+- **Then:** the viewer still renders best-effort, without crashing the page
+- **Data:** HTML missing a closing `</div>` tag
 
 ### S-003: Render Markdown styled (P0)
 
-**Description:** Là người nhận, tôi mở doc Markdown và đọc nó được trình bày đẹp
-theo theme app; nội dung script nhúng trong Markdown không chạy.
-**Source:** docs/explore/render-publish.md#quyết-định (mục 2 MD routing).
+**Description:** As a recipient, I open a Markdown doc and read it nicely presented
+in the app theme; scripts embedded in the Markdown don't run.
+**Source:** docs/explore/render-publish.md#decisions (item 2 MD routing).
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
-- `files:` unknown (dự kiến renderer MD + sanitize)
+- `files:` unknown (expected MD renderer + sanitize)
 - `autonomous:` true
 
 **Acceptance Scenarios:**
 
-AS-009: Markdown render theo theme app
-- **Given:** một doc Markdown đã publish có heading, danh sách, đoạn văn
-- **When:** người nhận mở link
-- **Then:** nội dung hiển thị có style theo theme app (không trong iframe)
-- **Data:** Markdown có H1/H2 + bullet list
+AS-009: Markdown renders in the app theme
+- **Given:** a published Markdown doc with headings, lists, paragraphs
+- **When:** the recipient opens the link
+- **Then:** the content displays styled in the app theme (not in an iframe)
+- **Data:** Markdown with H1/H2 + a bullet list
 
-AS-010: Script nhúng trong Markdown không chạy
-- **Given:** một doc Markdown chứa khối raw `<script>`
-- **When:** người nhận mở link
-- **Then:** script bị loại, không thực thi; phần văn bản vẫn hiển thị
-- **Data:** Markdown có `<script>alert(1)</script>`
+AS-010: Scripts embedded in Markdown don't run
+- **Given:** a Markdown doc containing a raw `<script>` block
+- **When:** the recipient opens the link
+- **Then:** the script is stripped and not executed; the text content still displays
+- **Data:** Markdown with `<script>alert(1)</script>`
 
 ### S-004: View image with zoom/pan (P0)
 
-**Description:** Là người nhận, tôi mở doc ảnh và xem được với zoom/pan, làm nền
-cho việc pin comment theo toạ độ về sau.
-**Source:** docs/explore/render-publish.md#quyết-định (mục 4 ảnh).
+**Description:** As a recipient, I open an image doc and can view it with zoom/pan, laying
+the groundwork for pinning comments by coordinate later.
+**Source:** docs/explore/render-publish.md#decisions (item 4 image).
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
-- `files:` unknown (dự kiến image viewer + zoom/pan)
+- `files:` unknown (expected image viewer + zoom/pan)
 - `autonomous:` true
 
 **Acceptance Scenarios:**
 
-AS-011: Ảnh hiển thị và zoom/pan được
-- **Given:** một doc ảnh PNG đã publish
-- **When:** người nhận mở link và zoom in rồi kéo (pan)
-- **Then:** ảnh phóng to và di chuyển theo; vị trí dựa trên toạ độ ảnh gốc
+AS-011: Image displays and supports zoom/pan
+- **Given:** a published PNG image doc
+- **When:** the recipient opens the link and zooms in then drags (pan)
+- **Then:** the image zooms and moves accordingly; position is based on the original image coordinates
 - **Data:** PNG 1600×1200
 
-AS-012: Ảnh hỏng hiện placeholder
-- **Given:** một doc ảnh có file hỏng/không đọc được
-- **When:** người nhận mở link
-- **Then:** khung hiện placeholder "Không đọc được ảnh", không sập trang
-- **Data:** file ảnh corrupt
+AS-012: A corrupt image shows a placeholder
+- **Given:** an image doc with a broken/unreadable file
+- **When:** the recipient opens the link
+- **Then:** the frame shows a placeholder "Could not read image", without crashing the page
+- **Data:** a corrupt image file
 
-AS-013: SVG render cách ly trong sandbox
-- **Given:** một doc ảnh SVG chứa script
-- **When:** người nhận mở link
-- **Then:** SVG render trong iframe sandbox; script không chạm tới app
-- **Data:** SVG có phần tử `<script>`
+AS-013: SVG renders isolated in a sandbox
+- **Given:** an SVG image doc containing a script
+- **When:** the recipient opens the link
+- **Then:** the SVG renders in a sandbox iframe; the script can't reach the app
+- **Data:** SVG with a `<script>` element
+
+### S-005: Serve a doc to the in-app viewer (P0)
+
+**Description:** As the in-app (SPA) viewer, I load a doc's metadata and rendered content so I can
+render it in the React 3-pane viewer (direction B) — Markdown comes back as sanitized app-theme HTML;
+HTML/image come back as a reference to the sandboxed content, not inline.
+**Source:** direction B (viewer is a React route, see annotation-core-ui); the current `/d` server page
++ `/v` sandbox give no JSON the SPA can render from. Resolves annotation-core-ui:GAP (doc-content API).
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (expected `src/routes/docs.*` GET-by-slug + the viewer-loader + access gate)
+- `autonomous:` true
+- `verify:` open the viewer on a markdown doc → it receives title/kind/version + sanitized HTML and renders it; an HTML/image doc → receives the sandbox content reference; a no-access slug → nothing returned (404).
+
+**Acceptance Scenarios:**
+
+AS-016: The viewer loads a doc's metadata + rendered content
+- **Given:** a published doc I can access (markdown)
+- **When:** the viewer requests the doc by slug
+- **Then:** it receives the doc's metadata (title, kind, current version, status, general-access) and the
+  rendered content — for Markdown, sanitized HTML in the app theme
+- **Data:** a markdown doc at version 3
+
+AS-017: HTML/image content comes back as a sandbox reference, not inline
+- **Given:** a published HTML doc I can access
+- **When:** the viewer requests the doc by slug
+- **Then:** the metadata comes back plus a reference to the sandboxed content (the `/v` content for the
+  iframe) — the untrusted HTML is NOT returned inline for the app origin to render
+- **Data:** an HTML doc
+
+AS-018: A doc I cannot access is not served to the viewer
+- **Given:** a restricted doc I am not invited to (or a non-existent slug)
+- **When:** the viewer requests it by slug
+- **Then:** nothing is returned and not-found is indistinguishable from no-access (existence-hiding)
+- **Data:** restricted doc, non-member requester
+
+### S-006: Inject block-id markers at serve time (P0)
+
+**Description:** As the annotation layer, the content served to the viewer (and the sandboxed `/v`
+content) carries a stable positional block id on each block element, so an annotation can anchor to a
+position. This serves `annotation-core`'s anchor model (C-001 there); durability still comes from
+text-snippet+fuzzy, the block id is a cheap positional hint.
+**Source:** annotation-core C-001 / GAP-002 (block_id injected server-side at serve/publish time); annotation-core-ui prerequisite (highlights can't anchor without it).
+
+**Execution:**
+- `depends_on:` S-002, S-003, S-005
+- `parallel_safe:` false
+- `files:` unknown (expected the serve-time content transform reused by `/d`, `/v`, and S-005)
+- `autonomous:` true
+- `verify:` fetch a served markdown/HTML doc → each block element carries `block-{tag}-{n}`; an element with an existing id keeps it (gets `data-block-id`); the same phrase in two blocks resolves to two different block ids.
+
+**Acceptance Scenarios:**
+
+AS-019: Served content carries positional block ids
+- **Given:** a markdown or HTML doc with several block elements
+- **When:** it is served to the viewer (or as `/v` content)
+- **Then:** each block element carries a positional id `block-{tag}-{n}` (a per-tag sequential counter in document order)
+- **Data:** a doc with 3 paragraphs + 2 headings
+
+AS-020: An element that already has an id is not clobbered
+- **Given:** a block element that already carries an `id`
+- **When:** the content is served
+- **Then:** its existing `id` is preserved and the positional marker is added as `data-block-id` instead
+- **Data:** `<h2 id="intro">` in the content
+
+AS-021: The same text in two blocks resolves to distinct block ids
+- **Given:** the phrase "see below" appears in two different blocks
+- **When:** the content is served
+- **Then:** the two occurrences sit under two different block ids (so an annotation on the second anchors to the second block, not the first)
+- **Data:** "see below" in block 3 and block 9
+
+AS-022: Malformed/empty content is injected best-effort without crashing
+- **Given:** content with malformed/unclosed tags (or empty)
+- **When:** it is served
+- **Then:** block-id injection does not crash; the content still serves (best-effort), consistent with the best-effort HTML render (AS-008)
+- **Data:** HTML missing a closing tag
 
 ## Constraints & Invariants
 
-- C-001: HTML không tin cậy render trong iframe sandbox opaque origin (không
-  `allow-same-origin`) + header `CSP: sandbox allow-scripts`. (AS-007)
-- C-002: Nội dung render trong sandbox KHÔNG qua dompurify (giữ JS chạy); nội dung
-  render trong app origin (Markdown) PHẢI qua dompurify (cắt JS). (AS-006, AS-010)
-- C-003: Cap dung lượng artifact: HTML/MD 5MB, ảnh 25MB; vượt → từ chối, không lưu. (AS-004)
-- C-004: Slug sinh một lần lúc tạo doc và bất biến. Tạo doc → version 1. (AS-001)
-  _Tính bất biến qua các lần update thuộc cụm versioning-diff._
-- C-005: Loại nội dung xác định bằng sniff nội dung, không chỉ tin đuôi file. (AS-005)
+- C-001: Untrusted HTML renders in an opaque-origin sandbox iframe (no
+  `allow-same-origin`) + a `CSP: sandbox allow-scripts` header. (AS-007)
+- C-002: Content rendered in the sandbox does NOT go through dompurify (keeps JS running); content
+  rendered in the app origin (Markdown) MUST go through dompurify (strips JS). (AS-006, AS-010)
+- C-003: Artifact size cap: HTML/MD 5MB, image 25MB; over → rejected, not stored. (AS-004)
+- C-004: The slug is generated once at doc creation and is immutable. Creating a doc → version 1. (AS-001)
+  _Immutability across updates belongs to the versioning-diff cluster._
+- C-005: Content type is determined by sniffing the content, not just trusting the file extension. (AS-005)
+- C-006: An empty artifact (0 bytes / whitespace only) is rejected before any doc is created. (AS-014)
+- C-007: Ambiguous content (no declared format + no extension to infer) defaults to kind=markdown. (AS-015)
+- C-008: The in-app viewer content is access-gated (existence-hiding, like `/d`); Markdown is served as
+  sanitized app-theme HTML (dompurify, C-002), while HTML/image are served as a reference to the
+  sandboxed `/v` content — the untrusted HTML is NEVER returned inline for the app origin. (AS-016, AS-017, AS-018)
+- C-009: Block-id markers are injected at serve time on the content path: positional `block-{tag}-{n}`
+  (per-tag sequential counter, document order); an element with an existing `id` keeps it and gets
+  `data-block-id` instead; the markers appear in BOTH the viewer content (S-005) and the `/v` sandbox
+  content; injection is best-effort on malformed content. This serves annotation-core C-001 (block id is
+  a positional hint, not a stable identity). (AS-019, AS-020, AS-021, AS-022)
 
 ## UI Notes
 
-Từ `docs/explore/render-publish.md` §UI sketches. Greenfield → tất cả `[N]`. Component
-names only (không markup). Dark-operator theo `DESIGN.md`. Precedence: AS > Tree.
+From `docs/explore/render-publish.md` §UI sketches. Greenfield → all `[N]`. Component
+names only (no markup). Dark-operator per `DESIGN.md`. Precedence: AS > Tree.
 
 - `NewDocDialog` `[N]`
   - `SourceTabs`: Upload · Paste · viaMCP
-  - `UploadDropzone` *(nhận .html/.md/ảnh; cap 5MB / ảnh 25MB → reject message)*
-  - `FormatToggle`: HTML · Markdown *(chỉ hỏi khi Paste)*
-  - `TitleField` *(auto-suy từ <title>/H1/tên file; editable)*
+  - `UploadDropzone` *(accepts .html/.md/image; cap 5MB / image 25MB → reject message)*
+  - `FormatToggle`: HTML · Markdown *(only asked on Paste)*
+  - `TitleField` *(auto-inferred from <title>/H1/filename; editable)*
   - `PublishButton`
-- `DocRenderFrame` `[N]` *(nội dung render; chrome quanh — TopBar/TocSidebar/AnnotationsRail — thuộc annotation-core)*
-  - `HtmlSandboxFrame` *(iframe sandbox, JS chạy; dùng cho kind=html)*
-  - `MarkdownView` *(render app-origin + sanitize; kind=markdown)*
-  - `ImageViewer` *(zoom/pan, toạ độ gốc cho image-region; kind=image)*
-  - `RenderErrorState` *(ảnh corrupt / sai content-type → placeholder)*
+- `DocRenderFrame` `[N]` *(rendered content; surrounding chrome — TopBar/TocSidebar/AnnotationsRail — belongs to annotation-core)*
+  - `HtmlSandboxFrame` *(sandbox iframe, JS runs; used for kind=html)*
+  - `MarkdownView` *(app-origin render + sanitize; kind=markdown)*
+  - `ImageViewer` *(zoom/pan, original coordinates for image-region; kind=image)*
+  - `RenderErrorState` *(corrupt image / wrong content-type → placeholder)*
+
+## API
+
+HTTP contract for this cluster. Follows `api-core` (envelope C-001, error→status C-003,
+auth gate C-005, validation C-007, existence-hiding C-006). `→` = serves which AS.
+
+| Method · Path | Serves | Auth | Request | Success | Errors |
+|---|---|---|---|---|---|
+| `POST /api/w/:workspaceId/docs` | S-001 (AS-001/002/003/014/015) | session (member) | multipart file OR `{ content, kind?, title?, projectId? }` (Zod) | 201 `{ docId, slug, url }` | 400 VALIDATION_ERROR (empty AS-014; type mismatch AS-005), 413 PAYLOAD_TOO_LARGE (over-cap AS-004) |
+| `GET /api/w/:workspaceId/docs/:slug` | S-005 (AS-016/017/018) + S-006 (block-ids in content) | session (viewer+) | path slug | 200 `{ doc: {title,kind,version,status,generalAccess}, content }` (markdown: sanitized HTML w/ block-ids; html/image: `{ contentUrl: /v/:id }`) | 404 (no-access → indistinguishable, C-006/C-008) |
+
+Non-`/api` routes (already mounted in `src/app.ts`, **exempt from the JSON envelope** per
+api-core C-009 — they serve HTML/sandboxed content, not JSON):
+
+| Method · Path | Serves | Notes |
+|---|---|---|
+| `GET /d/:slug` | S-002/S-003/S-004 (viewer shell) | HTML page; access-gated → a no-access/missing doc returns 404 via api-core C-006 (existence-hiding) |
+| `GET /v/:id` | S-002 (AS-007 isolation, AS-013 SVG) | raw content under CSP sandbox (opaque origin); access-gated like `/d` |
 
 ## What Already Exists
 
 ### System Impact & Technical Risks
 
-- Repo greenfield — chưa có code. Schema phác cũ trong `src/db/schema.ts` đã revert;
-  cần `docs.slug` (bản phác chưa có).
-- Reuse: viewer iframe + content-route ở đây được cụm `annotation-core` tái dùng để
-  inject bridge + `data-block-id`. Thiết kế content-route nên tính trước hook này.
-- Risk: render HTML không tin cậy là bề mặt XSS chính — C-001/C-002 là hàng rào;
-  sai sót ở đây là rủi ro bảo mật cao.
-- Cross-spec: `mcp-roundtrip` tạo doc/version qua MCP theo cùng model danh tính.
+- Greenfield repo — no code yet. The old schema draft in `src/db/schema.ts` was reverted;
+  `docs.slug` is needed (the draft didn't have it).
+- Reuse: the viewer iframe + content-route here are reused by the `annotation-core` cluster to
+  inject the bridge + `data-block-id`. The content-route design should anticipate this hook.
+- Risk: rendering untrusted HTML is the main XSS surface — C-001/C-002 are the guardrails;
+  a mistake here is a high security risk.
+- Cross-spec: `mcp-roundtrip` creates docs/versions via MCP under the same identity model.
 
 ## Not in Scope
 
-- Import `.zip` (CSS/font/ảnh đi kèm) — defer v0.5 (kéo theo zip-slip/zip-bomb/entry-point).
-- `<img src>` → asset endpoint rewrite (kiểu publish_with_assets) — đi cùng zip, v0.5.
-- Hiểu schema mf-stack (S/AS/C/P, ID-as-anchor) — bỏ khỏi v0 theo chỉ đạo (coi mf-stack như HTML/MD thường).
-- "Island" (nhúng raw-HTML/JS trong Markdown) — v2.
-- Annotate PDF, annotate live URL — v2.
-- Append version / diff / restore — cụm versioning-diff.
-- Visibility / general-access enforcement — cụm sharing-permissions.
-- Publish qua MCP — cụm mcp-roundtrip (tạo cùng artifact).
+- Importing `.zip` (bundled CSS/font/images) — deferred to v0.5 (drags in zip-slip/zip-bomb/entry-point).
+- `<img src>` → asset endpoint rewrite (publish_with_assets style) — goes with zip, v0.5.
+- Understanding the mf-stack schema (S/AS/C/P, ID-as-anchor) — dropped from v0 per direction (treat mf-stack like plain HTML/MD).
+- "Island" (embedding raw-HTML/JS inside Markdown) — v2.
+- Annotating PDFs, annotating live URLs — v2.
+- Appending versions / diff / restore — versioning-diff cluster.
+- Visibility / general-access enforcement — sharing-permissions cluster.
+- Publishing via MCP — mcp-roundtrip cluster (creates the same artifact).
 
 ## Gaps
 
-- GAP-001 (status: open): `@font-face` cross-origin từ opaque-origin iframe về app
-  cần header CORS (ACAO) trên content endpoint — cách cấu hình chưa chốt. Source:
-  "@font-face cross-origin … cần header CORS (ACAO)".
-- GAP-002 (status: deferred): doc HTML lớn (gần 5MB) có cần lazy/stream khi render
-  không — đo lúc build. Owner: build-time perf. Source: "Doc lớn … render trong
-  iframe có cần lazy/stream".
-- GAP-003 (status: deferred): lib sniffing content-type + danh sách MIME chấp nhận
-  chính xác — quyết định lúc build. Source: "Content-type sniffing dùng lib nào".
+- GAP-001 (status: open): `@font-face` cross-origin from the opaque-origin iframe back to the app
+  needs a CORS (ACAO) header on the content endpoint — the configuration isn't settled. Source:
+  "@font-face cross-origin … needs a CORS (ACAO) header".
+- GAP-002 (status: deferred): whether a large HTML doc (close to 5MB) needs lazy/streaming when rendering
+  — measure at build time. Owner: build-time perf. Source: "Large doc … does iframe rendering need lazy/stream".
+- GAP-003 (status: deferred): which content-type sniffing lib + the exact accepted MIME list
+  — decided at build time. Source: "which content-type sniffing lib to use".
 
 ## Clarifications — 2026-06-07
 
-(Bê từ decision rationale của explore doc; không hỏi lại.)
+(Carried over from the explore doc's decision rationale; not re-asked.)
 
-- **Sandbox iframe thay vì dompurify-strip cho HTML:** yêu cầu "HTML chạy thật" mâu
-  thuẫn việc sanitize cắt JS; cách ly origin giải cả hai. Nếu opaque-origin chưa đủ
-  → chuyển origin sandbox riêng (đắt hơn cho self-host).
-- **iframe `src` + content-route thay vì `srcdoc`:** ban đầu vì zip cần resolve
-  đường dẫn tương đối; zip đã defer nhưng giữ `src` cho nhất quán + để
-  annotation-core inject `data-block-id`/bridge server-side; tránh srcdoc cồng kềnh.
-- **Slug bất biến + append version; visibility tách sang sharing:** tránh hai nơi
-  cùng điều khiển hiển thị.
-- **Defer zip + mf-stack:** giảm bề mặt v0 theo chỉ đạo.
-- **Ảnh lưu trên volume** (quyết định ở cụm self-host), content text trong Postgres.
+- **Sandbox iframe instead of dompurify-strip for HTML:** the "HTML runs for real" requirement
+  conflicts with sanitizing away JS; origin isolation solves both. If opaque-origin isn't enough
+  → move to a dedicated sandbox origin (more expensive for self-host).
+- **iframe `src` + content-route instead of `srcdoc`:** initially because zip needs to resolve
+  relative paths; zip is deferred but `src` is kept for consistency + so that
+  annotation-core can inject `data-block-id`/bridge server-side; avoids an unwieldy srcdoc.
+- **Immutable slug + append version; visibility split out to sharing:** avoids two places
+  both controlling visibility.
+- **Defer zip + mf-stack:** reduce the v0 surface per direction.
+- **Images stored on a volume** (decided in the self-host cluster), text content in Postgres.
+
+## Spec Sizing Notes
+
+Stories=6 (under target 7). AS=22 (target 20, in the G7 overage range ≤30). The overage comes from the
+2026-06-11 additions for the React viewer (direction B), each AS one atom:
+- S-005 viewer content: AS-016 (meta+MD html), AS-017 (html/image → sandbox ref), AS-018 (no-access).
+- S-006 block-id inject: AS-019 (positional), AS-020 (don't-clobber existing id), AS-021 (duplicate→distinct), AS-022 (malformed best-effort).
+No bloat — each AS traces to one stated behavior.
 
 ## Change Log
 
@@ -249,3 +377,6 @@ names only (không markup). Dark-operator theo `DESIGN.md`. Precedence: AS > Tre
 |------|--------|-----|
 | 2026-06-07 | Initial creation (from docs/explore/render-publish.md) | -- |
 | 2026-06-07 | + ## UI Notes (Component Tree from explore §UI sketches) — Minor | -- |
+| 2026-06-08 | + ## API (HTTP contract: POST /api/docs + /d /v exempt; per api-core) — Minor | -- |
+| 2026-06-07 | Added AS-014/AS-015 + C-006/C-007 (document reject-empty + ambiguous→markdown guards; /mf-build S3); snapshot 2026-06-07.md | -- |
+| 2026-06-11 | Major: + S-005 (serve doc to in-app React viewer, JSON meta+content, AS-016/017/018) + S-006 (serve-time block-id injection, AS-019/020/021/022) + C-008/C-009 + API `GET /api/w/:ws/docs/:slug`; POST path corrected to workspace-scoped; + Spec Sizing Notes. Snapshot 2026-06-11.md. Unblocks annotation-core-ui prerequisites #1+#2 | -- |

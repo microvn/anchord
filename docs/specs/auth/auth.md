@@ -6,113 +6,116 @@
 
 ## Overview
 
-Đăng ký/đăng nhập đa phương thức (email+password, GitHub, Google), phiên DB-backed,
-operator bật/tắt provider qua config. Auth = *cách* đăng nhập, tách khỏi roles/share
-(*cái* phân quyền). Dùng thư viện better-auth (tự quản schema auth).
+Multi-method sign up / sign in (email+password, GitHub, Google), DB-backed sessions,
+operator toggles providers via config. Auth = *how* you sign in, separate from roles/share
+(*what* you're allowed to do). Uses the better-auth library (it manages the auth schema itself).
 
 ## Data Model
 
-- **better-auth tự quản:** `user`, `session`, `account`, `verification`.
-- Bảng app (`workspaces`, `docs`, `annotations`, `comments`, `doc_members`,
-  `api_tokens`…) tham chiếu `user.id`.
-- Pending invite (`doc_members` ở `sharing-permissions`) được pick up theo email
-  lúc sign up.
+- **Managed by better-auth:** `user`, `session`, `account`, `verification`.
+- App tables (`workspaces`, `docs`, `annotations`, `comments`, `doc_members`,
+  `api_tokens`…) reference `user.id`.
+- Pending invite (`doc_members` in `sharing-permissions`) is picked up by email
+  at sign up.
+- **Email provider config (boot-mandatory, C-008):** either `SMTP_HOST`/`SMTP_PORT`/
+  `SMTP_USER`/`SMTP_PASS` **or** `RESEND_API_KEY` (Resend HTTP API). At least one must be
+  present at boot; both present → Resend API wins. `self-host` mirrors this env set.
 
 ## Stories
 
 ### S-001: Sign up / sign in with email + password (P0)
 
-**Description:** Là người dùng, tôi đăng ký và đăng nhập bằng email + mật khẩu; có
-phiên đăng nhập revoke được.
-**Source:** docs/explore/auth.md#quyết-định (mục 2 method set), #business-rules.
+**Description:** As a user, I sign up and sign in with email + password; I get a
+revocable session.
+**Source:** docs/explore/auth.md#decisions (item 2 method set), #business-rules.
 
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
-- `files:` unknown (dự kiến cấu hình better-auth + `src/auth/*`)
+- `files:` unknown (expected: better-auth config + `src/auth/*`)
 - `autonomous:` true
-- `verify:` đăng ký email+pw → đăng nhập → có phiên; logout → phiên mất.
+- `verify:` sign up email+pw → sign in → session exists; logout → session gone.
 
 **Acceptance Scenarios:**
 
-AS-001: Đăng ký rồi đăng nhập email+password
-- **Given:** provider email+password đang bật, SMTP đã cấu hình
-- **When:** đăng ký bằng email+mật khẩu, xác thực email, rồi đăng nhập
-- **Then:** tài khoản active; có phiên đăng nhập (cookie); logout xoá phiên
-- **Data:** email mới + mật khẩu ≥ 8 ký tự
+AS-001: Sign up then sign in with email+password
+- **Given:** the email+password provider is enabled, SMTP is configured
+- **When:** signing up with email+password, verifying the email, then signing in
+- **Then:** account is active; a session exists (cookie); logout deletes the session
+- **Data:** new email + password ≥ 8 characters
 
-AS-002: Sai mật khẩu bị từ chối + rate-limit
-- **Given:** một account email+password tồn tại
-- **When:** đăng nhập sai mật khẩu nhiều lần liên tiếp
-- **Then:** từ chối; sau ngưỡng thất bại → tạm hạn chế thử lại
-- **Data:** sai mật khẩu lặp lại
+AS-002: Wrong password is rejected + rate-limited
+- **Given:** an email+password account exists
+- **When:** signing in with the wrong password several times in a row
+- **Then:** rejected; past the failure threshold → retries are temporarily limited
+- **Data:** repeated wrong password
 
 ### S-002: Sign in with OAuth (GitHub / Google) (P0)
 
-**Description:** Là người dùng, tôi đăng nhập qua GitHub hoặc Google và có phiên.
-**Source:** docs/explore/auth.md#quyết-định (mục 2), #happy-path.
+**Description:** As a user, I sign in via GitHub or Google and get a session.
+**Source:** docs/explore/auth.md#decisions (item 2), #happy-path.
 
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
-- `files:` unknown (OAuth provider config better-auth)
+- `files:` unknown (better-auth OAuth provider config)
 - `autonomous:` checkpoint
-- `verify:` "Continue with GitHub" → quay về có phiên; provider tắt → nút không hiện.
+- `verify:` "Continue with GitHub" → return with a session; provider disabled → button hidden.
 
 **Acceptance Scenarios:**
 
-AS-003: Đăng nhập GitHub tạo phiên
-- **Given:** provider GitHub đang bật
-- **When:** người dùng bấm "Continue with GitHub", hoàn tất OAuth
-- **Then:** tạo (hoặc khớp) account, email coi như verified; có phiên đăng nhập
-- **Data:** tài khoản GitHub hợp lệ
+AS-003: GitHub sign-in creates a session
+- **Given:** the GitHub provider is enabled
+- **When:** the user clicks "Continue with GitHub" and completes OAuth
+- **Then:** an account is created (or matched), email treated as verified; a session exists
+- **Data:** a valid GitHub account
 
-AS-004: OAuth callback lỗi/từ chối không tạo phiên
-- **Given:** người dùng bắt đầu OAuth nhưng từ chối cấp quyền / callback lỗi
-- **When:** quay về app
-- **Then:** không tạo phiên; quay lại sign-in với thông báo lỗi
-- **Data:** OAuth bị huỷ
+AS-004: Failed/denied OAuth callback creates no session
+- **Given:** the user starts OAuth but denies the grant / the callback fails
+- **When:** returning to the app
+- **Then:** no session is created; return to sign-in with an error message
+- **Data:** OAuth cancelled
 
 ### S-003: Auto-link providers by verified email (P1)
 
-**Description:** Là người dùng đã có account, khi tôi đăng nhập bằng phương thức
-khác cùng email đã verified, hệ thống gộp vào cùng một account.
-**Source:** docs/explore/auth.md#quyết-định (mục 3 account linking).
+**Description:** As a user who already has an account, when I sign in with a different
+method using the same verified email, the system merges into the same account.
+**Source:** docs/explore/auth.md#decisions (item 3 account linking).
 
 **Execution:**
 - `depends_on:` S-001, S-002
 - `parallel_safe:` false
 - `files:` unknown
 - `autonomous:` checkpoint
-- `verify:` account GitHub (email verified) rồi đăng nhập Google cùng email → cùng account.
+- `verify:` GitHub account (verified email) then Google sign-in with the same email → same account.
 
 **Acceptance Scenarios:**
 
-AS-005: Auto-link khi email đã verified
-- **Given:** account đã tồn tại với email đã verified (vd qua GitHub)
-- **When:** người dùng đăng nhập Google cùng email đã verified
-- **Then:** gộp vào cùng account (không tạo account trùng)
-- **Data:** cùng email, cả hai verified
+AS-005: Auto-link when email is verified
+- **Given:** an account already exists with a verified email (e.g. via GitHub)
+- **When:** the user signs in with Google using the same verified email
+- **Then:** merge into the same account (no duplicate account created)
+- **Data:** same email, both verified
 
-AS-006: KHÔNG auto-link khi email chưa verified
-- **Given:** một account có email chưa verified
-- **When:** một phương thức khác đăng nhập với cùng email (chưa verified)
-- **Then:** KHÔNG auto-link (chống chiếm tài khoản); giữ account riêng cho tới khi verify
-- **Data:** email chưa verified
+AS-006: Do NOT auto-link when email is unverified
+- **Given:** an account with an unverified email
+- **When:** another method signs in with the same email (unverified)
+- **Then:** do NOT auto-link (account-takeover protection); keep accounts separate until verified
+- **Data:** unverified email
 
-AS-010: OAuth trả email_verified=false không auto-link [harden H3]
-- **Given:** đã có account verified cho `victim@x.com`
-- **When:** đăng nhập OAuth trả về `victim@x.com` nhưng provider KHÔNG khẳng định
-  `email_verified===true` (thiếu hoặc false)
-- **Then:** KHÔNG auto-link; định tuyến sang xác nhận "link account" cần chứng minh
-  quyền sở hữu account cũ
+AS-010: OAuth returning email_verified=false does not auto-link [harden H3]
+- **Given:** a verified account already exists for `victim@x.com`
+- **When:** an OAuth sign-in returns `victim@x.com` but the provider does NOT assert
+  `email_verified===true` (missing or false)
+- **Then:** do NOT auto-link; route to a "link account" confirmation that requires proving
+  ownership of the existing account
 - **Data:** provider email_verified=false
 
 ### S-004: Operator toggles auth providers (P1)
 
-**Description:** Là operator self-host, tôi bật/tắt từng provider qua config; UI chỉ
-hiện provider đang bật.
-**Source:** docs/explore/auth.md#quyết-định (mục 4 toggle).
+**Description:** As a self-host operator, I enable/disable each provider via config; the UI only
+shows enabled providers.
+**Source:** docs/explore/auth.md#decisions (item 4 toggle).
 
 **Execution:**
 - `depends_on:` none
@@ -122,135 +125,150 @@ hiện provider đang bật.
 
 **Acceptance Scenarios:**
 
-AS-007: Provider tắt thì không hiện và không nhận callback
-- **Given:** operator tắt Google trong config
-- **When:** người dùng mở trang sign-in
-- **Then:** không thấy nút Google; nếu cố gọi callback Google → bị từ chối
+AS-007: A disabled provider is not shown and rejects callbacks
+- **Given:** the operator disables Google in config
+- **When:** the user opens the sign-in page
+- **Then:** no Google button; if a Google callback is forced → rejected
 - **Data:** Google off, GitHub on
 
 ### S-005: Activate pending invite on sign up (P0)
 
-**Description:** Là người được mời (cụm sharing) chưa có account, khi tôi đăng ký
-bằng đúng email được mời (đã verified), tôi nhận role đã mời.
+**Description:** As an invitee (sharing cluster) without an account, when I sign up
+with exactly the invited email (verified), I receive the invited role.
 **Source:** docs/explore/auth.md#cross-cluster (sharing pending invite).
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
-- `files:` unknown (phối hợp sharing-permissions)
+- `files:` unknown (coordinated with sharing-permissions)
 - `autonomous:` true
-- `verify:` tạo pending invite editor cho email X → sign up X (verified) → có role editor.
+- `verify:` create a pending editor invite for email X → sign up X (verified) → has editor role.
 
 **Acceptance Scenarios:**
 
-AS-008: Sign up bằng email được mời kích hoạt role
-- **Given:** có pending invite (email `bob@x.com`, role editor) từ cụm sharing
-- **When:** Bob đăng ký bằng `bob@x.com` và email được verified
-- **Then:** lời mời kích hoạt; Bob có role editor trên doc tương ứng
-- **Data:** email khớp pending invite
+AS-008: Signing up with the invited email activates the role
+- **Given:** a pending invite exists (email `bob@x.com`, editor role) from the sharing cluster
+- **When:** Bob signs up with `bob@x.com` and the email is verified
+- **Then:** the invite activates; Bob has the editor role on the corresponding doc
+- **Data:** email matches the pending invite
 
-AS-009: Email khác không kích hoạt invite của email kia
-- **Given:** pending invite cho `bob@x.com`
-- **When:** người khác đăng ký bằng `eve@x.com`
-- **Then:** không nhận role nào của invite dành cho `bob@x.com`
-- **Data:** email không khớp
+AS-009: A different email does not activate someone else's invite
+- **Given:** a pending invite for `bob@x.com`
+- **When:** someone else signs up with `eve@x.com`
+- **Then:** they receive no role from the invite meant for `bob@x.com`
+- **Data:** email does not match
 
-AS-011: SMTP lỗi lúc runtime không làm kẹt vĩnh viễn [harden H6]
-- **Given:** SMTP cấu hình OK lúc boot nhưng provider lỗi/rate-limit lúc gửi
-- **When:** một verify/invite được gửi và send thất bại
-- **Then:** mail vào queue + retry; thất bại hiện trạng thái cho operator; pending
-  invite vẫn chấp nhận được qua link in-app/shareable không phụ thuộc email tới
-- **Data:** SMTP trả 5xx lúc runtime
+AS-011: A runtime mail-send failure does not get stuck permanently [harden H6]
+- **Given:** an email provider is configured OK at boot but the provider errors/rate-limits when sending
+- **When:** a verify/invite is sent and the send fails
+- **Then:** mail goes to a queue + retry; failures surface a status to the operator; the pending
+  invite is still acceptable via an in-app/shareable link that does not depend on the email arriving
+- **Data:** the provider returns a 5xx / rate-limit at runtime
+
+AS-012: Mail is delivered via the configured email provider (Resend HTTP API)
+- **Given:** `RESEND_API_KEY` is configured (Resend HTTP API is the active provider)
+- **When:** a verification or invite email is enqueued for delivery
+- **Then:** it is sent through the Resend transport via the shared mail-transport port + queue
+  (the same port carries the SMTP transport when SMTP is the configured provider instead)
+- **Data:** RESEND_API_KEY set, SMTP absent
 
 ## Constraints & Invariants
 
-- C-001: Phiên DB-backed (cookie httpOnly), revoke được; logout xoá phiên. (AS-001)
-- C-002 [harden H3]: Email từ OAuth CHỈ coi verified khi provider khẳng định rõ
-  `email_verified === true`; thiếu/false → không coi verified. email+password phải
-  verify trước khi auto-link. (AS-003, AS-006, AS-010)
-- C-003: Auto-link chỉ khi email đã verified (chống account takeover). (AS-005, AS-006)
-- C-004: Provider bật/tắt qua config; UI chỉ hiện provider đang bật; provider tắt từ
-  chối callback. (AS-007)
-- C-005: Pending invite kích hoạt khi account của đúng email đó tồn tại + verified. (AS-008, AS-009)
-- C-006: Mật khẩu tối thiểu 8 ký tự (NIST-style, không quy tắc cứng nhắc); hash bằng
+- C-001: DB-backed session (httpOnly cookie), revocable; logout deletes the session. (AS-001)
+- C-002 [harden H3]: An email from OAuth is treated as verified ONLY when the provider explicitly
+  asserts `email_verified === true`; missing/false → not treated as verified. email+password must
+  be verified before auto-link. (AS-003, AS-006, AS-010)
+- C-003: Auto-link only when the email is verified (account-takeover protection). (AS-005, AS-006)
+- C-004: Providers are toggled via config; the UI only shows enabled providers; a disabled provider
+  rejects callbacks. (AS-007)
+- C-005: A pending invite activates when an account for that exact email exists + is verified. (AS-008, AS-009)
+- C-006: Password minimum 8 characters (NIST-style, no rigid rules); hashed by
   better-auth. (AS-001)
-- C-007: Đăng nhập có rate-limit chống brute-force. (AS-002)
-- C-008: SMTP bắt buộc — app không khởi động nếu thiếu cấu hình SMTP (như APP_SECRET);
-  do đó email verify luôn hoạt động, không có chế độ no-verify. (AS-001)
-- C-009 [harden H6]: SMTP bắt buộc lúc boot KHÁC với gửi được lúc runtime — mọi
-  outbound mail enqueue + retry + dead-letter + trạng thái "gửi lỗi" cho operator;
-  pending invite kèm link chấp nhận (in-app/shareable) hoạt động KHÔNG phụ thuộc
-  email có tới hay không. (AS-011)
+- C-007: Sign-in is rate-limited against brute-force. (AS-002)
+- C-008: An email provider is mandatory — the app does not start unless at least one is configured
+  (SMTP **or** Resend HTTP API), like APP_SECRET; therefore email verify always works, no no-verify
+  mode. Both configured → Resend API is used. (AS-001, AS-012)
+- C-009 [harden H6]: A boot-mandatory email provider is DIFFERENT from being able to send at runtime —
+  every outbound mail, via whichever transport (SMTP or Resend API), enqueues + retries + dead-letters
+  + surfaces a "send failed" status to the operator; pending invites carry an accept link
+  (in-app/shareable) that works regardless of whether the email arrives. (AS-011)
   _(Token hardening hashed/scope/revoke → `mcp-roundtrip` C-008.)_
 
 ## Linked Fields
 
-- **pending invite (email→role)** — produced bởi `sharing-permissions:S-003` (AS-008).
-  Consumed bởi auth:S-005 (AS-008) lúc sign up để gán role. ✔ pick-up theo email verified.
-- **`user.id`** — produced bởi auth (better-auth user). Consumed bởi mọi bảng app
-  (workspace_members, docs.published_by, annotations, api_tokens…). ✔ là khoá danh
-  tính chung toàn hệ.
+- **pending invite (email→role)** — produced by `sharing-permissions:S-003` (AS-008).
+  Consumed by auth:S-005 (AS-008) at sign up to assign the role. ✔ picked up by verified email.
+- **`user.id`** — produced by auth (better-auth user). Consumed by every app table
+  (workspace_members, docs.published_by, annotations, api_tokens…). ✔ the shared identity
+  key across the whole system.
 
 ## UI Notes
 
-Từ `docs/explore/auth.md` §UI sketches. Greenfield → `[N]`. Component names only.
+From `docs/explore/auth.md` §UI sketches. Greenfield → `[N]`. Component names only.
 Dark-operator (`DESIGN.md`). Precedence: AS > Tree.
 
 - `SignInCard` `[N]`
   - `EmailField` · `PasswordField` · `SignInButton`
-  - `OAuthButton` GitHub · `OAuthButton` Google *(chỉ render provider operator bật — S-004)*
-- `FirstRunSetup` `[N]` *(2-pane; **stacked** ≤760; chỉ chạy lần đầu)*
+  - `OAuthButton` GitHub · `OAuthButton` Google *(only render providers the operator enabled — S-004)*
+- `FirstRunSetup` `[N]` *(2-pane; **stacked** ≤760; runs first time only)*
   - `WorkspaceNameField` · `AdminEmailField`
   - `ProviderToggleList` → `ProviderToggle` *(email+pw / GitHub / Google)*
-  - `SmtpStatus` *(bắt buộc — configured ✓ / chặn nếu thiếu, C-008)*
+  - `SmtpStatus` *(mandatory — configured ✓ / blocks if missing, C-008)*
   - `CreateWorkspaceButton`
 
 ## What Already Exists
 
 ### System Impact & Technical Risks
 
-- Repo greenfield. better-auth tự quản schema auth → bảng `users` phác cũ nhường cho nó.
-- Cross-spec: `sharing-permissions` tạo pending invite; `mcp-roundtrip` phát API
-  token gắn user; `workspace-project` first-run admin = user đầu tiên; `self-host`
-  cấp APP_SECRET (phiên) + provider env + SMTP.
+- Greenfield repo. better-auth manages the auth schema → the old sketched `users` table yields to it.
+- Cross-spec: `sharing-permissions` creates the pending invite; `mcp-roundtrip` issues API
+  tokens bound to a user; `workspace-project` first-run admin = the first user; `self-host`
+  provides APP_SECRET (session) + provider env + SMTP.
 - Risk (sensitive): OAuth (external identity) + auto-link (account-takeover surface)
-  → đánh `checkpoint`; sai sót ở đây là rủi ro bảo mật/chiếm tài khoản.
+  → marked `checkpoint`; a mistake here is a security/account-takeover risk.
 
 ## Not in Scope
 
 - Magic link → v0.5.
 - GitLab OAuth → v0.5.
-- OIDC/SAML SSO (cắm IdP riêng) → v0.5 (better-auth SSO plugin).
+- OIDC/SAML SSO (plug in your own IdP) → v0.5 (better-auth SSO plugin).
 - 2FA / passkey → v2.
-- OAuth 2.1 Provider cho MCP agent → `mcp-roundtrip` quyết định (v0 dùng API token).
-- First-run instance admin (tạo workspace) → `workspace-project`.
+- OAuth 2.1 Provider for MCP agent → decided by `mcp-roundtrip` (v0 uses API tokens).
+- First-run instance admin (creating the workspace) → `workspace-project`.
 
 ## Gaps
 
-- GAP-001 (status: resolved → C-008): SMTP **bắt buộc** — app không khởi động nếu
-  chưa cấu hình SMTP. Nên email verify luôn gửi được; không có chế độ degrade.
-  (Chốt 2026-06-07; đảo lại "SMTP optional" của explore — `self-host` phải cập nhật:
-  SMTP là config bắt buộc lúc boot như APP_SECRET.)
-- GAP-002 (status: deferred): ngưỡng rate-limit đăng nhập (số lần / thời gian khoá)
-  — chốt lúc build. Source: "Rate-limit đăng nhập bật (ngưỡng chốt lúc build)".
+- GAP-001 (status: resolved → C-008): an **email provider is mandatory** — the app does not
+  start unless SMTP **or** Resend HTTP API is configured. So email verify always sends; no
+  degrade mode. (Decided 2026-06-07; reverses explore's "SMTP optional" — `self-host` must
+  update: an email provider is mandatory boot config like APP_SECRET. Generalized 2026-06-07
+  from SMTP-only to SMTP-or-Resend.)
+- GAP-002 (status: deferred): sign-in rate-limit threshold (number of attempts / lockout window)
+  — decided at build time. Source: "Sign-in rate-limit enabled (threshold decided at build)".
 
 ## Clarifications — 2026-06-07
 
-- **better-auth thay vì tự ráp:** tổ hợp email+pw/OAuth/(SSO sau) tự viết dễ sai bảo
-  mật; better-auth là lựa chọn 2026 cho TS, hợp Bun/Elysia/Drizzle, DB session.
-- **DB session thay vì JWT:** cần revoke/logout/cấm phiên cho self-host.
-- **Method v0 = email+pw + GitHub + Google;** magic link & GitLab dời v0.5; Google
-  kéo lên v0.
-- **Auto-link chỉ khi verified:** cân bằng liền mạch vs chống account takeover.
-- **SMTP bắt buộc (đảo lại explore):** app không khởi động nếu thiếu SMTP → email
-  verify/invite/notify luôn hoạt động, bỏ mọi logic degrade. Ảnh hưởng `self-host`:
-  SMTP_* thành config bắt buộc lúc boot.
+- **better-auth instead of rolling our own:** hand-writing the email+pw/OAuth/(SSO later) combo is
+  easy to get wrong security-wise; better-auth is the 2026 choice for TS, fits Bun/Elysia/Drizzle, DB session.
+- **DB session instead of JWT:** need revoke/logout/session ban for self-host.
+- **v0 methods = email+pw + GitHub + Google;** magic link & GitLab move to v0.5; Google
+  pulled up to v0.
+- **Auto-link only when verified:** balances seamlessness vs account-takeover protection.
+- **SMTP mandatory (reverses explore):** the app does not start without SMTP → email
+  verify/invite/notify always works, drop all degrade logic. Affects `self-host`:
+  SMTP_* becomes mandatory boot config.
+- **Email provider generalized to SMTP or Resend HTTP API (2026-06-07):** the boot-mandatory
+  requirement is an *email provider*, not SMTP specifically. Resend HTTP API (`RESEND_API_KEY`)
+  is a first-class provider — better deliverability/observability than raw SMTP, and it slots
+  into the existing `MailTransport` port + mail queue. SMTP stays valid (incl. Resend-over-SMTP).
+  Both configured → Resend API wins. `self-host` env list mirrors `RESEND_API_KEY`.
 
 ## Change Log
 
 | Date | Change | Ref |
 |------|--------|-----|
 | 2026-06-07 | Initial creation (from docs/explore/auth.md) | -- |
-| 2026-06-07 | GAP-001 resolved → C-008 (SMTP bắt buộc, không degrade) | -- |
-| 2026-06-07 | /mf-challenge harden: C-002 (auto-link cần email_verified) + AS-010; C-009 + AS-011 (SMTP runtime retry/dead-letter, invite accept-link) | -- |
+| 2026-06-07 | GAP-001 resolved → C-008 (SMTP mandatory, no degrade) | -- |
+| 2026-06-07 | /mf-challenge harden: C-002 (auto-link requires email_verified) + AS-010; C-009 + AS-011 (SMTP runtime retry/dead-letter, invite accept-link) | -- |
 | 2026-06-07 | + ## UI Notes (Component Tree from explore §UI sketches) — Minor | -- |
+| 2026-06-07 | Major: C-008/C-009 generalized SMTP→email-provider (SMTP or Resend HTTP API); +AS-012 (mail via configured provider); +RESEND_API_KEY config; self-host mirrors env | snapshot 2026-06-07.md |

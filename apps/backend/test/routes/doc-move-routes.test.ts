@@ -134,9 +134,11 @@ describe("/api/w/ws_1/docs/:slug/move|copy route glue (workspace-project S-004)"
     expect(res.status).toBe(404);
   });
 
-  test("MOVE bad projectId (not a uuid) → 400 VALIDATION_ERROR", async () => {
+  // Ids are opaque snowflake strings now (no uuid format to malform) — the validation layer
+  // only guards an EMPTY projectId; a well-formed-but-nonexistent id is the resolver's job.
+  test("MOVE empty projectId → 400 VALIDATION_ERROR", async () => {
     const app = buildApp({ resolveDocRole: asRole("editor") });
-    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: "not-a-uuid" }));
+    const res = await app.handle(req("POST", "/api/w/ws_1/docs/billing-doc/move", { projectId: "" }));
     expect(res.status).toBe(400);
     expect(((await res.json()) as any).error.code).toBe("VALIDATION_ERROR");
   });

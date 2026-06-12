@@ -20,9 +20,13 @@ import type { Bootstrap, MembersDirectory, WorkspaceRole } from "./types";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const treaty = api as any;
 
+// Read thunks are typed to their POST-peel payload (useApiQuery's peelEnvelope strips the envelope),
+// so screens get `Bootstrap` / `MembersDirectory` directly. The runtime body is the envelope; the
+// annotation is the same benign cast as the treaty wrapper above.
+
 /** GET /api/me — the bootstrap (S-001). */
-export function fetchBootstrap(): Promise<EdenResult<unknown>> {
-  return treaty.api.me.get() as Promise<EdenResult<unknown>>;
+export function fetchBootstrap(): Promise<EdenResult<Bootstrap>> {
+  return treaty.api.me.get() as Promise<EdenResult<Bootstrap>>;
 }
 
 /** POST /api/me/active-workspace — persist the active workspace (S-001 switch / C-005). */
@@ -41,8 +45,8 @@ export function renameWorkspace(workspaceId: string, name: string): Promise<Eden
 }
 
 /** GET /api/w/:workspaceId/members — member directory + pending invites (S-003, AS-007). */
-export function fetchMembers(workspaceId: string): Promise<EdenResult<unknown>> {
-  return treaty.api.w({ workspaceId }).members.get() as Promise<EdenResult<unknown>>;
+export function fetchMembers(workspaceId: string): Promise<EdenResult<MembersDirectory>> {
+  return treaty.api.w({ workspaceId }).members.get() as Promise<EdenResult<MembersDirectory>>;
 }
 
 /** POST /api/workspaces/:id/invitations — invite by email (S-003, AS-008). */

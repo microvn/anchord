@@ -1,1 +1,0 @@
-ALTER TABLE "share_links" ADD COLUMN "editors_can_share" boolean DEFAULT true NOT NULL;

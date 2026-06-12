@@ -72,7 +72,7 @@ export function SearchScreen() {
             {results.map((r) => (
               <Link
                 key={r.docId}
-                to={`/d/${r.slug}`}
+                to={`/w/${workspaceId}/d/${r.slug}`}
                 data-testid={`result-row-${r.slug}`}
                 className="flex gap-[13px] border-b border-line px-4 py-[14px] text-inherit no-underline last:border-b-0 hover:bg-elev"
               >

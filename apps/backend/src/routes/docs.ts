@@ -50,7 +50,8 @@ export const publishBodySchema = z.object({
   // workspace-project S-003 (AS-005): the project to publish into. Omitted → the
   // publisher's default project (C-009 / MCP fallback). A supplied id is validated to
   // belong to the workspace by the resolver (foreign/bogus → 404), never defaulted.
-  projectId: z.string().uuid().optional(),
+  // Ids are opaque snowflake strings (src/db/id.ts), not uuids — validate as non-empty string.
+  projectId: z.string().min(1).optional(),
 });
 
 export type PublishBody = z.infer<typeof publishBodySchema>;

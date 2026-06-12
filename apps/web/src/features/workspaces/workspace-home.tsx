@@ -123,7 +123,7 @@ export function WorkspaceHome() {
             />
           </div>
         ) : (
-          <DocList docs={recent} />
+          <DocList docs={recent} workspaceId={workspace.id} />
         )}
       </div>
     </section>

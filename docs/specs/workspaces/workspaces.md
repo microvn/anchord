@@ -1,0 +1,366 @@
+# Spec: workspaces
+
+**Created:** 2026-06-09
+**Last updated:** 2026-06-09
+**Status:** Draft
+
+## Overview
+
+Multi-workspace tenancy for anchord. Every account owns at least one workspace (a private
+tenant: its own projects, docs, members); a user can create more, be invited into others,
+and switch between the workspaces they belong to. This **reverses the earlier "v0 single
+workspace = instance" decision** — multi-workspace with full UI is the model. This spec owns
+the tenancy layer (workspace lifecycle, membership, invite/accept, switch, per-tenant
+scoping); projects/docs/browse/search live in `workspace-project` (now workspace-scoped),
+per-doc sharing in `sharing-permissions`. The frontend is a sibling spec `workspaces-ui`.
+
+## Data Model
+
+- **workspaces**: `id`, `name`, `slug` (unique), `created_at`. Many rows (was 1). No
+  instance-level admin — each workspace has its own admin via membership.
+- **workspace_members**: `workspace_id` → workspaces, `user_id` → user, `role`
+  (**admin | member** — UNCHANGED from the existing enum; no migration), `created_at`. Unique
+  on (workspace_id, user_id). A user holds rows in many workspaces with per-workspace roles.
+- **workspace_invitations** (NEW): `id`, `workspace_id`, `email`, `role`, `token`, `status`
+  (pending | accepted | rejected | revoked), `invited_by` → user, `expires_at`, `created_at`.
+  No workspace-level pending-invite exists today (only doc-level) — this is new.
+- **session.activeWorkspaceId** (NEW, on the better-auth session): the login-default
+  workspace to land in; NOT the request scope (that is the URL path — C-005).
+- Projects/docs already reach a workspace via `projects.workspace_id` (+ `docs.project_id`);
+  unchanged here.
+- **Migration note:** the single-row setup guard +
+  `POST /api/setup` are removed (replaced by auto-create-on-signup, S-001). Existing built
+  single-workspace code is reworked (see What Already Exists).
+
+## Stories
+
+### S-001: A new account gets its own workspace (P0)
+
+**Description:** As a new user, when I sign up I get my own workspace (named "default") with
+me as its admin and a default project — I do not join anyone else's workspace.
+**Source:** product owner model item 1 (each account auto-creates its own default workspace; no auto-join).
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false
+- `files:` unknown (better-auth `onUserCreated` hook → create personal workspace + default project; remove `POST /api/setup`)
+- `autonomous:` checkpoint
+- `verify:` sign up a fresh user → a workspace named "default" exists with them as admin + a default project; a second sign-up gets a separate workspace, not the first user's.
+
+**Acceptance Scenarios:**
+
+AS-001: Signing up creates the user's own workspace as admin
+- **Given:** a new person with no account
+- **When:** they sign up (and verify)
+- **Then:** a workspace named "default" is created with them as its admin, plus a default project in it
+- **Data:** new user "Dung"
+
+AS-002: A new account does not auto-join an existing workspace as a member
+- **Given:** other workspaces already exist
+- **When:** a different person signs up
+- **Then:** they auto-join ONLY the new workspace they created (as its admin) and are NOT added as a member of any existing workspace
+- **Data:** second user, with other workspaces present
+
+### S-002: Create and rename a workspace (P0)
+
+**Description:** As a user, I create additional workspaces (becoming their admin) and rename a
+workspace I own; a non-admin cannot rename.
+**Source:** product owner model item 1 (create more workspaces) + item 3 (admin powers).
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (workspace create/rename service + routes)
+- `autonomous:` true
+- `verify:` create "Acme" → I'm its admin and it appears in my workspace list; rename it; a member (non-admin) renaming is refused.
+
+**Acceptance Scenarios:**
+
+AS-003: Creating a workspace makes me its admin
+- **Given:** I am signed in
+- **When:** I create a workspace named "Acme"
+- **Then:** the workspace exists with me as its admin and appears in my list of workspaces
+- **Data:** name "Acme"
+
+AS-004: A workspace admin renames the workspace
+- **Given:** I own workspace "Acme"
+- **When:** I rename it to "Acme Docs"
+- **Then:** the workspace name becomes "Acme Docs"
+- **Data:** new name "Acme Docs"
+
+AS-005: A non-admin cannot rename the workspace
+- **Given:** I am a member (not admin) of "Acme"
+- **When:** I try to rename it
+- **Then:** the request is refused (admin only)
+- **Data:** member, not admin
+
+### S-003: See my workspaces and switch between them (P0)
+
+**Description:** As a user, I see every workspace I belong to (with my role) and the active
+one, and I switch the active workspace; each workspace's data is isolated to its members.
+**Source:** product owner model item 3 (belongs to many → switch); researched path-scoping.
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (bootstrap/me endpoint listing workspaces + active; switch)
+- `autonomous:` true
+- `verify:` the bootstrap returns all my workspaces + my role + the active one; opening a workspace I belong to scopes its data; opening one I don't belong to is refused.
+
+**Acceptance Scenarios:**
+
+AS-006: My workspace list shows every workspace I belong to with my role
+- **Given:** I own "default" and am a member of someone else's "default" (now "Acme")
+- **When:** the app loads my bootstrap
+- **Then:** both workspaces are listed, each with my role and the creating admin's display name (so two "default"s disambiguate, e.g. "My default" vs "Lan's default"), and the active workspace is indicated
+- **Data:** admin of one, member of another
+
+AS-007: Workspace data is scoped to the active workspace
+- **Given:** I belong to "default" and "Acme", each with its own projects/docs
+- **When:** I view "Acme"
+- **Then:** I see only "Acme"'s projects/docs, never "default"'s
+- **Data:** distinct content per workspace
+
+AS-008: Accessing a workspace I do not belong to is refused
+- **Given:** workspace "Globex" exists and I am not a member
+- **When:** I request "Globex"'s data
+- **Then:** the request is refused as not-a-member (existence-hiding: indistinguishable from "no such workspace")
+- **Data:** non-member of "Globex"
+
+### S-004: Invite a member by email; accept or reject (P0)
+
+**Description:** As a workspace admin, I invite someone by email; they receive a link, open an
+accept/reject page, and on accept become a member; the invited email must match.
+**Source:** product owner model item 2 (invite via email → link → accept/reject).
+
+**Execution:**
+- `depends_on:` S-002
+- `parallel_safe:` false
+- `files:` unknown (workspace invitation create + email + accept/reject endpoints)
+- `autonomous:` true
+- `verify:` admin invites bob@x.com → pending; bob opens the link → accept → bob is a member; reject → no membership; a mismatched email is refused.
+
+**Acceptance Scenarios:**
+
+AS-009: An admin invites a member by email
+- **Given:** I own "Acme"
+- **When:** I invite `bob@acme.com` as a member
+- **Then:** a pending invitation is recorded and an invite email with an accept link is sent
+- **Data:** email `bob@acme.com`, role member
+
+AS-010: Accepting an invite joins the workspace
+- **Given:** a pending invitation for `bob@acme.com` to "Acme"
+- **When:** Bob (signed in as `bob@acme.com`) opens the link and accepts
+- **Then:** Bob becomes a member of "Acme" and the invitation is marked accepted
+- **Data:** matching signed-in email
+
+AS-011: Rejecting an invite leaves no membership
+- **Given:** a pending invitation for `bob@acme.com`
+- **When:** Bob opens the link and rejects
+- **Then:** Bob is not a member and the invitation is marked rejected
+- **Data:** reject action
+
+AS-012: An invite link used by a different email is refused
+- **Given:** an invitation issued to `bob@acme.com`
+- **When:** someone signed in as `eve@acme.com` opens the link
+- **Then:** it is refused (the accepting email must match the invited email); no membership granted
+- **Data:** mismatched email
+
+AS-013: Only an admin can invite
+- **Given:** I am a member (not admin) of "Acme"
+- **When:** I try to invite someone
+- **Then:** the request is refused (admin only)
+- **Data:** member, not admin
+
+### S-005: Remove a member and change a member's role (P1)
+
+**Description:** As a workspace admin, I remove a member or change their role (including
+transferring ownership); a workspace always keeps at least one admin.
+**Source:** product owner model item 3 (admin can remove/change-role).
+
+**Execution:**
+- `depends_on:` S-004
+- `parallel_safe:` false
+- `files:` unknown (member remove + change-role service/routes)
+- `autonomous:` true
+
+**Acceptance Scenarios:**
+
+AS-014: An admin removes a member
+- **Given:** I own "Acme" and `bob@acme.com` is a member
+- **When:** I remove Bob
+- **Then:** Bob is no longer a member and loses access to "Acme"'s data
+- **Data:** member Bob
+
+AS-015: An admin promotes a member to admin (admin transfer)
+- **Given:** I own "Acme" and Bob is a member
+- **When:** I change Bob's role to admin
+- **Then:** Bob becomes an admin of "Acme" (more than one admin is allowed)
+- **Data:** promote Bob
+
+AS-016: The last admin cannot be removed or demoted
+- **Given:** I am the only admin of "Acme"
+- **When:** I try to remove myself or demote myself to member
+- **Then:** the request is refused (a workspace must keep at least one admin)
+- **Data:** sole admin
+
+AS-017: A non-admin cannot remove or change roles
+- **Given:** I am a member (not admin) of "Acme"
+- **When:** I try to remove a member or change a role
+- **Then:** the request is refused (admin only)
+- **Data:** member, not admin
+
+AS-021: An admin sees the workspace's member list
+- **Given:** I own "Acme" with members Bob (member) and a pending invite for `eve@acme.com`
+- **When:** I open the members surface
+- **Then:** I see the workspace's members with their roles plus pending invitations with their status
+- **Data:** 1 active member + 1 pending invite
+
+### S-006: Workspace data is isolated per tenant (P0)
+
+**Description:** As the system, I scope every data request to a workspace the caller belongs
+to, so one workspace's members never reach another workspace's data; `anyone_in_workspace`
+access resolves only within the doc's own workspace.
+**Source:** researched cross-tenant isolation; the 3 forward-compat seams now real.
+
+**Execution:**
+- `depends_on:` S-003
+- `parallel_safe:` false
+- `files:` unknown (move data APIs under /api/w/:workspaceId/; membership gate; scope isWorkspaceMember + search predicate by the doc's workspace)
+- `autonomous:` true
+- `verify:` a member of A requesting B's data is refused; an anyone_in_workspace doc in A is visible to A's members but not to B's members.
+
+**Acceptance Scenarios:**
+
+AS-018: A member of one workspace cannot read another workspace's data
+- **Given:** Alice is a member of "Acme" only, and "Globex" has docs
+- **When:** Alice requests a doc/project/search in "Globex"
+- **Then:** it is refused / absent — her membership in "Acme" grants nothing in "Globex"
+- **Data:** Alice ∈ Acme, target in Globex
+
+AS-019: anyone_in_workspace access resolves only within the doc's workspace
+- **Given:** a doc in "Acme" set to anyone_in_workspace, and Bob is a member of "Globex" but not "Acme"
+- **When:** Bob tries to view that doc via the anyone_in_workspace path
+- **Then:** access is denied — anyone_in_workspace means members of THAT doc's workspace ("Acme"), not any workspace
+- **Data:** Bob ∈ Globex, doc ∈ Acme (anyone_in_workspace)
+
+AS-020: A workspace member reaches that workspace's anyone_in_workspace docs
+- **Given:** a doc in "Acme" set to anyone_in_workspace, and Carol is a member of "Acme"
+- **When:** Carol views it
+- **Then:** access is granted (she is a member of the doc's workspace)
+- **Data:** Carol ∈ Acme
+
+## Constraints & Invariants
+
+- C-001: Each account auto-gets one workspace named "default" (the creator = admin) + a default
+  project on sign-up; sign-up never joins an existing workspace. (AS-001, AS-002)
+- C-002: A caller accesses a workspace's data ONLY as a member of that workspace; every data
+  API is scoped to a workspace the caller belongs to (cross-tenant isolation), and
+  `isWorkspaceMember`/access predicates are scoped by the relevant workspace, never "member of any". (AS-007, AS-008, AS-018, AS-019, AS-020)
+- C-003: Only an admin invites, removes, or changes member roles; a workspace must always keep
+  at least one admin (the last admin cannot be removed or demoted). (AS-005, AS-013, AS-016, AS-017)
+- C-004: A workspace invite is by email and pending until acted on; the accepting session's
+  email must match the invited email; reject leaves no membership. (AS-010, AS-011, AS-012)
+- C-005: The active-workspace scope is carried in the request path (`/api/w/:workspaceId/…`),
+  not a single server-side "current workspace"; `session.activeWorkspaceId` is only the
+  login-default landing target. (AS-007)
+- C-006: Per-doc sharing is orthogonal to workspace membership — a non-member can access a doc
+  via a direct per-doc share, and a doc's effective permission is the most-permissive across
+  workspace-role and per-doc ACL (no double-gating). (GAP-004)
+
+## Linked Fields
+
+This spec is the **producer** (backend tenancy); `workspaces-ui` is the consumer.
+
+- `workspaces[]` `{id, name, slug, role}` + `activeWorkspaceId` — consumed by `workspaces-ui` on
+  the switcher/bootstrap (read on app load). Produced by workspaces:S-003 (AS-006) on the
+  bootstrap surface (persisted + served every load). ✔.
+- `members[]` `{userId, email, role, status}` — consumed by `workspaces-ui` members screen.
+  Produced by workspaces:S-005 (AS-021) on the workspace members surface. ✔.
+- invitation accept/reject — consumed by `workspaces-ui` accept/reject landing; produced by
+  workspaces:S-004 (AS-010/011/012). ✔.
+
+## UI Notes
+
+The frontend is the sibling spec `workspaces-ui` (switcher, create-workspace, members screen,
+invite + accept/reject landing). This backend spec names no components; see `workspaces-ui`.
+
+## What Already Exists
+
+### System Impact & Technical Risks
+
+- **The built single-workspace code is reworked, not reused as-is** (migration assessment):
+  - `workspace/repo.ts` `currentWorkspaceId()` (LIMIT-1, lines 66/274) → resolve from the
+    request path; `createPublishProjectResolver` (LIMIT-1) → validate against the actor's workspace.
+  - `isWorkspaceMember(userId)` (one-arg, repo.ts:290) → `(workspaceId, userId)` — TODAY it
+    matches membership in ANY workspace, which becomes a **cross-tenant leak** with >1 workspace (C-002).
+  - `search/search-repo.ts` access predicate scopes membership by NO workspace → scope by the
+    doc's workspace (project_id→workspace_id). Same leak class.
+  - `workspace/setup.ts` + `routes/setup.ts` single-row guard + `POST /api/setup` → REMOVED;
+    replaced by auto-create-on-signup (S-001). The `onUserCreated` hook currently joins "the"
+    workspace; it must instead create the user's own workspace + default project.
+  - `workspace_members.role` enum is UNCHANGED (admin|member stays) — the creator is the workspace admin; no enum migration.
+- The schema is otherwise multi-ready: `workspace_members` is already a real (workspace × user
+  × role) join; every domain table reaches a workspace; no DB-level single-workspace guard.
+- **Big surface:** every data API moves under `/api/w/:workspaceId/…` (S-006) — a route
+  restructure across docs/projects/versions/annotations/sharing/search/members. Heavy but mechanical.
+- Risk (sensitive): S-001 changes the auth signup hook + removes setup, and the role-enum + route
+  moves are migrations — hence S-001 is `checkpoint`.
+
+## Not in Scope
+
+- Projects, docs, browse, search, notifications — `workspace-project` (gets a Mode C to become
+  workspace-scoped under `/api/w/:id/`).
+- Per-doc sharing (invite-to-a-doc, anyone-with-link, guest) — `sharing-permissions` (unchanged;
+  orthogonal to membership per C-006).
+- MCP under multi-workspace (identity-token + `/w/:id/mcp`, Atlassian model) — `mcp-roundtrip`, deferred.
+- Workspace deletion, leave-workspace (member self-removal), domain-allowlist auto-join,
+  workspace-level default-share settings — later (v0.5+).
+- Signup gating (open vs invite-only): signup is OPEN — each new user gets their own isolated
+  workspace and reaches others only by invite, so no instance-level gate is needed (Clarification).
+
+## Gaps
+
+- GAP-001 (status: resolved → keep custom): tenancy uses anchord's **custom** `workspaces` /
+  `workspace_members` tables (already multi-ready) and builds invite/switch/role ourselves — NOT
+  better-auth's organization plugin (which would force migrating off the built, tested tables).
+  (Decided 2026-06-09.) Source: researched org-plugin-vs-custom decision.
+- GAP-002 (status: resolved → AS-006 + workspaces-ui): the stored auto-workspace name stays
+  "default"; the switcher disambiguates by qualifying it with the creating admin's display name
+  ("My default" / "Lan's default") — the bootstrap (AS-006) serves the admin display name per
+  workspace; the rendering is `workspaces-ui`'s. (Decided 2026-06-09.) Source: model item 1.
+- GAP-003 (status: resolved → AS-021): the per-workspace member-list read is now S-005 AS-021
+  (the admin's members surface: active members + pending invites). (Decided 2026-06-09.)
+- GAP-004 (status: resolved → sharing-permissions): the unified most-permissive
+  `resolveDocPermission` (workspace-role + per-doc ACL) is owned by **sharing-permissions**,
+  consuming `isWorkspaceMember(workspaceId, userId)` + the caller's workspace role from this
+  spec. Composition: the max permission across workspace membership and any per-doc ACL; never
+  double-gated (C-006). (Decided 2026-06-09.) Source: researched authz composition.
+
+## Spec Sizing Notes
+
+Stories=6 (≤7 ✓). AS=21 (1 over the 20 soft target, within the ≤30 range). The single
+over-target AS is **AS-021** (the admin's member-list read) — a real, independently-assertable
+atom the members surface needs, not a G1 split. No bloat — each AS traces to one stated atom.
+
+## Clarifications — 2026-06-09
+
+- **Auto-join is admin-of-own, not member-of-others** (S-001): sign-up auto-joins ONLY the new
+  workspace it creates, as admin; it never adds the user to an existing workspace as a member.
+- **Tenancy = custom tables, not the better-auth org plugin** (GAP-001): keep the built, multi-ready
+  `workspaces`/`workspace_members`; build invite/switch/role ourselves.
+- **"default" name disambiguated by admin** (GAP-002): stored name stays "default"; the switcher
+  shows it qualified with the creating admin's display name.
+- **`resolveDocPermission` owned by sharing-permissions** (GAP-004): most-permissive across
+  workspace-role + per-doc ACL; this spec supplies workspace membership/role.
+- **Signup is open**: each new user gets their own isolated workspace and reaches others only by
+- **Workspace role = `admin | member` (one tier), NOT `owner`** (decided 2026-06-09): the creator is the workspace admin (≥1 admin invariant); "owner" stays exclusively the per-doc role in sharing-permissions, so the `isWorkspaceAdmin` override + members enum are UNCHANGED (no migration). UI may label the creator "Owner" but the stored role is admin.
+  invite, so no instance-level signup gate is needed.
+
+## Change Log
+
+| Date | Change | Ref |
+|------|--------|-----|
+| 2026-06-09 | Initial creation — multi-workspace tenancy (reverses single-workspace decision) | -- |
+| 2026-06-09 | Phase 3: AS-002 wording (admin-of-own vs member-of-others); +AS-021 member list; GAP-001..004 resolved (custom tables / admin-qualified name / member-list AS / sharing owns resolveDocPermission) | -- |
+| 2026-06-09 | Workspace role kept as `admin|member` (not owner) — no enum migration; "owner" reserved for the per-doc role; isWorkspaceAdmin override unchanged (scoped only) | -- |

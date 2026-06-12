@@ -2,75 +2,75 @@
 
 _2026-06-07_
 
-Khám phá theo cụm cho v0 anchord. Nguồn: design doc
+Cluster-by-cluster exploration for anchord v0. Source: design doc
 `~/.gstack/projects/claude/administrator-design-20260607-self-hosted-annotation.md`
-§4, và đọc source thật (Plannotator OSS, uselink bundle). Stack: Bun + ElysiaJS +
-Drizzle + Postgres (xem `CLAUDE.md`).
+§4, plus reading the real source (Plannotator OSS, uselink bundle). Stack: Bun + ElysiaJS +
+Drizzle + Postgres (see `CLAUDE.md`).
 
-## 8 cụm v0
+## 8 v0 clusters
 
-| Cụm | File | Quyết định cốt lõi |
+| Cluster | File | Core decisions |
 |---|---|---|
-| render-publish | [render-publish.md](render-publish.md) | iframe `src` + CSP sandbox; MD app-styled / HTML sandbox; slug bất biến + append version; ảnh zoom/pan; cap 5MB/25MB |
-| versioning-diff | [versioning-diff.md](versioning-diff.md) | content tạo version; restore=append-copy; **re-anchor + detached**; diff two-level (source + rendered side-by-side) |
-| annotation-core | [annotation-core.md](annotation-core.md) | anchor **block-scoped** (uselink) + bridge Plannotator + fuzzy; doc-level; image-region toạ độ; thread flat; suggestion=typed+MCP |
-| sharing-permissions | [sharing-permissions.md](sharing-permissions.md) | Google-Docs: 4 role, 3 general-access, anon view + tên ngẫu nhiên, link password/expiry/view-limit, pending invite |
-| auth | [auth.md](auth.md) | better-auth; email+pw + GitHub + Google (v0); auto-link nếu verified; DB session |
-| workspace-project | [workspace-project.md](workspace-project.md) | single workspace=instance; member tạo project/doc; browse theo doc-access; search title+content+comment; notify in-app+email |
+| render-publish | [render-publish.md](render-publish.md) | iframe `src` + CSP sandbox; MD app-styled / HTML sandboxed; immutable slug + append version; image zoom/pan; cap 5MB/25MB |
+| versioning-diff | [versioning-diff.md](versioning-diff.md) | content creates a version; restore = append-copy; **re-anchor + detached**; two-level diff (source + rendered side-by-side) |
+| annotation-core | [annotation-core.md](annotation-core.md) | **block-scoped** anchor (uselink) + Plannotator bridge + fuzzy; doc-level; image-region coordinates; flat thread; suggestion = typed + MCP |
+| sharing-permissions | [sharing-permissions.md](sharing-permissions.md) | Google-Docs style: 4 roles, 3 general-access modes, anon view + random name, link password/expiry/view-limit, pending invite |
+| auth | [auth.md](auth.md) | better-auth; email+pw + GitHub + Google (v0); auto-link if verified; DB session |
+| workspace-project | [workspace-project.md](workspace-project.md) | single workspace = instance; members create projects/docs; browse by doc-access; search title + content + comment; notify in-app + email |
 | mcp-roundtrip | [mcp-roundtrip.md](mcp-roundtrip.md) | API token + Streamable HTTP; create/update/read/search + pull_annotations + reply/resolve |
-| self-host | [self-host.md](self-host.md) | content Postgres + ảnh volume; SMTP optional+degrade; no telemetry; single-binary v1 (đã pha loãng) |
+| self-host | [self-host.md](self-host.md) | content in Postgres + images on volume; SMTP optional + degrade; no telemetry; single-binary v1 (already watered down) |
 
-**UI sketches:** ASCII mỗi màn nằm trong `## UI sketches` của từng explore doc (đúng
-quy ước /mf-explore, để /mf-plan route [N]/[E]/[X]) — greenfield nên tất cả `[N]`.
-Bản đồ màn↔cụm: render-publish (New doc + render) · annotation-core (viewer + image
-+ mobile) · versioning-diff (history+diff) · sharing-permissions (share dialog) ·
-auth (sign-in + first-run) · workspace-project (browser+search + notifications) ·
-mcp-roundtrip (settings token) · self-host (không UI riêng). Design system:
-`DESIGN.md` (repo root). Lưu ý: self-host ghi SMTP-optional nhưng đã đảo thành
-**SMTP bắt buộc** (xem auth C-008 / self-host spec).
+**UI sketches:** the ASCII for each screen lives in the `## UI sketches` section of each explore doc
+(per the /mf-explore convention, so /mf-plan can route [N]/[E]/[X]) — greenfield, so everything is `[N]`.
+Screen↔cluster map: render-publish (New doc + render) · annotation-core (viewer + image
++ mobile) · versioning-diff (history + diff) · sharing-permissions (share dialog) ·
+auth (sign-in + first-run) · workspace-project (browser + search + notifications) ·
+mcp-roundtrip (settings token) · self-host (no dedicated UI). Design system:
+`DESIGN.md` (repo root). Note: self-host says SMTP-optional but this has flipped to
+**SMTP required** (see auth C-008 / self-host spec).
 
-## Quyết định xuyên suốt (đọc trước khi /mf-plan)
+## Cross-cutting decisions (read before /mf-plan)
 
-- **Model danh tính doc:** slug bất biến (create) + append immutable version
-  (update). Visibility KHÔNG ở publish — thuộc sharing (general-access).
+- **Doc identity model:** immutable slug (create) + append immutable version
+  (update). Visibility is NOT set at publish — it belongs to sharing (general-access).
 - **Anchor:** block-scoped `{ type, block_id, text_snippet, offset, length,
-  segments }`, doc-level, `is_orphaned`. Re-anchor khi version mới: block_id →
-  snippet exact → fuzzy → detached. **annotation-core ↔ versioning-diff ràng buộc
-  hai chiều — /mf-plan nên chốt cùng nhau.**
-  - **block_id = positional hint** (`block-{tag}-{n}`, inject server-side lúc
-    publish) — xác nhận qua điều tra uselink (so draft vs published_content). KHÔNG
-    phải identity ổn định; độ bền dựa text_snippet+fuzzy+orphan. (Đóng /mf-challenge C1.)
-- **Render:** HTML không tin cậy chạy trong iframe sandbox (opaque origin, no
-  same-origin) qua content-route + CSP `sandbox` header. dompurify CHỈ cho nội
-  dung render ở app origin (MD, comment) — KHÔNG cho HTML sandbox.
-- **Reuse hợp pháp:** Plannotator `html-viewer` (bridge/postMessage/mark, MIT/
-  Apache) — reuse transport, THAY matcher exact-substring bằng block-scoped+fuzzy.
-  uselink: chỉ học model (block anchor, orphan/unorphan), không lấy code.
-- **better-auth tự quản schema auth** (`user/session/account/verification`) → bảng
-  `users` phác ban đầu nhường cho nó; bảng app tham chiếu `user.id`.
+  segments }`, doc-level, `is_orphaned`. Re-anchor on a new version: block_id →
+  snippet exact → fuzzy → detached. **annotation-core ↔ versioning-diff are
+  bidirectionally coupled — /mf-plan should lock them together.**
+  - **block_id = positional hint** (`block-{tag}-{n}`, injected server-side at
+    publish) — confirmed by investigating uselink (comparing draft vs published_content). It is NOT
+    a stable identity; durability rests on text_snippet + fuzzy + orphan. (Closes /mf-challenge C1.)
+- **Render:** untrusted HTML runs inside an iframe sandbox (opaque origin, no
+  same-origin) via a content-route + CSP `sandbox` header. dompurify is ONLY for
+  content rendered at the app origin (MD, comment) — NOT for sandboxed HTML.
+- **Legitimate reuse:** Plannotator `html-viewer` (bridge/postMessage/mark, MIT/
+  Apache) — reuse the transport, REPLACE the exact-substring matcher with block-scoped + fuzzy.
+  uselink: only learn the model (block anchor, orphan/unorphan), do not take the code.
+- **better-auth manages its own auth schema** (`user/session/account/verification`) → the
+  initially sketched `users` table defers to it; app tables reference `user.id`.
 
-## Cần đồng bộ (tài liệu đang vênh)
+## Needs reconciling (docs currently out of sync)
 
-- **SQLite → Postgres:** design doc §4.8/§5/§6 vẫn ghi SQLite; đã đổi sang
-  Postgres (workload multi-writer). `CLAUDE.md` đã theo Postgres. Khi /mf-plan nên
-  sửa design doc cho khớp.
-- **Single-binary:** giấc mơ "một file" của design doc dựa trên SQLite; với Postgres
-  v1 single-binary = binary app + Postgres kèm, không all-in-one.
-- **mf-stack schema:** design doc đánh ⭐ v0; theo chỉ đạo đã **bỏ khỏi v0** (coi
-  doc mf-stack như HTML/MD thường).
+- **SQLite → Postgres:** design doc §4.8/§5/§6 still says SQLite; this was changed to
+  Postgres (multi-writer workload). `CLAUDE.md` already follows Postgres. During /mf-plan,
+  fix the design doc to match.
+- **Single-binary:** the design doc's "one file" dream rests on SQLite; with Postgres,
+  the v1 single-binary = the app binary + a bundled Postgres, not all-in-one.
+- **mf-stack schema:** the design doc starred it ⭐ for v0; per direction it has been **dropped from v0**
+  (treat mf-stack docs as ordinary HTML/MD).
 
-## Schema đổi so với bản phác `src/db/schema.ts` (đã revert)
+## Schema changes vs the sketched `src/db/schema.ts` (reverted)
 
-- `annotations`: bỏ neo `docVersionId`, đổi sang neo **doc** + cột `anchor jsonb`
+- `annotations`: drop the `docVersionId` anchor, switch to anchoring on the **doc** + an `anchor jsonb` column
   (block model) + `is_orphaned` + `status`.
-- `docs`: thêm `slug` bất biến.
-- `users`: nhường cho better-auth.
-- Thêm: `doc_shares`/`doc_members`, `share_links`, `api_tokens`, `notifications`,
-  FTS index (title+content+comment), blob dedup theo content_hash.
+- `docs`: add an immutable `slug`.
+- `users`: defers to better-auth.
+- Add: `doc_shares`/`doc_members`, `share_links`, `api_tokens`, `notifications`,
+  FTS index (title + content + comment), blob dedup by content_hash.
 
-## Bước kế
+## Next step
 
-Mỗi cụm → `/mf-plan` thành spec có acceptance scenarios, rồi `/mf-build`.
-Thứ tự đề xuất: render-publish → versioning-diff + annotation-core (cùng nhau, do
-ràng buộc re-anchor) → auth → sharing-permissions → workspace-project →
+Each cluster → `/mf-plan` into a spec with acceptance scenarios, then `/mf-build`.
+Suggested order: render-publish → versioning-diff + annotation-core (together, due to
+the re-anchor coupling) → auth → sharing-permissions → workspace-project →
 mcp-roundtrip → self-host.

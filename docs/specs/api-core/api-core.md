@@ -1,7 +1,7 @@
 # Spec: api-core
 
 **Created:** 2026-06-08
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-12
 **Status:** Draft
 
 ## Overview
@@ -278,8 +278,21 @@ AS-015: Out-of-range paging params are bounded
 - **Pagination out-of-range = clamp limit, reject page<1:** limit over max clamps (lenient,
   avoids breaking a client asking for "all"); page<1 is a client bug → 400.
 
+## Clarifications — 2026-06-12
+
+- **The envelope `onError` maps the FRAMEWORK's built-in errors too, not only our domain errors
+  (refines S-002 / AS-006).** Elysia's own `NOT_FOUND` (an UNMATCHED route) → 404 `NOT_FOUND`;
+  Elysia `VALIDATION`/`PARSE` → 400 `VALIDATION_ERROR`. Without this, a route mismatch fell through to
+  `INTERNAL 500`, masking a 404 as a server crash (this is exactly how an FE/BE comment-path mismatch
+  surfaced as an opaque 500). Only a genuinely unexpected error is `INTERNAL 500`.
+- **An unexpected 500 is LOGGED server-side (refines AS-006).** AS-006 still holds — NO stack/SQL/path
+  in the response BODY — but the `INTERNAL` branch now `console.error`s the real error + the `requestId`
+  to stderr, so a 500 is never silent (a silent 500 with no trace is an ops blackhole). Client-facing
+  shape is unchanged.
+
 ## Change Log
 
 | Date | Change | Ref |
 |------|--------|-----|
 | 2026-06-08 | Initial creation (cross-cutting HTTP contract; closes the no-API-section gap across specs) | -- |
+| 2026-06-12 | Minor (Clarifications): envelope onError maps Elysia built-in errors (unmatched route NOT_FOUND→404, VALIDATION/PARSE→400), not just domain errors; unexpected 500s are logged server-side (stack + requestId) with the client body still leaking nothing (refines S-002/AS-006) | commit `9fac99b` |

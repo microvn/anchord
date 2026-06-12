@@ -41,7 +41,8 @@ import type { DB } from "../db/client";
 
 /** Body for both move and copy: the target project to relocate/duplicate INTO. */
 export const docMoveBodySchema = z.object({
-  projectId: z.string().uuid(),
+  // Snowflake string id (src/db/id.ts), not a uuid — validate as a non-empty string.
+  projectId: z.string().min(1),
 });
 
 export interface DocMoveRoutesDeps {

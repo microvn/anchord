@@ -15,6 +15,21 @@ import { toApiError, type ApiError } from "./api-error";
 
 export type EdenResult<T> = { data: T | null; error: unknown };
 
+// Anchord's /api/* routes return the unified SuccessEnvelope { success, data, timestamp, … }
+// (apps/backend/src/http/envelope.ts), so treaty's `data` slot holds the ENVELOPE and the real
+// payload sits one level down at `.data`. `peelEnvelope` strips that one layer so screens read the
+// payload directly — done HERE, once, instead of every read-thunk remembering to call unwrapEnvelope
+// (the bug class that left the viewer blank). Detection is marker-based: peel ONLY a body that
+// carries both `success` and `data` (the envelope's fingerprint). A composed payload that is a plain
+// array or `{ projects }` / `{ items }` object has no `success` key, so it passes through untouched —
+// which is why use-docs' multi-call thunks, already unwrapping internally, are not double-peeled.
+export function peelEnvelope(body: unknown): unknown {
+  if (body && typeof body === "object" && "success" in body && "data" in body) {
+    return (body as { data: unknown }).data;
+  }
+  return body;
+}
+
 export function useApiQuery<T>(
   queryKey: readonly unknown[],
   call: () => Promise<EdenResult<T>>,
@@ -34,8 +49,9 @@ export function useApiQuery<T>(
       if (result.error) {
         throw toApiError(result.error);
       }
-      // A 2xx with a null body is still a successful empty response.
-      return result.data as T;
+      // A 2xx with a null body is still a successful empty response. Peel the success-envelope
+      // (no-op on an already-flat payload) so callers never see `query.data.data`.
+      return peelEnvelope(result.data) as T;
     },
     // Don't auto-retry an unauthenticated response — it can't succeed without a new session,
     // and the cache onError is already routing the user to sign-in. Other errors get ONE

@@ -1,0 +1,27 @@
+[x] AS-001.T1 — version.test.ts:AS-001.T1 (appends N+1, prev not overwritten)             | owner: S-001
+[x] AS-001.T2 — version.test.ts:AS-001.T2 (current = newest after append)                 | owner: S-001
+[x] AS-002    — version.test.ts:AS-002 (title edit only, no new version)                  | owner: S-001
+[x] C-001     — version.test.ts:C-001 (no update-a-version path exposed)                   | owner: S-001
+[x] C-002     — version.test.ts:C-002 (counter from 1, no reuse, current=highest)          | owner: S-001
+[x] C-003     — version.test.ts:C-003 (only content change creates a version)              | owner: S-001
+[x] AS-003.T1 — version.test.ts:AS-003.T1 (lists all versions asc + empty edge)              | owner: S-002
+[x] AS-003.T2 — version.test.ts:AS-003.T2 (createdAt + publishedBy passthrough)               | owner: S-002
+[x] AS-003.T3 — version.test.ts:AS-003.T3 (highest marked current + single-version edge)     | owner: S-002
+[x] AS-004.T1 — version.test.ts:AS-004.T1 (content+hash == restored; +missing-version reject)  | owner: S-003
+[x] AS-004.T2 — version.test.ts:AS-004.T2 (current=new; v2,v3 remain)                       | owner: S-003
+[x] C-004     — version.test.ts:C-004 (length +1, none deleted; +restore-current edge)   | owner: S-003
+[x] AS-006.T1 — diff.test.ts:AS-006.T1 (LCS line diff + empty-content edges)               | owner: S-004
+[x] AS-006.T2 — diff.test.ts:AS-006.T2 (renderPair [a,b] emitted)                          | owner: S-004
+[x] AS-007    — diff.test.ts:AS-007 (equal hash → identical, pair still shown)          | owner: S-004
+[x] AS-008    — diff.test.ts:AS-008 (image pair, no text lines)                         | owner: S-004
+[~] AS-005    — restore triggers re-anchor → deferred, coordinated with annotation-core:S-005 | owner: S-003
+[~] AS-009    — matching annotations carry forward → deferred → annotation-core:S-005       | owner: S-005
+[~] AS-010    — unmatchable annotation → is_orphaned/detached → deferred → annotation-core:S-005 | owner: S-005
+[~] C-005     — new version triggers re-anchor (no match → detached) → deferred → annotation-core:S-005 | owner: S-005
+[ ] GAP-001   — storage growth (keep all versions) — open, not blocking; couples self-host | owner: —
+[N/A] GAP-003 — sync vs background re-anchor — deferred (measure at build time)            | owner: —
+[N/A] GAP-004 — @pierre/diffs raw HTML normalization — deferred (measure at build time)    | owner: —
+[N/A] version labels/commit-message — Not in Scope (auto-number only in v0)                | owner: —
+[N/A] link pinned to version (/d/:slug@v2) — Not in Scope (v0 = latest)                    | owner: —
+[N/A] overlay/swipe image diff; DOM structural diff; inline merged rich-diff — Not in Scope | owner: —
+[N/A] prune/retention of old versions — Not in Scope (keep all in v0)                       | owner: —

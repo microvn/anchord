@@ -1,0 +1,40 @@
+[x] AS-001 — unauthenticated visit shows the sign-in screen                        | owner: S-001
+[x] AS-002 — valid sign-in establishes session + enters the app shell              | owner: S-001
+[x] AS-003 — invalid sign-in shows an error, no session, stays on sign-in          | owner: S-001
+[x] AS-004 — protected route while unauthenticated redirects to sign-in            | owner: S-001
+[x] AS-005 — sign out clears the session and returns to sign-in                    | owner: S-001
+[x] C-001  — nothing past sign-in without a session; identity from cookie, no client token | owner: S-001
+[x] C-004  — built app same-origin as API via typed client (dev proxy / prod serve) | owner: S-001
+[x] AS-006 — authenticated request acts as the signed-in user (session, not body)  | owner: S-002
+[x] AS-007 — failed request shows a retryable error, not a crash/blank             | owner: S-002
+[x] AS-008 — expired session returns the user to sign-in                           | owner: S-002
+[x] C-002  — shared client: failed→retry surface, expired→sign-in, never crash      | owner: S-002
+[x] AS-009 — chrome uses the design system (dark-operator, teal only, Geist/Fraunces) | owner: S-003
+[x] AS-010 — shell responsive across breakpoints (drawer/sheet, tap ≥40px)         | owner: S-003
+[x] AS-011 — theme defaults to dark (canonical)                                    | owner: S-003
+[x] C-003  — design-system chrome + responsive; doc content never styled by it      | owner: S-003
+[ ] GAP-001 — sign-in methods (email+password only this slice; OAuth/magic-link deferred) | owner: —
+[N/A] feature screens (ProjectBrowser, viewer, share, diff) — Not in Scope (feature -ui specs) | owner: —
+[N/A] OAuth / magic-link sign-in buttons — Not in Scope (follow-up)                 | owner: —
+[N/A] first-run / setup wizard UI — Not in Scope (later)                           | owner: —
+[N/A] light-theme polish — Not in Scope (dark canonical this slice)                | owner: —
+[N/A] workspace-name display in top bar — superseded by switcher-in-sidebar (S-004) | owner: —
+[x] AS-012.T1 — sidebar shows brand · +New doc · switcher slot · nav · Members footer, in order  | owner: S-004
+[x] AS-012.T2 — sidebar on a recessed (lower-contrast) surface vs content                        | owner: S-004
+[x] AS-013   — current section nav item marked active (accent-soft bg + teal left bar); others not | owner: S-004
+[x] AS-014   — Members entry shows for admin, hidden/disabled for non-admin member (workspaces-ui C-002) | owner: S-004
+[x] AS-015   — collapse chevron → icon rail (glyph+tooltip; switcher→glyph, New doc→+); toggle restores | owner: S-004
+[x] AS-016   — mobile width → off-canvas drawer from header, switcher at drawer top, tap ≥40px      | owner: S-004
+[x] C-006    — Members entry admin-only                                                              | owner: S-004
+[~] GAP-002  — nav destinations owned by workspace-project-ui (deferred); shell routes regardless     | owner: S-004
+[x] AS-017   — header breadcrumb Workspace › Project › Doc, last crumb emphasized, parents muted    | owner: S-005
+[x] AS-018.T1 — header right = context actions · search · theme · avatar menu (settings/sign-out)   | owner: S-005
+[x] AS-018.T2 — workspace switcher does NOT appear in the header                                    | owner: S-005
+[x] AS-019   — mobile: search→icon, theme/notifications/sign-out fold into avatar menu, avatar stays | owner: S-005
+[x] C-005    — switcher only in sidebar + account only in header (no duplication)                    | owner: S-005
+[~] GAP-003  — notifications bell placeholder (no backend count yet)                                  | owner: S-005
+[x] AS-020   — empty data view: type-only, one primary create action ≥40px, no illustration         | owner: S-006
+[x] AS-021   — no-results distinct: names query + Clear search, NOT the create CTA                   | owner: S-006
+[x] AS-022   — loading: skeleton matching list shape (sub-300ms shows nothing), not full-page spinner | owner: S-006
+[x] AS-023   — failed load: recoverable error + Retry, distinct from empty state                     | owner: S-006
+[x] C-007    — empty≠no-results distinct; loading=skeleton; error=recoverable+retry                  | owner: S-006

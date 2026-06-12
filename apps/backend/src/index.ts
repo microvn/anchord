@@ -16,6 +16,12 @@ import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport, createEnqueueWorkspaceInvite } from "./auth/mail-transport";
 import { createDocMemberRepo, findUserById } from "./sharing/doc-member-repo";
 import { createDocMembersPendingInviteRepo } from "./sharing/invite";
+import {
+  createAnnotationRepo,
+  createReanchorApplyRepo,
+  createReanchorLedgerRepo,
+} from "./annotation/repo";
+import { runReanchorForNewVersion } from "./annotation/reanchor-job";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -193,6 +199,31 @@ const app = createApp({
     resolveWorkspaceRole,
     resolveDocRole: sharedResolveDocRole,
     accessDeps: sharedAccessDeps,
+    // annotation-core S-005 / C-012: when a new version is created, re-anchor the doc's
+    // annotations onto the new content — carried annotations follow the text, lost ones
+    // detach (never dropped). Fired off the publish path (the route doesn't await it). The
+    // ledger keys (annotation_id, version_id) so a re-run is idempotent; a >25%-detached
+    // run logs an alert.
+    reanchorOnNewVersion: async ({ docId, version, newContentHtml }) => {
+      const versionId = `${docId}:${version}`;
+      const ledger = createReanchorLedgerRepo(db);
+      await runReanchorForNewVersion(
+        {
+          annotations: createAnnotationRepo(db),
+          apply: createReanchorApplyRepo(db),
+          ledger,
+          onSummary: (s) => {
+            if (s.alert) {
+              console.warn(
+                `[reanchor] doc ${docId} v${version}: ${s.detached}/${s.total} annotations detached ` +
+                  `(${Math.round(s.detachedRate * 100)}%) — over threshold`,
+              );
+            }
+          },
+        },
+        { docId, versionId, newContentHtml },
+      );
+    },
   },
   // annotation-core S-001..S-007: annotation create/list, reply + guest comment,
   // resolve/reopen, suggestion create/decide.

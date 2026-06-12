@@ -45,7 +45,10 @@ function kindForFile(name: string, type: string): Kind | null {
 }
 
 function titleFromFilename(name: string): string {
-  return name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").trim();
+  const t = name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").trim();
+  // Lead with a capital, matching the backend's deriveTitle (AS-003): "auth-spec.md" → "Auth spec".
+  // First char only — the rest is preserved (e.g. "iOS notes" stays "iOS notes").
+  return t.length === 0 ? t : t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 /** The teal "New doc" button that opens the dialog. Reused by the dashboard + the All-docs head. */
@@ -159,7 +162,7 @@ export function NewDocDialog({
       toast.success(`Published “${body.title ?? res.data?.slug ?? "doc"}”`);
       onOpenChange(false);
       resetAll();
-      if (res.data?.slug) navigate(`/d/${res.data.slug}`);
+      if (res.data?.slug) navigate(`/w/${workspace.id}/d/${res.data.slug}`);
     } catch (thrown) {
       setReject(toApiError(thrown).message);
       setSubmitting(false);

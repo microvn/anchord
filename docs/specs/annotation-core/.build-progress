@@ -1,0 +1,7 @@
+S-001 done
+# PREREQ (cross-spec, user-directed 2026-06-11): backend annotation-core GAP-004 — serve in-iframe bridge script. Unblocks FE S-002 end-to-end.
+PREREQ-bridge done (commit 0c49d53; GAP-004 → run /mf-plan to mark resolved + record CSP/nested-iframe decision)
+S-002 done
+S-003 done
+S-004 done
+S-005 done

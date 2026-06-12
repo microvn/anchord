@@ -6,56 +6,57 @@
 
 ## Overview
 
-Mỗi lần nộp content mới tạo một version bất biến; xem lịch sử, restore version cũ
-(append-copy), và so sánh hai version (two-level: source diff + rendered side-by-side).
-Là nền cho "anchor bền qua version" — khi version mới ra đời, annotation của version
-trước được neo lại.
+Each new content submission creates an immutable version; view history, restore an old
+version (append-copy), and compare two versions (two-level: source diff + rendered
+side-by-side). This is the foundation for "anchors durable across versions" — when a new
+version is created, the previous version's annotations are re-anchored.
 
-_Ships cùng `annotation-core` (sibling): cụm này định nghĩa **trigger** re-anchor;
-`annotation-core` định nghĩa **thuật toán** matching + model annotation. Xem
+_Ships alongside `annotation-core` (sibling): this cluster defines the re-anchor
+**trigger**; `annotation-core` defines the matching **algorithm** + annotation model. See
 `## Linked Fields`._
 
 ## Data Model
 
-- **doc_versions** (định nghĩa ở `render-publish`): `version` int từ 1, `content`,
+- **doc_versions** (defined in `render-publish`): `version` int starting at 1, `content`,
   `content_hash`, `published_by`, `created_at`, unique (doc_id, version).
-- Title nằm trên `docs` (mutable), KHÔNG version hoá.
-- Annotation neo vào **doc** + descriptor anchor (định nghĩa ở `annotation-core`),
-  được re-resolve mỗi version.
+- Title lives on `docs` (mutable), NOT versioned.
+- Annotations anchor to the **doc** + an anchor descriptor (defined in `annotation-core`),
+  re-resolved on every version.
 
 ## Stories
 
 ### S-001: Append a new version on content update (P0)
 
-**Description:** Là tác giả, khi tôi nộp content mới cho một doc, hệ thống tạo một
-version bất biến mới thay vì ghi đè, và version mới nhất thành bản hiện hành.
-**Source:** docs/explore/versioning-diff.md#quyết-định (mục 1 content tạo version).
+**Description:** As an author, when I submit new content for a doc, the system creates a
+new immutable version instead of overwriting, and the newest version becomes the current
+one.
+**Source:** docs/explore/versioning-diff.md#decisions (item 1, content creates a version).
 
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
-- `files:` unknown (dự kiến `src/services/version.*`, `src/db/schema`)
+- `files:` unknown (expected `src/services/version.*`, `src/db/schema`)
 - `autonomous:` true
-- `verify:` nộp content mới cho doc đang ở v2 → xuất hiện v3, current=v3, v2 vẫn còn.
+- `verify:` submit new content for a doc at v2 → v3 appears, current=v3, v2 still exists.
 
 **Acceptance Scenarios:**
 
-AS-001: Nộp content mới tạo version bất biến mới
-- **Given:** doc "Payment Spec" đang ở version 2
-- **When:** tác giả nộp content đã sửa
-- **Then:** tạo version 3 (không ghi đè v2); current = v3
-- **Data:** content v3 khác v2
+AS-001: Submitting new content creates a new immutable version
+- **Given:** doc "Payment Spec" at version 2
+- **When:** the author submits edited content
+- **Then:** version 3 is created (v2 not overwritten); current = v3
+- **Data:** v3 content differs from v2
 
-AS-002: Sửa title không tạo version
-- **Given:** doc đang ở version 2
-- **When:** tác giả đổi title từ "Payment Spec" sang "Payment Spec v2"
-- **Then:** title đổi trên doc; KHÔNG tạo version mới (vẫn ở v2)
-- **Data:** chỉ đổi title, content giữ nguyên
+AS-002: Editing the title does not create a version
+- **Given:** doc at version 2
+- **When:** the author changes the title from "Payment Spec" to "Payment Spec v2"
+- **Then:** the title changes on the doc; NO new version is created (still at v2)
+- **Data:** title changed only, content unchanged
 
 ### S-002: View version history (P1)
 
-**Description:** Là người có quyền xem doc, tôi mở lịch sử và thấy danh sách các
-version với thời điểm và người publish.
+**Description:** As someone with permission to view the doc, I open the history and see a
+list of versions with the timestamp and publisher.
 **Source:** docs/explore/versioning-diff.md#ui-expectation.
 
 **Execution:**
@@ -66,179 +67,196 @@ version với thời điểm và người publish.
 
 **Acceptance Scenarios:**
 
-AS-003: Liệt kê lịch sử version
-- **Given:** doc có version 1, 2, 3
-- **When:** người dùng mở "Version history"
-- **Then:** thấy v1, v2, v3 kèm thời điểm tạo và người publish, current đánh dấu rõ
+AS-003: List version history
+- **Given:** doc has versions 1, 2, 3
+- **When:** the user opens "Version history"
+- **Then:** v1, v2, v3 are shown with their creation time and publisher, current clearly marked
 
 ### S-003: Restore a previous version (P0)
 
-**Description:** Là tác giả, tôi restore một version cũ; hệ thống tạo một version
-mới copy nội dung version đó, giữ nguyên toàn bộ lịch sử.
-**Source:** docs/explore/versioning-diff.md#quyết-định (mục 2 restore append-copy).
+**Description:** As an author, I restore an old version; the system creates a new version
+that copies that version's content, keeping the entire history intact.
+**Source:** docs/explore/versioning-diff.md#decisions (item 2, restore append-copy).
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
 - `files:` unknown
 - `autonomous:` true
-- `verify:` ở v3, restore v1 → xuất hiện v4 có nội dung = v1; v2,v3 vẫn còn.
+- `verify:` at v3, restore v1 → v4 appears with content = v1; v2, v3 still exist.
 
 **Acceptance Scenarios:**
 
-AS-004: Restore tạo version mới copy nội dung cũ
-- **Given:** doc đang ở version 3
-- **When:** tác giả bấm "Restore version 1"
-- **Then:** tạo version 4 có nội dung bằng version 1; current = v4; v2 và v3 vẫn
-  còn trong lịch sử
-- **Data:** restore v1 khi đang ở v3
+AS-004: Restore creates a new version copying the old content
+- **Given:** doc at version 3
+- **When:** the author clicks "Restore version 1"
+- **Then:** version 4 is created with content equal to version 1; current = v4; v2 and v3
+  remain in the history
+- **Data:** restore v1 while at v3
 
-AS-005: Restore kích hoạt re-anchor như mọi version mới
-- **Given:** doc ở version 3 có annotation đang neo trên v3
-- **When:** tác giả restore v1 (tạo v4)
-- **Then:** annotation được re-anchor sang v4 theo cùng cơ chế version mới (xem
+AS-005: Restore triggers re-anchor like any new version
+- **Given:** doc at version 3 with annotations anchored on v3
+- **When:** the author restores v1 (creating v4)
+- **Then:** annotations are re-anchored to v4 using the same new-version mechanism (see
   `annotation-core:S-005`)
-- **Data:** v4 = nội dung v1, khác v3
+- **Data:** v4 = v1 content, differs from v3
 
 ### S-004: Compare two versions (P0)
 
-**Description:** Là người có quyền xem doc, tôi chọn hai version bất kỳ để so sánh
-và thấy cả khác biệt source lẫn hai bản render đặt cạnh nhau.
-**Source:** docs/explore/versioning-diff.md#quyết-định (mục 4 diff two-level).
+**Description:** As someone with permission to view the doc, I pick any two versions to
+compare and see both the source differences and the two renders placed side-by-side.
+**Source:** docs/explore/versioning-diff.md#decisions (item 4, two-level diff).
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
-- `files:` unknown (dự kiến diff dùng `@pierre/diffs` + rendered side-by-side reuse viewer)
+- `files:` unknown (expected diff uses `@pierre/diffs` + rendered side-by-side reuses viewer)
 - `autonomous:` true
 
 **Acceptance Scenarios:**
 
-AS-006: Diff two-level cho HTML/Markdown
-- **Given:** doc có version 2 và version 3 khác nội dung
-- **When:** người dùng chọn "Compare v2 ↔ v3"
-- **Then:** hiện khác biệt source (highlight dòng thêm/bớt) + hai bản render đặt
-  cạnh nhau (v2 | v3)
-- **Data:** v2 và v3 khác vài đoạn text
+AS-006: Two-level diff for HTML/Markdown
+- **Given:** doc has version 2 and version 3 with different content
+- **When:** the user selects "Compare v2 ↔ v3"
+- **Then:** the source differences are shown (added/removed lines highlighted) + the two
+  renders placed side-by-side (v2 | v3)
+- **Data:** v2 and v3 differ in a few text passages
 
-AS-007: So hai version giống hệt
-- **Given:** hai version có nội dung trùng nhau (vd sau restore)
-- **When:** người dùng so hai version đó
-- **Then:** báo "Không có khác biệt"; vẫn hiện rendered side-by-side
-- **Data:** hai version content_hash bằng nhau
+AS-007: Comparing two identical versions
+- **Given:** two versions with identical content (e.g. after a restore)
+- **When:** the user compares those two versions
+- **Then:** "No differences" is reported; the rendered side-by-side is still shown
+- **Data:** the two versions have equal content_hash
 
-AS-008: So hai version của doc ảnh
-- **Given:** doc ảnh có hai version
-- **When:** người dùng so hai version
-- **Then:** hiện hai ảnh đặt cạnh nhau (side-by-side), không diff text
-- **Data:** hai ảnh khác nhau
+AS-008: Comparing two versions of an image doc
+- **Given:** an image doc has two versions
+- **When:** the user compares the two versions
+- **Then:** the two images are shown side-by-side, no text diff
+- **Data:** the two images differ
 
 ### S-005: Trigger re-anchor on new version (P0)
 
-**Description:** Là người để lại comment, khi tác giả publish version mới, comment
-của tôi tự động theo sang nội dung mới nếu còn neo được; nếu không, nó vào danh
-sách "detached" thay vì biến mất.
-**Source:** docs/explore/versioning-diff.md#quyết-định (mục 3 re-anchor + detached).
+**Description:** As someone who left a comment, when the author publishes a new version,
+my comment automatically follows to the new content if it can still be anchored; if not,
+it goes into the "detached" list instead of disappearing.
+**Source:** docs/explore/versioning-diff.md#decisions (item 3, re-anchor + detached).
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
-- `files:` unknown (phối hợp với annotation-core)
+- `files:` unknown (coordinated with annotation-core)
 - `autonomous:` true
 
 **Acceptance Scenarios:**
 
-AS-009: Annotation khớp được theo sang version mới
-- **Given:** doc ở v2 có 6 annotation; tác giả tạo v3 sửa nhẹ vài đoạn
-- **When:** version 3 được tạo
-- **Then:** các annotation re-resolve được (xem `annotation-core:S-005`) hiển thị
-  trên v3
-- **Data:** 5/6 đoạn neo còn khớp
+AS-009: Annotations that match carry forward to the new version
+- **Given:** doc at v2 has 6 annotations; the author creates v3 with light edits to a few passages
+- **When:** version 3 is created
+- **Then:** the annotations that can be re-resolved (see `annotation-core:S-005`) are
+  displayed on v3
+- **Data:** 5/6 anchored passages still match
 
-AS-010: Annotation không neo được vào danh sách detached
-- **Given:** cùng tình huống, 1 đoạn bị xoá hẳn khỏi nội dung
-- **When:** version 3 được tạo
-- **Then:** annotation đó được đánh `is_orphaned`, đưa vào danh sách "detached" để
-  relocate/resolve; không bị mất
-- **Data:** 1/6 đoạn biến mất ở v3
+AS-010: Annotations that cannot be anchored go into the detached list
+- **Given:** the same situation, 1 passage is removed entirely from the content
+- **When:** version 3 is created
+- **Then:** that annotation is marked `is_orphaned` and put into the "detached" list to
+  relocate/resolve; it is not lost
+- **Data:** 1/6 passages disappears in v3
 
 ## Constraints & Invariants
 
-- C-001: Version bất biến — sau khi tạo không sửa content/hash/người/thời điểm. (AS-001, AS-004)
-- C-002: Version đánh số tự tăng liên tục từ 1, không tái dùng số; current = số lớn nhất. (AS-001, AS-003)
-- C-003: Chỉ thay đổi content mới tạo version; đổi title/metadata không. (AS-002)
-- C-004: Restore không xoá version nào — luôn append. (AS-004)
-- C-005: Mỗi khi tạo version mới (gồm restore) → kích hoạt re-anchor cho annotation
-  của version trước; không khớp → detached, không mất. (AS-005, AS-009, AS-010)
+- C-001: Versions are immutable — after creation, content/hash/author/timestamp are not edited. (AS-001, AS-004)
+- C-002: Versions are numbered with a continuously incrementing counter from 1, no reuse; current = highest number. (AS-001, AS-003)
+- C-003: Only a content change creates a version; title/metadata changes do not. (AS-002)
+- C-004: Restore deletes no version — it always appends. (AS-004)
+- C-005: Every time a new version is created (including restore) → trigger re-anchor for the
+  previous version's annotations; no match → detached, not lost. (AS-005, AS-009, AS-010)
 
 ## Linked Fields
 
-- **"version mới được tạo" (event/trigger)** — produced by versioning-diff:S-001
-  (AS-001) và S-003 (AS-004, restore cũng tạo version). Consumed by
-  `annotation-core:S-005` để chạy re-resolve. ✔ producer có AS tạo version ở cả
-  hai đường (update + restore).
-- **anchor descriptor + kết quả matching (carry | orphaned)** — produced by
+- **"new version created" (event/trigger)** — produced by versioning-diff:S-001
+  (AS-001) and S-003 (AS-004, restore also creates a version). Consumed by
+  `annotation-core:S-005` to run re-resolve. ✔ producer has AS creating a version on both
+  paths (update + restore).
+- **anchor descriptor + matching result (carry | orphaned)** — produced by
   `annotation-core` (Data Model + S-005 matching). Consumed by versioning-diff:S-005
-  (AS-009/AS-010) để hiển thị carry-forward + detached list. ✔ annotation-core
-  định nghĩa model + thuật toán; cụm này chỉ tiêu thụ kết quả.
+  (AS-009/AS-010) to display carry-forward + detached list. ✔ annotation-core
+  defines the model + algorithm; this cluster only consumes the result.
 
 ## UI Notes
 
-Từ `docs/explore/versioning-diff.md` §UI sketches. Greenfield → `[N]`. Component names
+From `docs/explore/versioning-diff.md` §UI sketches. Greenfield → `[N]`. Component names
 only. Dark-operator (`DESIGN.md`). Precedence: AS > Tree.
 
 - `VersionHistoryPanel` `[N]`
   - `VersionList` → `VersionItem` *(versionLabel · time · author · currentMarker)*
-  - `RestoreButton` *(append-copy → version mới)*
+  - `RestoreButton` *(append-copy → new version)*
 - `DiffView` `[N]`
   - `DiffHeader` *(Compare vX ↔ vY · changeCount)*
-  - `VersionPicker` *(chọn 2 version bất kỳ)*
-  - `SourceLineDiff` *(line-diff: addedLine teal / removedLine đỏ strike; Geist Mono)*
-  - `RenderedSideBySide` *(2 pane render vX | vY; **stacked** ≤760)*
-  - `ImageDiffSideBySide` *(doc ảnh: 2 ảnh cạnh nhau)*
-  - `NoDiffState` *(2 version trùng → "Không có khác biệt")*
+  - `VersionPicker` *(pick any 2 versions)*
+  - `SourceLineDiff` *(line-diff: addedLine teal / removedLine red strike; Geist Mono)*
+  - `RenderedSideBySide` *(2-pane render vX | vY; **stacked** ≤760)*
+  - `ImageDiffSideBySide` *(image doc: 2 images side-by-side)*
+  - `NoDiffState` *(2 identical versions → "No differences")*
+
+## API
+
+HTTP contract for this cluster. Follows `api-core` (envelope C-001, error→status C-003,
+auth gate C-005, validation C-007, existence-hiding C-006). `→` = serves which AS.
+
+| Method · Path | Serves | Auth | Request | Success | Errors |
+|---|---|---|---|---|---|
+| `POST /api/docs/:slug/versions` | S-001 (AS-001) | session (editor) | `{ content, contentHash? }` (Zod) | 201 `{ version, previousVersion }` | 404 NOT_FOUND (no-access/missing, C-006), 403 FORBIDDEN (not editor) |
+| `PATCH /api/docs/:slug` | S-001 (AS-002 title-only, no version) | session (editor) | `{ title }` (Zod) | 200 `{ slug, title }` | 404, 403 |
+| `GET /api/docs/:slug/versions` | S-002 (AS-003 history) | session (viewer+) | pagination query (api-core C-008) | 200 `{ items, pagination }` | 404 |
+| `POST /api/docs/:slug/versions/:n/restore` | S-003 (AS-004) | session (editor) | — | 201 `{ version, previousVersion }` | 404 (doc or version n missing), 403 |
+| `GET /api/docs/:slug/diff?from=&to=` | S-004 (AS-006/007/008) | session (viewer+) | query `from`,`to` (Zod) | 200 `{ mode, identical?, changeCount?, lines?, renderPair }` | 404, 400 VALIDATION_ERROR (bad version refs) |
+
+Re-anchor (S-005 AS-009/010) is **not a route** — it is triggered server-side inside the
+version-creating endpoints (POST versions / restore) via `annotation-core` re-anchor; the
+detached list surfaces through annotation-core's annotation reads.
 
 ## What Already Exists
 
 ### System Impact & Technical Risks
 
-- Repo greenfield. `doc_versions` định nghĩa ở `render-publish`; cụm này thêm
-  history/restore/diff/re-anchor-trigger trên đó.
-- Reuse: rendered side-by-side trong diff dùng lại viewer iframe của `render-publish`.
-- Risk (medium-high): S-005 phụ thuộc hai chiều với `annotation-core` về model dữ
-  liệu — phải build phối hợp, không tách rời.
+- Greenfield repo. `doc_versions` is defined in `render-publish`; this cluster adds
+  history/restore/diff/re-anchor-trigger on top of it.
+- Reuse: the rendered side-by-side in the diff reuses `render-publish`'s viewer iframe.
+- Risk (medium-high): S-005 has a two-way dependency with `annotation-core` over the data
+  model — they must be built in coordination, not separately.
 
 ## Not in Scope
 
-- Thuật toán matching (block_id → snippet exact → fuzzy) + model annotation —
+- The matching algorithm (block_id → snippet exact → fuzzy) + annotation model —
   `annotation-core`.
-- Nhãn/tên/commit-message cho version — assumption: chỉ auto-number ở v0.
-- Link ghim version cụ thể (`/d/:slug@v2`) — v0 link = latest. Defer.
-- Overlay/swipe cho image diff; DOM-aware structural diff; inline merged rich-diff — defer.
-- Prune/retention version cũ — giữ tất cả ở v0 (xem GAP-001).
+- Labels/names/commit-message for versions — assumption: auto-number only in v0.
+- Link pinned to a specific version (`/d/:slug@v2`) — v0 link = latest. Defer.
+- Overlay/swipe for image diff; DOM-aware structural diff; inline merged rich-diff — defer.
+- Prune/retention of old versions — keep all in v0 (see GAP-001).
 - Real-time / live editor — v2.
 
 ## Gaps
 
-- GAP-001 (status: open): storage growth — giữ tất cả version × tối đa 5MB HTML/25MB
-  ảnh có thể phình DB; có nén / dedup theo content_hash / prune không? Couples
+- GAP-001 (status: open): storage growth — keeping all versions × up to 5MB HTML/25MB
+  images could bloat the DB; do we compress / dedup by content_hash / prune? Couples
   `self-host`. Source: "Storage growth (self-host)".
-- GAP-002 (status: resolved): `multi_range` mất bất kỳ segment nào → cả annotation
-  detached. Chốt 2026-06-07; hành vi ở `annotation-core:AS-018`.
-- GAP-003 (status: deferred): re-anchor chạy đồng bộ lúc tạo version hay job nền nếu
-  chậm — đo lúc build. Source: "Re-anchor chạy đồng bộ … nếu chậm → job nền".
-- GAP-004 (status: deferred): `@pierre/diffs` xử HTML thô tốt tới đâu, có cần
-  pre-normalize trước khi diff. Source: "@pierre/diffs xử lý HTML thô tốt tới đâu".
+- GAP-002 (status: resolved): if `multi_range` loses any segment → the whole annotation
+  detaches. Settled 2026-06-07; behavior in `annotation-core:AS-018`.
+- GAP-003 (status: deferred): does re-anchor run synchronously at version creation or as a
+  background job if slow — measure at build time. Source: "Re-anchor runs synchronously … if slow → background job".
+- GAP-004 (status: deferred): how well does `@pierre/diffs` handle raw HTML, do we need to
+  pre-normalize before diffing. Source: "How well @pierre/diffs handles raw HTML".
 
 ## Clarifications — 2026-06-07
 
-- **Restore = append-copy thay vì pointer-move:** lịch sử append-only dễ suy luận,
-  không mơ hồ "current ở đâu", an toàn self-host (không mất bản cũ).
-- **Chỉ content tạo version:** tránh version rác từ sửa title, nhẹ storage.
-- **Diff two-level thay vì inline rich-diff:** inline đòi render HTML merge ở app
-  origin → phá sandbox; side-by-side hai iframe giữ cách ly mà vẫn thấy thay đổi.
-- **Re-anchor + detached:** đúng yêu cầu "anchor bền qua version" (§4.2); detached
-  list đảm bảo không bao giờ mất feedback im lặng.
+- **Restore = append-copy instead of pointer-move:** an append-only history is easy to
+  reason about, no ambiguity over "where is current", safe for self-host (never loses an old copy).
+- **Only content creates a version:** avoids junk versions from title edits, lighter on storage.
+- **Two-level diff instead of inline rich-diff:** inline requires rendering merged HTML in the
+  app origin → breaks the sandbox; two side-by-side iframes keep isolation while still showing changes.
+- **Re-anchor + detached:** meets the "anchors durable across versions" requirement (§4.2); the
+  detached list ensures feedback is never silently lost.
 
 ## Change Log
 
@@ -247,3 +265,4 @@ only. Dark-operator (`DESIGN.md`). Precedence: AS > Tree.
 | 2026-06-07 | Initial creation (from docs/explore/versioning-diff.md) | -- |
 | 2026-06-07 | GAP-002 resolved (multi_range all-or-nothing; see annotation-core:AS-018) | -- |
 | 2026-06-07 | + ## UI Notes (Component Tree from explore §UI sketches) — Minor | -- |
+| 2026-06-08 | + ## API (HTTP contract: version create/history/restore/diff; per api-core) — Minor | -- |

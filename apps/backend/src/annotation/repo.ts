@@ -7,10 +7,16 @@
 // Postgres in test/integration/annotation-repo.itest.ts.
 
 import { and, asc, desc, eq } from "drizzle-orm";
-import { annotations, comments, reanchorLedger } from "../db/schema";
+import { annotations, comments, reanchorLedger, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { Anchor } from "./annotation";
-import type { AnnotationRepo, AnnotationRow, AnnotationType, NewAnnotation } from "./annotation";
+import type {
+  AnnotationRepo,
+  AnnotationRow,
+  AnnotationType,
+  NewAnnotation,
+  ViewerComment,
+} from "./annotation";
 import type { CommentRepo, CommentRow } from "./reply";
 import type { ResolutionRepo, AnnotationStatus } from "./resolve";
 import type {
@@ -21,6 +27,7 @@ import type {
 } from "./suggestion";
 import type { GuestCommentRepo, NewGuestComment } from "./guest";
 import type { ReanchorLedgerRepo, ReanchorLedgerEntry } from "./reanchor";
+import type { ReanchorApplyRepo } from "./reanchor-job";
 
 // ── S-001: annotation create + read (AnnotationRepo) ───────────────────────
 
@@ -62,6 +69,38 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
         anchor: r.anchor as Anchor,
         isOrphaned: r.isOrphaned,
         status: r.status,
+      }));
+    },
+
+    // S-003 viewer read: every comment on the doc's annotations, in creation order, with the
+    // session author's display name resolved (LEFT JOIN — a guest comment has no authorId, keeps
+    // its guestName). One query for the whole doc; the domain groups these into per-annotation
+    // threads. Shape matches the annotation-core-ui list contract `{ …, authorName|guestName, createdAt }`.
+    async listCommentsByDoc(docId: string): Promise<(ViewerComment & { annotationId: string })[]> {
+      const rows = await db
+        .select({
+          id: comments.id,
+          annotationId: comments.annotationId,
+          parentId: comments.parentId,
+          authorName: user.name,
+          guestName: comments.guestName,
+          body: comments.body,
+          createdAt: comments.createdAt,
+        })
+        .from(comments)
+        .innerJoin(annotations, eq(comments.annotationId, annotations.id))
+        .leftJoin(user, eq(comments.authorId, user.id))
+        .where(eq(annotations.docId, docId))
+        .orderBy(asc(comments.createdAt)); // root(s) then replies in creation order.
+      return rows.map((r) => ({
+        id: r.id,
+        annotationId: r.annotationId,
+        parentId: r.parentId,
+        // Exactly one of authorName / guestName is meaningful; omit the absent one (don't emit null).
+        ...(r.authorName != null ? { authorName: r.authorName } : {}),
+        ...(r.guestName != null ? { guestName: r.guestName } : {}),
+        body: r.body,
+        createdAt: r.createdAt.toISOString(),
       }));
     },
   };
@@ -290,6 +329,29 @@ export function createReanchorLedgerRepo(db: DB): DrizzleReanchorLedgerRepo {
       // Keep the cache consistent with what is now persisted.
       cache.set(key(entry.annotationId, entry.versionId), entry);
       return didInsert;
+    },
+  };
+}
+
+/**
+ * Apply a re-anchor outcome to the annotations table (S-005 / C-012). `applyCarried`
+ * updates the anchor to the new-version positions and clears is_orphaned; `markDetached`
+ * sets is_orphaned (the row's original anchor is left in place so the annotation is never
+ * lost — C-002). Both writes are value-idempotent, so a re-run applies the same state.
+ */
+export function createReanchorApplyRepo(db: DB): ReanchorApplyRepo {
+  return {
+    async applyCarried(annotationId: string, anchor: Anchor): Promise<void> {
+      await db
+        .update(annotations)
+        .set({ anchor, isOrphaned: false })
+        .where(eq(annotations.id, annotationId));
+    },
+    async markDetached(annotationId: string): Promise<void> {
+      await db
+        .update(annotations)
+        .set({ isOrphaned: true })
+        .where(eq(annotations.id, annotationId));
     },
   };
 }

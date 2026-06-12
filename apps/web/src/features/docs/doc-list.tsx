@@ -16,7 +16,10 @@ export function DocList({
   projects,
 }: {
   docs: DocRow[];
-  workspaceId?: string;
+  // Required: every in-app list is workspace-scoped, so a row ALWAYS opens the in-app React viewer
+  // `/w/:workspaceId/d/:slug` — never the bare `/d/:slug` server page. Making this required stops a
+  // caller silently falling back to the server page (the "click → broken viewer" bug).
+  workspaceId: string;
   projects?: ProjectRow[];
 }) {
   return (
@@ -27,8 +30,8 @@ export function DocList({
       {docs.map((d) => (
         <Link
           key={d.id}
-          // annotation-core-ui S-001: in-app viewer route when scoped to a workspace.
-          to={workspaceId ? `/w/${workspaceId}/d/${d.slug}` : `/d/${d.slug}`}
+          // annotation-core-ui S-001: always the in-app React viewer route (workspace-scoped).
+          to={`/w/${workspaceId}/d/${d.slug}`}
           data-testid={`doc-row-${d.slug}`}
           className="grid min-h-[56px] grid-cols-[30px_1fr_auto_auto] items-center gap-[14px] border-b border-line px-4 text-inherit no-underline last:border-b-0 hover:bg-elev sm:grid-cols-[30px_1fr_70px_96px_96px]"
         >

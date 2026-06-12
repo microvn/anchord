@@ -135,7 +135,7 @@ describe("workspaces-ui S-003 — members screen", () => {
     await waitFor(() => expect(screen.queryByTestId("member-row-u-bob")).not.toBeInTheDocument());
   });
 
-  it("AS-009: cancelling the remove confirm does NOT remove the member", async () => {
+  it("AS-016: cancelling the remove confirm keeps the member", async () => {
     render(<App role="admin" />);
     await screen.findByTestId("member-row-u-bob");
 
@@ -144,6 +144,32 @@ describe("workspaces-ui S-003 — members screen", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(removeMember).not.toHaveBeenCalled();
     expect(screen.getByTestId("member-row-u-bob")).toBeInTheDocument();
+  });
+
+  it("AS-017: revoking a pending invite requires confirmation", async () => {
+    render(<App role="admin" />);
+    await screen.findByTestId("invite-row-inv-eve");
+
+    // After confirming, the directory refetch drops the revoked invite.
+    fetchMembers.mockImplementation(async () =>
+      env({
+        members: [
+          { userId: "u-me", email: "me@acme.com", name: "Me", role: "admin" },
+          { userId: "u-bob", email: "bob@acme.com", name: "Bob", role: "member" },
+        ],
+        invitations: [],
+      }),
+    );
+
+    // The ✕ opens a confirm dialog — it does NOT revoke on its own.
+    await userEvent.click(screen.getByTestId("revoke-inv-eve"));
+    expect(removeMember).not.toHaveBeenCalled();
+
+    // Only the "Revoke" action in the dialog runs the mutation (revoke reuses removeMember w/ the invite id).
+    await userEvent.click(await screen.findByTestId("revoke-confirm-inv-eve"));
+    expect(removeMember).toHaveBeenCalledWith("ws-acme", "inv-eve");
+    // The pending invite disappears from the list.
+    await waitFor(() => expect(screen.queryByTestId("invite-row-inv-eve")).not.toBeInTheDocument());
   });
 
   it("AS-010: the admin changes a member's role", async () => {
@@ -160,14 +186,15 @@ describe("workspaces-ui S-003 — members screen", () => {
       }),
     );
 
-    const roleSelect = within(screen.getByTestId("member-row-u-bob")).getByTestId("role-u-bob");
-    await userEvent.selectOptions(roleSelect, "admin");
+    // Open the shadcn (Radix) Select for Bob and pick Admin.
+    await userEvent.click(within(screen.getByTestId("member-row-u-bob")).getByTestId("role-u-bob"));
+    await userEvent.click(await screen.findByRole("option", { name: "Admin" }));
     expect(changeMemberRole).toHaveBeenCalledWith("ws-acme", "u-bob", "admin");
-    // Bob's role now shows as admin.
+    // Bob's role trigger now displays Admin.
     await waitFor(() =>
-      expect(within(screen.getByTestId("member-row-u-bob")).getByTestId("role-u-bob")).toHaveValue(
-        "admin",
-      ),
+      expect(
+        within(screen.getByTestId("member-row-u-bob")).getByTestId("role-u-bob"),
+      ).toHaveTextContent("Admin"),
     );
   });
 

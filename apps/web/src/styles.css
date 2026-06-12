@@ -238,3 +238,140 @@ h4 {
   letter-spacing: -0.03em;
   font-weight: 500;
 }
+
+/* ============================================================
+   annotation-core-ui — doc viewer typography + anchored highlight.
+   Mirrors Anchord-Design/viewer.css (.doc-* + .anno). The doc body is
+   server-sanitized HTML injected via dangerouslySetInnerHTML, so its
+   h1/p/code/etc. can't carry Tailwind utilities — they're styled here,
+   scoped to .doc-prose, so the rendered doc is the high-contrast hero.
+   ============================================================ */
+.doc-prose {
+  /* Wide: fill the doc column (horizontal padding comes from the px-5 wrapper in
+     MarkdownView) — diverges from the prototype's 760px cap, by request. */
+  max-width: none;
+  margin: 0 auto;
+  transition: max-width 0.2s cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+/* Wide | Focus (DocModeToolbar) — the docpane <main> carries the width mode.
+   Focus caps at 800px (centered); on a narrow/mobile viewport the column is < 800px so it
+   naturally fills full-width minus the px-5 wrapper padding. */
+main[data-doc-width="focus"] .doc-prose {
+  max-width: 800px;
+}
+.doc-prose > :first-child {
+  margin-top: 0;
+}
+.doc-prose h1 {
+  font-size: 27px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin: 0 0 22px;
+  scroll-margin-top: 60px;
+}
+.doc-prose h2 {
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 28px 0 10px;
+  scroll-margin-top: 60px;
+}
+.doc-prose h3 {
+  font-size: 15.5px;
+  font-weight: 600;
+  margin: 22px 0 8px;
+  scroll-margin-top: 60px;
+}
+.doc-prose p,
+.doc-prose ul,
+.doc-prose ol {
+  font-size: 14.5px;
+  line-height: 1.72;
+  color: var(--ink);
+  margin: 0 0 13px;
+}
+.doc-prose ul,
+.doc-prose ol {
+  padding-left: 22px;
+}
+.doc-prose li {
+  margin: 0 0 5px;
+}
+.doc-prose li::marker {
+  color: var(--subtle);
+}
+.doc-prose a {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, var(--accent) 50%, transparent);
+}
+.doc-prose a:hover {
+  text-decoration-color: var(--accent);
+}
+.doc-prose strong {
+  font-weight: 600;
+}
+.doc-prose code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: var(--elev);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--accent-ink);
+}
+.doc-prose pre {
+  background: var(--elev);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0 0 14px;
+}
+.doc-prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ink);
+}
+.doc-prose blockquote {
+  border-left: 2px solid var(--accent);
+  padding: 2px 0 2px 12px;
+  margin: 0 0 14px;
+  color: var(--muted);
+}
+.doc-prose hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 22px 0;
+}
+
+/* anchored text-range highlight (S-003) — mirrors Anchord-Design `.anno`.
+   Created imperatively by annotation-marks as <mark class="anno-mark" data-anno>. */
+.anno-mark {
+  background: var(--accent-soft);
+  border-bottom: 1.5px solid var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.anno-mark:hover,
+.anno-mark--focus {
+  background: color-mix(in oklab, var(--accent) 26%, var(--accent-soft));
+}
+.anno-mark[data-resolved="true"] {
+  background: color-mix(in oklab, var(--green) 12%, transparent);
+  border-bottom-color: var(--green);
+}
+/* One annotation can wrap as MULTIPLE adjacent <mark> (per-node, cross-inline ranges).
+   Collapse the inner 1px padding between back-to-back marks so the run reads as ONE
+   continuous highlight — no doubled gap. Only the run's outer edges keep their 1px. */
+.anno-mark + .anno-mark {
+  padding-left: 0;
+}
+.anno-mark:has(+ .anno-mark) {
+  padding-right: 0;
+}

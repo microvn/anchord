@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // annotation-core-ui S-002 — Navigate the doc with the outline (TOC).
@@ -98,6 +98,27 @@ describe("TocSidebar (S-002)", () => {
 
     await userEvent.click(toc.getByText("Results"));
     expect(scrolled).toBe(1);
+  });
+
+  it("AS-005: re-derives the outline when doc content arrives after mount (loading→loaded race)", async () => {
+    // The viewer's <main> scroll container mounts empty (skeleton) and keeps the same element
+    // identity when the doc content swaps in after the query resolves. The TOC must re-extract
+    // headings when the content inside contentEl changes, not only when contentEl's identity does.
+    const host = mountDoc("");
+
+    render(<TocSidebar contentEl={host} activeId={null} onActiveChange={() => {}} />);
+    const toc = within(screen.getByTestId("toc-sidebar"));
+
+    // Nothing to list while the pane is still empty.
+    expect(toc.queryByText("A")).toBeNull();
+
+    // Doc content swaps in after mount — same contentEl, new children.
+    act(() => {
+      host.innerHTML = '<h1 id="a">A</h1><h2 id="b">B</h2>';
+    });
+
+    expect(await toc.findByText("A")).toBeInTheDocument();
+    expect(await toc.findByText("B")).toBeInTheDocument();
   });
 
   it("AS-005: the search filter narrows the listed entries", async () => {

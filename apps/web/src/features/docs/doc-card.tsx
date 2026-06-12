@@ -15,13 +15,14 @@ export function DocCard({
   projects,
 }: {
   doc: DocRow;
-  workspaceId?: string;
+  // Required: a card always opens the in-app React viewer `/w/:workspaceId/d/:slug`, never the bare
+  // `/d/:slug` server page. Required so a caller can't silently fall back to the broken server page.
+  workspaceId: string;
   projects?: ProjectRow[];
 }) {
   const meta = FORMAT_META[doc.kind] ?? FORMAT_META.markdown;
-  // annotation-core-ui S-001: open in the in-app React viewer (workspace-scoped route) when we
-  // know the workspace; fall back to the bare /d/:slug server page otherwise.
-  const href = workspaceId ? `/w/${workspaceId}/d/${doc.slug}` : `/d/${doc.slug}`;
+  // annotation-core-ui S-001: open in the in-app React viewer (workspace-scoped route).
+  const href = `/w/${workspaceId}/d/${doc.slug}`;
   return (
     <Link
       to={href}

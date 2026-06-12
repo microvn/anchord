@@ -146,8 +146,8 @@ describe("render-publish S-001 — New-doc dialog", () => {
     await userEvent.upload(input, md);
 
     await waitFor(() => expect(screen.getByTestId("picked-file")).toHaveTextContent("web-core-spec.md"));
-    // Title auto-inferred from the filename (dashes → spaces, extension stripped).
-    expect(screen.getByTestId("new-doc-title")).toHaveValue("web core spec");
+    // Title auto-inferred from the filename (dashes → spaces, extension stripped, first char capitalized).
+    expect(screen.getByTestId("new-doc-title")).toHaveValue("Web core spec");
 
     await waitFor(() => expect(screen.getByTestId("publish-button")).not.toBeDisabled());
     await userEvent.click(screen.getByTestId("publish-button"));

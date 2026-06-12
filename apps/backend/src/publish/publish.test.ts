@@ -74,8 +74,11 @@ test("AS-003: title auto-derived (<title>/H1/filename) and editable before publi
   expect(deriveTitle("html", "<h1>Only An H1</h1>")).toBe("Only An H1");
   // Markdown: first H1 (ATX).
   expect(deriveTitle("markdown", "# Release Notes\nbody")).toBe("Release Notes");
-  // Image: file name without extension.
-  expect(deriveTitle("image", new Uint8Array([0x89, 0x50, 0x4e, 0x47]), "diagrams/flow.png")).toBe("flow");
+  // Image: file name without extension — first char capitalized (AS-003).
+  expect(deriveTitle("image", new Uint8Array([0x89, 0x50, 0x4e, 0x47]), "diagrams/flow.png")).toBe("Flow");
+  // First char of an auto-derived title is always uppercased; the rest is left as-is.
+  expect(deriveTitle("markdown", "# release notes\nbody")).toBe("Release notes");
+  expect(deriveTitle("html", "<title>payment spec v2</title>")).toBe("Payment spec v2");
 
   // Edge — empty / whitespace title falls back, never empty.
   expect(deriveTitle("html", "<title>   </title>")).toBe("Untitled");

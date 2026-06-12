@@ -86,14 +86,24 @@ and carries a thread of **Comments**.
 ## v0 scope discipline
 
 In: async annotation (read → comment → author reviews later), versioning + diff,
-sharing/roles, single workspace, basic search, reply notifications, MCP
-publish + pull-annotations, `docker compose up`.
+sharing/roles, **multi-workspace** (each account owns a "default" workspace; create
+more, invite/remove members, switch — see `docs/specs/workspaces/`), basic search,
+reply notifications, MCP publish + pull-annotations, `docker compose up`.
+
+> **Workspace model — REVERSED 2026-06-09.** v0 was originally "single workspace =
+> instance"; the product owner changed it to **multi-workspace with full UI**. Each
+> account auto-creates its own "default" workspace (creator = owner) on sign-up, can
+> create more, invite members by email (accept/reject), remove/change-role, and switch.
+> Tenancy is scoped by URL path `/api/w/:workspaceId/…` (not a server-side current
+> workspace); custom `workspaces`/`workspace_members` tables (NOT the better-auth org
+> plugin); per-doc sharing stays orthogonal to membership (most-permissive wins). The
+> earlier single-workspace `POST /api/setup` first-run is removed (auto-create-on-signup).
+> Do not relitigate back to single-workspace. Spec: `docs/specs/workspaces/workspaces.md`.
 
 **Out of v0 (explicitly deferred):** real-time multi-editor collaboration
 (CRDT/OT) — it sinks solo OSS projects, costs 2-3 months alone, and async covers
-~90% of the value. Also deferred: PDF/live-URL annotation, multi-workspace,
-visual no-code editor, editor integrations. See design doc §4 for the full
-versioned feature table.
+~90% of the value. Also deferred: PDF/live-URL annotation, visual no-code editor,
+editor integrations. See design doc §4 for the full versioned feature table.
 
 ## Conventions
 
@@ -104,6 +114,34 @@ versioned feature table.
 - Any AI-generated HTML must pass through dompurify before render or storage.
 - Keep the Drizzle schema portable: avoid Postgres-only features that would
   close the door on a future SQLite build.
+
+## Frontend folder architecture (MANDATORY — `apps/web`)
+
+Spec: `docs/specs/web-structure/`. Adapted from feature-based principles for anchord's
+real stack (Vite + React Router + Eden treaty + better-auth + React Query). When adding
+or moving FE code, follow this exactly — do not regress to flat features or relative imports.
+
+- **Feature-based.** Code lives under `src/features/<feature>/`, organized by feature, NOT
+  by technical layer. Each feature owns its `client.ts` (typed Eden request thunks — the
+  service layer) and `types.ts` (shared types). Single-use prop types stay co-located in
+  their component file; only types used by 2+ files go in `types.ts`.
+- **Sub-layer only large features.** A feature past ~20 files splits into `components/`
+  (UI `.tsx`) and `hooks/` (`use-*.ts`), keeping `client.ts` + `types.ts` at the feature
+  root. Small features stay flat — do not create empty sub-folders.
+- **Cross-module imports use the `@/` alias** (`@/lib/api`, `@/features/docs/client`),
+  never deep relative paths (`../../lib/api`). Same-directory siblings stay relative (`./x`).
+- **One home per layer.** App shell / providers / guards → `src/app/`. API infra (`api`,
+  `api-error`, `auth-client`, `use-api-query`) → `src/lib/api/`. Pure utils → `src/lib/` root.
+  Global hooks → `src/hooks/`. Shared primitives → `src/components/` (`ui/` for radix wrappers).
+- **Tests live with their feature** under `src/features/<feature>/` (next to the code).
+  Only app-root / shared-primitive / infra tests and `test/setup.ts` stay in `test/`.
+  Any file move MUST update every importer AND `mock.module(...)` target in the same change.
+- **Locked rejections** (don't reintroduce from borrowed guides): no Zustand global store
+  (React Query owns server state, `useState` owns local); no axios (Eden treaty only); no
+  PascalCase filenames (kebab-case everywhere); keep `import type { App } from "backend"`
+  a type-only import — never alias it into backend source.
+
+Conventions doc for contributors: `apps/web/FRONTEND.md`.
 
 ## Design System
 Always read DESIGN.md before any visual or UI decision. Font choices, colors,
