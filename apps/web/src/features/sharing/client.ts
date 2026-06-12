@@ -126,6 +126,32 @@ export function invitePerson(
     .invites.post(input) as Promise<EdenResult<InviteResult>>;
 }
 
+/** The link-controls write payload (S-005). Each control is optional + independent (C-001 backend):
+ *  only the control being changed is sent. `password: null` / `expiresAt: null` / `viewLimit: null`
+ *  clears that control; a value sets it. */
+export interface SetLinkInput {
+  password?: string | null;
+  expiresAt?: string | null;
+  viewLimit?: number | null;
+}
+
+/** The link controls echoed back from a successful write (the prefill `ShareLink` shape). */
+export type LinkResult = ShareLink;
+
+/** PUT /api/w/:workspaceId/docs/:slug/link — set the optional link controls (password / expiry /
+ *  view-limit) on an anyone-with-link doc (sharing-permissions-ui S-005; backend S-004). Each
+ *  control is independent (C-001); a refused write rolls back the chip (C-005). */
+export function setLinkControls(
+  workspaceId: string,
+  slug: string,
+  input: SetLinkInput,
+): Promise<EdenResult<LinkResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .link.put(input) as Promise<EdenResult<LinkResult>>;
+}
+
 // --- manage-eligibility gate (C-002) -------------------------------------------------------
 // Mirror of backend C-007: the editable ShareDialog is shown only when the session CAN manage
 // sharing — owner always; editor only when `editorsCanShare` is on (from the prefill read);

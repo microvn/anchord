@@ -22,6 +22,7 @@ import { canManageShare, getShareState, type ShareState, type SharePerson } from
 import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
+import { LinkControls } from "./link-controls";
 import type { EffectiveRole } from "../viewer/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
@@ -259,44 +260,8 @@ function ShareSections({
         onLevelChange={setLevel}
       />
 
-      {/* Link — shown only when anyone-with-link (C-007). S-005 fills Copy + the chips. */}
-      {isLink && (
-        <section data-testid="share-sec-link" className="flex flex-col gap-1.5">
-          <span className="text-[12px] font-medium text-muted">Link</span>
-          <div className="flex items-center gap-2 rounded-md border border-line bg-sunken px-2.5 py-1.5">
-            <Icon name="link" size={14} />
-            <code data-testid="share-link-url" className="min-w-0 flex-1 truncate text-[12px] text-ink">
-              {state.link.url}
-            </code>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            <span
-              data-testid="share-link-password"
-              data-on={state.link.hasPassword ? "1" : "0"}
-              className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle"
-            >
-              <Icon name="shield" size={12} />
-              {state.link.hasPassword ? "Password · set" : "+ Password"}
-            </span>
-            <span
-              data-testid="share-link-expiry"
-              data-on={state.link.expiresAt ? "1" : "0"}
-              className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle"
-            >
-              <Icon name="clock" size={12} />
-              {state.link.expiresAt ? "Expiry · set" : "+ Expiry"}
-            </span>
-            <span
-              data-testid="share-link-limit"
-              data-on={state.link.viewLimit ? "1" : "0"}
-              className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle"
-            >
-              <Icon name="user" size={12} />
-              {state.link.viewLimit ? "View limit · set" : "+ View limit"}
-            </span>
-          </div>
-        </section>
-      )}
+      {/* Link — shown only when anyone-with-link (C-007). Copy + the independent chips (S-005). */}
+      {isLink && <LinkControls workspaceId={workspaceId} slug={slug} link={state.link} />}
 
       {/* Invite people / People list (S-003 invite field + optimistic row; S-004 the row controls) */}
       <section data-testid="share-sec-people" className="flex flex-col gap-2">
