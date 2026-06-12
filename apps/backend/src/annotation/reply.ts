@@ -153,3 +153,55 @@ export async function addReply(
   });
   return { created: true, id, parentId };
 }
+
+export interface AddCommentInput {
+  annotationId: string;
+  body: string;
+  author: ReplyAuthor;
+  /**
+   * Role resolved SERVER-side from the session (like addReply). This — and ONLY
+   * this — authorizes the write; never a client/iframe-supplied claim.
+   */
+  sessionRole: Role;
+}
+
+export type AddCommentResult =
+  | { created: true; id: string; parentId: null }
+  | { created: false; reason: "forbidden" | "empty_body" };
+
+/**
+ * Add a TOP-LEVEL comment to an annotation — the first/root comment of a thread,
+ * with no parent (parentId === null). This is the session counterpart to the guest
+ * createGuestComment top-level path; addReply is for replying to an existing comment.
+ *
+ * Authz mirrors addReply: gated SOLELY by `can(sessionRole, "comment")`. There is no
+ * thread lookup and no parent_not_found case — a top comment has no parent to resolve.
+ *
+ * Edge: an empty/whitespace-only body is rejected (no empty comments).
+ */
+export async function addComment(
+  input: AddCommentInput,
+  repo: CommentRepo,
+): Promise<AddCommentResult> {
+  const { annotationId, body, author, sessionRole } = input;
+
+  // Server re-authorization (mirrors addReply): only a session role that can
+  // comment may create a comment. A viewer/none session cannot.
+  if (!can(sessionRole, "comment")) {
+    return { created: false, reason: "forbidden" };
+  }
+
+  // No empty comments — a 0-char / whitespace-only body is not real content.
+  if (body == null || body.trim().length === 0) {
+    return { created: false, reason: "empty_body" };
+  }
+
+  const { id } = await repo.insertComment({
+    annotationId,
+    parentId: null, // top-level: no parent.
+    authorId: author.kind === "user" ? author.userId : null,
+    guestName: author.kind === "guest" ? author.guestName : null,
+    body,
+  });
+  return { created: true, id, parentId: null };
+}

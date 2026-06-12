@@ -24,7 +24,7 @@ import type { SessionResolver } from "../../src/http/auth-gate";
 import type { Role } from "../../src/sharing/roles";
 import type { DocLookup, DocLookupRepo } from "../../src/routes/versions";
 import type { AnnotationLookupRepo, LoadShareConfig } from "../../src/routes/annotations";
-import type { AnnotationRepo, AnnotationRow, NewAnnotation } from "../../src/annotation/annotation";
+import type { AnnotationRepo, AnnotationRow, NewAnnotation, ViewerComment } from "../../src/annotation/annotation";
 import type { CommentRepo, CommentRow, NewComment } from "../../src/annotation/reply";
 import type { GuestCommentRepo, NewGuestComment } from "../../src/annotation/guest";
 import type { ResolutionRepo, AnnotationStatus } from "../../src/annotation/resolve";
@@ -45,7 +45,10 @@ const VISIBLE_DOC: DocLookup = {
 
 const TEXT_ANCHOR = { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 };
 
-function fakeAnnotationRepo(seed: AnnotationRow[] = []) {
+function fakeAnnotationRepo(
+  seed: AnnotationRow[] = [],
+  commentSeed: (ViewerComment & { annotationId: string })[] = [],
+) {
   const rows = [...seed];
   let n = 0;
   const calls = { inserts: [] as NewAnnotation[] };
@@ -58,6 +61,10 @@ function fakeAnnotationRepo(seed: AnnotationRow[] = []) {
     },
     async listByDoc(docId) {
       return rows.filter((r) => r.docId === docId);
+    },
+    async listCommentsByDoc(docId) {
+      const annIds = new Set(rows.filter((r) => r.docId === docId).map((r) => r.id));
+      return commentSeed.filter((c) => annIds.has(c.annotationId));
     },
   };
   return { repo, calls, rows };
@@ -306,16 +313,27 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
 
 describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
   test("viewer+ lists → 200 { items, pagination }", async () => {
-    const ar = fakeAnnotationRepo([
-      { id: "a1", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved" },
-      { id: "a2", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved" },
-    ]);
+    const ar = fakeAnnotationRepo(
+      [
+        { id: "a1", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved" },
+        { id: "a2", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved" },
+      ],
+      // S-003 linked field: each item must carry its comment thread for the viewer rail.
+      [
+        { annotationId: "a1", id: "c1", parentId: null, authorName: "Demo", body: "root", createdAt: "2026-01-01T00:00:00.000Z" },
+        { annotationId: "a1", id: "c2", parentId: "c1", guestName: "Guest", body: "reply", createdAt: "2026-01-01T00:01:00.000Z" },
+      ],
+    );
     const app = buildApp({ resolveDocRole: asViewer, annotationRepo: ar });
     const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.data.items).toHaveLength(2);
     expect(json.data.pagination.total).toBe(2);
+    // The viewer-read contract: each annotation carries comments[] (the gap that white-screened the rail).
+    expect(json.data.items[0].comments).toHaveLength(2);
+    expect(json.data.items[0].comments[0]).toMatchObject({ id: "c1", authorName: "Demo", body: "root" });
+    expect(json.data.items[1].comments).toEqual([]);
   });
 
   test("pagination: limit=1 page=2 → second item only", async () => {
@@ -355,6 +373,22 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     const json = (await res.json()) as any;
     expect(json.data.commentId).toBeString();
     expect(cr.calls.inserts[0]?.parentId).toBe("root");
+  });
+
+  test("S-001: signed-in top-level comment (no parentId) on an EMPTY thread → 201 { commentId }, parentId null", async () => {
+    // The FE first-comment flow: createAnnotation (no body) then addComment with NO
+    // parentId. Before the fix this was routed through addReply → parent_not_found → 404.
+    const cr = fakeCommentRepo(); // empty thread
+    const app = buildApp({ resolveDocRole: asCommenter, commentRepo: cr });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "first comment" }) }),
+    );
+    expect(res.status).toBe(201);
+    const json = (await res.json()) as any;
+    expect(json.data.commentId).toBeString();
+    expect(cr.calls.inserts).toHaveLength(1);
+    expect(cr.calls.inserts[0]?.parentId).toBeNull();
+    expect(cr.calls.inserts[0]?.body).toBe("first comment");
   });
 
   test("AS-007: a signed-in reply records the session actor as author (no guest name)", async () => {

@@ -48,7 +48,7 @@ import {
   type AnnotationRepo,
 } from "../annotation/annotation";
 import { pointRegion, boxRegion, imageRegionAnchor, type ImageRegion } from "../annotation/image-region";
-import { addReply, type CommentRepo } from "../annotation/reply";
+import { addReply, addComment, type CommentRepo } from "../annotation/reply";
 import { createGuestComment, type GuestCommentRepo } from "../annotation/guest";
 import { setResolution, type ResolutionRepo } from "../annotation/resolve";
 import { createSuggestion, decideSuggestion, type SuggestionRepo } from "../annotation/suggestion";
@@ -395,20 +395,32 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
 
     if (actor) {
       const sessionRole = await docRole(parent.docId, actor.userId);
-      const result = await addReply(
-        {
-          annotationId: params.id,
-          parentCommentId: body.parentId ?? params.id, // fall back to root if omitted
-          body: body.body,
-          author: { kind: "user", userId: actor.userId },
-          sessionRole,
-        },
-        commentRepo,
-      );
+      // parentId PRESENT → it's a reply (flatten to root, may parent_not_found).
+      // parentId ABSENT  → it's a TOP-LEVEL comment (no parent, no thread lookup).
+      const result = body.parentId
+        ? await addReply(
+            {
+              annotationId: params.id,
+              parentCommentId: body.parentId,
+              body: body.body,
+              author: { kind: "user", userId: actor.userId },
+              sessionRole,
+            },
+            commentRepo,
+          )
+        : await addComment(
+            {
+              annotationId: params.id,
+              body: body.body,
+              author: { kind: "user", userId: actor.userId },
+              sessionRole,
+            },
+            commentRepo,
+          );
       if (!result.created) {
         if (result.reason === "forbidden") throw new ForbiddenError();
         if (result.reason === "empty_body") throw new ValidationError("body must not be empty", { field: "body" });
-        throw new NotFoundError("Parent comment not found"); // parent_not_found
+        throw new NotFoundError("Parent comment not found"); // parent_not_found (reply path only)
       }
       // S-006: reply persisted → notify others (best-effort, post-commit). The replier
       // is the session actor; they never notify themselves (handled in notifyOnReply).

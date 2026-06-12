@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   addReply,
+  addComment,
   flattenedParentId,
   threadDepth,
   type CommentRepo,
@@ -195,5 +196,80 @@ test("AS-008: replying to a non-existent parent comment is rejected — parent_n
     repo,
   );
   expect(res).toEqual({ created: false, reason: "parent_not_found" });
+  expect(repo.inserted).toHaveLength(0);
+});
+
+// ── addComment: TOP-LEVEL comment (no parent) — the session counterpart to the
+// guest top-level path. No thread lookup, no parent_not_found. ──
+
+test("S-001: top-level comment on an annotation (no parent) is created with parentId null", async () => {
+  // Empty thread: this is the first/root comment on the annotation.
+  const repo = fakeRepo();
+  const res = await addComment(
+    {
+      annotationId: "ann-1",
+      body: "the first comment",
+      author: { kind: "user", userId: "u-author" },
+      sessionRole: "commenter",
+    },
+    repo,
+  );
+
+  expect(res).toEqual({ created: true, id: "c-1", parentId: null });
+  expect(repo.inserted).toHaveLength(1);
+  expect(repo.inserted[0].parentId).toBeNull(); // top-level: no parent
+  expect(repo.inserted[0].annotationId).toBe("ann-1");
+  expect(repo.inserted[0].authorId).toBe("u-author");
+  expect(repo.inserted[0].guestName).toBeNull();
+  // The repo never needed a thread lookup — a top comment has no parent to resolve.
+  expect(threadDepth(await repo.listByAnnotation("ann-1"))).toBe(0);
+});
+
+test("S-001: a guest can post a top-level comment — authorId null, guestName carried", async () => {
+  const repo = fakeRepo();
+  const res = await addComment(
+    {
+      annotationId: "ann-1",
+      body: "guest top comment",
+      author: { kind: "guest", guestName: "Visitor 9" },
+      sessionRole: "commenter",
+    },
+    repo,
+  );
+  expect(res).toEqual({ created: true, id: "c-1", parentId: null });
+  expect(repo.inserted[0].authorId).toBeNull();
+  expect(repo.inserted[0].guestName).toBe("Visitor 9");
+});
+
+test("S-001: empty / whitespace-only top-level comment body is rejected — empty_body, nothing persisted", async () => {
+  const repo = fakeRepo();
+
+  const empty = await addComment(
+    { annotationId: "ann-1", body: "", author: { kind: "user", userId: "u-x" }, sessionRole: "commenter" },
+    repo,
+  );
+  expect(empty).toEqual({ created: false, reason: "empty_body" });
+
+  const ws = await addComment(
+    { annotationId: "ann-1", body: "  \n\t ", author: { kind: "user", userId: "u-x" }, sessionRole: "commenter" },
+    repo,
+  );
+  expect(ws).toEqual({ created: false, reason: "empty_body" });
+
+  expect(repo.inserted).toHaveLength(0);
+});
+
+test("S-001 / C-009: a viewer session cannot post a top-level comment — forbidden, nothing persisted", async () => {
+  const repo = fakeRepo();
+  const res = await addComment(
+    {
+      annotationId: "ann-1",
+      body: "should not persist",
+      author: { kind: "user", userId: "u-viewer" },
+      sessionRole: "viewer",
+    },
+    repo,
+  );
+  expect(res).toEqual({ created: false, reason: "forbidden" });
   expect(repo.inserted).toHaveLength(0);
 });
