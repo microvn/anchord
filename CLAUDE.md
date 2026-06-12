@@ -125,9 +125,10 @@ or moving FE code, follow this exactly — do not regress to flat features or re
   by technical layer. Each feature owns its `client.ts` (typed Eden request thunks — the
   service layer) and `types.ts` (shared types). Single-use prop types stay co-located in
   their component file; only types used by 2+ files go in `types.ts`.
-- **Sub-layer only large features.** A feature past ~20 files splits into `components/`
-  (UI `.tsx`) and `hooks/` (`use-*.ts`), keeping `client.ts` + `types.ts` at the feature
-  root. Small features stay flat — do not create empty sub-folders.
+- **Sub-layer every feature.** Each feature splits into `components/` (UI `.tsx`) and
+  `hooks/` (`use-*.ts`), keeping `client.ts` + `types.ts` + plain helpers at the feature
+  root. Don't create an empty `hooks/` when a feature has no hooks. (Uniform across all
+  features — decided 2026-06-13, reversing the earlier "only large features" rule.)
 - **Cross-module imports use the `@/` alias** (`@/lib/api`, `@/features/docs/client`),
   never deep relative paths (`../../lib/api`). Same-directory siblings stay relative (`./x`).
 - **One home per layer.** App shell / providers / guards → `src/app/`. API infra (`api`,
