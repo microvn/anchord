@@ -115,9 +115,11 @@ export function useCompose(
 
   // Compute the on-screen {top,left,centered} for a selection rect via placePopover (above-centered,
   // flip-below, clamp). `centered` rides through so the popover applies translateX(-50%).
-  const positionFor = useCallback((rect: RectLike | null) => {
+  // `prefer` defaults to "above" (the selection quick-popover, tooltip-style); the inline COMPOSER
+  // passes "below" so its card drops below the selection (Plannotator-style, Apache-2.0).
+  const positionFor = useCallback((rect: RectLike | null, prefer: "above" | "below" = "above") => {
     if (!rect) return { top: 0, left: 0, centered: true };
-    const { top, left, centered } = placePopover(rect, popoverSize.current, viewport());
+    const { top, left, centered } = placePopover(rect, popoverSize.current, viewport(), prefer);
     return { top, left, centered };
   }, []);
 
@@ -194,9 +196,9 @@ export function useCompose(
         if (!composerAnchor) pendingAnchor.current = null;
         return;
       }
-      const pos = positionFor(rect);
-      setPopover((cur) => (cur ? pos : cur));
-      setComposerAnchor((cur) => (cur ? pos : cur));
+      setPopover((cur) => (cur ? positionFor(rect) : cur));
+      // The composer card tracks the selection on the BELOW side (matches its initial placement).
+      setComposerAnchor((cur) => (cur ? positionFor(rect, "below") : cur));
     };
     window.addEventListener("scroll", reposition, { capture: true, passive: true });
     window.addEventListener("resize", reposition, { passive: true });
@@ -257,12 +259,16 @@ export function useCompose(
     if (!anchor) return;
     setActive(anchor);
     setQuote(anchor.textSnippet);
-    // #3 (2026-06-12): the composer is now an INLINE popover at the selection (not the rail). Carry
-    // the selection popover's current position into the composer anchor, then close the selection
-    // popover — the composer replaces it at the same spot.
-    setComposerAnchor((prev) => prev ?? popover ?? { top: 0, left: 0, centered: true });
+    // #3 (2026-06-12): the composer is now an INLINE popover at the selection (not the rail). The
+    // composer card prefers BELOW the selection (Plannotator-style, Apache-2.0) — recompute from the
+    // live selection rect with prefer:"below" so it drops under the text rather than sitting where
+    // the (above) selection popover was. Falls back to the selection popover's spot when no live rect
+    // is readable (the iframe bridge path). Then close the selection popover — the composer replaces it.
+    const rect = liveRect.current?.() ?? null;
+    const below = rect ? positionFor(rect, "below") : (popover ?? { top: 0, left: 0, centered: true });
+    setComposerAnchor((prev) => prev ?? below);
     setPopover(null);
-  }, [popover]);
+  }, [popover, positionFor]);
 
   const cancel = useCallback(() => {
     setActive(null);

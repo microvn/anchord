@@ -59,6 +59,47 @@ describe("placePopover", () => {
     // maxTop = max(8, 300 - 700 - 8) = 8 → clamped to MARGIN, never off-screen.
     expect(p.top).toBe(8);
   });
+
+  // #1 (2026-06-12): the COMPOSER card passes prefer:"below" so it drops UNDER the selection
+  // (Plannotator card, Apache-2.0). Default ABOVE is unchanged (the cases above) — these only cover
+  // the opt-in below mode.
+  describe('prefer: "below"', () => {
+    test("default: positions BELOW the selection, centered, when there's room", () => {
+      const r = rect({ top: 100, bottom: 120, left: 200, right: 300 });
+      const p = placePopover(r, SIZE, VP, "below");
+      expect(p.side).toBe("below");
+      expect(p.centered).toBe(true);
+      expect(p.top).toBe(120 + 8); // selRect.bottom + GAP
+      expect(p.left).toBe(250); // center x = left + width/2 = 200 + 50
+    });
+
+    test("flip: no room below → flips ABOVE the selection (still centered)", () => {
+      // Selection near the viewport bottom: bottom=790, popover (40) + gap (8) = 48 > 10 room below.
+      const r = rect({ top: 760, bottom: 790, left: 200, right: 300 });
+      const p = placePopover(r, SIZE, VP, "below");
+      expect(p.side).toBe("above");
+      expect(p.top).toBe(760 - 8 - 40); // selRect.top - GAP - height
+      expect(p.left).toBe(250); // still centered on the selection
+    });
+
+    test("clamp: a below-preferred card near the right edge stays on-screen", () => {
+      const r = rect({ top: 100, bottom: 120, left: 980, right: 995 });
+      const p = placePopover(r, SIZE, VP, "below");
+      expect(p.side).toBe("below");
+      // maxCenter = 1000 - 80 - 8 = 912.
+      expect(p.left).toBe(912);
+    });
+
+    test("no room either side: stays below but clamped on-screen (never escapes)", () => {
+      const tall = { width: 160, height: 700 };
+      const shortVp = { width: 1000, height: 300 };
+      const r = rect({ top: 150, bottom: 170, left: 100, right: 200 });
+      const p = placePopover(r, tall, shortVp, "below");
+      expect(p.side).toBe("below");
+      // top would be 170 + 8 = 178, but maxTop = max(8, 300 - 700 - 8) = 8 → clamped to MARGIN.
+      expect(p.top).toBe(8);
+    });
+  });
 });
 
 describe("isRectOutOfViewport", () => {
