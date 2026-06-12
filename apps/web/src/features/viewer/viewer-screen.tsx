@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useApiQuery } from "../../lib/use-api-query";
 import { useViewerLayoutMode } from "../../lib/use-breakpoint";
@@ -14,9 +14,10 @@ import { AnnotationsRail } from "./annotations-rail";
 import { ViewerTopBar } from "./viewer-top-bar";
 import { MetaStrip, type SpecMeta } from "./meta-strip";
 import { toast } from "sonner";
-import { useAnnotationMarks, placeAnnotations, scrollToAnno } from "./annotation-marks";
+import { useAnnotationMarks, scrollToAnno } from "./annotation-marks";
 import { SelectionPopover } from "./selection-popover";
 import { Composer } from "./composer";
+import { useDismissOnOutsideAndEscape } from "./use-dismiss";
 import { useCompose } from "./use-compose";
 import {
   fetchViewerDoc,
@@ -214,9 +215,14 @@ function ViewerShell({
     setTocOpen(false);
   };
 
+  // #3 (2026-06-12) — PRODUCT DECISION (deviates from the spec's "Composer in AnnotationsRail"):
+  // the composer is now an INLINE popover anchored at the selection (above-centered, same anchor as
+  // the selection popover) so the user types + sends right at the text. Only the COMPOSING UI moved;
+  // the optimistic + reconciled threads still land in the rail as before. Recorded here for /mf-plan.
   const composerNode =
-    compose.quote !== null ? (
-      <Composer
+    compose.quote !== null && compose.composerAnchor ? (
+      <InlineComposerPopover
+        anchor={compose.composerAnchor}
         quote={compose.quote}
         pending={compose.pending}
         guest={guest}
@@ -229,11 +235,7 @@ function ViewerShell({
   // newest comment tops the list (AS-001) and the count includes them (AS-001.T4 / C-011).
   const railAnnotations = [...compose.optimistic, ...anno.railProps.annotations];
   const railContent = hasDoc ? (
-    <AnnotationsRail
-      {...anno.railProps}
-      annotations={railAnnotations}
-      composer={composerNode}
-    />
+    <AnnotationsRail {...anno.railProps} annotations={railAnnotations} />
   ) : null;
 
   return (
@@ -391,6 +393,45 @@ function ViewerShell({
           onMeasure={compose.setPopoverSize}
         />
       )}
+
+      {/* #3: the INLINE composer popover — replaces the selection popover at the same anchor once
+          the user picks Comment. Mounted here (overlays the viewer body), not in the rail. */}
+      {composerNode}
+    </div>
+  );
+}
+
+// InlineComposerPopover (#3, 2026-06-12): the comment composer rendered as a FLOATING popover at the
+// selection — above-centered like the selection popover it replaces (translateX(-50%) when centered).
+// Outside-click + Escape dismiss reuses the same guard as the selection popover (the multi-click
+// guard keeps a triple-click selection alive — Plannotator, Apache-2.0). The Composer inside is
+// unchanged (quote, textarea, Send, guest fields), so all its behavior + data-testids hold.
+function InlineComposerPopover({
+  anchor,
+  quote,
+  pending,
+  guest,
+  onSend,
+  onCancel,
+}: {
+  anchor: { top: number; left: number; centered: boolean };
+  quote: string;
+  pending?: boolean;
+  guest?: boolean;
+  onSend: (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Dismiss on an outside mousedown / Escape → cancel the compose (same as the selection popover).
+  useDismissOnOutsideAndEscape(ref, onCancel);
+  return (
+    <div
+      ref={ref}
+      data-testid="inline-composer-popover"
+      className="absolute z-40 w-[320px] max-w-[88vw]"
+      style={{ top: anchor.top, left: anchor.left, transform: anchor.centered ? "translateX(-50%)" : undefined }}
+    >
+      <Composer quote={quote} pending={pending} guest={guest} onSend={onSend} onCancel={onCancel} />
     </div>
   );
 }
@@ -429,20 +470,30 @@ function useAnnotations(
 
   const annotations: ViewerAnnotation[] = annoQuery.data?.items ?? [];
 
-  // Which anchored annotations the FE could NOT place at runtime (GAP-005).
-  const unplaceableIds = useMemo(() => {
-    const set = new Set<string>();
-    if (!docPaneEl) return set;
-    const { unplaceable } = placeAnnotations(docPaneEl, annotations);
-    unplaceable.forEach((id) => set.add(id));
-    return set;
-  }, [docPaneEl, annotations]);
+  // Which anchored annotations the FE could NOT place at runtime (GAP-005). BUG #1 (2026-06-12):
+  // this used to be derived in a render-time useMemo that called placeAnnotations — a DOM side
+  // effect DURING render. It's now reported from the post-commit useAnnotationMarks effect (the
+  // single owner of mark placement), removing the double-place that could wipe existing highlights.
+  const [unplaceableIds, setUnplaceableIds] = useState<Set<string>>(() => new Set());
+  const reportUnplaceable = useCallback((ids: string[]) => {
+    setUnplaceableIds((prev) => {
+      // Avoid a state churn loop: only update when the set actually changed.
+      if (prev.size === ids.length && ids.every((id) => prev.has(id))) return prev;
+      return new Set(ids);
+    });
+  }, []);
 
   // Place marks + wire click-on-highlight → focus thread (AS-008) AND open the rail drawer (AS-014).
-  useAnnotationMarks(docPaneEl, annotations, focusedId, (id) => {
-    setFocusedId(id);
-    onHighlightTap();
-  });
+  useAnnotationMarks(
+    docPaneEl,
+    annotations,
+    focusedId,
+    (id) => {
+      setFocusedId(id);
+      onHighlightTap();
+    },
+    reportUnplaceable,
+  );
 
   const focusThread = (id: string) => {
     setFocusedId(id);

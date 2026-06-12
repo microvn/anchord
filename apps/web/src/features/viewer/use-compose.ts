@@ -43,10 +43,15 @@ function selectionRect(sel: Selection | null): RectLike | null {
 let optimisticSeq = 0;
 
 export interface ComposeApi {
-  /** popover position when a valid selection is live (else null → no popover). */
-  popover: { top: number; left: number } | null;
+  /** popover position when a valid selection is live (else null → no popover). `centered` means
+   *  `left` is the CENTER x of the selection and the popover applies translateX(-50%) (above-
+   *  centered, Plannotator center-above, Apache-2.0). */
+  popover: { top: number; left: number; centered: boolean } | null;
   /** the active quote when the composer is open (else null → no composer). */
   quote: string | null;
+  /** #3 (2026-06-12): the on-screen position for the INLINE composer popover — the same anchor the
+   *  selection popover used (above-centered). Non-null only while the composer is open. */
+  composerAnchor: { top: number; left: number; centered: boolean } | null;
   /** the optimistic threads created locally and not yet reconciled (lead the rail). */
   optimistic: ViewerAnnotation[];
   /** true while a create write is in flight. */
@@ -89,9 +94,12 @@ export function useCompose(
    *  screen can relay a highlight DOWN to the in-iframe bridge (the parent can't draw the mark). */
   onCreated?: (anchor: SelectionAnchor, annotationId: string) => void,
 ): ComposeApi {
-  const [popover, setPopover] = useState<{ top: number; left: number } | null>(null);
+  const [popover, setPopover] = useState<{ top: number; left: number; centered: boolean } | null>(null);
   const [active, setActive] = useState<SelectionAnchor | null>(null);
   const [quote, setQuote] = useState<string | null>(null);
+  // #3: the inline composer popover anchor (the position the selection popover occupied). Kept in
+  // sync on scroll/resize the same way the selection popover is, so the composer stays at the text.
+  const [composerAnchor, setComposerAnchor] = useState<{ top: number; left: number; centered: boolean } | null>(null);
   const [optimistic, setOptimistic] = useState<ViewerAnnotation[]>([]);
   const [pending, setPending] = useState(false);
   // Hold the anchor the popover was raised for, so Comment uses it even after the DOM selection
@@ -105,11 +113,12 @@ export function useCompose(
   // null for the bridge path (the iframe re-posts its own rect — TASK 3).
   const liveRect = useRef<(() => RectLike | null) | null>(null);
 
-  // Compute the on-screen {top,left} for a selection rect via the pure placePopover (flip + clamp).
+  // Compute the on-screen {top,left,centered} for a selection rect via placePopover (above-centered,
+  // flip-below, clamp). `centered` rides through so the popover applies translateX(-50%).
   const positionFor = useCallback((rect: RectLike | null) => {
-    if (!rect) return { top: 0, left: 0 };
-    const { top, left } = placePopover(rect, popoverSize.current, viewport());
-    return { top, left };
+    if (!rect) return { top: 0, left: 0, centered: true };
+    const { top, left, centered } = placePopover(rect, popoverSize.current, viewport());
+    return { top, left, centered };
   }, []);
 
   const setPopoverSize = useCallback((size: { width: number; height: number }) => {
@@ -171,18 +180,23 @@ export function useCompose(
   // Plannotator AnnotationToolbar). Capture phase + passive so inner scroll containers count and the
   // listener never blocks scrolling. Cleaned up when the popover closes or the hook unmounts.
   useEffect(() => {
-    if (!popover) return;
+    // #3: reposition while EITHER the selection popover OR the inline composer popover is open.
+    if (!popover && !composerAnchor) return;
     const reposition = () => {
       const get = liveRect.current;
       if (!get) return; // bridge path re-posts its own rect (TASK 3) — nothing to re-read here.
       const rect = get();
       if (!rect) return;
       if (isRectOutOfViewport(rect, viewport())) {
+        // Only the floating selection popover auto-dismisses on scroll-out; the composer (the user
+        // is mid-typing) stays mounted so an accidental scroll doesn't discard the draft.
         setPopover(null);
-        pendingAnchor.current = null;
+        if (!composerAnchor) pendingAnchor.current = null;
         return;
       }
-      setPopover(positionFor(rect));
+      const pos = positionFor(rect);
+      setPopover((cur) => (cur ? pos : cur));
+      setComposerAnchor((cur) => (cur ? pos : cur));
     };
     window.addEventListener("scroll", reposition, { capture: true, passive: true });
     window.addEventListener("resize", reposition, { passive: true });
@@ -190,7 +204,7 @@ export function useCompose(
       window.removeEventListener("scroll", reposition, { capture: true } as EventListenerOptions);
       window.removeEventListener("resize", reposition);
     };
-  }, [popover, positionFor]);
+  }, [popover, composerAnchor, positionFor]);
 
   // C-004 gate also applies to the bridge path: a viewer-only role never opens a composer even if a
   // (forged or real) selection arrives over the port. The screen only wires the bridge when
@@ -218,7 +232,7 @@ export function useCompose(
       // Bridge path: the iframe owns the selection; there's no parent-readable Range to re-read on
       // scroll, so clear liveRect. The iframe re-posts its rect over the port instead (TASK 3).
       liveRect.current = null;
-      setPopover(rect ? positionFor(rect) : { top: 0, left: 0 });
+      setPopover(rect ? positionFor(rect) : { top: 0, left: 0, centered: true });
     },
     [canCompose, positionFor],
   );
@@ -243,12 +257,17 @@ export function useCompose(
     if (!anchor) return;
     setActive(anchor);
     setQuote(anchor.textSnippet);
+    // #3 (2026-06-12): the composer is now an INLINE popover at the selection (not the rail). Carry
+    // the selection popover's current position into the composer anchor, then close the selection
+    // popover — the composer replaces it at the same spot.
+    setComposerAnchor((prev) => prev ?? popover ?? { top: 0, left: 0, centered: true });
     setPopover(null);
-  }, []);
+  }, [popover]);
 
   const cancel = useCallback(() => {
     setActive(null);
     setQuote(null);
+    setComposerAnchor(null);
   }, []);
 
   const send = useCallback(
@@ -297,6 +316,7 @@ export function useCompose(
       }
       setActive(null);
       setQuote(null);
+      setComposerAnchor(null); // #3: close the inline composer popover on send.
       setPending(true);
 
       // Drop the optimistic temp thread + unwrap its highlight mark. Shared by the success reconcile
@@ -375,6 +395,7 @@ export function useCompose(
   return {
     popover,
     quote,
+    composerAnchor,
     optimistic,
     pending,
     startComment,

@@ -216,7 +216,8 @@ describe("AnnotationsRail S-003", () => {
     await renderViewer();
 
     expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
-    expect(screen.getByTestId("rail-empty")).toHaveTextContent("No comments yet");
+    // #3 (2026-06-12): the rail hosts ALL annotation types — empty copy renamed to "annotations".
+    expect(screen.getByTestId("rail-empty")).toHaveTextContent("No annotations yet");
     expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
     expect(screen.queryAllByTestId("thread-card")).toHaveLength(0);
     expect(screen.getByTestId("markdown-view").querySelectorAll("[data-anno]")).toHaveLength(0);

@@ -15,7 +15,6 @@ export function AnnotationsRail({
   onFocusThread,
   onReply,
   onResolve,
-  composer,
 }: {
   annotations: ViewerAnnotation[];
   focusedId: string | null;
@@ -32,21 +31,20 @@ export function AnnotationsRail({
    *  on a refused/failed write so the card rolls back its optimistic toggle. Absent → no Resolve
    *  control (viewer role, C-004/C-006 — resolve is comment-gated, not author-gated). */
   onResolve?: (annotation: ViewerAnnotation, resolved: boolean) => Promise<boolean>;
-  /** S-001: the compose box (Composer) when a comment is in progress; mounts at the TOP of the
-   *  rail so the in-progress comment + its new thread read top-down. Absent on a read-only rail
-   *  (viewer role / no active selection) — the rail stays read-only (C-004). */
-  composer?: React.ReactNode;
 }) {
   const anchored = annotations.filter((a) => !a.isOrphaned);
   const detached = annotations.filter((a) => a.isOrphaned);
-  // The composer (when present) keeps the rail out of its empty state — there's something to show.
-  const isEmpty = annotations.length === 0 && !composer;
+  // #3 (2026-06-12): the composer moved to an inline popover at the selection — the rail no longer
+  // hosts the composing UI, so the empty state is purely a function of the annotation count.
+  const isEmpty = annotations.length === 0;
 
   return (
     <div data-testid="annotations-rail" className="flex h-full flex-col">
       <div className="flex h-11 flex-none items-center gap-2 border-b border-line px-3.5">
         <Icon name="inbox" size={15} />
-        <span className="text-[13px] font-semibold text-ink">Comments</span>
+        {/* #3 (2026-06-12): the rail hosts ALL annotation types globally, not just comments —
+            user-visible label renamed "Comments" → "Annotations" (internal ids/APIs unchanged). */}
+        <span className="text-[13px] font-semibold text-ink">Annotations</span>
         <span
           data-testid="rail-count"
           className="ml-auto font-mono text-[11px] text-subtle"
@@ -61,12 +59,11 @@ export function AnnotationsRail({
           className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-[30px] text-center text-muted"
         >
           <Icon name="inbox" size={24} className="text-subtle" />
-          <div className="text-[13px] font-semibold text-ink">No comments yet</div>
-          <div className="text-[12px] leading-[1.5]">Comments will appear here.</div>
+          <div className="text-[13px] font-semibold text-ink">No annotations yet</div>
+          <div className="text-[12px] leading-[1.5]">Annotations will appear here.</div>
         </div>
       ) : (
         <div className="flex flex-1 flex-col gap-[10px] overflow-auto p-3">
-          {composer}
           {anchored.map((a) => (
             <ThreadCard
               key={a.id}
