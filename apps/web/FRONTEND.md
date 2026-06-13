@@ -20,10 +20,10 @@ React Hook Form + Zod + Tailwind 4. One test runner: `bun test` (happy-dom via
 The API client is `@elysiajs/eden`'s treaty, typed end-to-end against the backend's `App`
 type. There is no axios and no hand-written fetch wrapper. `src/lib/api/` owns the treaty
 instance plus the error/envelope helpers; a feature talks to the backend only through its
-own `client.ts` (typed request thunks built on `@/lib/api`). Do not introduce axios or call
-`fetch` directly from a component.
+own `services/client.ts` (typed request thunks built on `@/lib/api`). Do not introduce axios
+or call `fetch` directly from a component.
 
-The one load-bearing detail: `src/lib/api.ts` keeps `import type { App } from "backend"` as a
+The one load-bearing detail: `src/lib/api/api.ts` keeps `import type { App } from "backend"` as a
 **type-only** import of the workspace package. Aliasing it into backend source collapses
 Eden's end-to-end types to `any` — never rewrite that import.
 
@@ -52,12 +52,14 @@ src/
     *.ts       pure utils only: utils, initials, session-expiry
   hooks/       GLOBAL (non-feature) hooks: use-breakpoint (also exports useIsMobile)
   components/  shared primitives + ui/ (radix/shadcn-style wrappers)
-  features/<feature>/
-    components/   UI .tsx (+ co-located tests)
-    hooks/        use-* hooks (omit the dir when the feature has none)
-    client.ts     Eden request thunks — the feature's service
-    types.ts      shared wire/domain types (see contract below)
-    *.ts          plain helpers at the feature root
+  features/<feature>/      ROOT HOLDS ONLY SUBDIRECTORIES — no loose files, no index barrel
+    components/   UI .tsx (+ single-subject co-located tests)
+    hooks/        use-* hooks
+    services/     the Eden API/3rd-party client — services/client.ts
+    types/        feature TS types (types/index.ts)
+    schema/       Zod form schemas
+    lib/          feature-local helpers (and a helper's single-subject test)
+    tests/        cross-cutting / flow-spanning feature tests
 ```
 
 `src/lib/api/` is the API-infra layer (request + envelope). `use-api-query` lives there, with
@@ -66,24 +68,38 @@ is for global hooks that aren't owned by a feature.
 
 ## Feature layering
 
-Every feature follows the same internal shape: UI components under `components/`, `use-*`
-hooks under `hooks/` (omitted when the feature has no hooks — never create an empty `hooks/`),
-and `client.ts` + `types.ts` + plain helpers at the feature root. This is uniform across all
-features, large and small — uniformity was chosen over the minor over-engineering of
-sub-folders for a 6-file feature.
+Every feature follows the same internal shape, and **the feature root holds only
+subdirectories — no loose `.ts`/`.tsx` file at the root, and no per-feature `index.ts`
+barrel.** Each subfolder is created only when it has content (never an empty folder):
 
-### The `client.ts` + `types.ts` contract
+| subfolder | holds |
+|---|---|
+| `components/` | UI `.tsx` (+ the single-subject test next to its component) |
+| `hooks/` | `use-*` hooks |
+| `services/` | the Eden client — `services/client.ts` (the feature's only backend entry) |
+| `types/` | feature TS types (`types/index.ts`) |
+| `schema/` | Zod form schemas |
+| `lib/` | feature-local helpers (+ a helper's single-subject test alongside it) |
+| `tests/` | cross-cutting / flow-spanning tests not tied to one component |
 
-- **`client.ts`** — the feature's service: typed Eden request thunks, built on `@/lib/api`.
-  Every backend call a feature makes goes through here. Wire-shape types that exist only to
-  describe a request/response may stay co-located in `client.ts` (it's already the home of the
-  service that produces them).
-- **`types.ts`** — domain/wire types the feature's UI consumes that are **shared across 2+
-  files** and don't belong to a specific module. Create it only when such a type exists. A
-  single-component prop type stays co-located in that component — do not hoist it. Do not create
-  an empty `types.ts` just for symmetry; a feature with no cross-file shared type simply has none
-  (`auth` and `sharing` are like this today — `auth`'s only shared type is single-file, and
-  `sharing`'s shared types are its `client.ts` service contract).
+Uniform across all features, large and small — uniformity was chosen over the minor
+over-engineering of sub-folders for a 6-file feature. No barrel: imports stay explicit
+`@/features/<f>/<sub>/<file>` (avoids circular-import risk and keeps tree-shaking clean).
+
+### The `services/` + `types/` + `schema/` contract
+
+- **`services/client.ts`** — the feature's service: typed Eden request thunks, built on
+  `@/lib/api`. Every backend call a feature makes goes through here. It lives in `services/`
+  because calling the API / a 3rd party is its role. Wire-shape types that only describe a
+  request/response may stay co-located in `services/client.ts`.
+- **`types/`** — domain/wire types the feature's UI consumes that are **shared across 2+
+  files**. Create the folder only when such a type exists (single `types/index.ts` is fine). A
+  single-component prop type stays co-located in that component — do not hoist it. A feature
+  with no cross-file shared type has no `types/` (`auth` and `sharing` are like this — `auth`'s
+  only shared type is single-file, `sharing`'s shared types are its `services/client.ts`
+  contract).
+- **`schema/`** — Zod form schemas, extracted out of components. Create only where the feature
+  has forms (`auth`, `sharing`, `workspaces`); `docs`/`viewer` use no Zod and have no `schema/`.
 
 ## File naming
 
@@ -105,10 +121,11 @@ itself (a doc, by convention); everything under `src/` is kebab-case.
 
 Tests use `bun test` (one runner; no Vitest migration).
 
-- **Feature tests co-locate with their feature** — a feature's `*.test.tsx` lives inside
-  `src/features/<feature>/` (under `components/` next to the component it covers, or at the
-  feature root for module tests), so code and its tests move and review together. Tests reach
-  their subject as a sibling (`./`) or via `@/…`, including `mock.module("@/features/<f>/client", …)`.
+- **Feature tests co-locate with their feature** — inside `src/features/<feature>/`. A
+  single-subject test sits next to its subject (`components/<x>.test.tsx` beside `<x>.tsx`, or
+  in `lib/` beside the helper it covers); a cross-cutting / flow-spanning test goes in the
+  feature's `tests/` folder. Tests reach their subject via `@/…`, including
+  `mock.module("@/features/<f>/services/client", …)`.
 - **Infra / app-root tests stay central** in `apps/web/test/` — the app-shell, shared
   primitives, and API/hook infra aren't owned by any one feature (`smoke`, `header`, `sidebar`,
   `breakpoint`, `eden-type`, `design-system-shell`, `states`). The harness `test/setup.ts` stays

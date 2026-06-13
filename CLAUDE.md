@@ -122,9 +122,9 @@ real stack (Vite + React Router + Eden treaty + better-auth + React Query). When
 or moving FE code, follow this exactly — do not regress to flat features or relative imports.
 
 - **Feature-based.** Code lives under `src/features/<feature>/`, organized by feature, NOT
-  by technical layer. Each feature owns its `client.ts` (typed Eden request thunks — the
-  service layer) and `types.ts` (shared types). Single-use prop types stay co-located in
-  their component file; only types used by 2+ files go in `types.ts`.
+  by technical layer. Each feature owns its `services/client.ts` (typed Eden request thunks —
+  the service layer) and `types/` (shared types). Single-use prop types stay co-located in
+  their component file; only types used by 2+ files go in `types/`.
 - **Every feature is fully sub-layered — the feature root holds only subdirectories, no loose
   files.** The subfolders (each created only when it has content — no empty folders):
   `components/` (UI `.tsx`), `hooks/` (`use-*.ts`), `services/` (the Eden API client —
@@ -133,12 +133,13 @@ or moving FE code, follow this exactly — do not regress to flat features or re
   next to their subject (in `components/`/`lib/`); flow-spanning tests go in `tests/`. No
   per-feature `index.ts` barrel — imports stay explicit `@/features/<f>/<sub>/<file>`.
   (Uniform across all features — decided 2026-06-13.)
-- **Cross-module imports use the `@/` alias** (`@/lib/api`, `@/features/docs/client`),
+- **Cross-module imports use the `@/` alias** (`@/lib/api`, `@/features/docs/services/client`),
   never deep relative paths (`../../lib/api`). Same-directory siblings stay relative (`./x`).
 - **One home per layer.** App shell / providers / guards → `src/app/`. API infra (`api`,
   `api-error`, `auth-client`, `use-api-query`) → `src/lib/api/`. Pure utils → `src/lib/` root.
   Global hooks → `src/hooks/`. Shared primitives → `src/components/` (`ui/` for radix wrappers).
-- **Tests live with their feature** under `src/features/<feature>/` (next to the code).
+- **Tests live with their feature** under `src/features/<feature>/`: a single-subject test
+  next to its subject (`components/`/`lib/`), a cross-cutting/flow test in `<feature>/tests/`.
   Only app-root / shared-primitive / infra tests and `test/setup.ts` stay in `test/`.
   Any file move MUST update every importer AND `mock.module(...)` target in the same change.
 - **Locked rejections** (don't reintroduce from borrowed guides): no Zustand global store
