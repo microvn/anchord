@@ -1,5 +1,4 @@
 import { useForm, type Resolver } from "react-hook-form";
-import { z } from "zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { useActiveWorkspace } from "./active-workspace";
 import { useMembers, useBootstrap } from "@/features/workspaces/hooks/use-bootstrap";
@@ -19,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { initials, avatarColor } from "@/lib/initials";
 import type { MemberRow, InvitationRow, WorkspaceRole } from "@/features/workspaces/types";
+import { inviteSchema, type InviteForm } from "@/features/workspaces/schema/invite";
 
 // S-003 MembersScreen (AS-007..AS-012 / C-002). ADMIN-ONLY management: a non-admin sees a
 // read-only view with NO manage controls (invite/remove/change-role hidden). The directory is
@@ -26,14 +26,6 @@ import type { MemberRow, InvitationRow, WorkspaceRole } from "@/features/workspa
 // flashes another workspace's members. Visual structure mirrors the Anchord-Design `MembersScreen`
 // (page-head / list-head / member-row / avatar / you-tag / badge / role-select / pending section).
 // Mobile: the .list-head hides and rows reflow (C-003, [→MANUAL] for pixels).
-
-const inviteSchema = z.object({
-  // AS-012: client-side email validation (inline) BEFORE the request — a malformed email
-  // never reaches the invite endpoint.
-  email: z.string().min(1, "Email is required").email("Enter a valid email address"),
-  role: z.enum(["admin", "member"]),
-});
-type InviteForm = z.infer<typeof inviteSchema>;
 
 // A tiny Zod→RHF resolver. We bind RHF's validation to the Zod schema directly instead of
 // `@hookform/resolvers/zod`, whose 3.x build reads Zod 3's error internals (`unionErrors`)

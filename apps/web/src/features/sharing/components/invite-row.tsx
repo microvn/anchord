@@ -1,8 +1,8 @@
 import { useForm, type Resolver } from "react-hook-form";
-import { z } from "zod";
 import { toast } from "sonner";
 import { Icon } from "@/components/icon";
 import { invitePerson, type ShareRole, type SharePerson } from "@/features/sharing/services/client";
+import { inviteSchema, type InviteForm } from "@/features/sharing/schema/invite";
 
 // InviteRow (sharing-permissions-ui S-003) — invite a person by email + role + optional message.
 // Mirrors the workspaces members-screen InviteRow (RHF + a flat Zod resolver, segmented role
@@ -11,14 +11,6 @@ import { invitePerson, type ShareRole, type SharePerson } from "@/features/shari
 // backend, and reconciles the row's status (active|pending, AS-010/AS-011) — or rolls the
 // optimistic row back on a refused/failed write (C-005/AS-013). A malformed email is rejected
 // inline by the resolver BEFORE the request (C-006/AS-012) — the same inline check as members.
-
-const inviteSchema = z.object({
-  // AS-012/C-006: inline email validation BEFORE the request — a malformed email never reaches POST.
-  email: z.string().min(1, "Email is required").email("Enter a valid email address"),
-  role: z.enum(["viewer", "commenter", "editor"]),
-  message: z.string().optional(),
-});
-type InviteForm = z.infer<typeof inviteSchema>;
 
 // A version-proof Zod→RHF resolver (safeParse + flat field-map), same rationale as members-screen:
 // the project is on Zod 4 and @hookform/resolvers reads Zod 3 internals.

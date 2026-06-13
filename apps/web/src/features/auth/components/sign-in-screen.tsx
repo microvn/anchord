@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@/features/auth/zod-resolver";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { z } from "zod";
 import { toast } from "sonner";
+import { signInSchema, type SignInValues } from "@/features/auth/schema/sign-in";
 import { signIn, sendVerificationEmail, getSession, useSession } from "@/lib/api/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,12 +28,6 @@ import { OAuthErrorBanner } from "./oauth-error-banner";
 //  - the OAuthButtons (only enabled providers — AS-007),
 //  - the OAuthErrorBanner driven by ?error=… set when better-auth redirected back after a
 //    denied/failed OAuth callback (AS-008).
-const schema = z.object({
-  email: z.string().email("Enter a valid email"),
-  password: z.string().min(1, "Enter your password"),
-});
-type Values = z.infer<typeof schema>;
-
 // better-auth's error code for "the account exists but its email isn't verified". We branch
 // on this (or a message match as a fallback) to show the verify-first state, NOT a credential
 // error (C-001).
@@ -68,9 +62,9 @@ export function SignInScreen() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<Values>({ resolver: zodResolver(schema) });
+  } = useForm<SignInValues>({ resolver: zodResolver(signInSchema) });
 
-  async function onSubmit(values: Values) {
+  async function onSubmit(values: SignInValues) {
     setFormError(null);
     setUnverifiedEmail(null);
     setResent(false);

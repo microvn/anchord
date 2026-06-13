@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@/features/auth/zod-resolver";
 import { Link } from "react-router-dom";
-import { z } from "zod";
 import { signUp } from "@/lib/api/auth-client";
+import { signUpSchema, type SignUpValues } from "@/features/auth/schema/sign-up";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,15 +25,6 @@ import { OAuthButtons } from "./oauth-buttons";
 // cookie, and with requireEmailVerification a fresh sign-up has NO session yet (C-003).
 // OAuthButtons (only enabled providers) are reused here too.
 
-// C-001/AS-001: password must be at least 8 characters (mirrors the backend
-// minPasswordLength). Validate on the client so the user gets the rule before submit.
-const schema = z.object({
-  name: z.string().trim().min(1, "Enter your name"),
-  email: z.string().email("Enter a valid email"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-});
-type Values = z.infer<typeof schema>;
-
 export function SignUpScreen() {
   const [formError, setFormError] = useState<string | null>(null);
   // Once sign-up succeeds we flip to the "check your inbox" state (with resend), keeping the
@@ -44,9 +35,9 @@ export function SignUpScreen() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<Values>({ resolver: zodResolver(schema) });
+  } = useForm<SignUpValues>({ resolver: zodResolver(signUpSchema) });
 
-  async function onSubmit(values: Values) {
+  async function onSubmit(values: SignUpValues) {
     setFormError(null);
     const res = await signUp.email({
       email: values.email,
