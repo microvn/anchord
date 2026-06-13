@@ -16,7 +16,7 @@ const setActiveWorkspace = mock(async (id: string) => env({ activeWorkspaceId: i
 const createWorkspace = mock(async (_name: string) => env({ id: "ws-new", name: _name }));
 const renameWorkspace = mock(async (_id: string, name: string) => env({ id: _id, name }));
 
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   fetchBootstrap,
   setActiveWorkspace,
   createWorkspace,

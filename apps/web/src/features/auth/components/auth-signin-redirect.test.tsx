@@ -62,7 +62,7 @@ mock.module("@/lib/api/auth-client", () => ({
   authClient: {},
 }));
 
-mock.module("@/features/auth/client", () => ({
+mock.module("@/features/auth/services/client", () => ({
   fetchAuthProviders: mock(async () => ({
     data: { success: true, data: { providers: [] } },
     error: null,

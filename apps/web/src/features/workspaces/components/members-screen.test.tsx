@@ -24,7 +24,7 @@ const changeMemberRole = mock(async (_w: string, userId: string, role: string) =
 let bootstrap: unknown;
 const fetchBootstrap = mock(async () => bootstrap);
 
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   fetchBootstrap,
   fetchMembers,
   inviteMember,

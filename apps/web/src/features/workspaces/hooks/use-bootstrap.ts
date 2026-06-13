@@ -1,6 +1,6 @@
 import { useApiQuery, peelEnvelope, type EdenResult } from "@/lib/api/use-api-query";
 import { queryKeys } from "@/features/workspaces/query-keys";
-import { fetchBootstrap, fetchMembers } from "@/features/workspaces/client";
+import { fetchBootstrap, fetchMembers } from "@/features/workspaces/services/client";
 import type { Bootstrap, MembersDirectory } from "@/features/workspaces/types";
 
 // `useApiQuery` already peels the success-envelope for every read it runs (see peelEnvelope), so a

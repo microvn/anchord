@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/icon";
 import { signIn } from "@/lib/api/auth-client";
-import { fetchAuthProviders } from "@/features/auth/client";
+import { fetchAuthProviders } from "@/features/auth/services/client";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 
 // auth-ui S-002 OAuthButtons (AS-006/AS-007) — renders a "Continue with …" button for ONLY

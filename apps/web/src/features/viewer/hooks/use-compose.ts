@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { createAnnotation, addComment, type ViewerAnnotation } from "@/features/viewer/client";
+import { createAnnotation, addComment, type ViewerAnnotation } from "@/features/viewer/services/client";
 import { selectionToAnchor, type SelectionAnchor } from "@/features/viewer/selection-anchor";
 import { placeAnnotations } from "@/features/viewer/components/annotation-marks";
 import { placePopover, isRectOutOfViewport, type RectLike } from "@/features/viewer/place-popover";

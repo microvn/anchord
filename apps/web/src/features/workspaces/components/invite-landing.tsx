@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Brandmark } from "@/components/icon";
 import { AuthCenter } from "@/features/auth/components/auth-shell";
-import { acceptInvitation, rejectInvitation, setActiveWorkspace } from "@/features/workspaces/client";
+import { acceptInvitation, rejectInvitation, setActiveWorkspace } from "@/features/workspaces/services/client";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { toApiError } from "@/lib/api/api-error";

@@ -23,7 +23,7 @@ import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismis
 import { useDraggable } from "@/features/viewer/hooks/use-draggable";
 import { useCompose, peelCommentId } from "@/features/viewer/hooks/use-compose";
 import { ShareDialog } from "@/features/sharing/components/share-dialog";
-import { canManageShare } from "@/features/sharing/client";
+import { canManageShare } from "@/features/sharing/services/client";
 import {
   fetchViewerDoc,
   listAnnotations,
@@ -33,7 +33,7 @@ import {
   type ViewerDocResponse,
   type ListAnnotationsResponse,
   type ViewerAnnotation,
-} from "@/features/viewer/client";
+} from "@/features/viewer/services/client";
 
 // ViewerScreen (S-001): the React route `/w/:workspaceId/d/:slug`. It fetches the doc via the
 // workspace-scoped read, then renders it inside the 3-pane viewer shell. The TOC sidebar (S-002),

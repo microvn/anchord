@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import type { EdenResult } from "@/lib/api/use-api-query";
-import type { Bootstrap, MembersDirectory, WorkspaceRole } from "./types";
+import type { Bootstrap, MembersDirectory, WorkspaceRole } from "@/features/workspaces/types";
 
 // Typed request thunks for the workspaces backend (`/api/me`, `/api/workspaces`,
 // `/api/w/:id/members`, `/api/invitations/:id/{accept,reject}`).

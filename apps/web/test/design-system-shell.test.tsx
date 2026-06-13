@@ -11,7 +11,7 @@ import { join } from "node:path";
 // chrome tests. Mock the client so the bootstrap read resolves to an empty workspace set (the
 // S-003 chrome assertions don't depend on its data).
 const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   fetchBootstrap: mock(async () => env({ userId: "me", workspaces: [], activeWorkspaceId: null })),
   setActiveWorkspace: mock(async () => env({})),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),

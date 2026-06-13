@@ -18,11 +18,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ShareDialog } from "@/features/sharing/components/share-dialog";
-import type { EffectiveRole } from "@/features/viewer/client";
+import type { EffectiveRole } from "@/features/viewer/services/client";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
-import { moveDoc, copyDoc } from "@/features/docs/client";
+import { moveDoc, copyDoc } from "@/features/docs/services/client";
 import type { DocRow, ProjectRow } from "@/features/docs/types";
 
 // MoveCopyDialog (workspace-project-ui S-001) — 1:1 with Anchord-Design dialogs2.jsx P10.

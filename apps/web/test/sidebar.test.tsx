@@ -18,7 +18,7 @@ const env = (body: unknown) => ({ data: { success: true, data: body }, error: nu
 let bootstrap: unknown = env({ userId: "me", workspaces: [], activeWorkspaceId: null });
 const fetchBootstrap = mock(async () => bootstrap);
 
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   fetchBootstrap,
   setActiveWorkspace: mock(async (id: string) => env({ activeWorkspaceId: id })),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),

@@ -51,7 +51,7 @@ let annoResponse: unknown;
 const fetchViewerDoc = mock(async () => docResponse);
 const listAnnotations = mock(async () => annoResponse);
 
-mock.module("@/features/viewer/client", () => ({
+mock.module("@/features/viewer/services/client", () => ({
   fetchViewerDoc,
   listAnnotations,
   // S-001 grew the client surface; use-compose imports these at module eval, so the whole-module

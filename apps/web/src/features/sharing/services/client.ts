@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import type { EdenResult } from "@/lib/api/use-api-query";
-import type { EffectiveRole } from "@/features/viewer/client";
+import type { EffectiveRole } from "@/features/viewer/services/client";
 
 // Typed request thunks for the sharing-permissions backend (the producer is already built). This
 // story (S-001) adds only the PREFILL READ — `getShareState` → GET /api/w/:ws/docs/:slug/share

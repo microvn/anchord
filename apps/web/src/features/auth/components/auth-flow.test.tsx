@@ -59,7 +59,7 @@ mock.module("@/lib/api/auth-client", () => ({
 // SignInScreen renders OAuthButtons, which reads the enabled-provider list via the auth-ui
 // Eden wrapper. Mock it so the web-core sign-in tests never reach a real backend (no OAuth
 // buttons here — web-core's flow is email+password).
-mock.module("@/features/auth/client", () => ({
+mock.module("@/features/auth/services/client", () => ({
   fetchAuthProviders: mock(async () => ({
     data: { success: true, data: { providers: [] } },
     error: null,

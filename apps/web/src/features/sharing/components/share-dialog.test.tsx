@@ -12,11 +12,11 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // Prime the real module into the cache so the `...actual` spread below resolves every export
 // (the C-002 `canManageShare` gate is the REAL pure fn — only the read thunk is mocked).
-import * as sharingClient from "@/features/sharing/client";
+import * as sharingClient from "@/features/sharing/services/client";
 
 const getShareState = mock(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
 
-mock.module("@/features/sharing/client", () => ({
+mock.module("@/features/sharing/services/client", () => ({
   ...sharingClient,
   getShareState,
 }));
@@ -50,7 +50,7 @@ const LINK_STATE = {
 };
 
 const { ShareDialog } = await import("@/features/sharing/components/share-dialog");
-const { canManageShare } = await import("@/features/sharing/client");
+const { canManageShare } = await import("@/features/sharing/services/client");
 
 beforeEach(() => {
   getShareState.mockClear();
@@ -185,7 +185,7 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
   // The doc-card ⋯ now opens a menu (Share · Move · Copy) instead of MoveCopy directly; Share opens
   // the same ShareDialog for that doc. The docs client is mocked so the card renders standalone.
   const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
-  mock.module("@/features/docs/client", () => ({
+  mock.module("@/features/docs/services/client", () => ({
     moveDoc: mock(async () => env({})),
     copyDoc: mock(async () => env({})),
   }));

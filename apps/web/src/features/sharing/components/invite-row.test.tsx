@@ -9,13 +9,13 @@ import userEvent from "@testing-library/user-event";
 // AS-011 pending tag, AS-012 inline email block (no request), AS-013 refused → optimistic row
 // removed + error toast.
 
-import * as sharingClient from "@/features/sharing/client";
+import * as sharingClient from "@/features/sharing/services/client";
 
 const invitePerson = mock(async () => ({ data: { status: "active" }, error: null as unknown }));
 const getShareState = mock(async () => ({ data: OWNER_STATE, error: null as unknown }));
 const setAccess = mock(async () => ({ data: OWNER_STATE, error: null as unknown }));
 
-mock.module("@/features/sharing/client", () => ({
+mock.module("@/features/sharing/services/client", () => ({
   ...sharingClient,
   invitePerson,
   getShareState,

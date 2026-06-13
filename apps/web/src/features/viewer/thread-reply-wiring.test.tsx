@@ -53,7 +53,7 @@ function canComment(role: string | undefined) {
   return role !== "viewer";
 }
 
-mock.module("@/features/viewer/client", () => ({
+mock.module("@/features/viewer/services/client", () => ({
   fetchViewerDoc,
   listAnnotations,
   createAnnotation: mock(async () => okEnv({ annotationId: "a" })),

@@ -43,7 +43,7 @@ mock.module("@/lib/api/auth-client", () => ({
 
 // auth-ui client wrapper — providers read returns no OAuth (so SignUpScreen/SignInScreen
 // render the form alone; OAuth is the S-002 suite's concern).
-mock.module("@/features/auth/client", () => ({
+mock.module("@/features/auth/services/client", () => ({
   fetchAuthProviders: mock(async () => ({ data: { success: true, data: { providers: [] } }, error: null })),
   acceptDocInvite: mock(async () => ({ data: { success: true, data: { status: "active" } }, error: null })),
 }));

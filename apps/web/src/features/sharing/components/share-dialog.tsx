@@ -27,13 +27,13 @@ import {
   type ShareState,
   type SharePerson,
   type ShareRole,
-} from "@/features/sharing/client";
+} from "@/features/sharing/services/client";
 import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
 import { LinkControls } from "./link-controls";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
-import type { EffectiveRole } from "@/features/viewer/client";
+import type { EffectiveRole } from "@/features/viewer/services/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
 // (and the docs-list ⋯ menu), gates LAZILY on the gated `GET …/share` read result (C-002), is a

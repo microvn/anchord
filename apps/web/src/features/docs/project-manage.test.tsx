@@ -23,7 +23,7 @@ const toastSuccess = mock(() => {});
 const toastError = mock(() => {});
 mock.module("sonner", () => ({ toast: { success: toastSuccess, error: toastError } }));
 
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   fetchBootstrap: mock(async () => bootstrap),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
   setActiveWorkspace: mock(async () => env({})),
@@ -52,7 +52,7 @@ const archiveProject = mock(async () => env({ id: "p-old", archived: true }));
 const unarchiveProject = mock(async () => env({ id: "p-old", archived: false }));
 const deleteProject = mock(async () => env({ id: "p-scratch", deleted: true }));
 
-mock.module("@/features/docs/client", () => ({
+mock.module("@/features/docs/services/client", () => ({
   fetchProjects,
   fetchProjectDocs,
   createProject: mock(async () => env({})),

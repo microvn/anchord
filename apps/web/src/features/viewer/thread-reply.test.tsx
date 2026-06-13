@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 // onReply so the test asserts the reply WRITE + flat render, not a real round-trip.
 
 import { ThreadCard } from "@/features/viewer/components/thread-card";
-import type { ViewerAnnotation } from "@/features/viewer/client";
+import type { ViewerAnnotation } from "@/features/viewer/services/client";
 
 function thread(overrides: Partial<ViewerAnnotation> = {}): ViewerAnnotation {
   return {

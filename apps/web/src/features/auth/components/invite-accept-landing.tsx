@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Brandmark, Icon } from "@/components/icon";
 import { AuthCenter } from "./auth-shell";
-import { acceptDocInvite } from "@/features/auth/client";
+import { acceptDocInvite } from "@/features/auth/services/client";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 
 // auth-ui S-003 InviteAcceptLanding (AS-009/AS-010) — the PER-DOC invite accept-link landing.

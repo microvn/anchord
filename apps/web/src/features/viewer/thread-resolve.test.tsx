@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 // mocked onResolve so the test asserts the toggle behaviour + render state, not a real round-trip.
 
 import { ThreadCard } from "@/features/viewer/components/thread-card";
-import type { ViewerAnnotation } from "@/features/viewer/client";
+import type { ViewerAnnotation } from "@/features/viewer/services/client";
 
 function thread(overrides: Partial<ViewerAnnotation> = {}): ViewerAnnotation {
   return {

@@ -18,7 +18,7 @@ mock.module("sonner", () => ({
   Toaster: () => null,
 }));
 // Keep the network client inert — these tests only exercise selection→popover + dismiss, not writes.
-mock.module("@/features/viewer/client", () => ({
+mock.module("@/features/viewer/services/client", () => ({
   createAnnotation: mock(async () => ({ data: { annotationId: "a1" }, error: null })),
   addComment: mock(async () => ({ data: {}, error: null })),
 }));

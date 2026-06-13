@@ -14,7 +14,7 @@ const acceptDocInvite = mock(async (_id: string, _t: string) =>
   env({ status: "active", docId: "doc-42", role: "commenter" }),
 );
 
-mock.module("@/features/auth/client", () => ({
+mock.module("@/features/auth/services/client", () => ({
   acceptDocInvite,
   fetchAuthProviders: mock(async () => env({ providers: [] })),
 }));

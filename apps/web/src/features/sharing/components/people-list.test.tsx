@@ -7,7 +7,7 @@ import { render, screen, within } from "@testing-library/react";
 // dropdown (viewer|commenter|editor); a pending invitee shows the "Pending" tag.
 
 import { PeopleList } from "@/features/sharing/components/people-list";
-import type { SharePerson } from "@/features/sharing/client";
+import type { SharePerson } from "@/features/sharing/services/client";
 
 const PEOPLE: SharePerson[] = [
   { userId: "u-own", email: "owner@acme.com", name: "Owner Olu", role: "owner", status: "active" },

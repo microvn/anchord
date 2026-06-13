@@ -15,7 +15,7 @@ import { useActiveWorkspaceSafe } from "@/features/workspaces/components/active-
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
-import { publishDoc } from "@/features/docs/client";
+import { publishDoc } from "@/features/docs/services/client";
 import { useProjects } from "@/features/docs/hooks/use-docs";
 import { NewDocProjectPicker } from "./new-doc-project-picker";
 import { NewDocMcpPane } from "./new-doc-mcp-pane";

@@ -3,7 +3,7 @@ import { toApiError, type ApiError } from "@/lib/api/api-error";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { queryKeys } from "@/features/workspaces/query-keys";
-import { fetchProjects, fetchProjectDocs, searchDocs } from "@/features/docs/client";
+import { fetchProjects, fetchProjectDocs, searchDocs } from "@/features/docs/services/client";
 import type { DocRow, ProjectRow, SearchResultRow } from "@/features/docs/types";
 
 // Browse data hooks for the workspace-project surfaces. Keyed by workspaceId (GAP-001) so

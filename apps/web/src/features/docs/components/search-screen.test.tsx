@@ -10,7 +10,7 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   fetchBootstrap: mock(async () => env({})),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
   setActiveWorkspace: mock(async () => env({})),
@@ -35,7 +35,7 @@ const PROJECTS = [
   { id: "p-billing", name: "Billing", isDefault: false, archived: false },
   { id: "p-payments", name: "Payments", isDefault: true, archived: false },
 ];
-mock.module("@/features/docs/client", () => ({
+mock.module("@/features/docs/services/client", () => ({
   fetchProjects: mock(async () => env({ projects: PROJECTS })),
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   createProject: mock(async () => env({})),

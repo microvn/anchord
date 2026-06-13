@@ -12,7 +12,7 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 const env = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 
 let bootstrap: unknown;
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   fetchBootstrap: mock(async () => bootstrap),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
   setActiveWorkspace: mock(async () => env({})),
@@ -29,7 +29,7 @@ let projects: unknown;
 const docsByProject: Record<string, unknown> = {};
 const fetchProjects = mock(async () => projects);
 const fetchProjectDocs = mock(async (_w: string, id: string) => docsByProject[id]);
-mock.module("@/features/docs/client", () => ({
+mock.module("@/features/docs/services/client", () => ({
   fetchProjects,
   fetchProjectDocs,
   createProject: mock(async () => env({})),

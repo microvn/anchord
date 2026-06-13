@@ -10,7 +10,7 @@ import { useRef } from "react";
 // rendered card's inline top/left.
 
 // Keep the network client inert — these tests never write.
-mock.module("@/features/viewer/client", () => ({
+mock.module("@/features/viewer/services/client", () => ({
   createAnnotation: mock(async () => ({ data: { annotationId: "a1" }, error: null })),
   addComment: mock(async () => ({ data: {}, error: null })),
 }));

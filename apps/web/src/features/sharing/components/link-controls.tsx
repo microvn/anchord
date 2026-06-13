@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/icon";
-import { setLinkControls, type ShareLink, type SetLinkInput } from "@/features/sharing/client";
+import { setLinkControls, type ShareLink, type SetLinkInput } from "@/features/sharing/services/client";
 
 // LinkControls (sharing-permissions-ui S-005) — the Link section for an anyone-with-link doc:
 // the share URL + a Copy button (AS-015), and three INDEPENDENT chips (password / expiry /

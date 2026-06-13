@@ -7,7 +7,7 @@ import { queryKeys } from "@/features/workspaces/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
 import { useProjectsBrowse } from "@/features/docs/hooks/use-docs";
-import { createProject } from "@/features/docs/client";
+import { createProject } from "@/features/docs/services/client";
 import { ProjectCardMoreMenu } from "./project-more-menu";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";

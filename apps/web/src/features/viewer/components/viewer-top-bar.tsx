@@ -1,6 +1,6 @@
 import { Icon, Brandmark } from "@/components/icon";
 import { useTheme } from "@/app/theme-provider";
-import type { ViewerDocKind } from "@/features/viewer/client";
+import type { ViewerDocKind } from "@/features/viewer/services/client";
 
 // ViewerTopBar (S-005, AS-012): the bar ABOVE the 3-pane viewer body. Mirrors the prototype's
 // `.vtop` (viewer-shell.jsx ViewerTopBar) structurally, in Tailwind/DESIGN.md tokens:

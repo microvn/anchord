@@ -30,7 +30,7 @@ const env = (body: unknown) => ({ data: { success: true, data: body }, error: nu
 let providersResult: ReturnType<typeof env> = env({ providers: ["github"] });
 const fetchAuthProviders = mock(async () => providersResult);
 
-mock.module("@/features/auth/client", () => ({
+mock.module("@/features/auth/services/client", () => ({
   fetchAuthProviders,
   acceptDocInvite: mock(async () => env({ status: "active" })),
 }));

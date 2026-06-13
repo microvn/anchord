@@ -17,7 +17,7 @@ const acceptInvitation = mock(async (_id: string, _t: string) =>
 const rejectInvitation = mock(async (_id: string, _t: string) => env({ rejected: true }));
 const setActiveWorkspace = mock(async (id: string) => env({ activeWorkspaceId: id }));
 
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   acceptInvitation,
   rejectInvitation,
   setActiveWorkspace,

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useActiveWorkspace } from "./active-workspace";
-import { renameWorkspace } from "@/features/workspaces/client";
+import { renameWorkspace } from "@/features/workspaces/services/client";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { queryKeys } from "@/features/workspaces/query-keys";
 import { toApiError } from "@/lib/api/api-error";

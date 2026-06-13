@@ -9,12 +9,12 @@ import userEvent from "@testing-library/user-event";
 // optimistic/rollback writes (AS-005/006/008/009); the Link-section reveal half of AS-005 is
 // exercised through the full ShareDialog. Pixel/responsive layout is [→MANUAL].
 
-import * as sharingClient from "@/features/sharing/client";
+import * as sharingClient from "@/features/sharing/services/client";
 
 const setAccess = mock(async () => ({ data: OK_RESULT, error: null as unknown }));
 const getShareState = mock(async () => ({ data: RESTRICTED_OWNER_STATE, error: null as unknown }));
 
-mock.module("@/features/sharing/client", () => ({
+mock.module("@/features/sharing/services/client", () => ({
   ...sharingClient,
   setAccess,
   getShareState,

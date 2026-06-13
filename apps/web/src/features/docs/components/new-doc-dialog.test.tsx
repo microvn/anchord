@@ -22,7 +22,7 @@ mock.module("sonner", () => ({
 let projectsList: { id: string; name: string; isDefault: boolean; archived: boolean }[] = [];
 
 const publishDoc = mock(async () => env({ docId: "d1", slug: "new-doc", url: "/d/new-doc" }));
-mock.module("@/features/docs/client", () => ({
+mock.module("@/features/docs/services/client", () => ({
   fetchProjects: mock(async () => env({ projects: projectsList })),
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   createProject: mock(async () => env({})),

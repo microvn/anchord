@@ -16,7 +16,7 @@ let bootstrap: unknown;
 let members: unknown;
 const fetchBootstrap = mock(async () => bootstrap);
 const fetchMembers = mock(async () => members);
-mock.module("@/features/workspaces/client", () => ({
+mock.module("@/features/workspaces/services/client", () => ({
   fetchBootstrap,
   fetchMembers,
   setActiveWorkspace: mock(async () => env({})),
@@ -37,7 +37,7 @@ const fetchProjectDocs = mock(async (_w: string, projectId: string) => docsByPro
 const createProject = mock(async () => env({ id: "p-new", name: "new" }));
 const searchDocs = mock(async () => env({ results: [] }));
 const publishDoc = mock(async () => env({ docId: "d1", slug: "s1", url: "/d/s1" }));
-mock.module("@/features/docs/client", () => ({
+mock.module("@/features/docs/services/client", () => ({
   fetchProjects,
   fetchProjectDocs,
   createProject,

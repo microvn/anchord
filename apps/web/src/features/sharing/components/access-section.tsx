@@ -13,8 +13,8 @@ import {
   type GeneralAccessLevel,
   type ShareRole,
   type ShareState,
-} from "@/features/sharing/client";
-import type { EffectiveRole } from "@/features/viewer/client";
+} from "@/features/sharing/services/client";
+import type { EffectiveRole } from "@/features/viewer/services/client";
 
 // AccessSection (sharing-permissions-ui S-002) — the General-access section of the ShareDialog.
 // It owns the editable general-access controls the S-001 shell left as read-only prefill:

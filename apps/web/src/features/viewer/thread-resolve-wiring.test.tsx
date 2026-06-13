@@ -16,7 +16,7 @@ import userEvent from "@testing-library/user-event";
 // full doc-load query path (whose module-global client mock is shared across the suite by bun).
 
 import { AnnotationsRail } from "@/features/viewer/components/annotations-rail";
-import type { ViewerAnnotation, SetResolutionResult } from "@/features/viewer/client";
+import type { ViewerAnnotation, SetResolutionResult } from "@/features/viewer/services/client";
 import type { EdenResult } from "@/lib/api/use-api-query";
 
 const okEnv = (body: unknown) => ({ data: { success: true, data: body }, error: null });

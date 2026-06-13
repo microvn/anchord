@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useBootstrap } from "@/features/workspaces/hooks/use-bootstrap";
-import { setActiveWorkspace } from "@/features/workspaces/client";
+import { setActiveWorkspace } from "@/features/workspaces/services/client";
 import { workspaceLabel } from "@/features/workspaces/types";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
 import { Icon } from "@/components/icon";
