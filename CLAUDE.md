@@ -125,10 +125,14 @@ or moving FE code, follow this exactly — do not regress to flat features or re
   by technical layer. Each feature owns its `client.ts` (typed Eden request thunks — the
   service layer) and `types.ts` (shared types). Single-use prop types stay co-located in
   their component file; only types used by 2+ files go in `types.ts`.
-- **Sub-layer every feature.** Each feature splits into `components/` (UI `.tsx`) and
-  `hooks/` (`use-*.ts`), keeping `client.ts` + `types.ts` + plain helpers at the feature
-  root. Don't create an empty `hooks/` when a feature has no hooks. (Uniform across all
-  features — decided 2026-06-13, reversing the earlier "only large features" rule.)
+- **Every feature is fully sub-layered — the feature root holds only subdirectories, no loose
+  files.** The subfolders (each created only when it has content — no empty folders):
+  `components/` (UI `.tsx`), `hooks/` (`use-*.ts`), `services/` (the Eden API client —
+  `services/client.ts`), `types/` (feature TS types), `schema/` (Zod form schemas), `lib/`
+  (feature-local helpers), `tests/` (cross-cutting feature tests). Single-subject tests live
+  next to their subject (in `components/`/`lib/`); flow-spanning tests go in `tests/`. No
+  per-feature `index.ts` barrel — imports stay explicit `@/features/<f>/<sub>/<file>`.
+  (Uniform across all features — decided 2026-06-13.)
 - **Cross-module imports use the `@/` alias** (`@/lib/api`, `@/features/docs/client`),
   never deep relative paths (`../../lib/api`). Same-directory siblings stay relative (`./x`).
 - **One home per layer.** App shell / providers / guards → `src/app/`. API infra (`api`,
