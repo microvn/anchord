@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useActiveWorkspace } from "./active-workspace";
 import { renameWorkspace } from "@/features/workspaces/services/client";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
-import { queryKeys } from "@/features/workspaces/query-keys";
+import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { toApiError } from "@/lib/api/api-error";
 import { Icon } from "@/components/icon";
 import {

@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { archiveProject, unarchiveProject, deleteProject } from "@/features/docs/services/client";
 import { RenameProjectDialog } from "./rename-project-dialog";
-import { queryKeys } from "@/features/workspaces/query-keys";
+import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
 import { Icon } from "@/components/icon";

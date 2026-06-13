@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { createAnnotation, addComment, type ViewerAnnotation } from "@/features/viewer/services/client";
-import { selectionToAnchor, type SelectionAnchor } from "@/features/viewer/selection-anchor";
+import { selectionToAnchor, type SelectionAnchor } from "@/features/viewer/lib/selection-anchor";
 import { placeAnnotations } from "@/features/viewer/components/annotation-marks";
-import { placePopover, isRectOutOfViewport, type RectLike } from "@/features/viewer/place-popover";
+import { placePopover, isRectOutOfViewport, type RectLike } from "@/features/viewer/lib/place-popover";
 
 // MƯỢT TASK 1/2: the popover is now viewport-aware. A live Markdown selection keeps a reference to
 // its DOM Range so scroll/resize can re-read the current selection rect and reposition (or dismiss

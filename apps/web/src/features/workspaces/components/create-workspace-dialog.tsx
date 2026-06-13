@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { createWorkspace, setActiveWorkspace } from "@/features/workspaces/services/client";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
-import { queryKeys } from "@/features/workspaces/query-keys";
+import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { toApiError } from "@/lib/api/api-error";
 import {
   Dialog,

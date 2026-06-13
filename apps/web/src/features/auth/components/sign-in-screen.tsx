@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { zodResolver } from "@/features/auth/zod-resolver";
+import { zodResolver } from "@/features/auth/lib/zod-resolver";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { signInSchema, type SignInValues } from "@/features/auth/schema/sign-in";

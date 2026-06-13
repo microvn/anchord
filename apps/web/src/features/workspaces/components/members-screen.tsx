@@ -4,7 +4,7 @@ import { useActiveWorkspace } from "./active-workspace";
 import { useMembers, useBootstrap } from "@/features/workspaces/hooks/use-bootstrap";
 import { RenameField } from "./rename-field";
 import { inviteMember, removeMember, changeMemberRole } from "@/features/workspaces/services/client";
-import { queryKeys } from "@/features/workspaces/query-keys";
+import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { ErrorState } from "@/components/error-state";
 import { EmptyState } from "@/components/empty-state";
 import { ConfirmDialog } from "@/components/confirm-dialog";

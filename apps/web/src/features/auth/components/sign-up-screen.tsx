@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { zodResolver } from "@/features/auth/zod-resolver";
+import { zodResolver } from "@/features/auth/lib/zod-resolver";
 import { Link } from "react-router-dom";
 import { signUp } from "@/lib/api/auth-client";
 import { signUpSchema, type SignUpValues } from "@/features/auth/schema/sign-up";
