@@ -24,6 +24,7 @@ import { useDraggable } from "@/features/viewer/hooks/use-draggable";
 import { useCompose, peelCommentId } from "@/features/viewer/hooks/use-compose";
 import { ShareDialog } from "@/features/sharing/components/share-dialog";
 import { canManageShare } from "@/features/sharing/services/client";
+import { VersionHistoryPanel } from "@/features/versioning/components/version-history-panel";
 import {
   fetchViewerDoc,
   listAnnotations,
@@ -183,6 +184,9 @@ function ViewerShell({
   const [railVisible, setRailVisible] = useState(true);
   const [railOpen, setRailOpen] = useState(false); // drawer-mode rail overlay
   const [tocOpen, setTocOpen] = useState(false); // toc-drawer overlay
+  // C-006 / AS-018: the desktop inline-outline visibility (Markdown only). The outline-toggle
+  // collapses it to give the content more room; in tocDrawer mode the same toggle drives `tocOpen`.
+  const [tocVisible, setTocVisible] = useState(true);
   // S-001 (DocModeToolbar): the doc measure (Wide = full column width | Focus = 800px). Set on the docpane <main>
   // via data-doc-width so .doc-prose reflows. The toolbar only mounts on the success path (doc present).
   const [docWidth, setDocWidth] = useState<"wide" | "focus">("wide");
@@ -190,6 +194,10 @@ function ViewerShell({
 
   // S-001 (AS-001): the ShareDialog open-state, hosted here so the top bar's Share button opens it.
   const [shareOpen, setShareOpen] = useState(false);
+  // versioning-diff-ui S-001 (AS-001): the VersionHistoryPanel open-state, hosted here so the top
+  // bar's version button opens it (replacing the old placeholder toast). doc.version is the current
+  // version (the "Current" marker / later the default Compare target).
+  const [versionsOpen, setVersionsOpen] = useState(false);
   // C-002 (Share affordance gate): only a potential manager (owner, or editor — the editor's
   // editorsCanShare is re-checked after the dialog reads the share state) is shown the Share button.
   // A viewer/commenter — or an absent role (conservative) — never gets a Share affordance that opens
@@ -207,6 +215,10 @@ function ViewerShell({
   // DOWN to the in-iframe bridge (the parent can't draw a <mark> into the opaque iframe).
   const htmlFrameRef = useRef<HtmlSandboxFrameHandle>(null);
   const isHtml = doc?.kind === "html";
+  // C-006: the outline exists ONLY for a Markdown doc (its headings are derivable in the app-origin
+  // render). An HTML doc lives in a cross-origin sandbox and an image has no headings (GAP-004), so
+  // both render 2-pane (content + rail) with no outline pane and no outline-toggle.
+  const isMarkdown = doc?.kind === "markdown";
 
   // S-001 (commenting write path): capture a text selection on the doc → popover → composer → send.
   // Gated by `canCompose` (C-004): a viewer-only role never sees a popover/composer (read-only rail).
@@ -230,6 +242,27 @@ function ViewerShell({
   );
 
   const toggleRail = () => (drawerMode ? setRailOpen((o) => !o) : setRailVisible((v) => !v));
+  // The outline-toggle: in tocDrawer mode it opens/closes the TOC overlay drawer; on desktop it
+  // collapses/expands the inline outline column (AS-018). Markdown-only (the button isn't shown
+  // for html/image — C-006).
+  const toggleToc = () => (tocDrawer ? setTocOpen((o) => !o) : setTocVisible((v) => !v));
+
+  // The 3-pane grid columns are derived from the SAME JS tier that gates which panes render, so the
+  // template never reserves a column for an absent pane. (The old `lg:grid-cols-[236px_1fr_312px]`
+  // keyed off Tailwind `lg`=1024px while the TOC/rail render off the JS tiers 900/1200 — the two
+  // disagreed, leaving the doc squished into the empty TOC slot at 1024–1199 and the rail vanishing
+  // at 900–1023.) doc column = minmax(0,1fr) so long content shrinks instead of overflowing.
+  //   <900 (drawer)            → doc only
+  //   900–1199 (TOC drawer)    → doc + rail (when visible)
+  //   ≥1200 (desktop)          → TOC + doc + rail (when visible)
+  // C-006: the outline column appears only for Markdown, at desktop width (≥1200, i.e. not
+  // tocDrawer), and while not collapsed (AS-018). html/image never reserve it → 2-pane (full-width
+  // doc + rail). doc column = minmax(0,1fr) so long content shrinks instead of overflowing.
+  const tocInline = isMarkdown && !tocDrawer && tocVisible;
+  const railInline = !drawerMode && railVisible;
+  const gridCols = [tocInline ? "236px" : null, "minmax(0,1fr)", railInline ? "312px" : null]
+    .filter(Boolean)
+    .join(" ");
   const closeDrawers = () => {
     setRailOpen(false);
     setTocOpen(false);
@@ -266,10 +299,12 @@ function ViewerShell({
           doc={doc}
           railVisible={drawerMode ? railOpen : railVisible}
           onToggleRail={toggleRail}
-          onToggleToc={() => setTocOpen((o) => !o)}
-          showTocToggle={tocDrawer}
+          onToggleToc={toggleToc}
+          // C-006: the outline-toggle is shown only for Markdown — on desktop it collapses the
+          // inline outline (AS-018), in drawer mode it opens the TOC drawer. html/image: no toggle.
+          showTocToggle={isMarkdown}
           onBack={workspaceId ? () => navigate(`/w/${workspaceId}`) : undefined}
-          onVersion={() => toast("Version history isn't available yet")}
+          onVersion={() => setVersionsOpen(true)}
           onShare={() => setShareOpen(true)}
           showShare={canShare}
           onOverflow={() => toast("More actions")}
@@ -287,16 +322,16 @@ function ViewerShell({
       {/* 3-pane shell (Outline · Doc · Comments) at desktop in the prototype's doc-hero proportions
           236/1fr/312 (Anchord-Design/viewer.css `.vbody`): the DOC column is the dominant 1fr, the
           outline + comments are fixed-width rails — NOT equal thirds. Single column below lg (drawers). */}
-      <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[236px_1fr_312px]">
-        {/* TocSidebar — S-002. Inline column when NOT in tocDrawer mode; an overlay drawer below
-            1200 (S-006), opened by the top bar's outline button. */}
-        {!tocDrawer && (
+      <div className="relative grid min-h-0 flex-1" style={{ gridTemplateColumns: gridCols }}>
+        {/* TocSidebar — S-002. Markdown-only (C-006). Inline column at desktop width while not
+            collapsed (AS-018); an overlay drawer below 1200 (S-006), opened by the outline button. */}
+        {tocInline && (
           <aside
             data-testid="viewer-toc-slot"
             // min-h-0 + overflow-hidden: as a grid item this would otherwise grow to its content
             // height (grid items default to min-height:auto), so the inner outline list never
             // overflow-scrolls. Constraining the slot lets TocSidebar's own list scroll.
-            className="hidden min-h-0 overflow-hidden border-r border-line bg-sunken lg:block"
+            className="min-h-0 overflow-hidden border-r border-line bg-sunken"
           >
             <TocSidebar contentEl={docPaneEl} activeId={activeSection} onActiveChange={setActiveSection} />
           </aside>
@@ -348,7 +383,7 @@ function ViewerShell({
             data-testid="viewer-rail-slot"
             // min-h-0 + overflow-hidden so the rail's own thread list overflow-scrolls (same
             // grid-item min-height:auto issue as the TOC slot).
-            className="hidden min-h-0 overflow-hidden border-l border-line bg-sunken lg:block"
+            className="min-h-0 overflow-hidden border-l border-line bg-sunken"
           >
             {railContent}
           </aside>
@@ -357,7 +392,7 @@ function ViewerShell({
         {/* S-006: overlay drawers (drawer mode). Visual slide-in/bottom-sheet is [→MANUAL] +
             Playwright (C-005); here they are absolutely-positioned panels matching the prototype
             `.toc`/`.rail` drawer + `.drawer-scrim` structure. */}
-        {tocDrawer && tocOpen && hasDoc && (
+        {isMarkdown && tocDrawer && tocOpen && hasDoc && (
           <aside
             data-testid="viewer-toc-drawer"
             className="absolute inset-y-0 left-0 z-30 w-[260px] border-r border-line bg-sunken shadow-xl"
@@ -430,6 +465,19 @@ function ViewerShell({
           slug={slug!}
           docTitle={doc.title}
           effectiveRole={effectiveRole}
+        />
+      )}
+
+      {/* versioning-diff-ui S-001: the version history panel — opened by the top bar's version
+          button. Compare/Restore are wired in later stories (S-002/S-003); for now they toast. */}
+      {hasDoc && doc && (
+        <VersionHistoryPanel
+          open={versionsOpen}
+          workspaceId={workspaceId!}
+          slug={slug!}
+          onClose={() => setVersionsOpen(false)}
+          onCompare={() => toast("Compare arrives with the diff view")}
+          onRestore={() => toast("Restore arrives next")}
         />
       )}
     </div>
