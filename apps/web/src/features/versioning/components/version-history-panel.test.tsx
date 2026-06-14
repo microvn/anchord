@@ -30,7 +30,10 @@ const getVersionHistory = mock(async () => HISTORY as unknown);
 // The panel imports `restoreVersion` too (S-002 — the panel owns restore internally). mock.module
 // replaces the WHOLE module, so it must export every named import the panel uses, not just the read.
 const restoreVersion = mock(async () => ({ data: { success: true, data: { version: 5, previousVersion: 4 } }, error: null }) as unknown);
-mock.module("@/features/versioning/services/client", () => ({ getVersionHistory, restoreVersion }));
+// S-003: the panel now hosts the DiffOverlay (→ useDiff → getDiff), so the module mock must export
+// getDiff too (mock.module replaces the WHOLE module). It's never called in these history tests.
+const getDiff = mock(async () => okEnv({ mode: "text", changeCount: 0, lines: [], renderPair: ["/v/a", "/v/b"] }) as unknown);
+mock.module("@/features/versioning/services/client", () => ({ getVersionHistory, restoreVersion, getDiff }));
 
 const { VersionHistoryPanel, versionPanelIsFullWidth } = await import(
   "@/features/versioning/components/version-history-panel"

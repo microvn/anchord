@@ -45,7 +45,10 @@ const HISTORY_AT_V5 = {
 
 const getVersionHistory = mock(async () => okEnv(HISTORY_AT_V4) as unknown);
 const restoreVersion = mock(async () => okEnv({ version: 5, previousVersion: 4 }) as unknown);
-mock.module("@/features/versioning/services/client", () => ({ getVersionHistory, restoreVersion }));
+// S-003: the panel now hosts the DiffOverlay (→ useDiff → getDiff), so the module mock must export
+// getDiff too (mock.module replaces the WHOLE module). It's never called in these restore tests.
+const getDiff = mock(async () => okEnv({ mode: "text", changeCount: 0, lines: [], renderPair: ["/v/a", "/v/b"] }) as unknown);
+mock.module("@/features/versioning/services/client", () => ({ getVersionHistory, restoreVersion, getDiff }));
 
 const toastFn = mock(() => {});
 const toastError = mock(() => {});

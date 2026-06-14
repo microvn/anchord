@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Icon } from "@/components/icon";
@@ -9,6 +10,7 @@ import { tierForWidth, useBreakpoint } from "@/hooks/use-breakpoint";
 import { useVersionHistory } from "@/features/versioning/hooks/use-version-history";
 import { restoreVersion, type RestoreResult } from "@/features/versioning/services/client";
 import { VersionItem } from "@/features/versioning/components/version-item";
+import { DiffOverlay } from "@/features/versioning/components/diff-overlay";
 
 // VersionHistoryPanel (S-001) — the right-hand timeline panel opened from the viewer top bar's
 // version button. Lists every version newest-first (the backend returns them newest-first); each row
@@ -33,14 +35,17 @@ export function VersionHistoryPanel({
   workspaceId,
   slug,
   onClose,
-  onCompare,
+  onCompare: _onCompare,
   onRestore: _onRestore,
 }: {
   open: boolean;
   workspaceId: string;
   slug: string;
   onClose: () => void;
-  onCompare: (version: number) => void;
+  /** @deprecated S-003 — the panel now OWNS the diff overlay internally (keeps the diff seam inside
+   *  features/versioning/**, so viewer-screen never hosts it). Kept optional for type-compat with
+   *  viewer-screen's old placeholder; no longer used. A trivial future cleanup. */
+  onCompare?: (version: number) => void;
   /** @deprecated S-002 — the panel now owns restore internally (keeps the diff inside
    *  features/versioning/**). Kept optional for type-compat with viewer-screen's old placeholder;
    *  no longer used. A trivial future cleanup. */
@@ -52,6 +57,11 @@ export function VersionHistoryPanel({
 
   // Only fetch once the panel is actually open (the history isn't loaded until the reader opens it).
   const query = useVersionHistory(workspaceId, slug, open);
+
+  // S-003: the panel OWNS the Compare → DiffOverlay seam. A row's Compare opens the overlay for
+  // (clickedVersion → current). `compareFrom` holds the clicked version (null = overlay closed).
+  // The `to` default is the current (highest) version — the one row marked isCurrent.
+  const [compareFrom, setCompareFrom] = useState<number | null>(null);
 
   // S-002 (AS-005/AS-006 / C-001): the panel OWNS the restore mutation. Restore is always
   // append-copy — the POST asks the backend to copy the chosen version as a NEW current version
@@ -81,6 +91,8 @@ export function VersionHistoryPanel({
   if (!open) return null;
 
   const items = query.data?.items ?? [];
+  const versions = items.map((it) => it.version);
+  const currentVersion = items.find((it) => it.isCurrent)?.version ?? versions[0];
 
   return (
     <div data-testid="vh-overlay">
@@ -137,7 +149,7 @@ export function VersionHistoryPanel({
                   key={item.version}
                   item={item}
                   isLast={i === items.length - 1}
-                  onCompare={onCompare}
+                  onCompare={setCompareFrom}
                   onRestore={handleRestore}
                 />
               ))}
@@ -145,6 +157,19 @@ export function VersionHistoryPanel({
           )}
         </div>
       </aside>
+
+      {/* S-003: a row's Compare opens the DiffOverlay for (clickedVersion → current). The panel
+          owns the overlay open-state so the diff stays self-contained inside features/versioning. */}
+      {compareFrom !== null && currentVersion != null && (
+        <DiffOverlay
+          workspaceId={workspaceId}
+          slug={slug}
+          versions={versions}
+          initialFrom={compareFrom}
+          initialTo={currentVersion}
+          onClose={() => setCompareFrom(null)}
+        />
+      )}
     </div>
   );
 }

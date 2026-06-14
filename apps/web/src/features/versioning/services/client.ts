@@ -91,3 +91,44 @@ export function restoreVersion(
     .versions({ n })
     .restore.post() as Promise<EdenResult<RestoreResult>>;
 }
+
+/** One line of the source line-diff (backend versioning-diff:S-004). `added`/`removed` lines carry
+ *  the diff styling (added teal, removed red+strikethrough — C-004); `context` lines are unchanged. */
+export interface DiffLine {
+  type: "added" | "removed" | "context";
+  text: string;
+}
+
+/** What GET …/diff returns once the success envelope is peeled. `mode:"text"` carries the line-diff
+ *  + change count; `mode:"image"` carries only the renderPair (no line-diff — S-004 owns that branch).
+ *  `renderPair` is `[urlA, urlB]` where EACH url is a per-version content reference (`/v/<versionId>`)
+ *  the existing `/v/:id` route serves — fed straight to the Rendered tab's two iframes (AS-008). */
+export interface DiffResponse {
+  mode: "text" | "image";
+  /** true when the two versions are byte-identical — S-004 owns the "No differences" branch. */
+  identical?: boolean;
+  /** the +adds/−removed change count shown in the header (AS-007 / C-004). */
+  changeCount?: number;
+  /** the source line-diff rows (text mode only). */
+  lines?: DiffLine[];
+  /** per-version content refs for the Rendered tab's before|after iframes. */
+  renderPair: [string, string];
+}
+
+/** GET /api/w/:workspaceId/docs/:slug/diff?from=&to= — the two-level diff read (S-003 AS-007/008/009;
+ *  backend versioning-diff:S-004). The backend parses `from`/`to` off the query string, so they ride
+ *  the leaf `.get({ query })` per the Eden convention (mirrors features/* query reads). Same
+ *  `treaty as any` reach + raw `{data,error}` return as the other thunks — the call site unwraps the
+ *  api-core envelope. A refused read (bad version refs / not found) surfaces as `{error}` → the
+ *  overlay shows an explicit error state, never a blank/half diff (AS-011 / C-007). */
+export function getDiff(
+  workspaceId: string,
+  slug: string,
+  from: number,
+  to: number,
+): Promise<EdenResult<DiffResponse>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .diff.get({ query: { from, to } }) as Promise<EdenResult<DiffResponse>>;
+}
