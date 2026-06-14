@@ -64,6 +64,28 @@ test("AS-006.T2: rendered side-by-side pair — logic emits BOTH versions' rende
   expect(res.renderPair).toEqual(["/v/v2", "/v/v3"]); // ordered [a, b] = left | right
 });
 
+test("AS-013/C-007: renderPair carries one per-version reference per side, in [a,b] order — a's ≠ b's", async () => {
+  // C-007: the compare result references EACH compared version's own content via a per-version
+  // reference. compareVersions passes each side's opaque renderTarget through verbatim into the
+  // pair — so when the caller builds them from each version's distinct content surface (its row
+  // id, e.g. /v/ver_2 vs /v/ver_3), the pair holds two DISTINCT, version-scoped references, never
+  // one current-version reference duplicated. This is the pure-function half the route relies on.
+  const a = { version: 2, content: "v2 body", contentHash: sha("v2 body"), renderTarget: "/v/ver_2" };
+  const b = { version: 3, content: "v3 body", contentHash: sha("v3 body"), renderTarget: "/v/ver_3" };
+
+  const res = compareVersions({ kind: "markdown", a, b });
+  expect(res.renderPair).toEqual(["/v/ver_2", "/v/ver_3"]); // [a, b] order, each its own reference
+  expect(res.renderPair[0]).not.toBe(res.renderPair[1]); // distinct surfaces, not current duplicated
+
+  // C-007 holds for image docs too (render-pair-only, AS-008) — still one reference per version.
+  const img = compareVersions({
+    kind: "image",
+    a: { version: 2, content: "<a>", contentHash: sha("<a>"), renderTarget: "/v/ver_2" },
+    b: { version: 3, content: "<b>", contentHash: sha("<b>"), renderTarget: "/v/ver_3" },
+  });
+  expect(img.renderPair).toEqual(["/v/ver_2", "/v/ver_3"]);
+});
+
 test("AS-007: identical versions (equal content_hash) → 'No differences'; side-by-side STILL shown", async () => {
   // Equal content → equal contentHash → identical:true, changeCount 0, and an
   // empty/zero diff — BUT the render pair is STILL emitted (you still see both).

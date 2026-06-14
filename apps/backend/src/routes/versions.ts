@@ -67,11 +67,16 @@ export interface DocLookup {
 export interface DocLookupRepo {
   /** Find a doc by its (immutable) slug, or null if none exists. */
   findDocBySlug(slug: string): Promise<DocLookup | null>;
-  /** Read a single version's content+hash for the diff, or null if it doesn't exist. */
+  /**
+   * Read a single version's row id + content + hash for the diff, or null if it doesn't exist.
+   * The row `id` is what the served `/v/:id` content surface resolves by (viewer-loaders'
+   * createLoadContent), so the diff handler builds each side's `renderTarget` from THIS id —
+   * referencing that exact version's content, never the current version's (S-004 / AS-013, C-007).
+   */
   getVersionContent(
     docId: string,
     version: number,
-  ): Promise<{ content: string; contentHash: string } | null>;
+  ): Promise<{ id: string; content: string; contentHash: string } | null>;
 }
 
 /** Concrete Drizzle-backed DocLookupRepo — thin read glue. */
@@ -91,7 +96,11 @@ export function createDocLookupRepo(db: DB): DocLookupRepo {
     },
     async getVersionContent(docId, version) {
       const [row] = await db
-        .select({ content: docVersions.content, contentHash: docVersions.contentHash })
+        .select({
+          id: docVersions.id,
+          content: docVersions.content,
+          contentHash: docVersions.contentHash,
+        })
         .from(docVersions)
         .where(and(eq(docVersions.docId, docId), eq(docVersions.version, version)));
       return row ?? null;
@@ -342,19 +351,24 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
           const b = await lookupRepo.getVersionContent(doc.id, to);
           if (!a) throw new NotFoundError(`Version ${from} not found`);
           if (!b) throw new NotFoundError(`Version ${to} not found`);
+          // C-007 / AS-013: each side's renderTarget is the per-version content reference —
+          // the served `/v/:versionId` surface keyed on the version's ROW id (a.id / b.id),
+          // which createLoadContent resolves to THAT version's sandboxed content. Building it
+          // from the version NUMBER (or doc id) would point at a path no route serves and lose
+          // the per-version guarantee — so the side-by-side renders v_from ≠ v_to, never current.
           return compareVersions({
             kind: doc.kind,
             a: {
               version: from,
               content: a.content,
               contentHash: a.contentHash,
-              renderTarget: `/v/${doc.id}/${from}`,
+              renderTarget: `/v/${a.id}`,
             },
             b: {
               version: to,
               content: b.content,
               contentHash: b.contentHash,
-              renderTarget: `/v/${doc.id}/${to}`,
+              renderTarget: `/v/${b.id}`,
             },
           });
         },

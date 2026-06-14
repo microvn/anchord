@@ -76,7 +76,10 @@ function fakeLookupRepo(doc: DocLookup | null, versionRepo?: ReturnType<typeof f
     },
     async getVersionContent(_docId, version) {
       if (!versionRepo) return null;
-      return versionRepo.repo.getVersion("", version);
+      const hit = await versionRepo.repo.getVersion("", version);
+      // A stable per-version ROW id, distinct from the version NUMBER and from the doc id —
+      // so AS-013 can assert each renderTarget references THAT version's own content surface.
+      return hit ? { id: `ver_${version}`, ...hit } : null;
     },
   };
 }
@@ -362,6 +365,34 @@ describe("GET /api/docs/:slug/diff?from=&to= (AS-006/007/008)", () => {
     expect(json.data.identical).toBe(true);
     expect(json.data.changeCount).toBe(0);
     expect(json.data.renderPair).toHaveLength(2);
+  });
+
+  test("AS-013: compare v2↔v3 → renderPair references each version's OWN content surface (v2's ≠ v3's, not current)", async () => {
+    // doc has v1 (current=highest), v2, v3 with different content. Comparing v2↔v3 must
+    // carry one per-version content reference per side, each resolving to THAT version's
+    // served `/v/:versionId` surface (the row id, not the version number, not the doc id,
+    // and NOT the current version v3). C-007: the references are distinct and version-scoped.
+    const vr = fakeVersionRepo([
+      { version: 1, content: "v1 current-ish", contentHash: "h1" },
+      { version: 2, content: "v2 body", contentHash: "h2" },
+      { version: 3, content: "v3 body changed", contentHash: "h3" },
+    ]);
+    const app = buildApp({ resolveDocRole: asViewer, versionRepo: vr });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/diff?from=2&to=3"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    // One reference per compared version, ordered [from, to] = left | right.
+    expect(json.data.renderPair).toHaveLength(2);
+    const [refFrom, refTo] = json.data.renderPair as [string, string];
+    // Each reference points at the served per-version surface keyed on the ROW id (ver_2 / ver_3),
+    // NOT the version number path (/v/doc_1/2) the buggy caller built, NOT the doc id.
+    expect(refFrom).toBe("/v/ver_2");
+    expect(refTo).toBe("/v/ver_3");
+    // The two references are distinct version surfaces (v2 ≠ v3) and neither is the current (v3=highest)
+    // collapsed onto both sides — refFrom resolves to v2, not v3.
+    expect(refFrom).not.toBe(refTo);
+    expect(refFrom).not.toContain("/3");
+    expect(refFrom).not.toBe("/v/doc_1");
   });
 
   test("missing version ref of a visible doc → 404", async () => {
