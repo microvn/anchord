@@ -1,9 +1,13 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Icon } from "@/components/icon";
 import { ErrorState } from "@/components/error-state";
 import { Skeleton } from "@/components/skeleton";
 import { EmptyState } from "@/components/empty-state";
+import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { tierForWidth, useBreakpoint } from "@/hooks/use-breakpoint";
 import { useVersionHistory } from "@/features/versioning/hooks/use-version-history";
+import { restoreVersion, type RestoreResult } from "@/features/versioning/services/client";
 import { VersionItem } from "@/features/versioning/components/version-item";
 
 // VersionHistoryPanel (S-001) — the right-hand timeline panel opened from the viewer top bar's
@@ -30,20 +34,49 @@ export function VersionHistoryPanel({
   slug,
   onClose,
   onCompare,
-  onRestore,
+  onRestore: _onRestore,
 }: {
   open: boolean;
   workspaceId: string;
   slug: string;
   onClose: () => void;
   onCompare: (version: number) => void;
+  /** @deprecated S-002 — the panel now owns restore internally (keeps the diff inside
+   *  features/versioning/**). Kept optional for type-compat with viewer-screen's old placeholder;
+   *  no longer used. A trivial future cleanup. */
   onRestore?: (version: number) => void;
 }) {
   const tier = useBreakpoint();
   const fullWidth = tier === "mobile";
+  const queryClient = useQueryClient();
 
   // Only fetch once the panel is actually open (the history isn't loaded until the reader opens it).
   const query = useVersionHistory(workspaceId, slug, open);
+
+  // S-002 (AS-005/AS-006 / C-001): the panel OWNS the restore mutation. Restore is always
+  // append-copy — the POST asks the backend to copy the chosen version as a NEW current version
+  // (older versions stay; never overwrite/delete). It's a pure server mutation: there is NO
+  // optimistic row (the only state change is the post-success refetch), so a failure leaves the
+  // list untouched (AS-006 rollback = nothing to roll back). On 201 we toast and invalidate the
+  // history (so the new current shows + olders remain) AND the viewer doc read (so the top bar's
+  // version refreshes — best-effort; the key mirrors viewer-screen's `["viewer-doc", ws, slug]`).
+  const restore = useMutation({
+    mutationFn: async (version: number) => {
+      const res = unwrapEnvelope<RestoreResult>(await restoreVersion(workspaceId, slug, version));
+      if (res.error || !res.data) throw new Error("restore-failed");
+      return res.data;
+    },
+    onSuccess: (_data, version) => {
+      toast(`Restored v${version} as a new version`);
+      void queryClient.invalidateQueries({ queryKey: ["version-history", workspaceId, slug] });
+      void queryClient.invalidateQueries({ queryKey: ["viewer-doc", workspaceId, slug] });
+    },
+    onError: () => {
+      toast.error("We couldn't restore this version.");
+    },
+  });
+
+  const handleRestore = (version: number) => restore.mutate(version);
 
   if (!open) return null;
 
@@ -105,7 +138,7 @@ export function VersionHistoryPanel({
                   item={item}
                   isLast={i === items.length - 1}
                   onCompare={onCompare}
-                  onRestore={onRestore}
+                  onRestore={handleRestore}
                 />
               ))}
             </div>

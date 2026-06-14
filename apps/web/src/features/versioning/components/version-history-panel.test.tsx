@@ -27,7 +27,10 @@ const HISTORY = okEnv({
 });
 
 const getVersionHistory = mock(async () => HISTORY as unknown);
-mock.module("@/features/versioning/services/client", () => ({ getVersionHistory }));
+// The panel imports `restoreVersion` too (S-002 — the panel owns restore internally). mock.module
+// replaces the WHOLE module, so it must export every named import the panel uses, not just the read.
+const restoreVersion = mock(async () => ({ data: { success: true, data: { version: 5, previousVersion: 4 } }, error: null }) as unknown);
+mock.module("@/features/versioning/services/client", () => ({ getVersionHistory, restoreVersion }));
 
 const { VersionHistoryPanel, versionPanelIsFullWidth } = await import(
   "@/features/versioning/components/version-history-panel"

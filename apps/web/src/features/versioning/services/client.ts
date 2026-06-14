@@ -65,3 +65,29 @@ export function getVersionHistory(
     EdenResult<VersionHistoryResponse>
   >;
 }
+
+/** What a successful restore returns (201): the NEW current version number (the append-copy) and the
+ *  version it copied from. Restore is ALWAYS append-copy — it never overwrites or deletes (C-001 /
+ *  backend C-004). */
+export interface RestoreResult {
+  version: number;
+  previousVersion: number;
+}
+
+/** POST /api/w/:workspaceId/docs/:slug/versions/:n/restore — append-copy version `n`'s content as a
+ *  NEW current version (S-002 AS-005; backend versioning-diff:S-003). On 201 the older versions all
+ *  stay; the call site refetches the history so the new current shows. A refused write (403/404/
+ *  network) adds no version (AS-006). Same `treaty as any` reach + raw `{data,error}` return as the
+ *  history read — the call site unwraps the api-core envelope. Eden runtime path: static segments are
+ *  property access, the `:n` param is a function call, and the verb (post) is the leaf. */
+export function restoreVersion(
+  workspaceId: string,
+  slug: string,
+  n: number,
+): Promise<EdenResult<RestoreResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .versions({ n })
+    .restore.post() as Promise<EdenResult<RestoreResult>>;
+}
