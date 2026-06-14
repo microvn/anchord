@@ -47,8 +47,14 @@ export interface NewVersionRow {
 export interface VersionListRow {
   version: number;
   createdAt: Date;
-  /** Author id; null until the auth cluster lands (see publishedBy seam). */
+  /** Author id; null when the version has no recorded author (set null on delete). */
   publishedBy: string | null;
+  /**
+   * S-002 / C-006: the author's resolved display name (user.name), via a LEFT JOIN
+   * on user.id. Null when publishedBy is null OR the author no longer resolves to a
+   * user row — the service maps that null to a fallback label.
+   */
+  publishedByName: string | null;
 }
 
 export interface VersionRepo {
@@ -148,8 +154,30 @@ export async function restoreVersion(
   return appendVersion(docId, target.content, target.contentHash, repo, publishedBy, kind);
 }
 
+/**
+ * The publisher of a version, as exposed by history (S-002 / C-006). `id` is the
+ * raw author id (null when the version has no recorded author). `name` is the
+ * RESOLVED display name (from user.name), or a fallback label when the author is
+ * unknown/unresolved — never blank, never the raw id alone.
+ */
+export interface VersionPublisher {
+  id: string | null;
+  name: string;
+}
+
+/** Fallback publisher label when the author id is null or no longer resolves. */
+export const UNKNOWN_PUBLISHER_LABEL = "Unknown";
+
 /** A history entry: a version row plus a current-version marker (S-002 / AS-003). */
-export interface VersionHistoryRow extends VersionListRow {
+export interface VersionHistoryRow {
+  version: number;
+  createdAt: Date;
+  /**
+   * C-006 / AS-011 / AS-012: the resolved publisher — `{ id, name }`. `name` is the
+   * author's display name, or `UNKNOWN_PUBLISHER_LABEL` when the author is
+   * unknown/unresolved. The opaque author id is never surfaced on its own.
+   */
+  publishedBy: VersionPublisher;
   /** True for exactly one row — the highest version number (the current version). */
   isCurrent: boolean;
 }
@@ -160,8 +188,11 @@ export interface VersionHistoryRow extends VersionListRow {
  * version is the highest version number. Rows are returned ASCENDING by version
  * (oldest first, current last) — that order is the contract the tests assert.
  *
- * AUTH SEAM: `publishedBy` is the raw author id (or null) — resolving it to a
- * user name waits for the auth cluster (no users table yet).
+ * PUBLISHER RESOLUTION (C-006 / AS-011 / AS-012): the repo LEFT JOINs the author id
+ * onto user.name, so each row carries `publishedByName`. Here we shape `publishedBy`
+ * as `{ id, name }`: `id` is the truthful author id (null when none recorded);
+ * `name` is the resolved display name, OR `UNKNOWN_PUBLISHER_LABEL` when the id is
+ * null OR no user row matched — never a blank field and never the raw id alone.
  */
 export async function listVersionHistory(
   docId: string,
@@ -174,7 +205,11 @@ export async function listVersionHistory(
   return rows.map((r) => ({
     version: r.version,
     createdAt: r.createdAt,
-    publishedBy: r.publishedBy,
+    publishedBy: {
+      id: r.publishedBy,
+      // AS-011: resolved name when present; AS-012: fallback when unknown/unresolved.
+      name: r.publishedByName ?? UNKNOWN_PUBLISHER_LABEL,
+    },
     isCurrent: r.version === maxVersion,
   }));
 }

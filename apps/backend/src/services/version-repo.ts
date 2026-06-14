@@ -9,7 +9,7 @@
 // Postgres, not in the fast unit suite.
 
 import { and, asc, eq, max, sql } from "drizzle-orm";
-import { docs, docVersions } from "../db/schema";
+import { docs, docVersions, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { VersionRepo, NewVersionRow, VersionListRow, VersionKind } from "./version";
 import { extractText } from "../render/extract-text";
@@ -50,14 +50,20 @@ export function createVersionRepo(db: DB): VersionRepo {
     async listVersions(docId: string): Promise<VersionListRow[]> {
       // S-002 history read: all versions for the doc, ascending by version.
       // The service computes the current-marker; this only selects rows.
-      // publishedBy is returned raw (null until the auth cluster resolves names).
+      // C-006: LEFT JOIN user on publishedBy = user.id so each row carries the
+      // author's resolved display name (publishedByName). The join is LEFT so a
+      // version with a null author — or one whose author no longer resolves — still
+      // returns its row, with publishedByName null; the service maps that null to a
+      // fallback label (AS-011 resolved name / AS-012 fallback).
       return db
         .select({
           version: docVersions.version,
           createdAt: docVersions.createdAt,
           publishedBy: docVersions.publishedBy,
+          publishedByName: user.name,
         })
         .from(docVersions)
+        .leftJoin(user, eq(docVersions.publishedBy, user.id))
         .where(eq(docVersions.docId, docId))
         .orderBy(asc(docVersions.version));
     },

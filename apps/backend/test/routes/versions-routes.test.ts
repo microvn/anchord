@@ -59,7 +59,13 @@ function fakeVersionRepo(seed: { version: number; content: string; contentHash: 
       return rows
         .slice()
         .sort((a, b) => a.version - b.version)
-        .map((r) => ({ version: r.version, createdAt: r.createdAt, publishedBy: r.publishedBy }));
+        .map((r) => ({
+          version: r.version,
+          createdAt: r.createdAt,
+          publishedBy: r.publishedBy,
+          // C-006: history double resolves id→name; seeded rows have null authors → null.
+          publishedByName: null as string | null,
+        }));
     },
     async getVersion(_docId, version) {
       const hit = rows.find((r) => r.version === version);

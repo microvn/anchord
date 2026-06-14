@@ -42,7 +42,11 @@ function fakeRepo(seed: {
   docId: string;
   versions: { content: string; publishedBy?: string | null }[];
   title?: string;
+  // S-002 / C-006: id→display-name table the listVersions LEFT JOIN resolves against.
+  // An id absent here is "unresolved" (no user row) → publishedByName null.
+  users?: Record<string, string>;
 }) {
+  const users = seed.users ?? {};
   const rows: VersionRow[] = seed.versions.map((v, i) => ({
     docId: seed.docId,
     version: i + 1,
@@ -72,7 +76,13 @@ function fakeRepo(seed: {
       return rows
         .filter((r) => r.docId === docId)
         .sort((a, b) => a.version - b.version)
-        .map((r) => ({ version: r.version, createdAt: r.createdAt, publishedBy: r.publishedBy }));
+        .map((r) => ({
+          version: r.version,
+          createdAt: r.createdAt,
+          publishedBy: r.publishedBy,
+          // C-006: mirror the production LEFT JOIN — resolve id→name, null if unresolved.
+          publishedByName: r.publishedBy ? (users[r.publishedBy] ?? null) : null,
+        }));
     },
     async getVersion(docId, version) {
       const found = rows.find((r) => r.docId === docId && r.version === version);
@@ -206,8 +216,10 @@ test("AS-003.T2: each row carries createdAt AND publishedBy (publishedBy passed 
     expect(row.createdAt).toBeInstanceOf(Date);
     expect("publishedBy" in row).toBe(true);
   }
-  // publishedBy passed through verbatim — including null for the unauthored row.
-  expect(history.map((r) => r.publishedBy)).toEqual(["user-abc", null, "user-def"]);
+  // publishedBy is now the resolved publisher object { id, name } (S-002 / C-006),
+  // not the raw id. The id is passed through truthfully (null for the unauthored row);
+  // name resolution / fallback is asserted by the AS-011 / AS-012 tests below.
+  expect(history.map((r) => r.publishedBy.id)).toEqual(["user-abc", null, "user-def"]);
 });
 
 test("AS-003.T3: current version (highest number) clearly marked, exactly one row", async () => {
@@ -240,6 +252,89 @@ test("AS-003.T1: empty history — doc with no versions returns []", async () =>
   const history = await listVersionHistory("empty", f.repo);
 
   expect(history).toEqual([]);
+});
+
+// Story S-002 (publisher resolution): each history entry exposes the publisher's
+// RESOLVED display name via `publishedBy.{id,name}`, with a fallback label when the
+// author is unknown/unresolved — never an opaque author id alone, never a blank name.
+
+test("AS-011: history entry shows the publisher's resolved display name (id → name)", async () => {
+  // v3 published by Mara's id; her user row resolves to "Mara Lindqvist".
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [
+      { content: "a", publishedBy: "user-1" },
+      { content: "b", publishedBy: "user-1" },
+      { content: "c", publishedBy: "mara-id" }, // v3 = Mara
+    ],
+    users: { "mara-id": "Mara Lindqvist", "user-1": "Someone Else" },
+  });
+
+  const history = await listVersionHistory("doc-1", f.repo);
+  const v3 = history.find((r) => r.version === 3)!;
+
+  // The resolved display name, not the opaque id.
+  expect(v3.publishedBy.name).toBe("Mara Lindqvist");
+  expect(v3.publishedBy.id).toBe("mara-id");
+  expect(v3.publishedBy.name).not.toBe(v3.publishedBy.id); // never the raw id as the name
+});
+
+test("AS-012: a version with an unknown author shows a fallback label, never blank or raw id", async () => {
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [
+      { content: "a" }, // no recorded author → id null
+      { content: "b", publishedBy: "ghost-id" }, // author id present but no user row resolves
+    ],
+    users: { /* ghost-id deliberately absent → unresolved */ },
+  });
+
+  const history = await listVersionHistory("doc-1", f.repo);
+  const [noAuthor, unresolved] = history;
+
+  // No recorded author: fallback label, id stays null (truthful), name not blank.
+  expect(noAuthor.publishedBy.id).toBeNull();
+  expect(noAuthor.publishedBy.name).toBe("Unknown");
+
+  // Author id present but doesn't resolve: fallback label, NOT the raw id.
+  expect(unresolved.publishedBy.id).toBe("ghost-id");
+  expect(unresolved.publishedBy.name).toBe("Unknown");
+  expect(unresolved.publishedBy.name).not.toBe("ghost-id");
+
+  // Never blank.
+  for (const row of history) {
+    expect(row.publishedBy.name.length).toBeGreaterThan(0);
+  }
+});
+
+test("C-006 (versioning-diff): publisher resolved name carried on every entry + fallback when unknown", async () => {
+  // Mixed: resolved, no-author, and unresolved-author rows in one history.
+  const f = fakeRepo({
+    docId: "doc-1",
+    versions: [
+      { content: "a", publishedBy: "mara-id" }, // resolves
+      { content: "b" }, // no author
+      { content: "c", publishedBy: "ghost-id" }, // unresolved
+    ],
+    users: { "mara-id": "Mara Lindqvist" },
+  });
+
+  const history = await listVersionHistory("doc-1", f.repo);
+
+  // Every entry carries a non-blank resolved publisher name; the raw id is never the name alone.
+  for (const row of history) {
+    expect(typeof row.publishedBy.name).toBe("string");
+    expect(row.publishedBy.name.length).toBeGreaterThan(0);
+    if (row.publishedBy.id) {
+      // when there IS an id, the name is either the resolved name or the fallback — never the id.
+      expect(row.publishedBy.name).not.toBe(row.publishedBy.id);
+    }
+  }
+  expect(history.map((r) => r.publishedBy.name)).toEqual([
+    "Mara Lindqvist", // resolved
+    "Unknown", // no author
+    "Unknown", // unresolved author
+  ]);
 });
 
 // Story S-003: Restore a previous version. Restore is APPEND-COPY — it reads the
