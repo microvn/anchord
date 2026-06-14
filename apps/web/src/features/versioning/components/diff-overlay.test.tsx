@@ -31,6 +31,23 @@ const TEXT_DIFF = okEnv({
   renderPair: ["/v/idA", "/v/idB"],
 });
 
+// S-004 fixtures. IDENTICAL: changeCount 0, all-context lines, identical:true, mode text, renderPair
+// still present (AS-012 — the Rendered tab stays available). IMAGE: mode image, no lines/changeCount.
+const IDENTICAL_DIFF = okEnv({
+  mode: "text",
+  identical: true,
+  changeCount: 0,
+  lines: [
+    { type: "context", text: "# Title" },
+    { type: "context", text: "unchanged body" },
+  ],
+  renderPair: ["/v/idA", "/v/idB"],
+});
+const IMAGE_DIFF = okEnv({
+  mode: "image",
+  renderPair: ["/v/imgA", "/v/imgB"],
+});
+
 const getDiff = mock(async () => TEXT_DIFF as unknown);
 const getVersionHistory = mock(async () => okEnv({ items: [], pagination: {} }) as unknown);
 const restoreVersion = mock(async () => okEnv({ version: 5, previousVersion: 4 }) as unknown);
@@ -151,5 +168,52 @@ describe("AS-010 / C-006 — rendered pair stacks ≤760 (pure)", () => {
     expect(renderedPairStacks(760)).toBe(true);
     expect(renderedPairStacks(761)).toBe(false);
     expect(renderedPairStacks(1440)).toBe(false);
+  });
+});
+
+describe("versioning-diff-ui S-004 — DiffOverlay no-diff + image states", () => {
+  it("AS-012: identical versions show 'No differences' on Source (count 0) BUT keep the Rendered tab, which renders both side-by-side", async () => {
+    getDiff.mockImplementation(async () => IDENTICAL_DIFF as unknown);
+    renderOverlay();
+
+    // Source tab body: a "No differences" state with both version labels (NOT an empty line-diff).
+    const noDiff = await screen.findByTestId("no-diff");
+    expect(noDiff).toHaveTextContent(/no differences/i);
+    expect(noDiff).toHaveTextContent("v3");
+    expect(noDiff).toHaveTextContent("v4");
+    expect(screen.queryByTestId("source-line-diff")).toBeNull();
+
+    // Change count is 0 (+0 / −0).
+    const count = screen.getByTestId("diff-count");
+    expect(count).toHaveTextContent("+0");
+    expect(count).toHaveTextContent("−0");
+
+    // C-005 / AS-012: the tabs are NOT hidden — the Rendered tab is present and clickable.
+    const tabs = screen.getByTestId("diff-tabs");
+    const rendered = within(tabs).getByTestId("diff-tab-rendered");
+    fireEvent.click(rendered);
+
+    // Switching to Rendered renders BOTH panes side-by-side from the renderPair (still shown).
+    const pair = await screen.findByTestId("rendered-pair");
+    expect(within(pair).getByTestId("rp-frame-before")).toHaveAttribute("src", "/v/idA");
+    expect(within(pair).getByTestId("rp-frame-after")).toHaveAttribute("src", "/v/idB");
+  });
+
+  it("AS-013 / C-005: an image doc shows the two images side-by-side using renderPair AND renders NO Source tab / line-diff", async () => {
+    getDiff.mockImplementation(async () => IMAGE_DIFF as unknown);
+    renderOverlay();
+
+    // Two image panes side-by-side, each fed its renderPair url, in before|after order with labels.
+    const pair = await screen.findByTestId("image-diff-pair");
+    expect(within(pair).getByTestId("idp-img-before")).toHaveAttribute("src", "/v/imgA");
+    expect(within(pair).getByTestId("idp-img-after")).toHaveAttribute("src", "/v/imgB");
+    expect(within(pair).getByTestId("idp-col-before")).toHaveTextContent("v3");
+    expect(within(pair).getByTestId("idp-col-after")).toHaveTextContent("v4");
+
+    // C-005: NO Source tab (the tabs are dropped entirely for an image doc) and NO line-diff.
+    expect(screen.queryByTestId("diff-tabs")).toBeNull();
+    expect(screen.queryByTestId("diff-tab-source")).toBeNull();
+    expect(screen.queryByTestId("source-line-diff")).toBeNull();
+    expect(screen.queryByTestId("rendered-pair")).toBeNull();
   });
 });

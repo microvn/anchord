@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/skeleton";
 import { useDiff } from "@/features/versioning/hooks/use-diff";
 import { SourceLineDiff } from "@/features/versioning/components/source-line-diff";
 import { RenderedPair } from "@/features/versioning/components/rendered-pair";
+import { ImageDiffPair } from "@/features/versioning/components/image-diff-pair";
 
 // DiffOverlay (S-003) — the full-screen two-level diff (prototype `DiffView` P18, styled
 // viewer-dialogs.css `.diff-overlay`/`.diff-head`/`.diff-title`/`.diff-picker`/`.diff-count`/
@@ -15,9 +16,13 @@ import { RenderedPair } from "@/features/versioning/components/rendered-pair";
 // stacking ≤760 (AS-010 / C-006). A refused diff shows an explicit error, never a blank/half diff
 // (AS-011 / C-007).
 //
-// SCOPE: this story builds the text-doc paths. The NO-DIFF (`identical`) and IMAGE-doc (`mode:image`)
-// branches are SIBLING story S-004 (AS-012/013); a minimal hook is left here (the tabs render and the
-// Source body falls through to a thin placeholder) but those branches are NOT fully built.
+// S-004 completes the NO-DIFF (`identical`) and IMAGE-doc (`mode:image`) branches:
+//   - identical (AS-012 / C-005): the Source tab body shows a "No differences" state (NoDiffState —
+//     check icon · "No differences" · "vX and vY are identical") with change count 0, BUT the tabs are
+//     NOT hidden and the Rendered tab STILL renders the two versions side-by-side (backend AS-007
+//     overrides the prototype's tab-hiding on identical).
+//   - image doc (AS-013 / C-005): the Source tab is DROPPED entirely (no tabs, no line-diff, no change
+//     count); the body renders ImageDiffPair — the two images side-by-side using the renderPair urls.
 
 type DiffTab = "source" | "rendered";
 
@@ -157,18 +162,32 @@ export function DiffOverlay({
               retrying={query.isFetching}
             />
           </div>
-        ) : tab === "rendered" || isImage ? (
-          // AS-008: the two renders side-by-side (before|after). Image docs (S-004) also land here.
+        ) : isImage ? (
+          // AS-013 / C-005: an image doc has NO Source tab and NO line-diff — only the two images
+          // side-by-side using the renderPair urls.
+          diff?.renderPair ? (
+            <ImageDiffPair renderPair={diff.renderPair} fromLabel={fromLabel} toLabel={toLabel} />
+          ) : null
+        ) : tab === "rendered" ? (
+          // AS-008 / AS-012: the two renders side-by-side (before|after) — STILL shown for identical
+          // text versions (the Rendered tab stays available, backend AS-007 / C-005).
           diff?.renderPair ? (
             <RenderedPair renderPair={diff.renderPair} fromLabel={fromLabel} toLabel={toLabel} />
           ) : null
         ) : diff?.identical ? (
-          // S-004 owns the full "No differences" branch; a minimal placeholder hook here.
-          <div data-testid="no-diff" className="flex flex-1 flex-col items-center justify-center gap-1 text-center">
-            <Icon name="check" size={26} />
-            <div className="text-[13px] font-semibold text-ink">No differences</div>
-            <div className="text-[12px] text-subtle">
-              {fromLabel} and {toLabel} are identical.
+          // AS-012 / C-005: identical text versions show a "No differences" state in the Source tab
+          // body (NOT replacing the whole overlay — the Rendered tab is still reachable above), with
+          // the two version labels and change count 0. Prototype `.no-diff` (`.t`/`.s`).
+          <div
+            data-testid="no-diff"
+            className="grid flex-1 place-items-center px-6 py-[60px] text-center"
+          >
+            <div>
+              <Icon name="check" size={26} className="mx-auto text-accent-ink" />
+              <div className="mt-2 text-[15px] font-semibold text-ink">No differences</div>
+              <div className="mt-1.5 text-[12px] text-subtle">
+                {fromLabel} and {toLabel} are identical.
+              </div>
             </div>
           </div>
         ) : (
