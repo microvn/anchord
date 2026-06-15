@@ -221,6 +221,10 @@ const app = createApp({
     resolveWorkspaceRole,
     resolveDocRole: sharedResolveDocRole,
     resolveAccess: sharedResolveAccess,
+    // doc-access-routing S-005 / C-007: makes the DOC-ADDRESSED version reads
+    // (GET /api/docs/:slug/versions + /diff) anon-capable — same optional-session seam the
+    // /d, /v and /api/docs/:slug viewer routes use. Writes stay workspace-scoped above.
+    resolveViewerSession,
     // annotation-core S-005 / C-012: when a new version is created, re-anchor the doc's
     // annotations onto the new content — carried annotations follow the text, lost ones
     // detach (never dropped). Fired off the publish path (the route doesn't await it). The

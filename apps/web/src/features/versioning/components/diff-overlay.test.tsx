@@ -68,7 +68,6 @@ function renderOverlay(props: Partial<Parameters<typeof DiffOverlay>[0]> = {}) {
   render(
     <QueryClientProvider client={client()}>
       <DiffOverlay
-        workspaceId="ws-1"
         slug="my-doc"
         versions={[4, 3, 2, 1]}
         initialFrom={3}
@@ -135,16 +134,16 @@ describe("versioning-diff-ui S-003 — DiffOverlay", () => {
     renderOverlay();
     await screen.findByTestId("source-line-diff");
 
-    // Initial fetch was for from=3.
+    // Initial fetch was for from=3. S-005: getDiff(slug, from, to) — from at index 1, to at index 2.
     await waitFor(() => expect(getDiff).toHaveBeenCalled());
-    const firstFroms = getDiff.mock.calls.map((c) => c[2]);
+    const firstFroms = getDiff.mock.calls.map((c) => c[1]);
     expect(firstFroms).toContain(3);
 
     // Change `from` to v2 → a new fetch fires with from=2 (and to stays 4).
     fireEvent.change(screen.getByTestId("diff-from"), { target: { value: "2" } });
 
     await waitFor(() => {
-      const called = getDiff.mock.calls.some((c) => c[2] === 2 && c[3] === 4);
+      const called = getDiff.mock.calls.some((c) => c[1] === 2 && c[2] === 4);
       expect(called).toBe(true);
     });
   });

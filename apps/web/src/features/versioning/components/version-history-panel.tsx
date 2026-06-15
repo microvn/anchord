@@ -56,7 +56,9 @@ export function VersionHistoryPanel({
   const queryClient = useQueryClient();
 
   // Only fetch once the panel is actually open (the history isn't loaded until the reader opens it).
-  const query = useVersionHistory(workspaceId, slug, open);
+  // doc-access-routing S-005: the history read is DOC-ADDRESSED (slug-only), so the hook no longer
+  // takes workspaceId — a signed-out viewer can open the history through the doc link (AS-024).
+  const query = useVersionHistory(slug, open);
 
   // S-003: the panel OWNS the Compare → DiffOverlay seam. A row's Compare opens the overlay for
   // (clickedVersion → current). `compareFrom` holds the clicked version (null = overlay closed).
@@ -78,7 +80,8 @@ export function VersionHistoryPanel({
     },
     onSuccess: (_data, version) => {
       toast(`Restored v${version} as a new version`);
-      void queryClient.invalidateQueries({ queryKey: ["version-history", workspaceId, slug] });
+      // S-005: the history cache is keyed by slug only (doc-addressed read).
+      void queryClient.invalidateQueries({ queryKey: ["version-history", slug] });
       void queryClient.invalidateQueries({ queryKey: ["viewer-doc", workspaceId, slug] });
     },
     onError: () => {
@@ -162,7 +165,6 @@ export function VersionHistoryPanel({
           owns the overlay open-state so the diff stays self-contained inside features/versioning. */}
       {compareFrom !== null && currentVersion != null && (
         <DiffOverlay
-          workspaceId={workspaceId}
           slug={slug}
           versions={versions}
           initialFrom={compareFrom}

@@ -142,6 +142,16 @@ export interface VersionsRoutesDeps {
    */
   resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
   /**
+   * doc-access-routing S-005 / C-007: resolve the viewer session OPTIONALLY from the raw
+   * Request for the DOC-ADDRESSED version reads (history + diff). `{ userId }` for a
+   * logged-in caller, `null` for anon — the same seam the /d, /v and `/api/docs/:slug`
+   * viewer routes use. When supplied, the doc-scoped read routes are mounted (anon-capable,
+   * gated only by `resolveAccess`); absent → those routes are not mounted (tests that only
+   * exercise the workspace-scoped writes don't need it). The workspace-scoped routes are
+   * unaffected.
+   */
+  resolveViewerSession?: (request: Request) => Promise<{ userId: string } | null>;
+  /**
    * annotation-core S-005 / C-012: re-anchor the doc's annotations onto a newly-created
    * version. The route FIRES this (does not await) after a successful append/restore so it
    * runs OFF the publish path — it must not gate the 201, and its failure can't break a
@@ -239,10 +249,78 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
     requireCapability({ userId, role: role ?? "viewer" }, "edit");
   }
 
+  /**
+   * doc-access-routing S-005 / C-007: resolve the optional viewer for the DOC-ADDRESSED
+   * reads — `null` resolver or no cookie → an anonymous viewer (anon-capable, C-004). These
+   * routes never throw UnauthenticatedError, so a no-access doc returns the SAME 404 whether
+   * the caller is signed in or not (existence-hiding, AS-025).
+   */
+  async function resolveViewer(request: Request): Promise<Viewer> {
+    if (!deps.resolveViewerSession) return { kind: "anon" };
+    const session = await deps.resolveViewerSession(request);
+    return session ? { kind: "user", userId: session.userId } : { kind: "anon" };
+  }
+
+  /**
+   * Doc-scoped read gate (no workspace/session middleware): resolve :slug → a visible
+   * DocLookup or throw 404 (existence-hiding, AS-025) using the single `resolveAccess`,
+   * for the OPTIONAL (possibly anon) viewer. Mirrors loadVisibleDoc but for the anon path.
+   */
+  async function loadVisibleDocForViewer(slug: string, viewer: Viewer): Promise<DocLookup> {
+    const doc = await lookupRepo.findDocBySlug(slug);
+    const allowed = doc !== null && (await deps.resolveAccess(doc.id, viewer)).canView;
+    return enforceReadAccess({ doc, allowed });
+  }
+
   return (
     apiEnvelope(new Elysia())
-      .use(requireSession({ resolveSession: deps.resolveSession }))
-      .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
+      // ── DOC-ADDRESSED version reads (S-005) — session OPTIONAL, anon-capable, gated only
+      // by resolveAccess. Mounted as SIBLINGS OUTSIDE the session/workspace group below so a
+      // missing session never 401s (C-004). The slug is globally unique, so the doc link
+      // alone addresses these (C-007). Writes stay workspace-scoped (need workspace context).
+      // ── GET /api/docs/:slug/versions — S-005 / AS-024 (history via the doc link) ──
+      .get("/api/docs/:slug/versions", async ({ params, request, query }) => {
+        const viewer = await resolveViewer(request);
+        const doc = await loadVisibleDocForViewer(params.slug, viewer); // 404 if missing/no-access
+        const page = paginationQuery().parse(query) as PaginationParams;
+        const all = await listVersionHistory(doc.id, versionRepo);
+        const total = all.length;
+        const start = (page.page - 1) * page.limit;
+        const items = all.slice(start, start + page.limit);
+        return paginate(items, { page: page.page, limit: page.limit, total });
+      })
+
+      // ── GET /api/docs/:slug/diff?from=&to= — S-005 / AS-024 (diff via the doc link) ──
+      .get("/api/docs/:slug/diff", async ({ params, request, query }) => {
+        const parsed = diffQuerySchema.safeParse(query);
+        if (!parsed.success) {
+          throw new ValidationError("from and to must be positive integers", {
+            field: parsed.error.issues[0]?.path.map(String).join(".") ?? "from",
+          });
+        }
+        const { from, to } = parsed.data;
+        const viewer = await resolveViewer(request);
+        const doc = await loadVisibleDocForViewer(params.slug, viewer); // 404 if missing/no-access
+        const a = await lookupRepo.getVersionContent(doc.id, from);
+        const b = await lookupRepo.getVersionContent(doc.id, to);
+        if (!a) throw new NotFoundError(`Version ${from} not found`);
+        if (!b) throw new NotFoundError(`Version ${to} not found`);
+        // C-007 / AS-026: each side's renderTarget is the per-version content reference
+        // `/v/<versionId>` (the version ROW id), which createLoadContent resolves to THAT
+        // version's sandboxed content — never the current version.
+        return compareVersions({
+          kind: doc.kind,
+          a: { version: from, content: a.content, contentHash: a.contentHash, renderTarget: `/v/${a.id}` },
+          b: { version: to, content: b.content, contentHash: b.contentHash, renderTarget: `/v/${b.id}` },
+        });
+      })
+
+      // ── WORKSPACE-SCOPED routes (S-001..S-004) — session + workspace gated (writes need
+      // workspace context). Grouped so the gates apply only here, not to the doc reads above.
+      .group("", (gated) =>
+        gated
+          .use(requireSession({ resolveSession: deps.resolveSession }))
+          .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
 
       // ── POST /api/docs/:slug/versions — S-001 / AS-001 (append a new version) ──
       .group("", (app) =>
@@ -367,6 +445,7 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
             },
           });
         },
+      )
       )
   );
 }

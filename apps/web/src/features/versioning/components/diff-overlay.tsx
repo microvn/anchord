@@ -27,14 +27,13 @@ import { ImageDiffPair } from "@/features/versioning/components/image-diff-pair"
 type DiffTab = "source" | "rendered";
 
 export function DiffOverlay({
-  workspaceId,
   slug,
   versions,
   initialFrom,
   initialTo,
   onClose,
 }: {
-  workspaceId: string;
+  // doc-access-routing S-005: the diff read is DOC-ADDRESSED (slug-only) — no workspaceId.
   slug: string;
   /** every version number available to pick (newest-first, from the panel's history). */
   versions: number[];
@@ -48,8 +47,9 @@ export function DiffOverlay({
   const [to, setTo] = useState(initialTo);
   const [tab, setTab] = useState<DiffTab>("source");
 
-  // Re-fetches whenever from/to change (the key carries both) — AS-009.
-  const query = useDiff(workspaceId, slug, from, to, true);
+  // Re-fetches whenever from/to change (the key carries both) — AS-009. doc-access-routing S-005:
+  // the diff read is DOC-ADDRESSED (slug-only), anon-capable — opened through the doc link (AS-024).
+  const query = useDiff(slug, from, to, true);
   const diff = query.data;
 
   const adds = diff?.lines?.filter((l) => l.type === "added").length ?? diff?.changeCount ?? 0;

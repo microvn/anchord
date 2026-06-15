@@ -55,15 +55,13 @@ export interface VersionHistoryResponse {
   };
 }
 
-/** GET /api/w/:workspaceId/docs/:slug/versions — the version history read (S-001 AS-001).
- *  Paginated, newest-first; v0 shows a single scrolling list (no load-more, GAP-005). */
-export function getVersionHistory(
-  workspaceId: string,
-  slug: string,
-): Promise<EdenResult<VersionHistoryResponse>> {
-  return treaty.api.w({ workspaceId }).docs({ slug }).versions.get() as Promise<
-    EdenResult<VersionHistoryResponse>
-  >;
+/** GET /api/docs/:slug/versions — the DOC-ADDRESSED version history read (doc-access-routing
+ *  S-005 / AS-024). The slug is globally unique, so the doc link alone addresses the history
+ *  (C-007) — no workspace segment; the read is anon-capable (the viewer may be signed out on an
+ *  anyone_with_link doc). Paginated, newest-first; v0 shows a single scrolling list (no load-more,
+ *  GAP-005). RESTORE (a write) stays workspace-scoped below — only the READS are doc-scoped. */
+export function getVersionHistory(slug: string): Promise<EdenResult<VersionHistoryResponse>> {
+  return treaty.api.docs({ slug }).versions.get() as Promise<EdenResult<VersionHistoryResponse>>;
 }
 
 /** What a successful restore returns (201): the NEW current version number (the append-copy) and the
@@ -115,20 +113,14 @@ export interface DiffResponse {
   renderPair: [string, string];
 }
 
-/** GET /api/w/:workspaceId/docs/:slug/diff?from=&to= — the two-level diff read (S-003 AS-007/008/009;
- *  backend versioning-diff:S-004). The backend parses `from`/`to` off the query string, so they ride
- *  the leaf `.get({ query })` per the Eden convention (mirrors features/* query reads). Same
- *  `treaty as any` reach + raw `{data,error}` return as the other thunks — the call site unwraps the
- *  api-core envelope. A refused read (bad version refs / not found) surfaces as `{error}` → the
- *  overlay shows an explicit error state, never a blank/half diff (AS-011 / C-007). */
-export function getDiff(
-  workspaceId: string,
-  slug: string,
-  from: number,
-  to: number,
-): Promise<EdenResult<DiffResponse>> {
-  return treaty.api
-    .w({ workspaceId })
-    .docs({ slug })
-    .diff.get({ query: { from, to } }) as Promise<EdenResult<DiffResponse>>;
+/** GET /api/docs/:slug/diff?from=&to= — the DOC-ADDRESSED two-level diff read (doc-access-routing
+ *  S-005 / AS-024). Like the history read it carries only the slug (C-007) and is anon-capable; the
+ *  backend parses `from`/`to` off the query string, so they ride the leaf `.get({ query })` per the
+ *  Eden convention. Same `treaty as any` reach + raw `{data,error}` return as the other thunks — the
+ *  call site unwraps the api-core envelope. A refused read (bad version refs / not found) surfaces as
+ *  `{error}` → the overlay shows an explicit error state, never a blank/half diff (AS-011 / C-007). */
+export function getDiff(slug: string, from: number, to: number): Promise<EdenResult<DiffResponse>> {
+  return treaty.api.docs({ slug }).diff.get({ query: { from, to } }) as Promise<
+    EdenResult<DiffResponse>
+  >;
 }

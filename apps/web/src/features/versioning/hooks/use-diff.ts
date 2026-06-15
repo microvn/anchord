@@ -7,16 +7,13 @@ import { getDiff, type DiffResponse } from "@/features/versioning/services/clien
 // key and re-fetches the diff (AS-009). `enabled` gates the fetch on the overlay being open and on a
 // real from/to pair. A failed/refused read sets `isError` (AS-011 / C-007: an explicit error state,
 // never a blank/half diff).
-export function useDiff(
-  workspaceId: string,
-  slug: string,
-  from: number,
-  to: number,
-  enabled: boolean,
-) {
+// doc-access-routing S-005 / AS-024: the diff read is DOC-ADDRESSED (slug-only) and anon-capable,
+// so the hook keys off slug + from + to — no workspaceId. Changing either picker swaps the key and
+// re-fetches (AS-009).
+export function useDiff(slug: string, from: number, to: number, enabled: boolean) {
   return useApiQuery<DiffResponse>(
-    ["version-diff", workspaceId, slug, from, to],
-    () => getDiff(workspaceId, slug, from, to),
+    ["version-diff", slug, from, to],
+    () => getDiff(slug, from, to),
     { enabled: enabled && from > 0 && to > 0 },
   );
 }

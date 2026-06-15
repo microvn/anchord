@@ -9,14 +9,12 @@ import {
 // centralized like every other read. `enabled` gates the fetch on the panel being open — the
 // history isn't loaded until the reader actually opens the panel. A failed read sets `isError`
 // (AS-004: an explicit error state, never a misleading empty list).
-export function useVersionHistory(
-  workspaceId: string,
-  slug: string,
-  enabled: boolean,
-) {
+// doc-access-routing S-005 / AS-024: the history read is DOC-ADDRESSED (slug-only) and
+// anon-capable, so the hook keys off the slug alone — no workspaceId in the path or cache key.
+export function useVersionHistory(slug: string, enabled: boolean) {
   return useApiQuery<VersionHistoryResponse>(
-    ["version-history", workspaceId, slug],
-    () => getVersionHistory(workspaceId, slug),
+    ["version-history", slug],
+    () => getVersionHistory(slug),
     { enabled },
   );
 }
