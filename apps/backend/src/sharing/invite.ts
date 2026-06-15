@@ -98,7 +98,12 @@ export interface InviteInput {
   invitedBy: string;
 }
 
-export type InviteResult = { status: "active"; role: ShareRole } | { status: "pending" };
+// `id` is the new doc_members row id — returned so the FE can target the PATCH/DELETE member
+// routes (S-007) on a JUST-invited row without re-reading the share state (sharing-permissions-ui
+// AS-022: a freshly invited pending person must be removable immediately).
+export type InviteResult =
+  | { status: "active"; role: ShareRole; id: string }
+  | { status: "pending"; id: string };
 
 /**
  * Invite someone to a doc by email + role + message.
@@ -129,7 +134,7 @@ export async function inviteByEmail(input: InviteInput, deps: InviteDeps): Promi
       status: "active",
     });
     deps.enqueueInvite({ kind: "active", email, inviteId: activeRow.id });
-    return { status: "active", role: input.role };
+    return { status: "active", role: input.role, id: activeRow.id };
   }
 
   const pendingRow = await deps.members.insert({
@@ -144,7 +149,7 @@ export async function inviteByEmail(input: InviteInput, deps: InviteDeps): Promi
   // AS-011: the enqueue carries the REAL pending-invite id so the invite mail's accept-link
   // points at this invite (no placeholder) — the email-independent join path (C-009).
   deps.enqueueInvite({ kind: "pending", email, inviteId: pendingRow.id });
-  return { status: "pending" };
+  return { status: "pending", id: pendingRow.id };
 }
 
 /**

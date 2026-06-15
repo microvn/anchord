@@ -1,6 +1,7 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // sharing-permissions-ui S-003 — Invite by email with role + message. The sharing Eden client
 // (`invitePerson` write + `getShareState` prefill read) is MOCKED so the optimistic-add /
@@ -52,15 +53,18 @@ beforeEach(() => {
 });
 
 function renderDialog() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
   return render(
-    <ShareDialog
-      open
-      onOpenChange={() => {}}
-      workspaceId="ws-1"
-      slug="web-core"
-      docTitle="Web Core"
-      effectiveRole="owner"
-    />,
+    <QueryClientProvider client={qc}>
+      <ShareDialog
+        open
+        onOpenChange={() => {}}
+        workspaceId="ws-1"
+        slug="web-core"
+        docTitle="Web Core"
+        effectiveRole="owner"
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -77,7 +81,9 @@ describe("Sharing S-003 — invite by email", () => {
     await openedDialog();
 
     await user.type(screen.getByTestId("invite-email"), "dev@acme.com");
-    await user.click(screen.getByTestId("invite-role-editor"));
+    // role dropdown → editor
+    await user.click(screen.getByTestId("invite-role-trigger"));
+    await user.click(await screen.findByTestId("invite-role-opt-editor"));
     await user.type(screen.getByTestId("invite-message"), "please review");
     await user.click(screen.getByTestId("invite-submit"));
 
@@ -101,6 +107,25 @@ describe("Sharing S-003 — invite by email", () => {
     await user.click(screen.getByTestId("invite-submit"));
 
     await waitFor(() => expect(invitePerson).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("share-person-pending-bob@x.com")).toBeInTheDocument();
+  });
+
+  it("AS-011 (envelope regression): the raw api-core envelope is unwrapped before reading .status", async () => {
+    // The real backend (and treaty) returns the api-core SuccessEnvelope { success, data } — the
+    // thunk hands that through raw. If the call site reads `res.data.status` WITHOUT unwrapping,
+    // `.status` is undefined and the Pending reconcile silently breaks. The other tests mock the
+    // ALREADY-unwrapped payload, so they can't catch this; this one mocks the real enveloped shape.
+    invitePerson.mockImplementation(
+      async () => ({ data: { success: true, data: { status: "pending" } }, error: null }) as never,
+    );
+    const user = userEvent.setup();
+    await openedDialog();
+
+    await user.type(screen.getByTestId("invite-email"), "bob@x.com");
+    await user.click(screen.getByTestId("invite-submit"));
+
+    await waitFor(() => expect(invitePerson).toHaveBeenCalledTimes(1));
+    // Only passes if unwrapEnvelope peeled the wrapper so `.status` resolved to "pending".
     expect(await screen.findByTestId("share-person-pending-bob@x.com")).toBeInTheDocument();
   });
 

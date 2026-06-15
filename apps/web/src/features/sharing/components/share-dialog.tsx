@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +21,6 @@ import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { toast } from "sonner";
 import {
   getShareState,
-  isForbidden,
   changeMemberRole,
   removeMember,
   type ShareState,
@@ -31,8 +30,11 @@ import {
 import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
-import { LinkControls } from "./link-controls";
-import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
+import { OptionsPanel } from "./options-panel";
+import { ShareLoadingSkeleton } from "./share-loading-skeleton";
+import { TabBar } from "@/components/ui/tabs";
+import { useAccessControls } from "@/features/sharing/hooks/use-access-controls";
+import { useApiQuery } from "@/lib/api/use-api-query";
 import type { EffectiveRole } from "@/features/viewer/services/client";
 
 // ShareDialog (sharing-permissions-ui S-001) — the SHELL. It opens from the viewer Share button
@@ -74,52 +76,23 @@ export function ShareDialog({
   // layout is [→MANUAL].
   const compact = tier === "mobile";
 
-  const [state, setState] = useState<ShareState | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // AS-018: on OPEN, read the full share state to prefill. Routed through `useApiQuery` (the
+  // codebase's single read entry point) instead of a hand-rolled useEffect — so it (a) dedups the
+  // request under React StrictMode's double-invoke (no more two `/share` calls per open), (b) peels
+  // the api-core envelope CENTRALLY (peelEnvelope), so `state.people` is the payload, not the
+  // wrapper, and (c) reuses the normalized ApiError (status carries the 403 for the lazy gate). The
+  // read is `enabled` only while open; closing disables it and a re-open re-reads (staleTime 30s).
+  const query = useApiQuery<ShareState>(
+    ["share-state", workspaceId, slug],
+    () => getShareState(workspaceId, slug),
+    { enabled: open },
+  );
+  const state = query.data ?? null;
+  const loading = open && query.isPending && query.fetchStatus !== "idle";
   // C-002 lazy gate: a 403 on the gated read means "can't manage" (read-only surface), distinct
-  // from a generic load error.
-  const [forbidden, setForbidden] = useState(false);
-
-  // AS-018: on OPEN, read the full share state to prefill. Reset on close so a re-open re-reads.
-  useEffect(() => {
-    if (!open) {
-      setState(null);
-      setError(null);
-      setForbidden(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setForbidden(false);
-    void getShareState(workspaceId, slug)
-      .then((raw) => {
-        if (cancelled) return;
-        // Unwrap the api-core envelope ({success,data,…}) — these thunks return the raw Eden result
-        // (not read through useApiQuery, which peels). Without this, `res.data` is the envelope and
-        // `state.people` is undefined → ShareDialog crashes.
-        const res = unwrapEnvelope<ShareState>(raw);
-        if (res.error || !res.data) {
-          // A refused (403) gated read → the read-only "can't manage" surface (AS-003); any other
-          // failure → the generic retryable error (AS network/500).
-          if (isForbidden(res.error)) setForbidden(true);
-          else setError("Couldn't load sharing settings");
-          return;
-        }
-        // A successful read PROVES manage-eligibility (AS-004) — render the editable sections.
-        setState(res.data);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Couldn't load sharing settings");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, workspaceId, slug]);
+  // from a generic load error (network / 500 → the retryable error surface).
+  const forbidden = query.isError && query.error?.status === 403;
+  const error = query.isError && !forbidden ? "Couldn't load sharing settings" : null;
 
   const body = (
     <ShareDialogBody
@@ -177,7 +150,11 @@ export function ShareDialog({
           </DialogTitle>
           <DialogDescription className="text-[13px] text-muted">{docTitle}</DialogDescription>
         </DialogHeader>
-        {body}
+        {/* Fixed-height scroll region: the modal's outer size stays CONSTANT whether the body is the
+            loading skeleton or the full sections, so the prefill read swaps content in place instead
+            of growing + re-centering the modal (the "two popups" effect on first open). Tall content
+            scrolls inside; short content sits within the clamped height. */}
+        <div className="-mr-1 h-[58vh] max-h-[600px] min-h-[420px] overflow-y-auto pr-1">{body}</div>
         <DialogFooter>
           <Button type="button" data-testid="share-done" onClick={() => onOpenChange(false)}>
             Done
@@ -206,11 +183,7 @@ function ShareDialogBody({
   slug: string;
 }) {
   if (loading || (!state && !error && !forbidden)) {
-    return (
-      <div data-testid="share-loading" className="py-6 text-[13px] text-muted">
-        Loading sharing settings…
-      </div>
-    );
+    return <ShareLoadingSkeleton />;
   }
 
   // C-002 (lazy gate): a REFUSED (403) gated read → the read-only "can't manage" surface, distinct
@@ -249,8 +222,16 @@ function ShareDialogBody({
   );
 }
 
-// The editable section scaffolding (shown only to a manager). S-001 built the SHELL; S-002 mounts
-// the editable General-access controls (AccessSection); S-003..S-005 fill in invite / people / link.
+// The editable scaffolding (shown only to a manager). Two tabs (uselink-style) keep the surface from
+// feeling cluttered: "Sharing" (who can read + invite + people) is the primary flow; "Options" holds
+// everything secondary (link password/expiry/view-limit, guest commenting, editors-can-share). The
+// access state + its PUT …/access live in one shared `useAccessControls` hook so the access level
+// (Sharing tab) and guest/editors (Options tab) still write together. S-002..S-006 fill the panels.
+const SHARE_TABS = [
+  { id: "sharing" as const, label: "Sharing", icon: "share" },
+  { id: "options" as const, label: "Options", icon: "settings" },
+];
+
 function ShareSections({
   state,
   workspaceId,
@@ -262,10 +243,10 @@ function ShareSections({
   slug: string;
   effectiveRole: EffectiveRole | undefined;
 }) {
-  // The selected level is owned here so it can be optimistically updated by AccessSection and drive
-  // the Link section's visibility (C-007) without a re-read. Seeded from the prefill state.
-  const [level, setLevel] = useState<ShareState["level"]>(state.level);
-  const isLink = level === "anyone_with_link";
+  // Shared access state + the optimistic PUT …/access writer (level/role on Sharing; guest/editors
+  // on Options). One hook so a level change and a guest toggle never race each other (C-005).
+  const controls = useAccessControls(workspaceId, slug, state, effectiveRole);
+  const [tab, setTab] = useState<"sharing" | "options">("sharing");
 
   // People list is owned here (seeded from the prefill read) so InviteRow (S-003) can optimistically
   // append a row + reconcile/rollback it (C-005), and S-006 can optimistically change a role / remove
@@ -273,8 +254,8 @@ function ShareSections({
   const [people, setPeople] = useState<SharePerson[]>(state.people);
   const addOptimistic = (person: SharePerson) =>
     setPeople((prev) => [...prev.filter((p) => p.email !== person.email), person]);
-  const reconcile = (email: string, status: SharePerson["status"]) =>
-    setPeople((prev) => prev.map((p) => (p.email === email ? { ...p, status } : p)));
+  const reconcile = (email: string, status: SharePerson["status"], id: string) =>
+    setPeople((prev) => prev.map((p) => (p.email === email ? { ...p, status, id } : p)));
   const rollback = (email: string) => setPeople((prev) => prev.filter((p) => p.email !== email));
 
   // S-006: change a member's role. Optimistically set the new role; on a refused write revert to the
@@ -304,32 +285,39 @@ function ShareSections({
     }
   }
 
+  const inviteeCount = people.filter((p) => p.role !== "owner").length;
+
   return (
     <div data-testid="share-sections" className="flex flex-col gap-4 pt-1">
-      {/* General access + guest + editors_can_share (S-002, AccessSection) */}
-      <AccessSection
-        workspaceId={workspaceId}
-        slug={slug}
-        initial={state}
-        effectiveRole={effectiveRole}
-        onLevelChange={setLevel}
-      />
+      <TabBar tabs={SHARE_TABS} value={tab} onChange={setTab} aria-label="Share settings" />
 
-      {/* Link — shown only when anyone-with-link (C-007). Copy + the independent chips (S-005). */}
-      {isLink && <LinkControls workspaceId={workspaceId} slug={slug} link={state.link} />}
+      {tab === "sharing" ? (
+        <div className="flex flex-col gap-4">
+          {/* Who can read? — self-describing access rows + role (S-002) */}
+          <AccessSection controls={controls} />
 
-      {/* Invite people / People list (S-003 invite field + optimistic row; S-004 the row controls) */}
-      <section data-testid="share-sec-people" className="flex flex-col gap-2">
-        <span className="text-[12px] font-medium text-muted">Invite people</span>
-        <InviteRow
-          workspaceId={workspaceId}
-          slug={slug}
-          onOptimisticAdd={addOptimistic}
-          onReconcile={reconcile}
-          onRollback={rollback}
-        />
-        <PeopleList people={people} onChangeRole={onChangeRole} onRemove={onRemove} />
-      </section>
+          {/* Invite people / People list (S-003 invite field + optimistic row; S-004/S-006 controls) */}
+          <section data-testid="share-sec-people" className="flex flex-col gap-3">
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">· Invite people</span>
+            <InviteRow
+              workspaceId={workspaceId}
+              slug={slug}
+              onOptimisticAdd={addOptimistic}
+              onReconcile={reconcile}
+              onRollback={rollback}
+            />
+            <div className="flex items-baseline justify-between border-t border-line pt-3">
+              <span className="text-[12px] font-medium text-muted">People with access</span>
+              <span data-testid="share-people-count" className="font-mono text-[11px] text-subtle">
+                {inviteeCount} {inviteeCount === 1 ? "invitee" : "invitees"}
+              </span>
+            </div>
+            <PeopleList people={people} onChangeRole={onChangeRole} onRemove={onRemove} />
+          </section>
+        </div>
+      ) : (
+        <OptionsPanel workspaceId={workspaceId} slug={slug} controls={controls} link={state.link} />
+      )}
     </div>
   );
 }

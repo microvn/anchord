@@ -1,8 +1,22 @@
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import { Icon } from "@/components/icon";
-import { invitePerson, type ShareRole, type SharePerson } from "@/features/sharing/services/client";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  invitePerson,
+  type InviteResult,
+  type ShareRole,
+  type SharePerson,
+} from "@/features/sharing/services/client";
 import { inviteSchema, type InviteForm } from "@/features/sharing/schema/invite";
+import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 
 // InviteRow (sharing-permissions-ui S-003) — invite a person by email + role + optional message.
 // Mirrors the workspaces members-screen InviteRow (RHF + a flat Zod resolver, segmented role
@@ -41,8 +55,9 @@ export function InviteRow({
   slug: string;
   /** append an optimistic person row (temp), returns the temp key used to reconcile/rollback it. */
   onOptimisticAdd: (person: SharePerson) => void;
-  /** replace the optimistic row's status once the backend answers (active|pending). */
-  onReconcile: (email: string, status: SharePerson["status"]) => void;
+  /** replace the optimistic row's status + bind its member id once the backend answers
+   *  (active|pending). The id makes the row immediately removable / role-changeable (AS-022). */
+  onReconcile: (email: string, status: SharePerson["status"], id: string) => void;
   /** remove the optimistic row on a refused/failed write (C-005). */
   onRollback: (email: string) => void;
 }) {
@@ -63,82 +78,79 @@ export function InviteRow({
     const email = values.email.trim();
     // AS-010/AS-011: optimistic active row; reconcile to the backend's status (active|pending).
     onOptimisticAdd({ email, role: values.role, status: "active" });
-    const res = await invitePerson(workspaceId, slug, {
-      email,
-      role: values.role,
-      ...(values.message ? { message: values.message } : {}),
-    });
+    // The thunk returns the RAW Eden envelope; unwrap so `res.data` is the payload (not the
+    // `{success,data,…}` wrapper) — otherwise `res.data.status` is undefined and the Pending
+    // reconcile (AS-011) silently breaks. Same convention as the other sharing call sites.
+    const res = unwrapEnvelope<InviteResult>(
+      await invitePerson(workspaceId, slug, {
+        email,
+        role: values.role,
+        ...(values.message ? { message: values.message } : {}),
+      }),
+    );
     if (res.error || !res.data) {
       // AS-013/C-005: refused/failed write → remove the optimistic row + error, no ghost.
       onRollback(email);
       toast.error("Couldn't send the invite");
       return;
     }
-    onReconcile(email, res.data.status);
+    onReconcile(email, res.data.status, res.data.id);
     reset();
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-2" data-testid="invite-row" noValidate>
-      <div className="flex flex-wrap items-center gap-[9px]">
-        <label
-          className={`flex h-[38px] min-w-0 flex-1 basis-full items-center gap-2 rounded-[8px] border bg-surface px-[11px] transition-[border-color,box-shadow] focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--accent-soft)] sm:basis-auto ${
-            errors.email ? "border-error" : "border-line"
-          }`}
-        >
-          <Icon name="mail" size={15} className="flex-none text-subtle" />
-          <input
-            {...register("email")}
-            data-testid="invite-email"
-            type="email"
-            placeholder="Invite by email address…"
-            aria-invalid={errors.email ? "true" : undefined}
-            className="min-w-0 flex-1 border-none bg-transparent text-[13.5px] text-ink outline-none placeholder:text-subtle"
-          />
-        </label>
+    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-2.5" data-testid="invite-row" noValidate>
+      {/* Row 1 — email, full width. Enter submits the form → invites this email immediately (each
+          Enter sends one), so the row appears below without leaving the field (AS-010/011). */}
+      <label
+        className={`flex h-[40px] items-center gap-2 rounded-[9px] border bg-surface px-3 transition-[border-color,box-shadow] focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--accent-soft)] ${
+          errors.email ? "border-error" : "border-line"
+        }`}
+      >
+        <Icon name="mail" size={15} className="flex-none text-subtle" />
+        <input
+          {...register("email")}
+          data-testid="invite-email"
+          type="email"
+          placeholder="Type an email and press Enter"
+          aria-invalid={errors.email ? "true" : undefined}
+          className="min-w-0 flex-1 border-none bg-transparent text-[13.5px] text-ink outline-none placeholder:text-subtle"
+        />
+      </label>
 
-        {/* role toggle — viewer | commenter | editor only (C-004: never owner). */}
-        <div
-          className="inline-flex gap-0.5 rounded-[8px] border border-line bg-sunken p-0.5"
-          data-testid="invite-role-toggle"
-          role="group"
-          aria-label="Invite role"
-        >
-          {ROLES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              data-testid={`invite-role-${r}`}
-              aria-pressed={role === r}
-              onClick={() => setValue("role", r)}
-              className={`inline-flex h-7 items-center rounded-[6px] px-[12px] text-[12.5px] transition-colors ${
-                role === r
-                  ? "bg-surface font-semibold text-accent-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
-                  : "font-medium text-muted hover:text-ink"
-              }`}
-            >
-              {roleLabel(r)}
-            </button>
-          ))}
-        </div>
-
-        <button
-          type="submit"
-          data-testid="invite-submit"
-          disabled={isSubmitting}
-          className="inline-flex h-8 flex-none items-center gap-[7px] rounded-[8px] bg-accent px-3 text-[12.5px] font-semibold text-on-accent transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50 max-[599px]:flex-1 max-[599px]:justify-center"
-        >
-          Invite
-        </button>
+      {/* Row 2 — role (left) + Send (right). Role dropdown applies to the email being sent now
+          (viewer | commenter | editor only — never owner, C-004). */}
+      <div className="flex items-center justify-between gap-2">
+        <Select value={role} onValueChange={(v) => setValue("role", v as ShareRole)}>
+          <SelectTrigger data-testid="invite-role-trigger" className="h-9 w-[150px]" aria-label="Invite role">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent data-testid="invite-role-options">
+            {ROLES.map((r) => (
+              <SelectItem key={r} value={r} data-testid={`invite-role-opt-${r}`}>
+                {roleLabel(r)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button type="submit" data-testid="invite-submit" disabled={isSubmitting}>
+          <Icon name="arrowRight" size={15} />
+          Send
+        </Button>
       </div>
 
-      <input
+      {/* Row 3 — optional note, carried in the invite email. */}
+      <textarea
         {...register("message")}
         data-testid="invite-message"
-        type="text"
-        placeholder="Add a message (optional)"
-        className="h-[34px] w-full rounded-[8px] border border-line bg-surface px-[11px] text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] placeholder:text-subtle focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+        rows={2}
+        placeholder="Add a note (optional) — included in the email."
+        className="w-full resize-none rounded-[9px] border border-line bg-surface px-3 py-2 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] placeholder:text-subtle focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
       />
+
+      <p className="font-mono text-[11px] tracking-[0.02em] text-subtle">
+        Press Enter after each email · revoke any time.
+      </p>
 
       {errors.email && (
         <p role="alert" data-testid="invite-email-error" className="text-[11.5px] text-error">

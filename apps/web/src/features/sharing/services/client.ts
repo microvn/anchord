@@ -64,6 +64,10 @@ export interface ShareState {
   editorsCanShare: boolean;
   people: SharePerson[];
   link: ShareLink;
+  /** the CALLER's own role on this doc — the dialog gates editors_can_share (owner-only, C-003)
+   *  off this so it works from the docs-list entry too (which preloads no `effectiveRole`).
+   *  Optional for back-compat with older reads / test fixtures. */
+  viewerRole?: ShareRole | "owner";
 }
 
 /** GET /api/w/:workspaceId/docs/:slug/share — the dialog-open prefill read (S-001 AS-018). */
@@ -130,6 +134,9 @@ export interface InvitePersonInput {
  *  already has an account (`active`) or is a no-account pending invite (`pending`, AS-011). */
 export interface InviteResult {
   status: "active" | "pending";
+  /** the new doc_members row id — lets the people list target PATCH/DELETE on the just-invited
+   *  row without re-reading the share state (AS-022). */
+  id: string;
 }
 
 /** POST /api/w/:workspaceId/docs/:slug/invites — invite a person by email + role + optional

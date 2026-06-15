@@ -1,6 +1,7 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // sharing-permissions-ui S-006 — Change or remove a person in the share list. The sharing Eden
 // client (`changeMemberRole` / `removeMember` writes + `getShareState` prefill read) is MOCKED so
@@ -57,15 +58,20 @@ beforeEach(() => {
 });
 
 function renderDialog() {
+  // The prefill read runs through useApiQuery → needs a QueryClient host (retry:false so a
+  // refused-write test reads its mock exactly once).
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
   return render(
-    <ShareDialog
-      open
-      onOpenChange={() => {}}
-      workspaceId="ws-1"
-      slug="web-core"
-      docTitle="Web Core"
-      effectiveRole="owner"
-    />,
+    <QueryClientProvider client={qc}>
+      <ShareDialog
+        open
+        onOpenChange={() => {}}
+        workspaceId="ws-1"
+        slug="web-core"
+        docTitle="Web Core"
+        effectiveRole="owner"
+      />
+    </QueryClientProvider>,
   );
 }
 

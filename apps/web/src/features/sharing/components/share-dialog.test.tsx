@@ -60,16 +60,21 @@ beforeEach(() => {
 });
 
 function renderDialog(props: Partial<Parameters<typeof ShareDialog>[0]> = {}) {
+  // The dialog's prefill read goes through useApiQuery → needs a QueryClient host. retry:false so a
+  // 403/500 mock is read exactly once (the gate/error assertions key off a single call).
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
   return render(
-    <ShareDialog
-      open
-      onOpenChange={() => {}}
-      workspaceId="ws-acme"
-      slug="web-core"
-      docTitle="Web-core spec"
-      effectiveRole="owner"
-      {...props}
-    />,
+    <QueryClientProvider client={qc}>
+      <ShareDialog
+        open
+        onOpenChange={() => {}}
+        workspaceId="ws-acme"
+        slug="web-core"
+        docTitle="Web-core spec"
+        effectiveRole="owner"
+        {...props}
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -81,16 +86,16 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     await screen.findByTestId("share-dialog");
     await waitFor(() => expect(getShareState).toHaveBeenCalledWith("ws-acme", "web-core"));
 
-    // The four sections render (General access · Guest commenting · Invite people / People).
+    // Two tabs (Sharing default · Options); the Sharing tab shows access + people.
+    expect(screen.getByTestId("share-tab-sharing")).toHaveAttribute("data-active", "1");
+    expect(screen.getByTestId("share-tab-options")).toBeInTheDocument();
     await screen.findByTestId("share-sec-access");
-    expect(screen.getByTestId("share-sec-guest")).toBeInTheDocument();
     expect(screen.getByTestId("share-sec-people")).toBeInTheDocument();
+    // guest commenting lives on the Options tab now, not the Sharing tab.
+    expect(screen.queryByTestId("share-sec-guest")).not.toBeInTheDocument();
 
-    // Prefilled from the CURRENT state — restricted, not a blank form (S-002 made the access
-    // control editable: the Restricted segment is the active one).
+    // Prefilled from the CURRENT state — restricted, not a blank form (the Restricted row is active).
     expect(screen.getByTestId("share-access-opt-restricted")).toHaveAttribute("data-active", "1");
-    // Restricted → no Link section (C-007).
-    expect(screen.queryByTestId("share-sec-link")).not.toBeInTheDocument();
     // The title is the doc-scoped "Share doc" header.
     expect(screen.getByTestId("share-dialog")).toHaveTextContent(/share doc/i);
   });
@@ -153,20 +158,20 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     renderDialog({ effectiveRole: "owner" });
 
     await screen.findByTestId("share-sections");
-    // level + role from the read (S-002 editable controls: the active segment + role trigger value)
+    // SHARING tab: level + role from the read (active access row + role trigger value)
     expect(screen.getByTestId("share-access-opt-anyone_with_link")).toHaveAttribute("data-active", "1");
     expect(screen.getByTestId("share-access-role-trigger")).toHaveTextContent(/commenter/i);
-    // guest on
-    expect(screen.getByTestId("share-guest-toggle")).toHaveAttribute("data-on", "1");
-    // editorsCanShare reflected (owner → editable toggle carries the prefilled state)
-    expect(screen.getByTestId("share-editors-can-share-toggle")).toHaveAttribute("data-on", "0");
-    // Link section present (anyone-with-link) with the URL + a password set
-    expect(screen.getByTestId("share-link-url")).toHaveTextContent("anchord.local/d/web-core?k=9f2a");
-    expect(screen.getByTestId("share-link-password")).toHaveAttribute("data-on", "1");
     // people: 1 active + 1 pending (+ owner) — the pending one carries a Pending tag
     expect(screen.getByTestId("share-person-dev@acme.com")).toBeInTheDocument();
     expect(screen.getByTestId("share-person-pending-bob@x.com")).toBeInTheDocument();
     expect(screen.queryByTestId("share-person-pending-dev@acme.com")).not.toBeInTheDocument();
+
+    // OPTIONS tab: guest on, editors reflected, link URL + a password set
+    await userEvent.click(screen.getByTestId("share-tab-options"));
+    expect(await screen.findByTestId("share-guest-toggle")).toHaveAttribute("data-on", "1");
+    expect(screen.getByTestId("share-editors-can-share-toggle")).toHaveAttribute("data-on", "0");
+    expect(screen.getByTestId("share-link-url")).toHaveTextContent("anchord.local/d/web-core?k=9f2a");
+    expect(screen.getByTestId("share-link-password")).toHaveAttribute("data-on", "1");
   });
 
   // C-002: the pure manage-eligibility gate (mirror of backend C-007).
@@ -192,7 +197,7 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
 
   it("AS-019: the ⋯ Share item shows UNCONDITIONALLY (no manager effectiveRole); Share opens the dialog for that doc", async () => {
     const { DocMoreMenu } = await import("@/features/docs/components/move-copy-dialog");
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
     const doc = {
       id: "d1",
       slug: "auth-spec",

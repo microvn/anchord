@@ -216,9 +216,11 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
       // NEVER returns the link password — the aggregator exposes hasPassword only.
       .get("/api/w/:workspaceId/docs/:slug/share", async ({ params, actor, ws }) => {
         const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
-        // 403 if the caller may not manage sharing (AS-027 / C-016) — same gate as writes.
-        await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
-        return readShareState(doc.id, params.slug, shareStateRepo());
+        // 403 if the caller may not manage sharing (AS-027 / C-016) — same gate as writes. The
+        // resolved role is also returned as `viewerRole` so the dialog's owner-only gate (C-003)
+        // works from any entry point (the docs-list ⋯ preloads no effectiveRole).
+        const viewerRole = await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
+        return readShareState(doc.id, params.slug, shareStateRepo(), viewerRole);
       })
 
       // ── PUT /api/docs/:slug/access — S-001 (general access + link role + guest) ──
@@ -295,7 +297,9 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
               inviteDeps,
             );
             set.status = 201;
-            return { status: result.status };
+            // Return the new doc_members row id so the FE can target PATCH/DELETE on the
+            // just-invited row immediately (AS-022 — remove a freshly invited pending person).
+            return { status: result.status, id: result.id };
           }),
       )
 

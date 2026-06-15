@@ -14,6 +14,7 @@
 //         not part of the repo's read shape at all.
 
 import type { GeneralAccessLevel, ShareRole } from "./share";
+import type { Role } from "./roles";
 
 /** One row of the people list — an invited member (active) or a pending invite. */
 export interface SharePerson {
@@ -45,6 +46,13 @@ export interface ShareState {
   editorsCanShare: boolean;
   people: SharePerson[];
   link: ShareLinkState;
+  /**
+   * The CALLER's own effective role on this doc (owner/editor/commenter/viewer) — the same role
+   * `requireManageSharing` resolved to gate the read. The dialog uses it for the owner-only gate
+   * (C-003 editors_can_share) so that check works regardless of HOW the dialog was opened (the
+   * viewer passes `effectiveRole`, but the docs-list ⋯ entry preloads no role — lazy gate, C-002).
+   */
+  viewerRole: Role;
 }
 
 /**
@@ -82,6 +90,7 @@ export async function readShareState(
   docId: string,
   slug: string,
   repo: ShareStateRepo,
+  viewerRole: Role,
 ): Promise<ShareState> {
   const row = await repo.readShareState(docId);
   return {
@@ -90,6 +99,7 @@ export async function readShareState(
     guestCommenting: row.guestCommenting,
     editorsCanShare: row.editorsCanShare,
     people: row.people,
+    viewerRole,
     link: {
       hasPassword: row.link.hasPassword,
       expiresAt: row.link.expiresAt,

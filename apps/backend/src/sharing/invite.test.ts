@@ -56,12 +56,12 @@ test("AS-007: invite an existing account → ACTIVE editor doc_members row + not
     f.deps,
   );
 
-  // Returns active + the granted role.
-  expect(out).toEqual({ status: "active", role: "editor" });
-
   // An ACTIVE row exists with the userId bound + the editor role + the message.
   const rows = f.store.rows();
   expect(rows).toHaveLength(1);
+
+  // Returns active + the granted role + the created row's id (AS-022: FE targets it for PATCH/DELETE).
+  expect(out).toEqual({ status: "active", role: "editor", id: rows[0].id });
   expect(rows[0]).toMatchObject({
     docId: "doc-1",
     email: "dev@acme.com",
@@ -84,10 +84,11 @@ test("AS-008: invite an email with no account → PENDING row + invite mail enqu
     f.deps,
   );
 
-  expect(out).toEqual({ status: "pending" });
-
   const rows = f.store.rows();
   expect(rows).toHaveLength(1);
+
+  // Returns pending + the created row's id (AS-022: a freshly invited pending person is removable).
+  expect(out).toEqual({ status: "pending", id: rows[0].id });
   expect(rows[0]).toMatchObject({
     docId: "doc-1",
     email: "bob@x.com",

@@ -91,17 +91,25 @@ export function LinkControls({
         {(Object.keys(CHIP_META) as ChipKey[]).map((key) => {
           const meta = CHIP_META[key];
           const on = chips[key];
+          // The chip reads "active" (accent) when its control is SET, OR while its inline editor is
+          // open — otherwise clicking "+ Password" opened the editor with no visible active state.
+          const active = on || editing === key;
           return (
             <span key={key} className="inline-flex items-center">
               <button
                 type="button"
                 data-testid={meta.testid}
                 data-on={on ? "1" : "0"}
-                onClick={() => (on ? void commit(key, null) : setEditing(key))}
-                className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle transition-colors hover:text-ink data-[on=1]:border-accent data-[on=1]:text-accent-ink"
+                data-active={active ? "1" : "0"}
+                onClick={() => {
+                  if (on) return void commit(key, null); // a set chip → clear that control
+                  setEditing((cur) => (cur === key ? null : key)); // toggle this chip's editor
+                  setDraft("");
+                }}
+                className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle transition-colors hover:text-ink data-[active=1]:border-accent data-[active=1]:bg-accent-soft data-[active=1]:text-accent-ink"
               >
                 <Icon name={meta.icon} size={12} />
-                {on ? `${meta.label} · set` : `+ ${meta.label}`}
+                {on ? `${meta.label} · set` : editing === key ? meta.label : `+ ${meta.label}`}
               </button>
             </span>
           );
