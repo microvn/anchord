@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ViewerAnnotation, AnnotationComment } from "@/features/viewer/services/client";
 import { Icon } from "@/components/icon";
 import { labelDisplay } from "@/features/viewer/lib/label-presets";
+import { REDLINE_ROOT_BODY } from "@/features/viewer/hooks/use-compose";
 
 // ThreadCard (S-003): one annotation rendered as a rail thread — QuoteRef · avatar · author ·
 // time · body · flat ReplyList · Resolved badge. Styled 1:1 with Anchord-Design viewer.css
@@ -262,6 +263,15 @@ export function ThreadCard({
   // Looked up from the SHARED preset set — an unknown id renders nothing (the server validates ∈
   // preset set, AS-014; this is defence-in-depth so a forged id never leaks a raw string).
   const labelPreset = labelDisplay(annotation.label);
+  // The root comment body is AUTO-PREFILLED from the type/label text (C-003): a Like/Label body =
+  // the preset display text, a redline body = the redline default. The label line (icon + preset
+  // text) and the DELETE badge ALREADY convey that, so rendering the identical body again is just
+  // noise ("Out of scope" chip + "Out of scope" body). Suppress the body when it's the unedited
+  // boilerplate; show it only when the author actually wrote something (a real note, or a comment).
+  const bodyIsBoilerplate =
+    Boolean(root) &&
+    ((labelPreset != null && root!.body.trim() === labelPreset.text) ||
+      (annotation.type === "suggestion" && root!.body.trim() === REDLINE_ROOT_BODY));
   const sugStatus = annotation.suggestionStatus;
   const isStale = isRedline && sugStatus === "stale";
   const isDecided = sugStatus === "accepted" || sugStatus === "rejected";
@@ -422,8 +432,11 @@ export function ThreadCard({
       {root && (
         <>
           <CommentHead c={root} />
-          {/* .cmt-body: t-small 12.5px / 1.5, 6px above. */}
-          <div className="mt-[6px] text-[12.5px] leading-[1.5] text-ink">{root.body}</div>
+          {/* .cmt-body: t-small 12.5px / 1.5, 6px above. Suppressed when it's the auto-prefilled
+              boilerplate (the label line / DELETE badge already says it) — shown only for a real note. */}
+          {!bodyIsBoilerplate && (
+            <div className="mt-[6px] text-[12.5px] leading-[1.5] text-ink">{root.body}</div>
+          )}
         </>
       )}
 

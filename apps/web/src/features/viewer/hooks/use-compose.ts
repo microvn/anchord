@@ -58,7 +58,7 @@ export const LIKE_BODY = "Looks good";
 // S-002 (C-003): a redline has no composer, but every annotation needs a root comment and the
 // backend rejects an empty body, so the redline's root comment carries this concise default
 // (the strike conveys the deletion; this is just the thread's authored anchor). S3 guard.
-const REDLINE_ROOT_BODY = "Suggested deletion";
+export const REDLINE_ROOT_BODY = "Suggested deletion";
 
 export interface ComposeApi {
   /** popover position when a valid selection is live (else null → no popover). `centered` means
