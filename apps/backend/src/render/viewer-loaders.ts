@@ -1,8 +1,13 @@
 // render-publish S-002/S-003/S-004 — the access-gated doc viewer loaders.
 //
-// These back the /d/:slug and /v/:id routes (app.ts). Both are ACCESS-GATED: a missing
-// doc OR one the caller cannot view BOTH return null, so the route 404s and never leaks
-// an out-of-access doc (existence-hiding — sharing C-003 / api-core C-006).
+// These back the doc-scoped read (createLoadViewerDoc) and the /v/:id content route
+// (createLoadContent, app.ts). Both are ACCESS-GATED: a missing doc OR one the caller
+// cannot view BOTH return null, so the route 404s and never leaks an out-of-access doc
+// (existence-hiding — sharing C-003 / api-core C-006).
+//
+// doc-access-routing S-006: the bare server-rendered /d/:slug loader (createLoadViewer)
+// was removed — the share link opens the in-app SPA viewer. /v/:id (content surface) and
+// createLoadViewerDoc (the doc-scoped read) stay.
 //
 // doc-access-routing S-001: the gate is now the SINGLE authoritative `resolveAccess`
 // (sharing/resolve-access.ts). It folds owner + invited + workspace-when-in-workspace +
@@ -57,44 +62,6 @@ export async function canViewVisible(
   return canView;
 }
 
-/** Build the access-gated /d/:slug loader. */
-export function createLoadViewer(
-  deps: ViewerLoaderDeps,
-): (slug: string, viewer: Viewer) => Promise<ViewerDoc | null> {
-  return async (slug, viewer) => {
-    const [doc] = await deps.db
-      .select({
-        id: docs.id,
-        slug: docs.slug,
-        title: docs.title,
-        kind: docs.kind,
-        generalAccess: docs.generalAccess,
-      })
-      .from(docs)
-      .where(eq(docs.slug, slug))
-      .limit(1);
-    if (!doc) return null;
-    if (!(await canViewVisible(deps, doc.id, doc.generalAccess, viewer))) return null;
-
-    // CURRENT version = highest `version` row (mirrors doc-move-repo.currentVersion / search).
-    const [ver] = await deps.db
-      .select({ id: docVersions.id, content: docVersions.content })
-      .from(docVersions)
-      .where(eq(docVersions.docId, doc.id))
-      .orderBy(desc(docVersions.version))
-      .limit(1);
-    if (!ver) return null; // a doc with no published version has nothing to render
-
-    return {
-      versionId: ver.id,
-      slug: doc.slug,
-      title: doc.title,
-      kind: doc.kind,
-      content: ver.content,
-    };
-  };
-}
-
 /**
  * The doc payload the in-app React viewer (S-005, direction B) loads by slug.
  * Carries the metadata (title, kind, current version number, status, generalAccess)
@@ -139,8 +106,8 @@ export interface ViewerDocPayload {
 
 /**
  * Build the access-gated S-005 loader: doc-by-slug → meta + current-version content,
- * for the in-app React viewer. Same two-layer existence-hiding gate as createLoadViewer
- * (a missing doc OR one the caller cannot view BOTH return null → the route 404s, AS-018).
+ * for the in-app React viewer. Two-layer existence-hiding gate (a missing doc OR one the
+ * caller cannot view BOTH return null → the route 404s, AS-018).
  */
 export function createLoadViewerDoc(
   deps: ViewerLoaderDeps,
@@ -162,7 +129,7 @@ export function createLoadViewerDoc(
     const access = await deps.resolveAccess(doc.id, viewer);
     if (!access.canView) return null;
 
-    // CURRENT version = highest `version` row (mirrors createLoadViewer / search).
+    // CURRENT version = highest `version` row (mirrors doc-move-repo.currentVersion / search).
     const [ver] = await deps.db
       .select({ id: docVersions.id, version: docVersions.version, content: docVersions.content })
       .from(docVersions)

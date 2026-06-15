@@ -22,10 +22,12 @@ export default defineConfig({
       "/api": { target: "http://localhost:3007", changeOrigin: true },
       "/mcp": { target: "http://localhost:3007", changeOrigin: true },
       // annotation-core-ui S-001 (GAP-003/G5): the HTML/image sandbox iframe uses a relative
-      // src="/v/:id" + the bare /d/:slug server fallback — proxy both to the backend in dev so
-      // the iframe resolves same-origin (matching prod, where the backend serves the app).
+      // src="/v/:id" — proxy it to the backend in dev so the iframe resolves same-origin
+      // (matching prod, where the backend serves the app).
+      //
+      // doc-access-routing S-006: the bare server-rendered /d/:slug was removed, so the /d
+      // proxy is GONE — Vite's default SPA fallback now serves /d/* (the in-app viewer route).
       "/v": { target: "http://localhost:3007", changeOrigin: true },
-      "/d": { target: "http://localhost:3007", changeOrigin: true },
     },
   },
 });

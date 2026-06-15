@@ -28,6 +28,8 @@ import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
 import { createProjectRepo } from "../../src/workspace/repo";
 import { createTenancyRepo, createWorkspaceAccess } from "../../src/workspace/tenancy-repo";
+import { createResolveAccess } from "../../src/sharing/resolve-access";
+import { createResolveDocRole, createIsDocOwner } from "../../src/sharing/resolve-doc-role-repo";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
@@ -103,16 +105,29 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     const auth = makeAuth(h.db);
     const wsAccess = createWorkspaceAccess(h.db);
     const resolveWorkspaceRole = (wsId: string, userId: string) => wsAccess.workspaceRoleOf(wsId, userId);
+    const resolveSession = betterAuthSessionResolver(auth);
+    // doc-access-routing S-006: the bare /d/:slug server page is gone. The surviving
+    // doc-scoped read is GET /api/docs/:slug (docViewer) — gated by the single resolveAccess
+    // over the doc's OWN workspace, anon-capable. Wire it with the REAL access deps so the
+    // "archive doesn't gate the direct link" assertion exercises the production read path.
+    const resolveDocRole = createResolveDocRole(h.db, {
+      isOwner: createIsDocOwner(h.db),
+      isWorkspaceMember: async (docId: string, userId: string) => {
+        const wsId = await wsAccess.workspaceOfDoc(docId);
+        return wsId ? wsAccess.isWorkspaceMember(wsId, userId) : false;
+      },
+    });
+    const resolveAccess = createResolveAccess(h.db, { resolveDocRole });
+    const resolveViewerSession = async (request: Request): Promise<{ userId: string } | null> => {
+      const actor = await resolveSession(request.headers);
+      return actor ? { userId: actor.userId } : null;
+    };
     app = createApp({
       dbCheck: async () => {},
       authHandler: auth.handler,
-      projects: { db: h.db, resolveSession: betterAuthSessionResolver(auth), resolveWorkspaceRole },
-      docs: { db: h.db, resolveSession: betterAuthSessionResolver(auth), resolveWorkspaceRole },
-      loadViewer: async (slug) => {
-        const [d] = await h.db.select().from(docs).where(eq(docs.slug, slug));
-        if (!d) return null;
-        return { versionId: "v", slug: d.slug, title: d.title, kind: d.kind as any, content: "" };
-      },
+      projects: { db: h.db, resolveSession, resolveWorkspaceRole },
+      docs: { db: h.db, resolveSession, resolveWorkspaceRole },
+      docViewer: { resolveViewerSession, loaderDeps: { db: h.db, resolveAccess } },
     });
 
     // workspaces S-001: A signs up → A auto-gets its OWN workspace WA (admin) + default project.
@@ -247,8 +262,10 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     const ids = ((await list.json()) as any).data.projects.map((p: any) => p.id);
     expect(ids).not.toContain(billingId); // hidden from the default list
 
-    // Direct link still works (archive does not gate the doc viewer).
-    const viewer = await app.handle(withCookie(`/d/${sharedDoc!.slug}`, A.cookie));
+    // Direct link still works (archive does not gate the doc read). doc-access-routing S-006:
+    // the bare /d/:slug server page is gone; the doc-scoped read GET /api/docs/:slug is the
+    // surviving surface the in-app viewer loads, so the assertion targets it now.
+    const viewer = await app.handle(withCookie(`/api/docs/${sharedDoc!.slug}`, A.cookie));
     expect(viewer.status).toBe(200);
 
     // Unarchive → it reappears.

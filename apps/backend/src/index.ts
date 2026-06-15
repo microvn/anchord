@@ -12,7 +12,7 @@ import { createResolveAccess } from "./sharing/resolve-access";
 import { createWorkspaceAccess } from "./workspace/tenancy-repo";
 import { eq } from "drizzle-orm";
 import { session as sessionTable } from "./db/schema";
-import { createLoadViewer, createLoadContent } from "./render/viewer-loaders";
+import { createLoadContent } from "./render/viewer-loaders";
 import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport, createEnqueueWorkspaceInvite } from "./auth/mail-transport";
 import { createDocMemberRepo, findUserById } from "./sharing/doc-member-repo";
@@ -190,15 +190,15 @@ const viewerLoaderDeps = {
   // tenancy helper the access resolver above already uses (wsAccess.workspaceOfDoc).
   workspaceOfDoc: (docId: string) => wsAccess.workspaceOfDoc(docId),
 };
-const loadViewer = createLoadViewer(viewerLoaderDeps);
 const loadContent = createLoadContent(viewerLoaderDeps);
 
 const app = createApp({
   dbCheck,
   corsOrigin: cfg.CORS_ORIGIN === "*" ? true : cfg.CORS_ORIGIN.split(","),
   authHandler: auth.handler,
-  // render-publish S-002/S-003/S-004: the access-gated doc viewer + content routes.
-  loadViewer,
+  // doc-access-routing S-006: the bare server-rendered /d/:slug viewer was removed — the
+  // share link opens the in-app SPA viewer. Only /v/:id (the sandbox content surface) is
+  // served here; the doc-scoped read is GET /api/docs/:slug (docViewer below).
   loadContent,
   resolveViewerSession,
   // All data APIs are now path-scoped under /api/w/:workspaceId (workspaces S-006). Each

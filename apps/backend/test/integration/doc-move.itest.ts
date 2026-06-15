@@ -133,11 +133,8 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
         resolveAccess,
       },
       docMove: { db: h.db, resolveSession, resolveWorkspaceRole, resolveDocRole, isWorkspaceAdmin },
-      loadViewer: async (slug) => {
-        const [d] = await h.db.select().from(docs).where(eq(docs.slug, slug));
-        if (!d) return null;
-        return { versionId: "v", slug: d.slug, title: d.title, kind: d.kind as any, content: "" };
-      },
+      // doc-access-routing S-006: the bare /d/:slug server viewer was removed; this suite
+      // never exercised it (move/copy only), so the dead loadViewer stub is dropped.
     });
 
     A = await signUpAndIn(`s4a-${process.pid}@itest.local`, "Alice");

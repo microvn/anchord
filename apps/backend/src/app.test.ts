@@ -2,6 +2,8 @@ import { test, expect } from "bun:test";
 import { createApp } from "./app";
 import type { ViewerDoc } from "./app";
 import type { Viewer } from "./sharing/access";
+import { shareUrl } from "./sharing/share-state";
+import { publishDoc } from "./publish/service";
 
 function get(app: ReturnType<typeof createApp>, path: string) {
   return app.handle(new Request(`http://localhost${path}`));
@@ -49,14 +51,6 @@ test("AS-007 / C-004: app makes no outbound telemetry/analytics call on a normal
 // These prove the WIRING (the injector exists & is unit-tested in annotation/block-id.test.ts;
 // here we prove createApp actually runs it on the /d and /v served content).
 
-function appWithViewer(doc: ViewerDoc | null) {
-  return createApp({
-    dbCheck: async () => {},
-    resolveViewerSession: async () => null, // anon viewer; the fake loaders ignore the gate
-    loadViewer: async (_slug: string, _v: Viewer) => doc,
-  });
-}
-
 function appWithContent(content: string, kind: ViewerDoc["kind"]) {
   return createApp({
     dbCheck: async () => {},
@@ -64,26 +58,6 @@ function appWithContent(content: string, kind: ViewerDoc["kind"]) {
     loadContent: async (_id: string, _v: Viewer) => ({ content, kind }),
   });
 }
-
-test("AS-019 / C-009: /d markdown viewer page carries positional block-{tag}-{n} ids", async () => {
-  // 3 paragraphs + 2 headings (AS-019 data) → each block stamped, per-tag counter.
-  const md = "# Title\n\n## Subtitle\n\nFirst para\n\nSecond para\n\nThird para";
-  const app = appWithViewer({
-    versionId: "v-1",
-    slug: "doc-md",
-    title: "Doc",
-    kind: "markdown",
-    content: md,
-  });
-  const res = await get(app, "/d/doc-md");
-  expect(res.status).toBe(200);
-  const html = await res.text();
-  expect(html).toContain('id="block-h1-1"');
-  expect(html).toContain('id="block-h2-1"');
-  expect(html).toContain('id="block-p-1"');
-  expect(html).toContain('id="block-p-2"');
-  expect(html).toContain('id="block-p-3"');
-});
 
 test("AS-019 / C-009: /v sandbox content carries positional block ids", async () => {
   const app = appWithContent("<h1>Untrusted</h1><p>a</p><p>b</p>", "html");
@@ -138,4 +112,70 @@ test("AS-022 / C-009: empty served content does not crash the route", async () =
   const body = await res.text();
   expect(body).toContain("anchord-bridge"); // bridge injected even for empty content
   expect(body.startsWith("<script")).toBe(true); // nothing before the bridge → content was empty
+});
+
+// doc-access-routing S-006 — the share link opens the app; the bare server page is gone.
+// The link string is unchanged (/d/:slug); the backend no longer serves its own HTML there.
+// It resolves to the in-app SPA viewer (dev: Vite's default fallback once the /d proxy is
+// removed; prod: the static-serving fallback, owned by the self-host spec).
+
+test("AS-027: the copied share link is /d/:slug and the backend no longer serves it", async () => {
+  // The Share box copies shareUrl(slug) — the link the manager opens. It is the /d/:slug
+  // string that now resolves to the in-app viewer, not a bare server page.
+  expect(shareUrl("payment-spec-v2")).toBe("/d/payment-spec-v2");
+  expect(shareUrl("a b/c")).toBe("/d/a%20b%2Fc"); // special chars stay encoded
+
+  // The backend has NO /d/:slug handler anymore — the server-render path is GONE. Even if a
+  // caller passes the OLD loadViewer dep (cast through any — the field was removed from
+  // AppDeps), createApp must NOT mount a /d server page: the SPA fallback owns the route.
+  const app = createApp({
+    dbCheck: async () => {},
+    resolveViewerSession: async () => null,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    loadViewer: async (_slug: string, _v: Viewer) => ({
+      versionId: "v-1",
+      slug: "payment-spec-v2",
+      title: "Doc",
+      kind: "markdown" as const,
+      content: "# secret\n\nbody",
+    }),
+  } as unknown as Parameters<typeof createApp>[0]);
+  const res = await app.handle(new Request("http://localhost/d/payment-spec-v2"));
+  expect(res.status).toBe(404); // no server handler — RED while /d still served the shell
+  const body = await res.text();
+  expect(body).not.toContain("<!doctype html"); // no server-rendered viewer shell
+  expect(body).not.toContain('<main class="doc-md">'); // no markdown server-render
+});
+
+test("AS-028: publish returns a /d/:slug app-viewer link and no /d server handler exists", async () => {
+  // An author publishes; the returned link opens the in-app viewer (the /d/:slug string).
+  const bytes = new TextEncoder().encode("<h1>Spec</h1>");
+  const res = await publishDoc(
+    { bytes, filename: "spec.html", editedTitle: "Release Spec" },
+    {
+      repo: { createDocWithV1: async () => ({ id: "doc-1" }) },
+      slugGen: () => "release-spec",
+    },
+  );
+  expect(res.url).toBe("/d/release-spec");
+
+  // The backend exposes NO /d handler — even given the OLD loadViewer dep — while the /v
+  // iframe content surface is preserved. Proves the dead viewerPage/server-shell path is gone.
+  const app = createApp({
+    dbCheck: async () => {},
+    resolveViewerSession: async () => null,
+    loadViewer: async (_slug: string, _v: Viewer) => ({
+      versionId: "v-1",
+      slug: "release-spec",
+      title: "Doc",
+      kind: "html" as const,
+      content: "<h1>x</h1>",
+    }),
+    loadContent: async (_id: string, _v: Viewer) => ({ content: "<h1>x</h1>", kind: "html" as const }),
+  } as unknown as Parameters<typeof createApp>[0]);
+  const dRes = await app.handle(new Request(`http://localhost${res.url}`));
+  expect(dRes.status).toBe(404); // no backend /d handler (RED while /d served the shell)
+  // …while /v (the iframe content surface) is preserved.
+  const vRes = await app.handle(new Request("http://localhost/v/v-1"));
+  expect(vRes.status).toBe(200);
 });

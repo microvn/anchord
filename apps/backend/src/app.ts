@@ -1,7 +1,6 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { contentHeaders, sandboxIframe } from "./render/sandbox";
-import { renderMarkdown } from "./render/markdown";
+import { contentHeaders } from "./render/sandbox";
 import { injectBlockIds } from "./annotation/block-id";
 import { injectBridge, generateNonce } from "./annotation/sandbox-bridge";
 import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
@@ -35,18 +34,14 @@ export type AppDeps = {
   dbCheck: () => Promise<void>;
   corsOrigin?: string | string[] | boolean;
   /**
-   * Look up the current published version of a doc by slug for the /d/:slug viewer,
-   * ACCESS-GATED for `viewer` (render-publish §API contract / sharing C-003). The
-   * loader MUST gate before returning: a missing doc OR a doc `viewer` cannot see
-   * BOTH resolve to `null` (existence-hiding — api-core C-006), so the route 404s and
-   * never leaks an out-of-access doc. `viewer` is the SERVER-resolved caller
-   * (anon when there is no session cookie).
-   */
-  loadViewer?: (slug: string, viewer: Viewer) => Promise<ViewerDoc | null>;
-  /**
    * Look up a version's raw content by version id for the /v/:id content route,
-   * ACCESS-GATED the SAME way (the version's doc must be viewable by `viewer`).
+   * ACCESS-GATED (the version's doc must be viewable by `viewer`).
    * Missing version OR no access → `null` → the route 404s (existence-hiding).
+   *
+   * doc-access-routing S-006: the bare server-rendered `/d/:slug` viewer (and its
+   * `loadViewer` loader + `viewerPage` shell) were removed — the share link now opens
+   * the in-app SPA viewer, served by the SPA fallback. `/v/:id` stays as the iframe
+   * content surface.
    */
   loadContent?: (
     versionId: string,
@@ -54,10 +49,10 @@ export type AppDeps = {
   ) => Promise<{ content: string; kind: ViewerDoc["kind"] } | null>;
   /**
    * Resolve the viewer's session from the raw Request (the better-auth cookie) for the
-   * access-gated viewer routes (/d, /v). Returns `{ userId }` for a logged-in caller, or
-   * `null` for an anonymous one (no cookie). Injected so the routes gate without a real
-   * better-auth instance in tests. Required for loadViewer/loadContent gating; when
-   * absent the routes treat every caller as anonymous.
+   * access-gated content route (/v). Returns `{ userId }` for a logged-in caller, or
+   * `null` for an anonymous one (no cookie). Injected so the route gates without a real
+   * better-auth instance in tests. Required for loadContent gating; when absent the route
+   * treats every caller as anonymous.
    */
   resolveViewerSession?: (request: Request) => Promise<{ userId: string } | null>;
   /** better-auth request handler (auth S-001); mounted at /api/auth/*. */
@@ -178,23 +173,6 @@ export type AppDeps = {
    */
   authProviders?: AuthProvidersRoutesDeps;
 };
-
-const esc = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-/** Viewer shell: HTML/image render in a sandboxed iframe; Markdown renders in-app (sanitized). */
-function viewerPage(doc: ViewerDoc): string {
-  let main: string;
-  if (doc.kind === "markdown") {
-    // S-006/C-009: stamp positional block-ids on the served (rendered+sanitized) HTML
-    // so annotations can anchor to a block. Best-effort, never throws (AS-019..022).
-    main = `<main class="doc-md">${injectBlockIds(renderMarkdown(doc.content))}</main>`;
-  } else {
-    // html + image (incl. svg) → sandboxed iframe (opaque origin, scripts run isolated)
-    main = sandboxIframe(`/v/${doc.versionId}`);
-  }
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(doc.title)}</title></head><body>${main}</body></html>`;
-}
 
 /**
  * Build the anchord HTTP app. Dependencies are injected so the app is testable
@@ -333,30 +311,18 @@ export function createApp(deps: AppDeps) {
     app.use(authProvidersRoutes(deps.authProviders));
   }
 
-  // Resolve the caller for the access-gated viewer routes: the better-auth session
-  // cookie → a `Viewer`. No cookie / no resolver → anon. The loaders gate on this, so a
-  // restricted/anyone_in_workspace doc is never rendered to someone who can't see it.
+  // Resolve the caller for the access-gated content route: the better-auth session
+  // cookie → a `Viewer`. No cookie / no resolver → anon. The loader gates on this, so a
+  // restricted/anyone_in_workspace doc's content is never served to someone who can't see it.
+  //
+  // doc-access-routing S-006: the bare server-rendered `/d/:slug` viewer and its
+  // `viewerPage`/`loadViewer` path are GONE — the share link opens the in-app SPA viewer
+  // (served by the SPA fallback). Only `/v/:id` (the iframe content surface) remains here.
   const resolveViewer = async (request: Request): Promise<Viewer> => {
     if (!deps.resolveViewerSession) return { kind: "anon" };
     const session = await deps.resolveViewerSession(request);
     return session ? { kind: "user", userId: session.userId } : { kind: "anon" };
   };
-
-  // /d/:slug — viewer shell (trusted app origin). ACCESS-GATED: a missing doc OR one the
-  // caller cannot view both come back null → 404 (existence-hiding, sharing C-003).
-  if (deps.loadViewer) {
-    // Returns a RAW Response so the scoped apiEnvelope onAfterHandle (which propagates to
-    // this parent app from the enveloped /api groups) passes it through untouched — the
-    // viewer serves HTML, not the JSON envelope (api-core C-009: /d is envelope-exempt).
-    app.get("/d/:slug", async ({ params, request }) => {
-      const viewer = await resolveViewer(request);
-      const doc = await deps.loadViewer!(params.slug, viewer);
-      if (!doc) return new Response("Not found", { status: 404 });
-      return new Response(viewerPage(doc), {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    });
-  }
 
   // /v/:id — untrusted content, served sandboxed (opaque origin via CSP), scripts run
   // isolated. ACCESS-GATED the same way: the version's doc must be viewable by the caller.
