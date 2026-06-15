@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test";
+import { describe, it, expect, mock, beforeEach, afterAll } from "bun:test";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
@@ -53,7 +53,10 @@ const annoResponse = {
   },
   error: null,
 };
-const fetchViewerDoc = mock(async () => docResponse);
+// `response` is mutable so the kind-conditional layout tests below (C-006) can swap in an
+// html / image doc; it defaults to the markdown docResponse the existing AS-014 tests rely on.
+let response: unknown = docResponse;
+const fetchViewerDoc = mock(async () => response);
 const listAnnotations = mock(async () => annoResponse);
 mock.module("@/features/viewer/services/client", () => ({
   fetchViewerDoc,
@@ -86,8 +89,31 @@ function App() {
 
 beforeEach(() => {
   setMode({ drawerMode: false, tocDrawer: false });
+  response = docResponse; // default: the markdown doc the AS-014 tests use
   fetchViewerDoc.mockClear();
   listAnnotations.mockClear();
+});
+
+// bun's mock.module is GLOBAL + persists across files, and this file's use-breakpoint mock reads a
+// shared `mode` let. Files loaded AFTER this one that DON'T mock the hook (viewer-screen,
+// annotations-rail, sandbox-bridge, reply-wiring) inherit whatever `mode` the LAST test here left.
+// The pre-existing suite passed because the last test left DESKTOP (inline panes) — the benign
+// state those files render against. Our added AS-014 tests can leave drawer mode last, which hides
+// the inline rail/toc in the inheriting files (findBy timeouts). Pin `mode` back to desktop after
+// this file so the leaked value stays the benign one the downstream files expect.
+afterAll(() => {
+  setMode({ drawerMode: false, tocDrawer: false });
+});
+
+// Kind-conditional doc payloads for the C-006 layout tests (html / image). Same envelope shape.
+const okEnv = (body: unknown) => ({ data: { success: true, data: body }, error: null });
+const htmlDoc = okEnv({
+  doc: { title: "My HTML doc", kind: "html", version: 2, status: "live", generalAccess: "restricted" },
+  content: { contentUrl: "/v/ver-42" },
+});
+const imageDoc = okEnv({
+  doc: { title: "My image", kind: "image", version: 1, status: "live", generalAccess: "restricted" },
+  content: { contentUrl: "/v/img-1" },
 });
 
 describe("S-006 — viewer responsive mode mapping (AS-014, pure)", () => {
@@ -165,5 +191,109 @@ describe("S-006 — narrow-screen shell (AS-014, drawer mode)", () => {
     await screen.findByTestId("markdown-view");
     expect(screen.getByTestId("viewer-rail-slot")).toBeInTheDocument();
     expect(screen.queryByTestId("comment-fab")).toBeNull();
+  });
+});
+
+// annotation-core-ui — kind-conditional viewer layout (C-006, 2026-06-14).
+//   Markdown → 3-pane: collapsible outline · content (prose width) · annotations rail.
+//   HTML / image → 2-pane: full-width content · annotations rail; NO outline pane,
+//     NO outline-toggle in the top bar (outline is derived from headings, which only the
+//     app-origin Markdown render exposes — GAP-004).
+//
+// AS-001 markdown desktop → the outline (toc slot) IS present alongside content + rail.
+// AS-002 html → 2-pane: no toc slot, no Outline toggle; the iframe content is NOT width-clamped.
+// AS-003 image → 2-pane: no toc slot, no Outline toggle; the image content is NOT width-clamped.
+// AS-018 markdown → collapsing the outline removes the toc slot (content reflows wider); toggling restores it.
+// AS-014 html in drawer mode → still no Outline toggle and no toc drawer (html has no outline at any width).
+// Pixel widths are [→MANUAL] + Playwright; the testable proxy for "full-width" is the absence of the
+// prototype's max-w-[760px] reading clamp.
+
+describe("kind-conditional layout (C-006)", () => {
+  it("AS-001: a Markdown doc on desktop renders 3-pane — outline + content + annotations", async () => {
+    response = docResponse;
+    render(<App />);
+
+    await screen.findByTestId("markdown-view");
+    expect(screen.getByTestId("viewer-toc-slot")).toBeInTheDocument();
+    expect(screen.getByTestId("viewer-doc-pane")).toBeInTheDocument();
+    expect(screen.getByTestId("viewer-rail-slot")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Outline" })).toBeInTheDocument();
+  });
+
+  it("AS-002 / C-006: an HTML doc renders 2-pane — no outline pane, no outline-toggle, full-width content", async () => {
+    response = htmlDoc;
+    render(<App />);
+
+    const frame = await screen.findByTestId("html-sandbox-frame");
+    expect(screen.queryByTestId("viewer-toc-slot")).toBeNull();
+    expect(screen.getByTestId("viewer-rail-slot")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Outline" })).toBeNull();
+    expect(frame.parentElement?.className ?? "").not.toContain("max-w-[760px]");
+  });
+
+  it("AS-003 / C-006: an image doc renders 2-pane — no outline pane, no outline-toggle, full-width content", async () => {
+    response = imageDoc;
+    render(<App />);
+
+    const viewer = await screen.findByTestId("image-viewer");
+    expect(screen.queryByTestId("viewer-toc-slot")).toBeNull();
+    expect(screen.getByTestId("viewer-rail-slot")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Outline" })).toBeNull();
+    expect(viewer.className).not.toContain("max-w-[760px]");
+  });
+});
+
+describe("collapse the outline on Markdown (AS-018)", () => {
+  it("AS-018: collapsing the outline removes the outline pane; toggling again restores it", async () => {
+    response = docResponse;
+    render(<App />);
+
+    await screen.findByTestId("markdown-view");
+    expect(screen.getByTestId("viewer-toc-slot")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Outline" }));
+    expect(screen.queryByTestId("viewer-toc-slot")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Outline" }));
+    expect(screen.getByTestId("viewer-toc-slot")).toBeInTheDocument();
+  });
+
+  it("AS-018: an in-pane collapse control (next to the outline search) also collapses the outline; the top-bar toggle re-expands", async () => {
+    response = docResponse;
+    render(<App />);
+
+    await screen.findByTestId("markdown-view");
+    expect(screen.getByTestId("viewer-toc-slot")).toBeInTheDocument();
+
+    // Collapse from INSIDE the pane (the chevron beside the "Filter outline…" search).
+    await userEvent.click(screen.getByRole("button", { name: "Collapse outline" }));
+    expect(screen.queryByTestId("viewer-toc-slot")).toBeNull();
+
+    // The persistent top-bar outline-toggle brings it back (the in-pane control is gone with the pane).
+    await userEvent.click(screen.getByRole("button", { name: "Outline" }));
+    expect(screen.getByTestId("viewer-toc-slot")).toBeInTheDocument();
+  });
+});
+
+describe("responsive per kind (AS-014)", () => {
+  it("AS-014: an HTML doc in drawer mode has no outline-toggle and no TOC drawer (html has no outline)", async () => {
+    setMode({ drawerMode: true, tocDrawer: true });
+    response = htmlDoc;
+    render(<App />);
+
+    await screen.findByTestId("html-sandbox-frame");
+    expect(screen.queryByRole("button", { name: "Outline" })).toBeNull();
+    expect(screen.queryByTestId("viewer-toc-drawer")).toBeNull();
+    expect(screen.getByTestId("comment-fab")).toBeInTheDocument();
+  });
+
+  it("AS-014: a Markdown doc in drawer mode still offers the outline as a drawer", async () => {
+    setMode({ drawerMode: true, tocDrawer: true });
+    response = docResponse;
+    render(<App />);
+
+    await screen.findByTestId("markdown-view");
+    await userEvent.click(screen.getByRole("button", { name: "Outline" }));
+    expect(await screen.findByTestId("viewer-toc-drawer")).toBeInTheDocument();
   });
 });

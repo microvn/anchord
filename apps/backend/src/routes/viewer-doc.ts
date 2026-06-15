@@ -47,7 +47,14 @@ export interface ViewerDocRoutesDeps {
 
 /** Shape the loaded payload into the API's `{ doc, content }` (C-008: markdown HTML vs sandbox ref). */
 function toResponse(payload: ViewerDocPayload): {
-  doc: { title: string; kind: ViewerDocPayload["kind"]; version: number; status: "published"; generalAccess: ViewerDocPayload["generalAccess"] };
+  doc: {
+    title: string;
+    kind: ViewerDocPayload["kind"];
+    version: number;
+    status: "published";
+    generalAccess: ViewerDocPayload["generalAccess"];
+    effectiveRole?: ViewerDocPayload["effectiveRole"];
+  };
   content: string | { contentUrl: string };
 } {
   const doc = {
@@ -56,6 +63,9 @@ function toResponse(payload: ViewerDocPayload): {
     version: payload.version,
     status: payload.status,
     generalAccess: payload.generalAccess,
+    // S-001/C-002: the consumer (ShareDialog gate) reads this to show the Share affordance for an
+    // owner/editor. Omit when null (anon) so the optional FE field stays absent rather than null.
+    ...(payload.effectiveRole ? { effectiveRole: payload.effectiveRole } : {}),
   };
   if (payload.kind === "markdown") {
     // C-002/C-008: markdown is rendered in the APP origin → MUST be sanitized (dompurify).

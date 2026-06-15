@@ -105,6 +105,14 @@ export interface ViewerDocPayload {
    */
   status: "published";
   generalAccess: GeneralAccessLevel;
+  /**
+   * The logged-in caller's effective role on this doc (owner/editor/commenter/viewer), resolved
+   * via the authoritative `resolveDocRole` (highest-wins over membership + invite + link + owner).
+   * `null` for an anon caller (no session userId). The in-app viewer gates the Share affordance on
+   * this (sharing-permissions-ui S-001 / C-002): owner/editor → Share button; viewer/commenter →
+   * none. Without it the owner's Share button never renders (the consumer's linked-field).
+   */
+  effectiveRole: Role | null;
   /** Raw current-version content (markdown text / html / image url) — the route renders it. */
   content: string;
 }
@@ -140,6 +148,11 @@ export function createLoadViewerDoc(
       .limit(1);
     if (!ver) return null; // a doc with no published version has nothing to render
 
+    // The caller's effective role (for the viewer's Share gate, S-001/C-002). Anon → null (no
+    // userId). The gate already proved access above; this resolves WHICH role for the UI.
+    const effectiveRole =
+      viewer.kind === "user" ? await deps.resolveDocRole(doc.id, viewer.userId) : null;
+
     return {
       versionId: ver.id,
       title: doc.title,
@@ -147,6 +160,7 @@ export function createLoadViewerDoc(
       version: ver.version,
       status: "published",
       generalAccess: doc.generalAccess,
+      effectiveRole,
       content: ver.content,
     };
   };

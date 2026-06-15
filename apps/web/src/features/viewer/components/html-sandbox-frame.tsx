@@ -1,5 +1,4 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import { Icon } from "@/components/icon";
 import { connectBridge, type BridgeAnchor, type BridgeConnection } from "@/features/viewer/lib/bridge";
 
 // HtmlSandboxFrame (S-001/AS-002, C-001/C-008; S-002/AS-004/AS-005, C-002/C-009): renders a
@@ -49,11 +48,23 @@ export const HtmlSandboxFrame = forwardRef<
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe || !onSelection) return;
+    // The bridge relays a selection rect in the IFRAME's own viewport coordinates (its
+    // getBoundingClientRect, relative to the iframe's top-left, after the iframe's internal scroll).
+    // The parent positions the popover in PAGE/window coordinates, so add the iframe's current
+    // offset (its own getBoundingClientRect) to translate iframe-local → page coords. Without this
+    // the popover lands at the wrong place and jumps as the iframe geometry / inner scroll changes.
+    const toPageRect = (
+      rect: { x: number; y: number; width: number; height: number },
+    ): { x: number; y: number; width: number; height: number } => {
+      const box = iframe.getBoundingClientRect();
+      return { x: rect.x + box.left, y: rect.y + box.top, width: rect.width, height: rect.height };
+    };
     const conn = connectBridge(iframe, {
-      onSelection: (anchor, rect) => handlersRef.current.onSelection?.(anchor, rect),
+      onSelection: (anchor, rect) =>
+        handlersRef.current.onSelection?.(anchor, rect ? toPageRect(rect) : rect),
       onClearSelection: () => handlersRef.current.onClearSelection?.(),
       onSelectionRect: (rect) => {
-        if (rect) handlersRef.current.onSelectionRect?.(rect);
+        if (rect) handlersRef.current.onSelectionRect?.(toPageRect(rect));
         else handlersRef.current.onClearSelection?.();
       },
     });
@@ -76,25 +87,21 @@ export const HtmlSandboxFrame = forwardRef<
   );
 
   return (
-    <div className="px-5 pb-[120px] pt-[14px]">
-      <div className="mx-auto max-w-[760px]">
-        <div className="mb-3 flex items-center gap-2 text-xs text-subtle">
-          <Icon name="shield" size={14} />
-          <span className="font-mono uppercase tracking-[0.06em]">
-            Isolated sandbox · opaque origin · author styles preserved
-          </span>
-        </div>
-        <iframe
-          ref={iframeRef}
-          data-testid="html-sandbox-frame"
-          className="h-[560px] w-full rounded-md border border-line bg-white"
-          sandbox="allow-scripts"
-          // C-009: src is set ONCE from the doc's /v/:id contentUrl and is NEVER reassigned from
-          // bridge/message data — the bridge only reads selections, it never drives navigation.
-          src={contentUrl}
-          title="doc"
-        />
-      </div>
-    </div>
+    // C-006: an HTML doc is FULL-BLEED — the sandbox iframe fills the doc pane edge-to-edge (no side
+    // padding/margin) and fills the full available height (the doc pane is a flex column; the frame
+    // is flex-1). No chrome around it; the outline pane is dropped for html (2-pane layout).
+    // The isolation is enforced by `sandbox="allow-scripts"` WITHOUT allow-same-origin (opaque
+    // origin) — the untrusted doc can't reach the app's cookies/DOM; the parent talks to it only
+    // over the postMessage bridge, never by sharing an origin.
+    <iframe
+      ref={iframeRef}
+      data-testid="html-sandbox-frame"
+      className="h-full min-h-0 w-full flex-1 border-0 bg-white"
+      sandbox="allow-scripts"
+      // C-009: src is set ONCE from the doc's /v/:id contentUrl and is NEVER reassigned from
+      // bridge/message data — the bridge only reads selections, it never drives navigation.
+      src={contentUrl}
+      title="doc"
+    />
   );
 });

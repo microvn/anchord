@@ -133,7 +133,7 @@ export function Composer({
               type="button"
               data-testid="guest-rename"
               onClick={() => setGuestName(nextGuestName(guestName))}
-              className="flex-none text-[11px] font-semibold text-accent hover:text-accent-strong"
+              className="flex-none cursor-pointer text-[11px] font-semibold text-accent hover:text-accent-strong"
             >
               Rename
             </button>
@@ -173,7 +173,7 @@ export function Composer({
           aria-label="Cancel"
           onClick={onCancel}
           onPointerDown={(e) => e.stopPropagation()}
-          className="flex-none rounded-[5px] p-0.5 text-subtle hover:bg-sunken hover:text-ink"
+          className="flex-none cursor-pointer rounded-[5px] p-0.5 text-subtle hover:bg-sunken hover:text-ink"
         >
           <Icon name="x" size={13} />
         </button>
@@ -213,7 +213,7 @@ export function Composer({
               onSend(body.trim());
             }
           }}
-          className="inline-flex items-center rounded-[6px] bg-accent px-3 py-1 text-[12.5px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex cursor-pointer items-center rounded-[6px] bg-accent px-3 py-1 text-[12.5px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending ? "Sending…" : "Send"}
         </button>

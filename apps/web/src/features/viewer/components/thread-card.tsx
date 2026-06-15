@@ -124,31 +124,22 @@ function CommentHead({
   );
 }
 
-// ReplyComposer: the inline reply affordance — a "Reply" link that opens a plaintext textarea +
-// Send. Mirrors the S-001 Composer's plaintext-only / disabled-until-typed rules at reply scale.
-// All controls stopPropagation so they don't bubble to the card's focus onClick.
-function ReplyComposer({ onReply }: { onReply: (body: string) => unknown | Promise<unknown> }) {
-  const [open, setOpen] = useState(false);
+// ReplyComposer: the OPEN inline reply form — a plaintext textarea + Cancel/Send. The collapsed
+// "Reply" trigger lives in ThreadCard's action row (so the parent can drop the Resolve button out of
+// the row while composing — the composer takes the full width, F3). Mirrors the S-001 Composer's
+// plaintext-only / disabled-until-typed rules at reply scale. All controls stopPropagation so they
+// don't bubble to the card's focus onClick. Tap targets are ≥40px / ≥44px on mobile (DESIGN.md).
+function ReplyComposer({
+  onReply,
+  onClose,
+}: {
+  onReply: (body: string) => unknown | Promise<unknown>;
+  onClose: () => void;
+}) {
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const canSend = body.trim().length > 0 && !sending;
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        data-testid="reply-open"
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen(true);
-        }}
-        className="rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-muted hover:bg-elev hover:text-ink"
-      >
-        Reply
-      </button>
-    );
-  }
 
   const send = () => {
     if (!canSend) return;
@@ -160,7 +151,7 @@ function ReplyComposer({ onReply }: { onReply: (body: string) => unknown | Promi
         // AS-006: on success the reply shows flat — the consumer's refetch reconciles the real row.
         // Close + clear so the affordance returns to its resting state.
         setBody("");
-        setOpen(false);
+        onClose();
       } finally {
         setSending(false);
       }
@@ -168,7 +159,7 @@ function ReplyComposer({ onReply }: { onReply: (body: string) => unknown | Promi
   };
 
   return (
-    <div data-testid="reply-composer" className="w-full" onClick={stop}>
+    <div data-testid="reply-composer" className="mt-[9px] w-full" onClick={stop}>
       <textarea
         data-testid="reply-input"
         aria-label="Reply"
@@ -185,10 +176,10 @@ function ReplyComposer({ onReply }: { onReply: (body: string) => unknown | Promi
           data-testid="reply-cancel"
           onClick={(e) => {
             e.stopPropagation();
-            setOpen(false);
             setBody("");
+            onClose();
           }}
-          className="rounded-[6px] px-2 py-1 text-[12px] text-subtle hover:text-ink"
+          className="cursor-pointer rounded-[6px] px-2 py-1 text-[12px] text-subtle hover:text-ink"
         >
           Cancel
         </button>
@@ -200,7 +191,7 @@ function ReplyComposer({ onReply }: { onReply: (body: string) => unknown | Promi
             e.stopPropagation();
             send();
           }}
-          className="inline-flex items-center rounded-[6px] bg-accent px-2.5 py-1 text-[12px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex cursor-pointer items-center rounded-[6px] bg-accent px-2.5 py-1 text-[12px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           {sending ? "Sending…" : "Send"}
         </button>
@@ -295,6 +286,10 @@ export function ThreadCard({
   // immediately, then call the consumer's setResolution. On a refused/failed write (resolves false)
   // roll the optimistic flip back — the toggle must reflect the SERVER result, never a forged one.
   const [toggling, setToggling] = useState(false);
+  // F3: the reply composer's open state lives on the CARD (not inside ReplyComposer) so the action
+  // row can drop the Resolve button while composing — the composer then takes the full width instead
+  // of sharing the row with Resolve (which used to pin awkwardly to the textarea's top-right corner).
+  const [replyOpen, setReplyOpen] = useState(false);
   const handleResolveToggle = onResolve
     ? (e: { stopPropagation: () => void }) => {
         e.stopPropagation(); // never trigger the card's focus onClick
@@ -399,22 +394,43 @@ export function ThreadCard({
 
       {/* Comment-capable actions row (C-004/C-006): Reply + Resolve/Reopen. Both appear only when
           their consumer callback is supplied (comment permission or higher) — a viewer-only role
-          gets neither (read-only rail). The Resolve toggle is NOT author-gated (AS-008). */}
-      {(handleReply || handleResolveToggle) && (
-        <div className="mt-[9px] flex items-start gap-1.5">
-          {handleReply && <ReplyComposer onReply={handleReply} />}
-          {handleResolveToggle && (
-            <button
-              type="button"
-              data-testid="resolve-toggle"
-              disabled={toggling}
-              onClick={handleResolveToggle}
-              className="rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:opacity-50"
-            >
-              {resolved ? "Reopen" : "Resolve"}
-            </button>
-          )}
-        </div>
+          gets neither (read-only rail). The Resolve toggle is NOT author-gated (AS-008).
+          F3 (matches the prototype's `replying ? composer : thread-actions`): while the reply composer
+          is open it OWNS the row full-width (Resolve hidden); at rest the two actions sit inline.
+          Styling is the prototype's `.tlink` — a borderless 11.5px text link (Reply muted, Resolve
+          green), NOT a sized button. F2: the React port dropped `.tlink`'s cursor:pointer; restore it
+          (the one genuine divergence from canon). */}
+      {replyOpen && handleReply ? (
+        <ReplyComposer onReply={handleReply} onClose={() => setReplyOpen(false)} />
+      ) : (
+        (handleReply || handleResolveToggle) && (
+          <div className="mt-[9px] flex items-center gap-1.5">
+            {handleReply && (
+              <button
+                type="button"
+                data-testid="reply-open"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setReplyOpen(true);
+                }}
+                className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-muted hover:bg-elev hover:text-ink"
+              >
+                Reply
+              </button>
+            )}
+            {handleResolveToggle && (
+              <button
+                type="button"
+                data-testid="resolve-toggle"
+                disabled={toggling}
+                onClick={handleResolveToggle}
+                className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {resolved ? "Reopen" : "Resolve"}
+              </button>
+            )}
+          </div>
+        )
       )}
     </div>
   );

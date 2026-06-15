@@ -45,10 +45,9 @@ import {
 // not-found / no-access state, NEVER an empty viewer or a "0 comments" shell that would leak the
 // doc's existence. Not-found and no-access are deliberately the same surface.
 
-// MƯỢT TASK 1/3: the iframe bridge sends a selection rect as {x,y,width,height} (iframe-local
-// viewport coords). placePopover wants a RectLike {top,bottom,left,right} — convert here. The
-// popover is position:absolute over the viewer body, so iframe-local top/left is a close-enough
-// anchor for v0 (pixel-exact cross-frame offset is [→MANUAL]/Playwright).
+// MƯỢT TASK 1/3: the iframe bridge sends a selection rect as {x,y,width,height}. HtmlSandboxFrame
+// has already translated it from iframe-local to PAGE coords (it adds the iframe's own offset), so
+// this is a pure shape conversion to the RectLike {top,bottom,left,right} placePopover wants.
 function frameRectToViewport(rect: { x: number; y: number; width: number; height: number }): {
   top: number;
   bottom: number;
@@ -246,6 +245,9 @@ function ViewerShell({
   // collapses/expands the inline outline column (AS-018). Markdown-only (the button isn't shown
   // for html/image — C-006).
   const toggleToc = () => (tocDrawer ? setTocOpen((o) => !o) : setTocVisible((v) => !v));
+  // AS-018: the in-pane collapse chevron (beside the outline search) — one-way hide. Desktop hides
+  // the inline column; drawer mode closes the overlay. The top-bar outline-toggle re-expands.
+  const collapseToc = () => (tocDrawer ? setTocOpen(false) : setTocVisible(false));
 
   // The 3-pane grid columns are derived from the SAME JS tier that gates which panes render, so the
   // template never reserves a column for an absent pane. (The old `lg:grid-cols-[236px_1fr_312px]`
@@ -333,14 +335,22 @@ function ViewerShell({
             // overflow-scrolls. Constraining the slot lets TocSidebar's own list scroll.
             className="min-h-0 overflow-hidden border-r border-line bg-sunken"
           >
-            <TocSidebar contentEl={docPaneEl} activeId={activeSection} onActiveChange={setActiveSection} />
+            <TocSidebar
+              contentEl={docPaneEl}
+              activeId={activeSection}
+              onActiveChange={setActiveSection}
+              onCollapse={collapseToc}
+            />
           </aside>
         )}
         <main
           ref={setDocPaneEl}
           data-testid="viewer-doc-pane"
           data-doc-width={docWidth}
-          className="min-w-0 overflow-auto"
+          // C-006: an HTML doc renders full-bleed + full-height — the pane is a flex column so the
+          // sandbox frame (flex-1) fills the available height with no scroll gutter. Markdown/image
+          // keep the natural scrolling pane.
+          className={isHtml ? "flex min-w-0 flex-col overflow-hidden" : "min-w-0 overflow-auto"}
         >
           {doc && (
             <DocModeToolbar
@@ -401,6 +411,7 @@ function ViewerShell({
               contentEl={docPaneEl}
               activeId={activeSection}
               onActiveChange={setActiveSection}
+              onCollapse={collapseToc}
             />
           </aside>
         )}

@@ -131,21 +131,11 @@ export function ViewerTopBar({
 
       <span className="ml-auto" />
 
-      <button
-        type="button"
-        data-testid="vt-comments-toggle"
-        aria-label="Comments"
-        aria-pressed={railVisible}
-        title="Comments"
-        className={`${ICON_BTN} ${railVisible ? "bg-elev text-ink" : ""}`}
-        onClick={onToggleRail}
-      >
-        <Icon name="inbox" size={16} />
-      </button>
-
       {/* Share is the doc's primary action — a filled teal button (Anchord-Design `.btn primary sm`),
-          not a bare icon, so it reads as the call-to-action it is. Shown only to a potential
-          manager (C-002 / AS-003): a viewer/commenter never sees it. */}
+          not a bare icon, so it reads as the call-to-action it is. Pinned to the LEFT edge of the
+          right-hand action cluster (the first action after the spacer), ahead of the icon toggles,
+          so the CTA leads the group. Shown only to a potential manager (C-002 / AS-003): a
+          viewer/commenter never sees it. */}
       {showShare && (
         <button
           type="button"
@@ -158,6 +148,18 @@ export function ViewerTopBar({
           Share
         </button>
       )}
+
+      <button
+        type="button"
+        data-testid="vt-comments-toggle"
+        aria-label="Comments"
+        aria-pressed={railVisible}
+        title="Comments"
+        className={`${ICON_BTN} ${railVisible ? "bg-elev text-ink" : ""}`}
+        onClick={onToggleRail}
+      >
+        <Icon name="inbox" size={16} />
+      </button>
 
       <button
         type="button"

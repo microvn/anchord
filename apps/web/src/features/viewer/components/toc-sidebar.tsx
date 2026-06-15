@@ -49,6 +49,7 @@ export function TocSidebar({
   contentEl,
   activeId,
   onActiveChange,
+  onCollapse,
   className,
 }: {
   // The rendered doc content element (the MarkdownView article / scroll container) to read
@@ -56,6 +57,10 @@ export function TocSidebar({
   contentEl: HTMLElement | null;
   activeId: string | null;
   onActiveChange: (id: string | null) => void;
+  // AS-018: an in-pane collapse affordance beside the search input. The persistent top-bar
+  // outline-toggle re-expands (it has to live outside the pane — collapsing removes this control
+  // along with the pane). Omitted in contexts that don't collapse (none today).
+  onCollapse?: () => void;
   className?: string;
 }) {
   const [query, setQuery] = useState("");
@@ -141,6 +146,17 @@ export function TocSidebar({
           placeholder="Filter outline…"
           className="w-full border-none bg-transparent text-[12.5px] text-ink outline-none placeholder:text-subtle"
         />
+        {onCollapse && (
+          <button
+            type="button"
+            aria-label="Collapse outline"
+            title="Collapse outline"
+            onClick={onCollapse}
+            className="inline-flex size-6 flex-none items-center justify-center rounded-[6px] text-subtle transition-colors hover:bg-elev hover:text-ink"
+          >
+            <Icon name="chevLeft" size={16} />
+          </button>
+        )}
       </div>
       <ul ref={listRef} className="min-h-0 flex-1 overflow-auto px-2 py-2">
         {filtered.map((h) => {

@@ -52,7 +52,7 @@ mock.module("sonner", () => ({
   Toaster: () => null,
 }));
 
-const { isTrustedReady, connectBridge } = await import("@/features/viewer/bridge");
+const { isTrustedReady, connectBridge } = await import("@/features/viewer/lib/bridge");
 const { ViewerScreen } = await import("@/features/viewer/components/viewer-screen");
 
 function client() {

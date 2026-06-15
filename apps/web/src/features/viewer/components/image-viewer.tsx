@@ -20,7 +20,8 @@ export function ImageViewer({ contentUrl }: { contentUrl: string }) {
     <div className="px-5 pb-[120px] pt-[14px]">
       <div
         data-testid="image-viewer"
-        className="relative mx-auto flex min-h-[360px] max-w-[760px] items-center justify-center overflow-hidden rounded-md border border-line bg-sunken p-6"
+        // C-006: an image doc fills the full content width (no prose-measure clamp); 2-pane layout.
+        className="relative flex min-h-[360px] w-full items-center justify-center overflow-hidden rounded-md border border-line bg-sunken p-6"
       >
         <img
           data-testid="image-viewer-img"
