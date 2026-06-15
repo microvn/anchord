@@ -87,7 +87,6 @@ export interface ComposeAnchor {
 }
 
 export function useCompose(
-  workspaceId: string | undefined,
   slug: string | undefined,
   docPaneEl: HTMLElement | null,
   canCompose: boolean,
@@ -284,7 +283,7 @@ export function useCompose(
   const send = useCallback(
     (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => {
       const anchor = active;
-      if (!anchor || !workspaceId || !slug || body.trim().length === 0) return;
+      if (!anchor || !slug || body.trim().length === 0) return;
       // S-005: a guest send with no name is a no-op write (the composer already gates Send on a
       // non-empty name — AS-011 — but re-check here so a forced call can't post an unnamed guest).
       if (guestIdentity && guestIdentity.guestName.trim().length === 0) return;
@@ -360,7 +359,7 @@ export function useCompose(
 
       void (async () => {
         try {
-          const created = await createAnnotation(workspaceId, slug, {
+          const created = await createAnnotation(slug, {
             type: "range",
             anchor: {
               blockId: anchor.blockId,
@@ -375,7 +374,7 @@ export function useCompose(
             return;
           }
           const annotationId = peelId(created.data);
-          const commented = await addComment(workspaceId, slug, annotationId, {
+          const commented = await addComment(slug, annotationId, {
             body,
             // S-005 (AS-010): a guest comment posts under its self-entered name + optional email;
             // a member posts body-only (identity rides the session cookie, no userId in the body).
@@ -431,7 +430,7 @@ export function useCompose(
         }
       })();
     },
-    [active, workspaceId, slug, docPaneEl, onCreatedAnnotation, onCreated],
+    [active, slug, docPaneEl, onCreatedAnnotation, onCreated],
   );
 
   return {

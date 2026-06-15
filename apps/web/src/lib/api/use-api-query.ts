@@ -33,11 +33,15 @@ export function peelEnvelope(body: unknown): unknown {
 export function useApiQuery<T>(
   queryKey: readonly unknown[],
   call: () => Promise<EdenResult<T>>,
-  options?: { enabled?: boolean },
+  options?: { enabled?: boolean; meta?: Record<string, unknown> },
 ): UseQueryResult<T, ApiError> {
   return useQuery<T, ApiError>({
     queryKey,
     enabled: options?.enabled,
+    // doc-access-routing S-003 / C-004: a query may carry `meta.viewerRead` so the shared
+    // QueryCache onError (query-client.ts) can EXEMPT it from the global session-expiry bounce.
+    // A doc-centric viewer read must never sign the user out / redirect to /signin (AS-014).
+    meta: options?.meta,
     queryFn: async () => {
       // A transport failure (backend unreachable) rejects here; toApiError normalizes it.
       let result: EdenResult<T>;

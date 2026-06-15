@@ -30,6 +30,16 @@ const fetchViewerDoc = mock(async () => response);
 // an empty list (the rail then shows its empty state, irrelevant to the S-001 assertions).
 const listAnnotations = mock(async () => ({ data: { success: true, data: { items: [] } }, error: null }));
 
+// doc-access-routing S-003: ViewerScreen now reads useSession to pick the anon top-bar variant +
+// the NoAccessView variant. These S-001 tests assert the signed-in member surfaces, so mock a
+// resolved signed-in session (isPending: false) — without it the viewer treats the visitor as anon
+// (no Back button, Sign in CTA) and the no-access copy flips to the signed-in variant.
+mock.module("@/lib/api/auth-client", () => ({
+  useSession: () => ({ data: { user: { email: "a@b.co" } }, isPending: false }),
+  signOut: mock(async () => ({ data: { success: true }, error: null })),
+  authClient: {},
+}));
+
 mock.module("@/features/viewer/services/client", () => ({
   fetchViewerDoc,
   listAnnotations,
@@ -54,8 +64,9 @@ function App() {
       <MemoryRouter initialEntries={["/w/ws-1/d/my-doc"]}>
         <Routes>
           <Route path="/w/:workspaceId/d/:slug" element={<ViewerScreen />} />
-          {/* Bug #3: the top bar's Back button navigates here (workspace home, /w/:workspaceId). */}
-          <Route path="/w/:workspaceId" element={<div data-testid="workspace-home">home</div>} />
+          {/* S-003: a signed-in member's Back button now navigates to the app root (/), not a
+              workspace path (the doc-scoped viewer carries no workspace). */}
+          <Route path="/" element={<div data-testid="workspace-home">home</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -199,7 +210,9 @@ describe("ViewerScreen S-001", () => {
     await waitFor(() => expect(screen.getByTestId("viewer-not-found")).toBeInTheDocument(), {
       timeout: 3000,
     });
-    expect(screen.getByText("Document not found")).toBeInTheDocument();
+    // S-003: the not-found / no-access surface is now NoAccessView (signed-in → "you don't have
+    // access"). Same C-002 existence-hiding behavior, re-skinned.
+    expect(screen.getByTestId("no-access-view")).toBeInTheDocument();
     // Existence-hiding: no doc surface, no empty "0 comments" rail leaking existence.
     expect(screen.queryByTestId("markdown-view")).toBeNull();
     expect(screen.queryByTestId("html-sandbox-frame")).toBeNull();

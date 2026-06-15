@@ -14,7 +14,14 @@ import { notifySessionExpired } from "@/lib/session-expiry";
 export function createQueryClient(): QueryClient {
   return new QueryClient({
     queryCache: new QueryCache({
-      onError: (error) => {
+      onError: (error, query) => {
+        // doc-access-routing S-003 / C-004: a doc-centric viewer READ (doc/annotation/version)
+        // can NEVER fire the global sign-out bounce. The public `/d/:slug` viewer serves
+        // signed-out visitors, and the backend already returns 404-not-401 for no-access — but
+        // this is the FE guarantee: any query tagged `meta.viewerRead` is exempt, so even an
+        // unexpected unauthenticated reply on a viewer read shows NoAccessView in place instead
+        // of stranding an anon at /signin (AS-014).
+        if (query.meta?.viewerRead) return;
         if (error instanceof ApiError && error.isUnauthenticated) {
           notifySessionExpired();
         }

@@ -190,7 +190,8 @@ describe("Commenting S-001", () => {
 
     // AS-001.T1: a block-anchored annotation create with {blockId, textSnippet, offset, length}.
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
-    const [, , createBody] = createAnnotation.mock.calls[0]!;
+    // S-003: createAnnotation is now slug-only (slug, body) → the body is the 2nd arg.
+    const [, createBody] = createAnnotation.mock.calls[0]!;
     expect(createBody.type).toBe("range");
     expect(createBody.anchor.blockId).toBe("block-p-1");
     expect(createBody.anchor.textSnippet).toBe("Payment expires after 24h");
@@ -199,9 +200,10 @@ describe("Commenting S-001", () => {
 
     // The comment body posts after the annotation is created (AS-001).
     await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
+    // S-003: addComment is now (slug, annotationId, body) → annotationId is the 2nd arg.
     const commentArgs = addComment.mock.calls[0]!;
-    expect(commentArgs[2]).toBe("anno-real-1"); // the created annotation id
-    expect(commentArgs[3].body).toBe("Why 24h and not 48h?");
+    expect(commentArgs[1]).toBe("anno-real-1"); // the created annotation id
+    expect(commentArgs[2].body).toBe("Why 24h and not 48h?");
 
     // AS-001.T2: EXACTLY ONE highlight marks the selected sentence — the real refetched row's mark,
     // with no leftover optimistic `data-anno=<tempId>` mark double-wrapping the same range.

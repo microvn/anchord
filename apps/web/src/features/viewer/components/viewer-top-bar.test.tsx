@@ -93,6 +93,36 @@ describe("ViewerTopBar S-005 (AS-012)", () => {
     expect(screen.getByTestId("vt-comments-toggle")).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("AS-029: an anonymous visitor sees the doc title + a Sign in CTA, and no session-only chrome", async () => {
+    let signedInClicked = false;
+    render(
+      <ViewerTopBar
+        doc={liveDoc}
+        railVisible
+        onToggleRail={() => {}}
+        onVersion={() => {}}
+        onShare={() => {}}
+        // even if a stray showShare leaks through, the anon variant must hard-hide it.
+        showShare
+        anonymous
+        onSignIn={() => {
+          signedInClicked = true;
+        }}
+      />,
+    );
+
+    // The doc title still shows (reading works for an anon).
+    expect(screen.getByTestId("vt-title")).toHaveTextContent("Web-core behavior contract");
+    // A Sign in CTA is present…
+    const signin = screen.getByTestId("vt-signin");
+    expect(signin).toBeInTheDocument();
+    await userEvent.click(signin);
+    expect(signedInClicked).toBe(true);
+    // …and the session-only chrome is hidden: no Share, no account/overflow (member) menu.
+    expect(screen.queryByTestId("vt-share")).toBeNull();
+    expect(screen.queryByTestId("vt-overflow")).toBeNull();
+  });
+
   it("AS-012: the format badge maps html and image kinds", () => {
     const { rerender } = render(
       <ViewerTopBar

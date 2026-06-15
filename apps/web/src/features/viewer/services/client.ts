@@ -1,8 +1,8 @@
 import { api } from "@/lib/api";
 import type { EdenResult } from "@/lib/api/use-api-query";
 
-// Typed request thunk for the in-app viewer's doc read (render-publish S-005):
-//   GET /api/w/:workspaceId/docs/:slug
+// Typed request thunk for the in-app viewer's doc read (doc-access-routing S-002/S-003):
+//   GET /api/docs/:slug   (doc-addressed, NO workspace in the path — C-002/C-007)
 // → { doc: { title, kind, version, status, generalAccess }, content }
 //     - kind=markdown → `content` is sanitized app-theme HTML (server-side dompurify +
 //       data-block-id injection); the viewer renders it in the app origin (C-001).
@@ -54,14 +54,12 @@ export interface ViewerDocResponse {
   content: string | { contentUrl: string };
 }
 
-/** GET /api/w/:workspaceId/docs/:slug — the access-gated doc read for the in-app viewer. */
-export function fetchViewerDoc(
-  workspaceId: string,
-  slug: string,
-): Promise<EdenResult<ViewerDocResponse>> {
-  return treaty.api.w({ workspaceId }).docs({ slug }).get() as Promise<
-    EdenResult<ViewerDocResponse>
-  >;
+/** GET /api/docs/:slug — the access-gated, anon-capable doc read for the in-app viewer.
+ *  doc-access-routing S-002/S-003 (C-002/C-004): addressed by slug alone (no workspace in the
+ *  path), session optional. A no-access OR missing doc → 404 (existence-hiding), NEVER a 401, so
+ *  the global session-expiry bounce can't fire on it. */
+export function fetchViewerDoc(slug: string): Promise<EdenResult<ViewerDocResponse>> {
+  return treaty.api.docs({ slug }).get() as Promise<EdenResult<ViewerDocResponse>>;
 }
 
 // --- Annotations read (S-003) -------------------------------------------------------------
@@ -103,15 +101,15 @@ export interface ListAnnotationsResponse {
   pagination?: { page: number; limit: number; total: number };
 }
 
-/** GET …/docs/:slug/annotations — read the doc's annotations for the viewer (S-003). */
-export function listAnnotations(
-  workspaceId: string,
-  slug: string,
-): Promise<EdenResult<ListAnnotationsResponse>> {
-  return treaty.api
-    .w({ workspaceId })
-    .docs({ slug })
-    .annotations.get() as Promise<EdenResult<ListAnnotationsResponse>>;
+/** GET /api/docs/:slug/annotations — read the doc's annotations for the viewer.
+ *  doc-access-routing S-003: doc-addressed (slug only, no workspace path — C-007), anon-capable.
+ *  The viewer tags this read `meta.viewerRead` so a no-access reply can never bounce to /signin
+ *  (AS-014). NOTE: the doc-scoped annotation READ backend route is owned by S-004; until it lands
+ *  this read returns no-access for an anon, which the viewer surfaces in place (no bounce). */
+export function listAnnotations(slug: string): Promise<EdenResult<ListAnnotationsResponse>> {
+  return treaty.api.docs({ slug }).annotations.get() as Promise<
+    EdenResult<ListAnnotationsResponse>
+  >;
 }
 
 // --- Annotation / comment WRITE (S-001 commenting) -----------------------------------------
@@ -150,33 +148,30 @@ export interface AddCommentResult {
   commentId: string;
 }
 
-/** POST …/docs/:slug/annotations — create a block-anchored annotation (S-001). */
+// doc-access-routing S-003: the write paths drop the workspace segment to stay coherent with the
+// slug-only viewer (no workspaceId in scope on the public route). The doc-scoped annotation WRITE
+// backend routes (create / comment / resolve) are owned by S-004; these client thunks point at the
+// doc-addressed paths so the viewer call-sites compile slug-only. Until S-004 lands, an anon write
+// is refused server-side (the FE rolls back) — never a forged annotation.
+
+/** POST /api/docs/:slug/annotations — create a block-anchored annotation (S-004 backend). */
 export function createAnnotation(
-  workspaceId: string,
   slug: string,
   body: CreateAnnotationBody,
 ): Promise<EdenResult<CreateAnnotationResult>> {
   return treaty.api
-    .w({ workspaceId })
     .docs({ slug })
     .annotations.post(body) as Promise<EdenResult<CreateAnnotationResult>>;
 }
 
-/** POST …/docs/:slug/annotations/:id/comments — attach a comment to an annotation (S-001). */
+/** POST /api/docs/:slug/annotations/:id/comments — attach a comment to an annotation (S-004). */
 export function addComment(
-  workspaceId: string,
-  _slug: string,
+  slug: string,
   annotationId: string,
   body: AddCommentBody,
 ): Promise<EdenResult<AddCommentResult>> {
-  // The comment endpoint is `/api/w/:workspaceId/annotations/:id/comments` — NOT nested under
-  // `docs/:slug` (the annotation id alone identifies the thread; mirrors setResolution). A stray
-  // `.docs({slug})` here built `/docs/:slug/annotations/:id/comments`, a path the backend has no
-  // route for → Elysia's built-in NotFoundError → (mis-mapped) 500. `_slug` stays in the signature
-  // for call-site symmetry with the doc-scoped create/list calls but is not part of this path.
-  void _slug;
   return treaty.api
-    .w({ workspaceId })
+    .docs({ slug })
     .annotations({ id: annotationId })
     .comments.post(body) as Promise<EdenResult<AddCommentResult>>;
 }
@@ -197,14 +192,14 @@ export interface SetResolutionResult {
   status: "unresolved" | "resolved";
 }
 
-/** PATCH …/annotations/:id/resolution — toggle an annotation's resolved status (S-004). */
+/** PATCH /api/docs/:slug/annotations/:id/resolution — toggle resolved status (S-004 backend). */
 export function setResolution(
-  workspaceId: string,
+  slug: string,
   annotationId: string,
   body: SetResolutionBody,
 ): Promise<EdenResult<SetResolutionResult>> {
   return treaty.api
-    .w({ workspaceId })
+    .docs({ slug })
     .annotations({ id: annotationId })
     .resolution.patch(body) as Promise<EdenResult<SetResolutionResult>>;
 }

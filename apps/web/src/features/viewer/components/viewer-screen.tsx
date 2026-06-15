@@ -1,10 +1,11 @@
 import { useCallback, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSession } from "@/lib/api/auth-client";
 import { useApiQuery } from "@/lib/api/use-api-query";
+import { NoAccessView } from "./no-access-view";
 import { useViewerLayoutMode } from "@/hooks/use-breakpoint";
 import { Icon } from "@/components/icon";
-import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
 import { Skeleton } from "@/components/skeleton";
 import { DocPane } from "./doc-pane";
@@ -36,8 +37,9 @@ import {
   type ViewerAnnotation,
 } from "@/features/viewer/services/client";
 
-// ViewerScreen (S-001): the React route `/w/:workspaceId/d/:slug`. It fetches the doc via the
-// workspace-scoped read, then renders it inside the 3-pane viewer shell. The TOC sidebar (S-002),
+// ViewerScreen (doc-access-routing S-003): the PUBLIC React route `/d/:slug` (outside AuthGuard).
+// It fetches the doc via the slug-only `GET /api/docs/:slug` read (anon-capable), then renders it
+// inside the 3-pane viewer shell. The TOC sidebar (S-002),
 // the annotations rail (S-003), the top bar (S-005), and the responsive drawers (S-006) all mount
 // into this shell.
 //
@@ -58,11 +60,28 @@ function frameRectToViewport(rect: { x: number; y: number; width: number; height
 }
 
 export function ViewerScreen() {
-  const { workspaceId = "", slug = "" } = useParams<{ workspaceId: string; slug: string }>();
+  // doc-access-routing S-003: the viewer mounts on the PUBLIC route `/d/:slug` (outside AuthGuard)
+  // and is addressed by slug alone (C-002) — there is no workspaceId param. The doc read goes to
+  // `GET /api/docs/:slug` (anon-capable), and the cache is keyed off slug only.
+  const { slug = "" } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
+  // AS-014/AS-015/AS-016: the session decides the NO-ACCESS variant + the anon top-bar chrome.
+  // While the session resolves, `isPending` is true — we don't paint a misleading variant yet.
+  const { data: session, isPending: sessionPending } = useSession();
+  const signedIn = Boolean(session);
 
-  const query = useApiQuery<ViewerDocResponse>(["viewer-doc", workspaceId, slug], () =>
-    fetchViewerDoc(workspaceId, slug),
+  // C-004 (AS-014): tag the doc read `viewerRead` so the shared QueryCache onError can NEVER turn
+  // a no-access reply into a global sign-out / sign-in redirect on the public viewer.
+  const query = useApiQuery<ViewerDocResponse>(
+    ["viewer-doc", slug],
+    () => fetchViewerDoc(slug),
+    { meta: { viewerRead: true } },
   );
+
+  // AS-016: route to sign-in carrying a return-to-doc, so completing sign-in lands back on /d/:slug.
+  const goSignIn = useCallback(() => {
+    navigate(`/signin?redirect=${encodeURIComponent(`/d/${slug}`)}`);
+  }, [navigate, slug]);
 
   if (query.isPending) {
     return (
@@ -81,13 +100,18 @@ export function ViewerScreen() {
     // never an empty render. Any other failure shows the retryable error surface.
     const notFound = query.error.status === 404 || query.error.code === "NOT_FOUND";
     if (notFound) {
+      // S-003 (C-004): a no-access doc and a missing doc are the SAME existence-hiding 404. The
+      // surface NEVER bounces to sign-in (the read is meta.viewerRead-exempt). The variant is
+      // chosen by the session: signed-OUT → "sign in to view" (signing in MIGHT help, AS-014),
+      // returning the visitor to /d/:slug after (AS-016); signed-IN → plain "you don't have
+      // access" (AS-015). While the session is still resolving, default to the no-access message
+      // (no premature sign-in prompt) — it flips to the signin prompt once we know there's no
+      // session.
+      const variant = !sessionPending && !signedIn ? "signin" : "no-access";
       return (
         <ViewerShell title="Not found">
           <div data-testid="viewer-not-found" className="px-5 pt-10">
-            <EmptyState
-              title="Document not found"
-              description="This document doesn't exist, or you don't have access to it."
-            />
+            <NoAccessView variant={variant} slug={slug} onSignIn={goSignIn} />
           </div>
         </ViewerShell>
       );
@@ -117,13 +141,16 @@ export function ViewerScreen() {
       doc={doc.doc}
       docResponse={doc}
       specMeta={specMeta}
-      workspaceId={workspaceId}
       slug={slug}
       effectiveRole={doc.doc.effectiveRole}
       canCompose={canComment(doc.doc.effectiveRole)}
       // S-005: a logged-out guest session (consumed from the read side) → the composer shows the
       // GuestNameField + name-required gate; the rail badges the guest comment (C-010).
       guest={doc.doc.guest === true}
+      // S-003 (AS-029): an anonymous visitor → the top bar shows a Sign in CTA + hides session-only
+      // chrome (Share / account menu). signedIn comes from the resolved session, not the doc.
+      anonymous={!signedIn}
+      onSignIn={goSignIn}
     />
   );
 }
@@ -143,11 +170,12 @@ function ViewerShell({
   docResponse,
   specMeta,
   children,
-  workspaceId,
   slug,
   effectiveRole,
   canCompose = false,
   guest = false,
+  anonymous = false,
+  onSignIn,
 }: {
   title: string;
   /** present only on the success path — drives the S-005 ViewerTopBar identity. */
@@ -160,8 +188,11 @@ function ViewerShell({
   specMeta?: SpecMeta | null;
   /** the loading / not-found / error shells render their state here instead of a DocPane. */
   children?: React.ReactNode;
-  workspaceId?: string;
   slug?: string;
+  /** S-003 (AS-029): an anonymous visitor → anon top-bar variant; no member-only chrome. */
+  anonymous?: boolean;
+  /** AS-029/AS-016: the anon top bar's Sign in CTA handler (routes to /signin with return-to). */
+  onSignIn?: () => void;
   /** S-001/C-004: whether the session's effective role may comment. A viewer-only role gets a
    *  read-only rail — no popover, no composer. False on the loading / error shells (no doc). */
   canCompose?: boolean;
@@ -189,7 +220,7 @@ function ViewerShell({
   // S-001 (DocModeToolbar): the doc measure (Wide = full column width | Focus = 800px). Set on the docpane <main>
   // via data-doc-width so .doc-prose reflows. The toolbar only mounts on the success path (doc present).
   const [docWidth, setDocWidth] = useState<"wide" | "focus">("wide");
-  const hasDoc = Boolean(workspaceId && slug);
+  const hasDoc = Boolean(slug);
 
   // S-001 (AS-001): the ShareDialog open-state, hosted here so the top bar's Share button opens it.
   const [shareOpen, setShareOpen] = useState(false);
@@ -206,7 +237,7 @@ function ViewerShell({
 
   // S-003/S-006: the annotations are read here (lifted above the rail) so the CommentFab can show
   // the count and the highlight-tap can open the rail drawer, while the rail still renders them.
-  const anno = useAnnotations(workspaceId, slug, docPaneEl, hasDoc, canCompose, () => {
+  const anno = useAnnotations(slug, docPaneEl, hasDoc, canCompose, () => {
     if (drawerMode) setRailOpen(true); // AS-014: tapping a highlight opens the rail drawer
   });
 
@@ -223,7 +254,6 @@ function ViewerShell({
   // Gated by `canCompose` (C-004): a viewer-only role never sees a popover/composer (read-only rail).
   // S-002: on a successful create for an HTML doc, relay the highlight to the iframe bridge.
   const compose = useCompose(
-    workspaceId,
     slug,
     docPaneEl,
     canCompose,
@@ -305,11 +335,15 @@ function ViewerShell({
           // C-006: the outline-toggle is shown only for Markdown — on desktop it collapses the
           // inline outline (AS-018), in drawer mode it opens the TOC drawer. html/image: no toggle.
           showTocToggle={isMarkdown}
-          onBack={workspaceId ? () => navigate(`/w/${workspaceId}`) : undefined}
+          // S-003: the public viewer carries no workspace to return to. A signed-in member goes
+          // home (/); an anon has no app home → no Back button (the Sign in CTA leads instead).
+          onBack={!anonymous ? () => navigate("/") : undefined}
           onVersion={() => setVersionsOpen(true)}
           onShare={() => setShareOpen(true)}
           showShare={canShare}
           onOverflow={() => toast("More actions")}
+          anonymous={anonymous}
+          onSignIn={onSignIn}
         />
       ) : (
         // Loading / not-found / error states have no doc yet → a minimal title-only bar.
@@ -465,14 +499,18 @@ function ViewerShell({
           the user picks Comment. Mounted here (overlays the viewer body), not in the rail. */}
       {composerNode}
 
-      {/* S-001: the ShareDialog — opened by the top bar's Share button. Only a doc with a
-          workspace + slug can be shared; the dialog reads the share state on open to prefill +
-          re-check editor manage-eligibility (C-002). */}
-      {hasDoc && doc && (
+      {/* S-001: the ShareDialog — opened by the top bar's Share button. Share is member-only +
+          workspace-addressed (C-007 keeps Share workspace-scoped), and the Share button is gated by
+          canShare (owner/editor) AND hidden for an anon (AS-029), so this never mounts for an anon.
+          SPEC SIGNAL (S-003): the doc-scoped viewer dropped workspaceId, but ShareDialog still
+          needs it (workspace-addressed sharing endpoints) — the doc read doesn't return one. Wired
+          for signed-in members only; the workspace-context plumbing for the doc-scoped viewer is
+          owed to a follow-up (sharing/versioning are not S-003 surfaces). */}
+      {hasDoc && doc && !anonymous && (
         <ShareDialog
           open={shareOpen}
           onOpenChange={setShareOpen}
-          workspaceId={workspaceId!}
+          workspaceId=""
           slug={slug!}
           docTitle={doc.title}
           effectiveRole={effectiveRole}
@@ -481,10 +519,10 @@ function ViewerShell({
 
       {/* versioning-diff-ui S-001: the version history panel — opened by the top bar's version
           button. Compare/Restore are wired in later stories (S-002/S-003); for now they toast. */}
-      {hasDoc && doc && (
+      {hasDoc && doc && !anonymous && (
         <VersionHistoryPanel
           open={versionsOpen}
-          workspaceId={workspaceId!}
+          workspaceId=""
           slug={slug!}
           onClose={() => setVersionsOpen(false)}
           onCompare={() => toast("Compare arrives with the diff view")}
@@ -568,7 +606,6 @@ function InlineComposerPopover({
 // the same annotation set. `onHighlightTap` fires on a highlight click (after focus) so the shell
 // can open the rail drawer in drawer mode.
 function useAnnotations(
-  workspaceId: string | undefined,
   slug: string | undefined,
   docPaneEl: HTMLElement | null,
   enabled: boolean,
@@ -593,12 +630,15 @@ function useAnnotations(
   const queryClient = useQueryClient();
   // The cache key for this doc's annotation list (matches useApiQuery below). All post-write
   // reconciles patch THIS entry directly via setQueryData instead of refetching.
-  const annoKey = ["viewer-annotations", workspaceId, slug] as const;
+  const annoKey = ["viewer-annotations", slug] as const;
 
+  // C-004 (AS-014): the annotation read is ALSO a doc-centric viewer read — tag it `viewerRead` so a
+  // no-access reply can never fire the global sign-out on the public viewer (the read is gated by
+  // `enabled`, but if it runs and 401s/404s for an anon, it stays in-place, no bounce).
   const annoQuery = useApiQuery<ListAnnotationsResponse>(
     annoKey,
-    () => listAnnotations(workspaceId ?? "", slug ?? ""),
-    { enabled },
+    () => listAnnotations(slug ?? ""),
+    { enabled, meta: { viewerRead: true } },
   );
 
   const annotations: ViewerAnnotation[] = annoQuery.data?.items ?? [];
@@ -608,15 +648,15 @@ function useAnnotations(
   // slug are present (the enabled-gated query); the create-success path always has them.
   const prependAnnotation = useCallback(
     (real: ViewerAnnotation) => {
-      if (!workspaceId || !slug) return;
+      if (!slug) return;
       queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) => {
         const items = old?.items ?? [];
         if (items.some((a) => a.id === real.id)) return old ?? { items };
         return { ...old, items: [real, ...items] };
       });
     },
-    // annoKey is derived from workspaceId+slug; list them so the closure tracks the real deps.
-    [queryClient, workspaceId, slug], // eslint-disable-line react-hooks/exhaustive-deps
+    // annoKey is derived from slug; list it so the closure tracks the real deps.
+    [queryClient, slug], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   // Which anchored annotations the FE could NOT place at runtime (GAP-005). BUG #1 (2026-06-12):
@@ -658,11 +698,11 @@ function useAnnotations(
   // cache change) + toast the same error S-001 uses. Gated by canCompose (C-004): a viewer-only role
   // gets no reply affordance.
   const onReply =
-    canCompose && workspaceId && slug
+    canCompose && slug
       ? async (annotation: ViewerAnnotation, body: string): Promise<boolean> => {
           const parentId = (annotation.comments ?? [])[0]?.id ?? null;
           try {
-            const res = await addComment(workspaceId, slug, annotation.id, {
+            const res = await addComment(slug, annotation.id, {
               body,
               ...(parentId ? { parentId } : {}),
             });
@@ -712,11 +752,11 @@ function useAnnotations(
     }
   };
   const onResolve =
-    canCompose && workspaceId && slug
+    canCompose && slug
       ? async (annotation: ViewerAnnotation, resolved: boolean): Promise<boolean> => {
           dimMark(annotation.id, resolved); // AS-007: highlight dims optimistically
           try {
-            const res = await setResolution(workspaceId, annotation.id, { resolved });
+            const res = await setResolution(slug, annotation.id, { resolved });
             if (res.error) {
               dimMark(annotation.id, !resolved); // revert the highlight
               toast.error("Couldn't update this thread");

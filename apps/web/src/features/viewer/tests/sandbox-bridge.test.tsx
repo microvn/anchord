@@ -348,14 +348,16 @@ describe("Sandbox bridge in ViewerScreen S-002", () => {
     // AS-004.T1: a block-anchored create carries the relayed anchor; the write is server re-authz'd
     // (the body has no role/userId — identity rides the session; C-001).
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
-    const [, , createBody] = createAnnotation.mock.calls[0]!;
+    // S-003: createAnnotation is now slug-only (slug, body) → the body is the 2nd arg.
+    const [, createBody] = createAnnotation.mock.calls[0]!;
     expect(createBody.type).toBe("range");
     expect(createBody.anchor.blockId).toBe("block-p-3");
     expect(createBody.anchor.textSnippet).toBe(HTML_ANCHOR.textSnippet);
     expect(createBody.anchor.offset).toBe(0);
 
     await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    expect(addComment.mock.calls[0]![2]).toBe("anno-real-1");
+    // S-003: addComment is now (slug, annotationId, body) → annotationId is the 2nd arg.
+    expect(addComment.mock.calls[0]![1]).toBe("anno-real-1");
 
     // AS-004.T2: the highlight is relayed DOWN the port (the parent can't draw into the opaque
     // iframe) with the real annotation id + the anchor.

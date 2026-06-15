@@ -65,7 +65,7 @@ describe("MƯỢT TASK 2 — touch selection via selectionchange", () => {
     stubCoarse(true);
     const pane = buildPaneWithSelection(8, 15); // "expires"
     const { result } = renderHook(() =>
-      useCompose("ws-1", "doc", pane, true, () => {}),
+      useCompose("doc", pane, true, () => {}),
     );
     expect(result.current.popover).toBeNull();
 
@@ -83,7 +83,7 @@ describe("MƯỢT TASK 2 — touch selection via selectionchange", () => {
   it("coarse pointer: a collapsed/empty selection is a no-op (C-003)", async () => {
     stubCoarse(true);
     const pane = buildPaneWithSelection(5, 5); // collapsed
-    const { result } = renderHook(() => useCompose("ws-1", "doc", pane, true, () => {}));
+    const { result } = renderHook(() => useCompose("doc", pane, true, () => {}));
     act(() => {
       document.dispatchEvent(new Event("selectionchange"));
     });
@@ -97,7 +97,7 @@ describe("MƯỢT TASK 2 — touch selection via selectionchange", () => {
   it("fine pointer: selectionchange is NOT wired (mouseup path instead)", async () => {
     stubCoarse(false);
     const pane = buildPaneWithSelection(8, 15);
-    const { result } = renderHook(() => useCompose("ws-1", "doc", pane, true, () => {}));
+    const { result } = renderHook(() => useCompose("doc", pane, true, () => {}));
     act(() => {
       document.dispatchEvent(new Event("selectionchange"));
     });

@@ -46,6 +46,8 @@ export function ViewerTopBar({
   onToggleToc,
   showTocToggle = false,
   onOverflow,
+  anonymous = false,
+  onSignIn,
 }: {
   doc: TopBarDoc;
   /** is the comments rail currently shown (desktop). The toggle reflects + flips this. */
@@ -65,9 +67,20 @@ export function ViewerTopBar({
   showTocToggle?: boolean;
   /** overflow menu — caller passes a placeholder. */
   onOverflow?: () => void;
+  /** doc-access-routing S-003 (AS-029): an anonymous (signed-out) visitor. The bar shows the doc
+   *  title + a Sign in CTA and HIDES every affordance that requires a session — the Share button
+   *  and the account/overflow menu. Reading + (when enabled) guest commenting still work. */
+  anonymous?: boolean;
+  /** AS-029: invoked when the anonymous Sign in CTA is pressed (caller routes to /signin with a
+   *  return-to-doc target so sign-in returns the visitor here — AS-016). */
+  onSignIn?: () => void;
 }) {
   const { theme, toggleTheme } = useTheme();
   const isLive = doc.status === "live" || doc.status === "published";
+  // AS-029: an anon never sees session-only chrome. The Share button is gated by the caller's
+  // showShare, but we also hard-gate it (and the overflow/account menu) here so a stray showShare
+  // can't leak member chrome to an anon.
+  const showShareAffordance = showShare && !anonymous;
 
   return (
     <header
@@ -136,7 +149,7 @@ export function ViewerTopBar({
           right-hand action cluster (the first action after the spacer), ahead of the icon toggles,
           so the CTA leads the group. Shown only to a potential manager (C-002 / AS-003): a
           viewer/commenter never sees it. */}
-      {showShare && (
+      {showShareAffordance && (
         <button
           type="button"
           data-testid="vt-share"
@@ -146,6 +159,21 @@ export function ViewerTopBar({
         >
           <Icon name="share" size={14} />
           Share
+        </button>
+      )}
+
+      {/* AS-029: the anonymous Sign in CTA — the doc's primary action for a signed-out visitor,
+          replacing the member-only Share. Leads the right-hand cluster, teal accent (DESIGN.md). */}
+      {anonymous && (
+        <button
+          type="button"
+          data-testid="vt-signin"
+          title="Sign in"
+          className="inline-flex h-8 flex-none items-center gap-1.5 rounded-md bg-accent px-3 text-[12.5px] font-semibold text-on-accent transition-colors hover:bg-accent-strong"
+          onClick={onSignIn}
+        >
+          <Icon name="user" size={14} />
+          Sign in
         </button>
       )}
 
@@ -171,16 +199,19 @@ export function ViewerTopBar({
         <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
       </button>
 
-      <button
-        type="button"
-        data-testid="vt-overflow"
-        aria-label="More"
-        title="More actions"
-        className={ICON_BTN}
-        onClick={onOverflow}
-      >
-        <Icon name="more" size={16} />
-      </button>
+      {/* AS-029: the overflow (account / member actions) menu is session-only — hidden for an anon. */}
+      {!anonymous && (
+        <button
+          type="button"
+          data-testid="vt-overflow"
+          aria-label="More"
+          title="More actions"
+          className={ICON_BTN}
+          onClick={onOverflow}
+        >
+          <Icon name="more" size={16} />
+        </button>
+      )}
     </header>
   );
 }

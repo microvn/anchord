@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { AuthGuard } from "./app/auth-guard";
 import { AppShell } from "./app/app-shell";
 import { WorkspaceSidebar } from "./app/workspace-sidebar";
@@ -39,6 +39,12 @@ export function AppRoutes() {
       <Route path="/signup" element={<SignUpScreen />} />
       <Route path="/verify-email" element={<VerifyEmailLanding />} />
 
+      {/* doc-access-routing S-003 (AS-013/AS-014): the PUBLIC doc viewer. Addressed by slug alone
+          (C-002), OUTSIDE AuthGuard so a signed-out recipient of an anyone_with_link doc lands in
+          the in-app viewer instead of being bounced to /signin. Access is decided by the doc read
+          (anon-capable, existence-hiding); a no-access reply renders NoAccessView in place. */}
+      <Route path="/d/:slug" element={<ViewerScreen />} />
+
       <Route element={<AuthGuard />}>
         {/* Workspace invite accept/reject landing — signed in, outside the shell. */}
         <Route path="/invite/workspace/:invitationId" element={<WorkspaceInviteLanding />} />
@@ -48,11 +54,10 @@ export function AppRoutes() {
         {/* S-001: the app root resolves the landing workspace and redirects into its /w/:id/. */}
         <Route index element={<WorkspaceRootRedirect />} />
 
-        {/* annotation-core-ui S-001: the doc viewer is a full-screen 3-pane route, workspace-scoped
-            (/w/:workspaceId/d/:slug — mirrors the workspace-scoped API) but OUTSIDE the AppShell
-            sidebar+header chrome so the doc is the high-contrast element. The bare server /d/:slug
-            stays a public fallback (untouched). */}
-        <Route path="/w/:workspaceId/d/:slug" element={<ViewerScreen />} />
+        {/* doc-access-routing S-003: the old workspace-scoped viewer route is retired — the viewer
+            is now the public slug-only `/d/:slug` above. Keep this as a thin redirect so any stale
+            /w/:workspaceId/d/:slug link still resolves to the doc (slug carried through). */}
+        <Route path="/w/:workspaceId/d/:slug" element={<LegacyViewerRedirect />} />
 
         {/* Tenancy is scoped by URL path /w/:workspaceId/… (mirrors /api/w/:workspaceId/…). The
             AppShell (sidebar + header) wraps the WorkspaceRouteGuard, which resolves the active
@@ -80,6 +85,13 @@ export function AppRoutes() {
       </Route>
     </Routes>
   );
+}
+
+// doc-access-routing S-003: a stale `/w/:workspaceId/d/:slug` link redirects to the public
+// slug-only `/d/:slug` viewer (the doc is addressed by slug alone — C-002).
+function LegacyViewerRedirect() {
+  const { slug = "" } = useParams<{ slug: string }>();
+  return <Navigate to={`/d/${slug}`} replace />;
 }
 
 export function App() {

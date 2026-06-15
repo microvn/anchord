@@ -138,8 +138,8 @@ describe("ViewerScreen reply wiring (S-003)", () => {
     // LIVE WIRING: addComment is called against THIS annotation with the typed body + parentId =
     // the annotation's first/root comment (flat-reply parent), not the bare callback.
     await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    const [wsId, slug, annotationId, body] = addComment.mock.calls[0]!;
-    expect(wsId).toBe("ws-1");
+    // S-003: addComment is now (slug, annotationId, body) — no workspace segment (doc-addressed).
+    const [slug, annotationId, body] = addComment.mock.calls[0]!;
     expect(slug).toBe("my-doc");
     expect(annotationId).toBe("anno-1");
     expect(body).toMatchObject({ body: "Because the trial window is 24h.", parentId: "cmt-root-1" });
