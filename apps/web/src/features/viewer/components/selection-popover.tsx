@@ -11,9 +11,9 @@ import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismis
 // S-006 reframe (2026-06-15): this surface is now the MARKUP TOOL's surface — it is shown ONLY when
 // the Markup tool is active (the other tools route the selection directly, viewer-screen/C-009). Its
 // buttons carry the SAME compact icon → hover-expand + per-type hue treatment as the toolbar tool
-// chips (DESIGN.md "Annotation type / tool colors" + the affordance pattern): each button shows its
-// icon + label, and on hover tints to its type hue (soft bg + coloured icon/text). The label text
-// stays in the DOM (the popover is small enough to keep labels) so the surface reads at a glance.
+// chips (DESIGN.md "Annotation type / tool colors"): each button is ICON-ONLY, tinted its type hue so
+// the surface reads by colour (PO 2026-06-15 — no verbose text). The type name is the accessible name
+// (aria-label + title tooltip); hover deepens the hue + adds a soft bg tint.
 //
 // SCOPE (S-001): this surface only DISPATCHES the chosen intent — Comment keeps its own dedicated
 // `onComment` seam (the built commenting create path); Like/Label/Redline/Suggest fire `onSelectType`
@@ -49,8 +49,10 @@ const TYPE_HUE: Record<string, string> = {
   suggest: "#37b3bd",
 };
 
-// One popover button: icon + label, tinting to its type hue on hover (the affordance pattern). The
-// label stays in the DOM so the surface reads at a glance and the S-001 text assertions hold.
+// One popover button: ICON-ONLY, tinted with its type hue so the surface reads by colour, not by
+// text (PO 2026-06-15 — "icon + màu, no long labels"). The label is the accessible name (aria-label +
+// native title tooltip on hover) so the popover still "offers Comment/Like/Label/Redline/Suggest"
+// (AS-001) without verbose text. Hover deepens the hue + adds a soft bg tint (the affordance pattern).
 function PopoverButton({
   type,
   testId,
@@ -72,15 +74,16 @@ function PopoverButton({
       data-testid={testId}
       data-type={type}
       data-hovered={hovered ? "true" : undefined}
+      aria-label={label}
+      title={label}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="inline-flex items-center gap-1.5 rounded-[5px] px-2 py-1 text-[12.5px] font-medium text-ink transition-colors hover:bg-sunken"
-      // Hover → the type's hue (coloured icon/text + a soft bg tint, DESIGN.md affordance pattern).
-      style={hovered && hue ? { color: hue, background: `${hue}1f` } : undefined}
+      className="inline-flex items-center justify-center rounded-[5px] p-1.5 transition-colors"
+      // icon coloured its type hue at rest; hover → soft bg tint of the same hue (DESIGN.md affordance).
+      style={{ color: hue, background: hovered && hue ? `${hue}24` : undefined }}
     >
-      <Icon name={icon} size={14} />
-      {label}
+      <Icon name={icon} size={16} />
     </button>
   );
 }

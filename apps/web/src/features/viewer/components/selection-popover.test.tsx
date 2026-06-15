@@ -21,7 +21,7 @@ const rect = { top: 100, left: 200, centered: true as const };
 function noop() {}
 
 describe("SelectionPopover S-001", () => {
-  it("AS-001: the Markup popover lists Comment, Like, Label, Redline, and Suggest", () => {
+  it("AS-001: the Markup popover offers Comment, Like, Label, Redline, and Suggest", () => {
     render(
       <SelectionPopover
         rect={rect}
@@ -32,12 +32,13 @@ describe("SelectionPopover S-001", () => {
     );
 
     const popover = screen.getByTestId("selection-popover");
-    // All five annotation types are offered by the single popover entry.
-    expect(within(popover).getByTestId("popover-comment")).toHaveTextContent(/comment/i);
-    expect(within(popover).getByTestId("popover-like")).toHaveTextContent(/like/i);
-    expect(within(popover).getByTestId("popover-label")).toHaveTextContent(/label/i);
-    expect(within(popover).getByTestId("popover-redline")).toHaveTextContent(/redline/i);
-    expect(within(popover).getByTestId("popover-suggest")).toHaveTextContent(/suggest/i);
+    // All five annotation types are offered by the single popover entry. The buttons are icon-only
+    // (PO 2026-06-15) — the type name is the accessible name (aria-label), not visible text.
+    expect(within(popover).getByTestId("popover-comment").getAttribute("aria-label")).toMatch(/comment/i);
+    expect(within(popover).getByTestId("popover-like").getAttribute("aria-label")).toMatch(/like/i);
+    expect(within(popover).getByTestId("popover-label").getAttribute("aria-label")).toMatch(/label/i);
+    expect(within(popover).getByTestId("popover-redline").getAttribute("aria-label")).toMatch(/redline/i);
+    expect(within(popover).getByTestId("popover-suggest").getAttribute("aria-label")).toMatch(/suggest/i);
   });
 
   it("AS-001: Comment keeps its dedicated handler (the existing create path)", async () => {
