@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 
 // DocModeToolbar (annotation-core-ui-types-modes S-001 + S-006, UI Notes §Component Tree): the sticky
 // toolbar at the top of the doc pane, mirroring the Anchord-Design viewer prototype. Left→right:
 //   • Select | Pinpoint — Select is the active read/selection mode owned HERE. Pinpoint (the whole-
 //     block element picker) is Phase 2, so it surfaces a "coming" note instead of dead UI (kept
-//     visible so the shell matches the prototype).
+//     visible so the shell matches the prototype). Rendered with the SAME expanding chip system as
+//     the markup tools (Plannotator's input-method group uses identical expanding buttons).
 //   • a markup TOOL GROUP — Markup · Comment · Redline · Label (S-006/C-009). Exactly ONE tool is
 //     active; the ACTIVE tool routes a text selection (the routing lives in viewer-screen): Markup →
 //     the 5-type popover, Comment → the composer directly, Redline → a red strike directly, Label →
@@ -13,7 +14,14 @@ import { Icon } from "@/components/icon";
 //     per-type hue (DESIGN.md "Annotation type / tool colors") when active OR hovered; inactive chips
 //     stay icon-only + muted.
 //   • Wide | Focus — pushed to the FAR RIGHT — the doc measure (Wide = full column width, Focus =
-//     800px capped), driven via `data-doc-width` on the docpane (widths live in styles.css .doc-prose).
+//     800px capped), driven via `data-doc-width` on the docpane. Stays a plain text segmented toggle.
+//
+// MƯỢT (S-006 polish): the chips port Plannotator's AnnotationToolstrip ToolstripButton smoothness —
+// an EXPLICIT measured pixel width is animated (not a max-width guess). Each chip measures its label
+// off-screen, then `width = expanded ? (H_PAD + ICON_INNER + GAP + labelWidth + H_PAD) : ICON_SIZE`
+// eases over DURATION with a cubic-bezier; the label fades in just AFTER the width starts opening.
+// A `mounted` flag suppresses transitions until after first paint (no mount flash); reduced-motion
+// disables all of it. MIT/Apache technique mirrored from Plannotator.
 
 export type MarkupTool = "markup" | "comment" | "redline" | "label";
 type DocWidth = "wide" | "focus";
@@ -28,6 +36,133 @@ const TOOL_META: Record<MarkupTool, { label: string; icon: string; hue: string }
 };
 
 const TOOL_ORDER: MarkupTool[] = ["markup", "comment", "redline", "label"];
+
+// Plannotator ToolstripButton geometry — the measured-width recipe.
+const ICON_SIZE = 28; // collapsed square width (px)
+const H_PAD = 8;
+const GAP = 6;
+const ICON_INNER = 14;
+const DURATION = 180; // within DESIGN.md "short 150–200ms"
+const EASE = "cubic-bezier(0.25,0.46,0.45,0.94)";
+
+// One expanding chip — the shared affordance for BOTH the Select|Pinpoint input-method group and the
+// markup tool group (parameterised by hue / active / onClick so both groups animate identically). It
+// measures its label off-screen and animates an explicit pixel width (Plannotator's technique), so the
+// expand/collapse is smooth instead of a max-width guess. Collapsed → icon-only square; expanded
+// (active OR hovered OR touch) → icon + label + its hue. `data-expanded` + `data-active` + the label's
+// `data-collapsed`/`aria-hidden` are the test hooks; the visual pixel-match is [→MANUAL].
+function ToolChip({
+  testId,
+  labelTestId,
+  tool,
+  icon,
+  label,
+  hue,
+  active,
+  mounted,
+  reduceMotion,
+  ariaPressed,
+  onClick,
+}: {
+  testId: string;
+  labelTestId: string;
+  tool?: string;
+  icon: string;
+  label: string;
+  hue: string;
+  active: boolean;
+  mounted: boolean;
+  reduceMotion: boolean;
+  ariaPressed?: boolean;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [labelWidth, setLabelWidth] = useState(0);
+
+  // Measure the label width off-screen so the expanded width is exact (Plannotator step 1).
+  useLayoutEffect(() => {
+    if (measureRef.current) setLabelWidth(measureRef.current.offsetWidth);
+  }, [label]);
+
+  const isTouch =
+    typeof window !== "undefined" &&
+    ("ontouchstart" in window || (navigator?.maxTouchPoints ?? 0) > 0);
+  const expanded = active || hovered || isTouch;
+
+  const expandedWidth = H_PAD + ICON_INNER + GAP + labelWidth + H_PAD;
+  const width = expanded ? expandedWidth : ICON_SIZE;
+
+  const animate = mounted && !reduceMotion;
+  const widthTransition = animate
+    ? `width ${DURATION}ms ${EASE}, background-color ${DURATION}ms ease, color ${DURATION}ms ease, box-shadow ${DURATION}ms ease`
+    : "none";
+  const padTransition = animate ? `padding-left ${DURATION}ms ${EASE}` : "none";
+  const labelTransition = animate
+    ? `opacity ${expanded ? DURATION : DURATION * 0.6}ms ease ${expanded ? "60ms" : "0ms"}`
+    : "none";
+
+  // Active = full hue (coloured icon/text + soft hue bg). Inactive+hovered = a lighter hue HINT (so
+  // hover reads warmer than rest). Resting inactive = muted, icon-only (no inline colour).
+  let chipStyle: React.CSSProperties = { width, transition: widthTransition };
+  if (active) {
+    chipStyle = { ...chipStyle, color: hue, background: `${hue}1f` };
+  } else if (hovered) {
+    chipStyle = { ...chipStyle, color: `${hue}cc`, background: `${hue}14` };
+  }
+
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      data-tool={tool}
+      data-active={active ? "true" : undefined}
+      data-expanded={expanded ? "true" : undefined}
+      aria-pressed={ariaPressed}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={[
+        "relative flex h-7 items-center overflow-hidden rounded-md text-[12px] font-medium",
+        active ? "shadow-sm" : hovered ? "" : "text-subtle",
+      ].join(" ")}
+      style={chipStyle}
+    >
+      {/* Inner wrapper: paddingLeft centers the icon when collapsed, opens to H_PAD when expanded. */}
+      <div
+        className="flex items-center whitespace-nowrap"
+        style={{
+          paddingLeft: expanded ? H_PAD : (ICON_SIZE - ICON_INNER) / 2,
+          gap: GAP,
+          transition: padTransition,
+        }}
+      >
+        <Icon name={icon} size={ICON_INNER} />
+        {/* Label fades in slightly AFTER the width opens (60ms delay), fades out faster on collapse.
+            Always mounted + aria-hidden when collapsed so the chip animates instead of popping. */}
+        <span
+          data-testid={labelTestId}
+          data-collapsed={expanded ? undefined : "true"}
+          aria-hidden={!expanded}
+          style={{ opacity: expanded ? 1 : 0, transition: labelTransition }}
+        >
+          {label}
+        </span>
+      </div>
+      {/* Off-screen measurer (Plannotator): gives the exact expanded width. */}
+      <span
+        ref={measureRef}
+        aria-hidden
+        className="text-[12px] font-medium"
+        style={{ visibility: "hidden", position: "absolute", left: -9999, whiteSpace: "nowrap" }}
+      >
+        {label}
+      </span>
+    </button>
+  );
+}
 
 function Seg({
   options,
@@ -63,70 +198,6 @@ function Seg({
   );
 }
 
-// A single markup tool chip (S-006/C-009): collapsed to an icon at rest; expands to icon + label + its
-// hue (soft bg tint + coloured icon/text) when active OR hovered. The expand/colour is visual ([→MANUAL]
-// pixel-match), but we expose a data-active hook + a data-expanded hook + the hue via inline style so a
-// test can assert the active tool carries its label + colour and inactive tools are icon-only.
-function ToolChip({
-  tool,
-  active,
-  onSelect,
-}: {
-  tool: MarkupTool;
-  active: boolean;
-  onSelect: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const meta = TOOL_META[tool];
-  const expanded = active || hovered;
-  return (
-    <button
-      type="button"
-      data-testid={`markup-tool-${tool}`}
-      data-tool={tool}
-      data-active={active ? "true" : undefined}
-      data-expanded={expanded ? "true" : undefined}
-      aria-pressed={active}
-      aria-label={meta.label}
-      title={meta.label}
-      onClick={onSelect}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      className={[
-        // transition-all so the padding + bg + colour ease together with the label reveal below.
-        // DESIGN.md motion: short 150ms, ease-out; respect reduced-motion.
-        "inline-flex h-7 items-center rounded-md text-[12px] font-medium transition-all duration-150 ease-out motion-reduce:transition-none",
-        expanded ? "px-2" : "px-1.5 text-subtle",
-      ].join(" ")}
-      // Active/hover → the tool's hue (coloured icon/text + a soft bg tint, DESIGN.md affordance
-      // pattern). Inactive/resting → icon-only + muted (the className handles the muted colour).
-      style={
-        expanded
-          ? { color: meta.hue, background: `${meta.hue}1f` }
-          : undefined
-      }
-    >
-      <Icon name={meta.icon} size={14} />
-      {/* The label is ALWAYS mounted and animated open/closed (max-width + opacity + the icon gap),
-          so the chip expands/collapses smoothly instead of the label popping in/out. Collapsed →
-          clipped to 0 width, faded out, aria-hidden (the button's aria-label keeps the a11y name). */}
-      <span
-        data-testid={`markup-tool-${tool}-label`}
-        data-collapsed={expanded ? undefined : "true"}
-        aria-hidden={!expanded}
-        className="overflow-hidden whitespace-nowrap transition-all duration-150 ease-out motion-reduce:transition-none"
-        style={{
-          maxWidth: expanded ? "6rem" : 0,
-          opacity: expanded ? 1 : 0,
-          marginLeft: expanded ? "0.375rem" : 0,
-        }}
-      >
-        {meta.label}
-      </span>
-    </button>
-  );
-}
-
 export function DocModeToolbar({
   width,
   onWidth,
@@ -145,23 +216,58 @@ export function DocModeToolbar({
    *  early shell before the doc resolves); but normally the viewer wires this to its activeTool state. */
   onTool?: (tool: MarkupTool) => void;
 }) {
+  // `mounted` gate: transitions stay 'none' until after first paint so chips don't flash open on mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+
+  // Reduced-motion respected once (guard for happy-dom: matchMedia may be undefined → default false).
+  const reduceMotion =
+    typeof window !== "undefined" &&
+    (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+
   return (
     <div
       data-testid="doc-mode-toolbar"
       className="sticky top-0 z-[5] flex h-11 items-center gap-2.5 border-b border-line-soft bg-paper/85 px-5 backdrop-blur"
     >
-      <Seg
-        options={[
-          { key: "select", label: "Select" },
-          { key: "pinpoint", label: "Pinpoint" },
-        ]}
-        value="select"
-        onChange={(k) => {
-          // Pinpoint (whole-block element picker) is Phase 2 — never becomes the active mode; it
-          // surfaces a "coming" note so the shell matches the prototype without dead UI.
-          if (k === "pinpoint") onPinpointUnavailable();
-        }}
-      />
+      {/* Select | Pinpoint — the input-method group, SAME expanding chip system as the markup tools
+          (Plannotator parity). Select is the active read/selection mode (a neutral teal-elevated
+          treatment). Pinpoint (whole-block element picker) is Phase 2 — clicking it surfaces a
+          "coming" note via onPinpointUnavailable; it never becomes active (no dead UI). */}
+      <div
+        data-testid="input-mode-group"
+        role="group"
+        aria-label="Input mode"
+        className="inline-flex items-center gap-0.5 rounded-md border border-line bg-sunken p-0.5"
+      >
+        <ToolChip
+          testId="input-mode-select"
+          labelTestId="input-mode-select-label"
+          icon="list"
+          label="Select"
+          hue="#37b3bd"
+          active
+          mounted={mounted}
+          reduceMotion={reduceMotion}
+          ariaPressed
+          onClick={() => {}}
+        />
+        <ToolChip
+          testId="input-mode-pinpoint"
+          labelTestId="input-mode-pinpoint-label"
+          icon="grid"
+          label="Pinpoint"
+          hue="#37b3bd"
+          active={false}
+          mounted={mounted}
+          reduceMotion={reduceMotion}
+          ariaPressed={false}
+          onClick={onPinpointUnavailable}
+        />
+      </div>
 
       {/* S-006/C-009: the markup tool palette. Exactly one tool active; the active tool routes the
           selection (Markup → popover, Comment → composer, Redline → strike, Label → picker). */}
@@ -171,17 +277,30 @@ export function DocModeToolbar({
         aria-label="Markup tool"
         className="inline-flex items-center gap-0.5 rounded-md border border-line bg-sunken p-0.5"
       >
-        {TOOL_ORDER.map((tool) => (
-          <ToolChip
-            key={tool}
-            tool={tool}
-            active={tool === activeTool}
-            onSelect={() => onTool?.(tool)}
-          />
-        ))}
+        {TOOL_ORDER.map((tool) => {
+          const meta = TOOL_META[tool];
+          const active = tool === activeTool;
+          return (
+            <ToolChip
+              key={tool}
+              testId={`markup-tool-${tool}`}
+              labelTestId={`markup-tool-${tool}-label`}
+              tool={tool}
+              icon={meta.icon}
+              label={meta.label}
+              hue={meta.hue}
+              active={active}
+              mounted={mounted}
+              reduceMotion={reduceMotion}
+              ariaPressed={active}
+              onClick={() => onTool?.(tool)}
+            />
+          );
+        })}
       </div>
 
-      {/* Wide | Focus — pushed to the FAR RIGHT (ml-auto), the doc measure. */}
+      {/* Wide | Focus — pushed to the FAR RIGHT (ml-auto), the doc measure. Plain text segmented
+          toggle (kept on transition-colors — NOT converted to chips). */}
       <div data-testid="doc-width-seg" className="ml-auto">
         <Seg
           options={[

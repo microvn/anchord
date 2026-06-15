@@ -4,12 +4,13 @@ import userEvent from "@testing-library/user-event";
 
 // annotation-core-ui-types-modes S-001 + S-006 (C-009) — the DocModeToolbar.
 //
-// Left→right: Select | Pinpoint (Select active; Pinpoint disabled/coming — Phase 2) · a markup TOOL
-// PALETTE (Markup · Comment · Redline · Label — exactly one active, the active tool routes the
-// selection) · Wide | Focus pushed to the FAR RIGHT. Each tool chip is collapsed to an icon at rest
-// and expands to icon + label + its per-type hue when active or hovered (the collapse/expand colour is
-// visual [→MANUAL] — here we assert the active chip carries its label + a colour hook, inactive chips
-// are icon-only). This is a presentational shell — no anchor-model change (C-008).
+// Left→right: Select | Pinpoint (Select active; Pinpoint disabled/coming — Phase 2 — now rendered as
+// the SAME expanding chip system as the markup tools, Plannotator parity) · a markup TOOL PALETTE
+// (Markup · Comment · Redline · Label — exactly one active, the active tool routes the selection) ·
+// Wide | Focus pushed to the FAR RIGHT. Each tool chip is collapsed to an icon at rest and expands to
+// icon + label + its per-type hue when active or hovered (the collapse/expand colour is visual
+// [→MANUAL] — here we assert the active chip carries its label + a colour hook, inactive chips are
+// icon-only). This is a presentational shell — no anchor-model change (C-008).
 
 import { DocModeToolbar } from "./doc-mode-toolbar";
 
@@ -19,21 +20,21 @@ describe("DocModeToolbar S-001 mode relabel", () => {
     const toolbar = screen.getByTestId("doc-mode-toolbar");
     expect(toolbar).toHaveTextContent("Select");
     expect(toolbar).toHaveTextContent("Pinpoint");
-    // Markup is no longer a MODE in the Select|Pinpoint segment — it's a TOOL in the markup palette.
-    const modeSeg = within(toolbar).getByRole("button", { name: "Select" }).parentElement!;
-    expect(modeSeg).not.toHaveTextContent("Markup");
+    // Markup is no longer a MODE in the Select|Pinpoint group — it's a TOOL in the markup palette.
+    const modeGroup = screen.getByTestId("input-mode-group");
+    expect(modeGroup).not.toHaveTextContent("Markup");
   });
 
   it("AS-001: Select is the active mode", () => {
     render(<DocModeToolbar width="wide" onWidth={() => {}} onPinpointUnavailable={() => {}} />);
-    const select = screen.getByRole("button", { name: "Select" });
+    const select = screen.getByTestId("input-mode-select");
     expect(select.getAttribute("data-active")).toBe("true");
   });
 
   it("AS-001: Pinpoint is disabled/coming — choosing it surfaces a note, does not switch mode", async () => {
     const onPinpoint = mock(() => {});
     render(<DocModeToolbar width="wide" onWidth={() => {}} onPinpointUnavailable={onPinpoint} />);
-    const pinpoint = screen.getByRole("button", { name: /pinpoint/i });
+    const pinpoint = screen.getByTestId("input-mode-pinpoint");
     await userEvent.click(pinpoint);
     expect(onPinpoint).toHaveBeenCalledTimes(1);
     // It never becomes the active mode (Phase 2 work).

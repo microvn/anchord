@@ -115,18 +115,41 @@ export function SelectionPopover({
 
   useDismissOnOutsideAndEscape(ref, onDismiss);
 
+  // MƯỢT (S-006 polish): Plannotator's popover entrance — scale(0.95)→1 + opacity 0→1, 0.15s ease-out,
+  // origin top-center (it floats ABOVE the selection). The scale rides an inner wrapper's `animation`
+  // so it never fights the outer `translateX(-50%)` centering transform (the two transforms live on
+  // different elements). Reduced-motion → no animation (the keyframes are gated by the media query).
   return (
-    <div
-      ref={ref}
-      data-testid="selection-popover"
-      role="toolbar"
-      aria-label="Selection actions"
-      // .selection-popover (prototype): floats over the range; elev surface, line border, r-md.
-      className="absolute z-40 flex items-center gap-0.5 rounded-md border border-line bg-elev p-1 shadow-lg"
-      // centered: `left` is the selection's center x → translateX(-50%) centers the popover over it
-      // (above-centered tooltip, Plannotator center-above, Apache-2.0).
-      style={{ top: rect.top, left: rect.left, transform: rect.centered ? "translateX(-50%)" : undefined }}
-    >
+    <>
+      <style>{`
+        @keyframes anchord-popover-in {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @media (prefers-reduced-motion: no-preference) {
+          [data-testid="selection-popover"] > [data-popover-anim] {
+            animation: anchord-popover-in 0.15s ease-out;
+            transform-origin: top center;
+          }
+        }
+      `}</style>
+      <div
+        ref={ref}
+        data-testid="selection-popover"
+        role="toolbar"
+        aria-label="Selection actions"
+        // centered: `left` is the selection's center x → translateX(-50%) centers the popover over it
+        // (above-centered tooltip, Plannotator center-above, Apache-2.0). The entrance scale lives on
+        // the inner wrapper below, so it composes with this centering translate instead of fighting it.
+        className="absolute z-40"
+        style={{ top: rect.top, left: rect.left, transform: rect.centered ? "translateX(-50%)" : undefined }}
+      >
+        {/* Inner wrapper carries the scale-in entrance + the visual surface (.selection-popover: floats
+            over the range; elev surface, line border, r-md). */}
+        <div
+          data-popover-anim
+          className="flex items-center gap-0.5 rounded-md border border-line bg-elev p-1 shadow-lg"
+        >
       <PopoverButton type="comment" testId="popover-comment" icon="inbox" label="Comment" onClick={onComment} />
       <PopoverButton type="like" testId="popover-like" icon="check" label="Like" onClick={() => onSelectType?.("like")} />
       <PopoverButton type="label" testId="popover-label" icon="pin" label="Label" onClick={() => onSelectType?.("label")} />
@@ -140,8 +163,10 @@ export function SelectionPopover({
         onClick={onDismiss}
         className="inline-flex items-center rounded-[5px] p-1 text-subtle hover:bg-sunken hover:text-ink"
       >
-        <Icon name="x" size={14} />
-      </button>
-    </div>
+          <Icon name="x" size={14} />
+        </button>
+        </div>
+      </div>
+    </>
   );
 }
