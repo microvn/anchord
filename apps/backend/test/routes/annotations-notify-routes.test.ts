@@ -129,7 +129,8 @@ function buildApp(opts: {
       resolveSession: opts.resolveSession,
       resolveWorkspaceRole: async () => "member",
       resolveDocRole: asCommenter,
-      accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      // doc-access-routing S-001: the single read gate admits these notify-path tests.
+      resolveAccess: async () => ({ role: "commenter", canView: true }),
       loadShareConfig: async () => ({ guestCommentingEnabled: true }),
       notify: { repo: opts.notifyRepo, mail: opts.mail },
     },

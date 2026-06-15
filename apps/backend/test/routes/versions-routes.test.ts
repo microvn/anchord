@@ -18,6 +18,8 @@ import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
 import type { SessionResolver } from "../../src/http/auth-gate";
 import type { Role } from "../../src/sharing/roles";
+import type { Viewer } from "../../src/sharing/access";
+import type { AccessResult } from "../../src/sharing/resolve-access";
 import type { VersionRepo, NewVersionRow } from "../../src/services/version";
 import type { DocLookup, DocLookupRepo } from "../../src/routes/versions";
 
@@ -93,6 +95,8 @@ function fakeLookupRepo(doc: DocLookup | null, versionRepo?: ReturnType<typeof f
 function buildApp(opts: {
   resolveSession?: SessionResolver;
   resolveDocRole?: (docId: string, userId: string) => Promise<Role | null>;
+  /** doc-access-routing S-001: the single read gate. Default admits (canView true). */
+  resolveAccess?: (docId: string, viewer: Viewer) => Promise<AccessResult>;
   doc?: DocLookup | null;
   versionRepo?: ReturnType<typeof fakeVersionRepo>;
   lookupRepo?: DocLookupRepo;
@@ -113,7 +117,7 @@ function buildApp(opts: {
       resolveSession: opts.resolveSession ?? member,
       resolveWorkspaceRole: async () => "member",
       resolveDocRole: opts.resolveDocRole ?? asEditor,
-      accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      resolveAccess: opts.resolveAccess ?? (async () => ({ role: "editor", canView: true })),
       reanchorOnNewVersion: opts.reanchorOnNewVersion,
     },
   });
@@ -208,7 +212,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
   });
 
   test("no-access doc → 404 (not 403), even for would-be editor", async () => {
-    // doc is restricted + accessDeps denies → canViewDoc false → 404 before role check
+    // S-001: restricted doc + resolveAccess denies (canView false) → 404 before role check
     const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
     const app = createApp({
       dbCheck: async () => {},
@@ -218,7 +222,7 @@ describe("POST /api/docs/:slug/versions (AS-001)", () => {
         resolveSession: member,
         resolveWorkspaceRole: async () => "member",
         resolveDocRole: asEditor,
-        accessDeps: { isInvited: () => false, isWorkspaceMember: () => false },
+        resolveAccess: async () => ({ role: null, canView: false }),
       },
     });
     const res = await app.handle(

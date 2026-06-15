@@ -55,7 +55,12 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
       resolveSession: member,
       resolveWorkspaceRole: asMember,
       resolveDocRole: async () => "owner" as const,
-      accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      // S-001: the single read gate. The seeded doc is anyone_with_link → both the member
+      // and the anon guest may view; member resolves to owner, anon to the link role.
+      resolveAccess: async (_docId: string, viewer: { kind: string }) =>
+        viewer.kind === "user"
+          ? { role: "owner" as const, canView: true }
+          : { role: "commenter" as const, canView: true },
       loadShareConfig: guestOn,
     };
     app = createApp({ dbCheck: async () => {}, annotations: base });

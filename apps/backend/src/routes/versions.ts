@@ -33,7 +33,8 @@ import { withValidation } from "../http/validate";
 import { ValidationError, NotFoundError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
-import { canViewDoc, type AccessDeps, type Viewer } from "../sharing/access";
+import { type Viewer } from "../sharing/access";
+import { type AccessResult } from "../sharing/resolve-access";
 import { type Role } from "../sharing/roles";
 import {
   appendVersion,
@@ -132,14 +133,14 @@ export interface VersionsRoutesDeps {
   resolveSession: SessionResolver;
   /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
   resolveWorkspaceRole: WorkspaceRoleResolver;
-  /** Doc-scoped effective-role resolver (the sharing seam — see ResolveDocRole). */
+  /** Doc-scoped effective-role resolver (used for editor-gated WRITE capability checks). */
   resolveDocRole: ResolveDocRole;
   /**
-   * Access deps for `canViewDoc` (invite / workspace-membership ports). These are
-   * sharing-permissions / workspace-project seams too; inject a fake in tests and
-   * the conservative concrete impls in index.ts.
+   * doc-access-routing S-001 / C-001: the SINGLE authoritative read gate for the version
+   * READ surface (history, diff) — and the existence-hiding pre-gate on every write.
+   * Replaces the permissive `canViewDoc` stub. `(docId, viewer) → { role, canView }`.
    */
-  accessDeps: AccessDeps;
+  resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
   /**
    * annotation-core S-005 / C-012: re-anchor the doc's annotations onto a newly-created
    * version. The route FIRES this (does not await) after a successful append/restore so it
@@ -205,14 +206,8 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
   async function loadVisibleDoc(slug: string, userId: string): Promise<DocLookup> {
     const doc = await lookupRepo.findDocBySlug(slug);
     const viewer: Viewer = { kind: "user", userId };
-    const allowed =
-      doc !== null &&
-      canViewDoc({
-        docId: doc.id,
-        generalAccess: doc.generalAccess,
-        viewer,
-        deps: deps.accessDeps,
-      }).allowed;
+    // S-001 / C-001: the single authoritative gate, NOT the permissive canViewDoc stub.
+    const allowed = doc !== null && (await deps.resolveAccess(doc.id, viewer)).canView;
     return enforceReadAccess({ doc, allowed });
   }
 

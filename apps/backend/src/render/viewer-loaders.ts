@@ -4,46 +4,47 @@
 // doc OR one the caller cannot view BOTH return null, so the route 404s and never leaks
 // an out-of-access doc (existence-hiding — sharing C-003 / api-core C-006).
 //
-// The gate reuses the EXISTING access model — it invents no new rule:
-//   1. canViewDoc (the structural general_access level rule). Authoritative for the anon
-//      path: a restricted / anyone_in_workspace doc is denied to an anon caller, no leak.
-//   2. For a logged-in caller on a non-open doc, the authoritative async resolveDocRole
-//      (real invited doc_members + share-link role + workspace membership + owner) must
-//      return SOME role. No role → denied. anyone_with_link is open to all → skip the read.
-//      (The sync canViewDoc deps are permissive by design in the v0 wiring — see index.ts;
-//      resolveDocRole is the authoritative seam, so the loaders consult it for the gate.)
+// doc-access-routing S-001: the gate is now the SINGLE authoritative `resolveAccess`
+// (sharing/resolve-access.ts). It folds owner + invited + workspace-when-in-workspace +
+// link-when-with-link, resolved against the doc's OWN workspace, and handles the anon
+// path (anon may view only anyone_with_link). This REPLACES the old two-layer gate
+// (structural canViewDoc pre-gate + resolveDocRole) whose permissive stubs decided
+// nothing and whose structural pre-gate wrongly blocked an invited outsider on an
+// anyone_in_workspace doc (AS-002). canView ⇔ resolveAccess returns a non-null role.
 
 import { desc, eq } from "drizzle-orm";
 import { docs, docVersions } from "../db/schema";
 import type { DB } from "../db/client";
-import { canViewDoc, type AccessDeps, type GeneralAccessLevel, type Viewer } from "../sharing/access";
+import type { GeneralAccessLevel, Viewer } from "../sharing/access";
 import type { Role } from "../sharing/roles";
+import type { AccessResult } from "../sharing/resolve-access";
 import type { ViewerDoc } from "../app";
 
 export interface ViewerLoaderDeps {
   db: DB;
-  /** Structural canViewDoc ports (anon/level rule). */
-  accessDeps: AccessDeps;
-  /** Authoritative doc-scoped effective-role read (membership/invite/owner). null → no role. */
-  resolveDocRole: (docId: string, userId: string) => Promise<Role | null>;
+  /**
+   * The SINGLE authoritative access gate (sharing/resolve-access.createResolveAccess):
+   * `(docId, viewer) → { role, canView }`. The loaders carry the same instance the
+   * annotation + version read paths gate on, so authorization is decided in one place.
+   */
+  resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
 }
 
 /**
- * Decide whether `viewer` may view a doc at `generalAccess` — the two-layer gate above.
- * Denied → false → the caller maps to null (existence-hiding).
+ * Decide whether `viewer` may view `docId` — delegates to the single `resolveAccess`
+ * gate. Denied → false → the caller maps to null (existence-hiding).
+ *
+ * `generalAccess` is no longer consulted here (resolveAccess reads it itself); the
+ * parameter is kept for call-site compatibility and ignored.
  */
 export async function canViewVisible(
   deps: ViewerLoaderDeps,
   docId: string,
-  generalAccess: GeneralAccessLevel,
+  _generalAccess: GeneralAccessLevel,
   viewer: Viewer,
 ): Promise<boolean> {
-  const structural = canViewDoc({ docId, generalAccess, viewer, deps: deps.accessDeps }).allowed;
-  if (!structural) return false;
-  if (generalAccess === "anyone_with_link" || viewer.kind === "anon") return structural;
-  // Logged-in caller on restricted / anyone_in_workspace → require a concrete role.
-  const role = await deps.resolveDocRole(docId, viewer.userId);
-  return role !== null;
+  const { canView } = await deps.resolveAccess(docId, viewer);
+  return canView;
 }
 
 /** Build the access-gated /d/:slug loader. */
@@ -137,7 +138,10 @@ export function createLoadViewerDoc(
       .where(eq(docs.slug, slug))
       .limit(1);
     if (!doc) return null;
-    if (!(await canViewVisible(deps, doc.id, doc.generalAccess, viewer))) return null;
+    // doc-access-routing S-001: ONE resolveAccess call gives BOTH the view gate AND the
+    // caller's effective role (for the viewer's Share gate, S-001/C-002) — no second read.
+    const access = await deps.resolveAccess(doc.id, viewer);
+    if (!access.canView) return null;
 
     // CURRENT version = highest `version` row (mirrors createLoadViewer / search).
     const [ver] = await deps.db
@@ -148,10 +152,7 @@ export function createLoadViewerDoc(
       .limit(1);
     if (!ver) return null; // a doc with no published version has nothing to render
 
-    // The caller's effective role (for the viewer's Share gate, S-001/C-002). Anon → null (no
-    // userId). The gate already proved access above; this resolves WHICH role for the UI.
-    const effectiveRole =
-      viewer.kind === "user" ? await deps.resolveDocRole(doc.id, viewer.userId) : null;
+    const effectiveRole = access.role;
 
     return {
       versionId: ver.id,

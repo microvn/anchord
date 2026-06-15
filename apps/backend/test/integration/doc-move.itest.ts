@@ -31,6 +31,7 @@ import {
   createResolveDocRole,
   createIsDocOwner,
 } from "../../src/sharing/resolve-doc-role-repo";
+import { createResolveAccess } from "../../src/sharing/resolve-access";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
@@ -116,6 +117,8 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
       isOwner: createIsDocOwner(h.db),
       isWorkspaceMember: isWorkspaceMemberOfDoc,
     });
+    // S-001: the single read gate the version routes consult, built on the real resolver.
+    const resolveAccess = createResolveAccess(h.db, { resolveDocRole });
 
     app = createApp({
       dbCheck: async () => {},
@@ -127,7 +130,7 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
         resolveSession,
         resolveWorkspaceRole,
         resolveDocRole,
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        resolveAccess,
       },
       docMove: { db: h.db, resolveSession, resolveWorkspaceRole, resolveDocRole, isWorkspaceAdmin },
       loadViewer: async (slug) => {

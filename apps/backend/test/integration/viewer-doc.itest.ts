@@ -18,9 +18,11 @@
 // Run: RUN_INTEGRATION=1 bun test ./test/integration/viewer-doc.itest.ts
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { docs, docVersions } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createLoadViewerDoc } from "../../src/render/viewer-loaders";
+import { createResolveAccess } from "../../src/sharing/resolve-access";
 import type { Viewer } from "../../src/sharing/access";
 import type { Role } from "../../src/sharing/roles";
 import type { WorkspaceRoleResolver, SessionResolver } from "../../src/http/auth-gate";
@@ -69,10 +71,25 @@ describe.skipIf(!RUN)("render-publish S-005: in-app viewer doc loader (real Post
   const resolveWorkspaceRole: WorkspaceRoleResolver = async () => workspaceRole;
 
   function buildApp() {
+    // S-001: the loader gates on the single resolveAccess. We model the production
+    // resolver faithfully via a fake resolveDocRole that — like the real one — grants the
+    // link role for an anyone_with_link doc even with no invite (the F1 fix), while a
+    // restricted doc with no role stays denied (AS-018). The doc's general_access is read
+    // from the seeded row so the per-test knob `docRole` overrides only when set.
+    const resolveDocRole = async (docId: string, _userId: string): Promise<Role | null> => {
+      if (docRole !== null) return docRole;
+      const [doc] = await h.db
+        .select({ ga: docs.generalAccess })
+        .from(docs)
+        .where(eq(docs.id, docId))
+        .limit(1);
+      // anyone_with_link admits a logged-in caller at the link role (default commenter),
+      // mirroring resolve-doc-role-repo.generalAccessAdmits; restricted → no role.
+      return doc?.ga === "anyone_with_link" ? "commenter" : null;
+    };
     const loaderDeps = {
       db: h.db,
-      accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
-      resolveDocRole: async (): Promise<Role | null> => docRole,
+      resolveAccess: createResolveAccess(h.db, { resolveDocRole }),
     };
     return createApp({
       dbCheck: async () => {},

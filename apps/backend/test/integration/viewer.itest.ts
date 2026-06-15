@@ -24,6 +24,7 @@ import { docs, docVersions } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { CONTENT_SECURITY_POLICY } from "../../src/render/sandbox";
 import { createLoadViewer, createLoadContent } from "../../src/render/viewer-loaders";
+import { createResolveAccess } from "../../src/sharing/resolve-access";
 import type { Viewer } from "../../src/sharing/access";
 import type { Role } from "../../src/sharing/roles";
 import { withMigratedDb, type MigratedDb } from "./harness";
@@ -68,12 +69,14 @@ describe.skipIf(!RUN)("render-publish S-002/S-003/S-004: access-gated viewer (re
   let docRole: Role | null = null;
 
   function buildApp() {
+    // doc-access-routing S-001: the loaders now gate on the single resolveAccess. Built on
+    // the REAL createResolveAccess (its anon path reads the seeded doc's general_access +
+    // share_links) with a fake resolveDocRole for the logged-in role.
     const deps = {
       db: h.db,
-      // Permissive structural ports (mirror index.ts sharedAccessDeps); the authoritative
-      // gate for non-open docs is resolveDocRole below.
-      accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
-      resolveDocRole: async (): Promise<Role | null> => docRole,
+      resolveAccess: createResolveAccess(h.db, {
+        resolveDocRole: async (): Promise<Role | null> => docRole,
+      }),
     };
     return createApp({
       dbCheck: async () => {},

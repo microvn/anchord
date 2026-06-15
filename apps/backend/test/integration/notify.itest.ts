@@ -91,7 +91,8 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
         resolveSession,
         resolveWorkspaceRole: asMember,
         resolveDocRole: async () => "owner" as const,
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        // S-001: single read gate admits the signed-in participants in these notify tests.
+        resolveAccess: async () => ({ role: "owner" as const, canView: true }),
         loadShareConfig: guestOn,
         notify: { mail },
       },

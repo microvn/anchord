@@ -25,17 +25,13 @@ import {
   createSuggestionRepo,
   createReanchorLedgerRepo,
 } from "../../src/annotation/repo";
-import type { AccessDeps } from "../../src/sharing/access";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
 
-// An access-deps stub that grants nothing extra; the seeded doc is anyone_with_link so
-// listAnnotations is allowed for an anon viewer without needing invite/workspace lookups.
-const openDeps: AccessDeps = {
-  isInvited: () => false,
-  isWorkspaceMember: () => false,
-};
+// doc-access-routing S-001: listAnnotations now takes a PRE-RESOLVED `canView` (the
+// route's single resolveAccess gate decides it). These itests pass `canView: true`
+// directly since the seeded doc is anyone_with_link.
 
 let docSeq = 0;
 /** Seed a doc (with version 1) via the real publish repo; return its id. */
@@ -96,7 +92,7 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
     const annId = created.created ? created.id : "";
 
     const listed = await listAnnotations(
-      { docId, viewer: { kind: "anon" }, generalAccess: "anyone_with_link", deps: openDeps },
+      { docId, canView: true },
       annRepo,
     );
     expect(listed.allowed).toBe(true);
@@ -142,7 +138,7 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
       .where(eq(annotations.id, ids[2]));
 
     const listed = await listAnnotations(
-      { docId, viewer: { kind: "anon" }, generalAccess: "anyone_with_link", deps: openDeps },
+      { docId, canView: true },
       annRepo,
     );
     expect(listed.allowed).toBe(true);

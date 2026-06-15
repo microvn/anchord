@@ -9,7 +9,7 @@ import {
   type NewAnnotation,
   type ViewerComment,
 } from "./annotation";
-import type { AccessDeps, Viewer } from "../sharing/access";
+import type { Viewer } from "../sharing/access";
 
 // annotation-core S-001 — anchor model + create-path SERVER re-auth (C-009/AS-020) +
 // read authz (C-010/AS-021). Pure logic against a fake repo (mirrors access.test.ts).
@@ -36,17 +36,7 @@ function fakeRepo(
   };
 }
 
-function deps(opts?: { invited?: string[]; members?: string[] }): AccessDeps {
-  const invited = new Set(opts?.invited ?? []);
-  const members = new Set(opts?.members ?? []);
-  return {
-    isInvited: (_d, u) => invited.has(u),
-    isWorkspaceMember: (u) => members.has(u),
-  };
-}
-
 const commenter: Viewer = { kind: "user", userId: "u-commenter" };
-const stranger: Viewer = { kind: "user", userId: "u-stranger" };
 const anon: Viewer = { kind: "anon" };
 
 test("AS-001: create a block-anchored text annotation on an HTML doc", async () => {
@@ -164,15 +154,8 @@ test("AS-021 / C-010: a user without doc permission cannot read annotations — 
     },
   ]);
 
-  const res = await listAnnotations(
-    {
-      docId: "doc-restricted",
-      viewer: stranger, // not invited
-      generalAccess: "restricted",
-      deps: deps({ invited: ["u-someone-else"] }),
-    },
-    repo,
-  );
+  // S-001: the route's single resolveAccess gate decided this reader cannot view → canView false.
+  const res = await listAnnotations({ docId: "doc-restricted", canView: false }, repo);
 
   expect(res.allowed).toBe(false);
   expect(res.annotations).toEqual([]); // NO content leaks
@@ -189,15 +172,7 @@ test("C-010: an authorized reader gets the doc's annotations", async () => {
   };
   const repo = fakeRepo([row]);
 
-  const res = await listAnnotations(
-    {
-      docId: "doc-ok",
-      viewer: stranger,
-      generalAccess: "anyone_with_link", // open → allowed even for a stranger
-      deps: deps(),
-    },
-    repo,
-  );
+  const res = await listAnnotations({ docId: "doc-ok", canView: true }, repo);
 
   expect(res.allowed).toBe(true);
   // S-003: every annotation now carries its (possibly empty) comment thread.
@@ -231,10 +206,7 @@ test("S-003: list attaches each annotation's comments[] thread (authorName | gue
   };
   const repo = fakeRepo([row], [root, reply]);
 
-  const res = await listAnnotations(
-    { docId: "doc-ok", viewer: stranger, generalAccess: "anyone_with_link", deps: deps() },
-    repo,
-  );
+  const res = await listAnnotations({ docId: "doc-ok", canView: true }, repo);
 
   expect(res.allowed).toBe(true);
   // The thread is attached, in creation order, with the annotationId stripped (it's the grouping key).

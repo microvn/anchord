@@ -5,7 +5,7 @@
 // re-authorization (C-009/AS-020), and the read authorization (C-010/AS-021).
 
 import { can, type Role } from "../sharing/roles";
-import { canViewDoc, type AccessDeps, type GeneralAccessLevel, type Viewer } from "../sharing/access";
+import { type Viewer } from "../sharing/access";
 
 /** Annotation type — text range for S-001; image-region (S-002) reuses the table. */
 export type AnnotationType = "range" | "multi_range" | "block" | "doc";
@@ -175,9 +175,13 @@ export async function createAnnotation(
 
 export interface ListAnnotationsInput {
   docId: string;
-  viewer: Viewer;
-  generalAccess: GeneralAccessLevel;
-  deps: AccessDeps;
+  /**
+   * doc-access-routing S-001 / AS-007: the reader's PRE-RESOLVED view access, decided by
+   * the route's single `resolveAccess` gate. The service no longer re-runs `canViewDoc`
+   * with permissive stub deps (the bug that let any logged-in user read a restricted
+   * doc's threads) — the route is the authoritative wall and passes its decision in.
+   */
+  canView: boolean;
 }
 
 export type ListAnnotationsResult =
@@ -186,19 +190,18 @@ export type ListAnnotationsResult =
 
 /**
  * List a doc's annotations, authorized by the reader's effective access to the PARENT
- * doc (C-010/AS-021). Reuses canViewDoc — the same read-gate the doc-serve route uses.
- * A reader without permission gets a clean deny with NO content: the repo is never
- * even queried, so no annotation/comment text can leak.
+ * doc (C-010/AS-021/AS-007). The view decision is made by the route's single
+ * `resolveAccess` gate and handed in as `canView`. A reader without permission gets a
+ * clean deny with NO content: the repo is never even queried, so no thread text leaks.
  */
 export async function listAnnotations(
   input: ListAnnotationsInput,
   repo: AnnotationRepo,
 ): Promise<ListAnnotationsResult> {
-  const { docId, viewer, generalAccess, deps } = input;
+  const { docId, canView } = input;
 
-  const decision = canViewDoc({ docId, generalAccess, viewer, deps });
-  if (!decision.allowed) {
-    // AS-021: denied → no content. Do not touch the repo.
+  if (!canView) {
+    // AS-021/AS-007: denied → no content. Do not touch the repo.
     return { allowed: false, annotations: [] };
   }
 

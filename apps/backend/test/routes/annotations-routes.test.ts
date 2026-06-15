@@ -22,6 +22,8 @@ import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
 import type { SessionResolver } from "../../src/http/auth-gate";
 import type { Role } from "../../src/sharing/roles";
+import type { Viewer } from "../../src/sharing/access";
+import type { AccessResult } from "../../src/sharing/resolve-access";
 import type { DocLookup, DocLookupRepo } from "../../src/routes/versions";
 import type { AnnotationLookupRepo, LoadShareConfig } from "../../src/routes/annotations";
 import type { AnnotationRepo, AnnotationRow, NewAnnotation, ViewerComment } from "../../src/annotation/annotation";
@@ -175,7 +177,12 @@ function buildApp(opts: {
   resolveSession?: SessionResolver;
   resolveDocRole?: (docId: string, userId: string) => Promise<Role | null>;
   doc?: DocLookup | null;
-  accessDeps?: { isInvited: () => boolean; isWorkspaceMember: () => boolean };
+  /**
+   * doc-access-routing S-001: the single read gate. Default ADMITS (canView true) at
+   * whatever role resolveDocRole reports — so the existing happy-path tests still pass.
+   * No-access tests pass an explicit gate returning { role: null, canView: false }.
+   */
+  resolveAccess?: (docId: string, viewer: Viewer) => Promise<AccessResult>;
   annotationRepo?: ReturnType<typeof fakeAnnotationRepo>;
   commentRepo?: ReturnType<typeof fakeCommentRepo>;
   guestCommentRepo?: ReturnType<typeof fakeGuestCommentRepo>;
@@ -184,6 +191,13 @@ function buildApp(opts: {
   annotationLookupRepo?: AnnotationLookupRepo;
   loadShareConfig?: LoadShareConfig;
 }) {
+  const resolveDocRole = opts.resolveDocRole ?? asOwner;
+  // Default gate: admit, mirroring the resolved role (anon → null role but still admitted
+  // for the default anyone_with_link doc the tests use). No-access cases override this.
+  const defaultAccess = async (docId: string, viewer: Viewer): Promise<AccessResult> => {
+    const role = viewer.kind === "user" ? await resolveDocRole(docId, viewer.userId) : null;
+    return { role, canView: true };
+  };
   return createApp({
     dbCheck: async () => {},
     annotations: {
@@ -196,12 +210,15 @@ function buildApp(opts: {
       annotationLookupRepo: opts.annotationLookupRepo ?? fakeAnnotationLookupRepo({}),
       resolveSession: opts.resolveSession ?? member,
       resolveWorkspaceRole: async () => "member",
-      resolveDocRole: opts.resolveDocRole ?? asOwner,
-      accessDeps: opts.accessDeps ?? { isInvited: () => true, isWorkspaceMember: () => true },
+      resolveDocRole,
+      resolveAccess: opts.resolveAccess ?? defaultAccess,
       loadShareConfig: opts.loadShareConfig ?? guestOff,
     },
   });
 }
+
+/** A no-access gate: every doc-centric read denies (existence-hiding 404). */
+const denyAll = async (): Promise<AccessResult> => ({ role: null, canView: false });
 
 function req(path: string, init: RequestInit = {}) {
   return new Request(`http://localhost${path}`, {
@@ -281,7 +298,7 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     const ar = fakeAnnotationRepo();
     const app = buildApp({
       doc: { ...VISIBLE_DOC, generalAccess: "restricted" },
-      accessDeps: { isInvited: () => false, isWorkspaceMember: () => false },
+      resolveAccess: denyAll,
       resolveDocRole: asOwner,
       annotationRepo: ar,
     });
@@ -351,10 +368,55 @@ describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
   test("AS-021: no-access doc → 404 (not an empty list — indistinguishable)", async () => {
     const app = buildApp({
       doc: { ...VISIBLE_DOC, generalAccess: "restricted" },
-      accessDeps: { isInvited: () => false, isWorkspaceMember: () => false },
+      resolveAccess: denyAll,
     });
     const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations"));
     expect(res.status).toBe(404);
+  });
+
+  test("AS-007: logged-in non-member (not owner/invited/member) is DENIED the annotation list of a restricted doc — same 404 as the doc read, no thread leak", async () => {
+    // Frank IS logged in (session resolves). The OLD permissive stub let any logged-in
+    // user pass; the single resolveAccess gate denies him (no role), so the list 404s
+    // EXACTLY like the doc read — and the annotation repo is never queried (no leak).
+    const ar = fakeAnnotationRepo([
+      { id: "secret", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved" },
+    ]);
+    const frank: SessionResolver = async () => ({ userId: "u_frank" });
+    const app = buildApp({
+      resolveSession: frank,
+      doc: { ...VISIBLE_DOC, generalAccess: "restricted" },
+      // The gate Frank fails: owner/invited/workspace/link all miss → denied.
+      resolveAccess: denyAll,
+      annotationRepo: ar,
+    });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations"));
+    expect(res.status).toBe(404); // not the old "200 with an empty/leaked list"
+    const json = (await res.json()) as any;
+    expect(json.success).toBe(false);
+    // No thread text reachable on a denied read.
+    expect(json.data?.items).toBeUndefined();
+  });
+
+  test("C-001 / C-012: the annotation LIST is gated by the single resolveAccess (negative-access regression: logged-in non-member → denied), not by requireWorkspaceMember", async () => {
+    // Distinct from AS-007's existence-hiding focus: this pins the C-012 invariant that a
+    // doc-centric READ which would lose its workspace-membership wall is STILL denied by
+    // the resolveAccess gate for a non-member. A widened gate (canView always true) would
+    // turn this green wrongly — so the gate is what's under test.
+    const nonMember: SessionResolver = async () => ({ userId: "u_outsider" });
+    const denied = buildApp({
+      resolveSession: nonMember,
+      doc: { ...VISIBLE_DOC, generalAccess: "restricted" },
+      resolveAccess: denyAll,
+    });
+    expect((await denied.handle(req("/api/w/ws_1/docs/doc-one/annotations"))).status).toBe(404);
+    // And the same gate ADMITTING (canView true) lets a real member read → 200 (proves
+    // the 404 above is the gate denying, not a blanket block).
+    const admitted = buildApp({
+      resolveSession: nonMember,
+      doc: { ...VISIBLE_DOC, generalAccess: "restricted" },
+      resolveAccess: async () => ({ role: "viewer", canView: true }),
+    });
+    expect((await admitted.handle(req("/api/w/ws_1/docs/doc-one/annotations"))).status).toBe(200);
   });
 });
 
@@ -502,7 +564,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     const app = buildApp({
       resolveDocRole: asCommenter,
       annotationLookupRepo: fakeAnnotationLookupRepo({ doc: { docId: "doc_1", generalAccess: "restricted" } }),
-      accessDeps: { isInvited: () => false, isWorkspaceMember: () => false },
+      resolveAccess: denyAll,
     });
     const res = await app.handle(
       req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi", parentId: "root" }) }),

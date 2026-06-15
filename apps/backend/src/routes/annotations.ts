@@ -38,7 +38,8 @@ import { withValidation } from "../http/validate";
 import { ValidationError, ForbiddenError, NotFoundError, ConflictError, UnauthenticatedError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
-import { canViewDoc, type AccessDeps, type Viewer, type GeneralAccessLevel } from "../sharing/access";
+import { type Viewer, type GeneralAccessLevel } from "../sharing/access";
+import { type AccessResult } from "../sharing/resolve-access";
 import { type Role } from "../sharing/roles";
 import {
   createAnnotation,
@@ -147,10 +148,15 @@ export interface AnnotationsRoutesDeps {
   resolveSession: SessionResolver;
   /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
   resolveWorkspaceRole: WorkspaceRoleResolver;
-  /** Doc-scoped effective-role resolver (the sharing seam — see ResolveDocRole). */
+  /** Doc-scoped effective-role resolver (used for write-class capability checks). */
   resolveDocRole: ResolveDocRole;
-  /** Access deps for `canViewDoc` (invite / workspace-membership ports). */
-  accessDeps: AccessDeps;
+  /**
+   * doc-access-routing S-001 / C-001: the SINGLE authoritative read gate. Every
+   * doc-centric READ on this cluster (annotation list, and the parent-doc gate for
+   * comment/resolve/suggest) flows through this — replacing the permissive `canViewDoc`
+   * stub that let any logged-in user pass (AS-007). `(docId, viewer) → { role, canView }`.
+   */
+  resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
   /** Guest-commenting toggle resolver (the sharing seam — see LoadShareConfig). */
   loadShareConfig: LoadShareConfig;
   /**
@@ -270,23 +276,27 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     await notifyOnReply({ annotationId, replierUserId }, notifyDeps);
   }
 
-  /** Resolve a doc by slug to a visible doc or throw 404 (existence-hiding, C-006). */
+  /**
+   * Resolve a doc by slug to a visible doc or throw 404 (existence-hiding, C-006).
+   * doc-access-routing S-001 / C-001: the gate is the single authoritative
+   * `resolveAccess` — NOT the permissive `canViewDoc` stub (which let any logged-in user
+   * through). A missing doc OR a no-access decision both collapse to the same 404.
+   */
   async function loadVisibleDocBySlug(slug: string, viewer: Viewer) {
     const doc = await lookupRepo.findDocBySlug(slug);
-    const allowed =
-      doc !== null &&
-      canViewDoc({ docId: doc.id, generalAccess: doc.generalAccess, viewer, deps: deps.accessDeps }).allowed;
+    const allowed = doc !== null && (await deps.resolveAccess(doc.id, viewer)).canView;
     return enforceReadAccess({ doc, allowed });
   }
 
-  /** Apply the read-access gate to a parent doc resolved by an annotation/suggestion id. */
-  function enforceParentAccess(
+  /**
+   * Apply the single-gate read-access check to a parent doc resolved by an annotation /
+   * suggestion id (S-001 / C-001 / AS-007: same authoritative `resolveAccess`).
+   */
+  async function enforceParentAccess(
     parent: { docId: string; generalAccess: GeneralAccessLevel } | null,
     viewer: Viewer,
   ) {
-    const allowed =
-      parent !== null &&
-      canViewDoc({ docId: parent.docId, generalAccess: parent.generalAccess, viewer, deps: deps.accessDeps }).allowed;
+    const allowed = parent !== null && (await deps.resolveAccess(parent.docId, viewer)).canView;
     return enforceReadAccess({ doc: parent, allowed });
   }
 
@@ -319,12 +329,13 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
 
   async function listAnnotationsHandler({ params, actor, query }: any) {
     const viewer: Viewer = { kind: "user", userId: actor.userId };
-    const doc = await loadVisibleDocBySlug(params.slug, viewer); // 404 if no access (AS-021)
+    // S-001 / AS-007: the single resolveAccess gate decides the read here too — a
+    // logged-in non-member of a restricted doc 404s exactly like the doc read (no thread
+    // leak), NOT the old "any logged-in user passes". loadVisibleDocBySlug throws 404 on
+    // deny; reaching this line means canView is true.
+    const doc = await loadVisibleDocBySlug(params.slug, viewer);
     const page = paginationQuery().parse(query) as PaginationParams;
-    const result = await listAnnotations(
-      { docId: doc.id, viewer, generalAccess: doc.generalAccess, deps: deps.accessDeps },
-      annotationRepo,
-    );
+    const result = await listAnnotations({ docId: doc.id, canView: true }, annotationRepo);
     const all = result.allowed ? result.annotations : [];
     const total = all.length;
     const start = (page.page - 1) * page.limit;
@@ -334,7 +345,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   async function resolutionHandler({ params, actor, validBody }: any) {
     const { resolved } = validBody as z.infer<typeof resolutionSchema>;
     const viewer: Viewer = { kind: "user", userId: actor.userId };
-    const parent = enforceParentAccess(await annotationLookupRepo.findAnnotationDoc(params.id), viewer);
+    const parent = await enforceParentAccess(await annotationLookupRepo.findAnnotationDoc(params.id), viewer);
     const sessionRole = await docRole(parent.docId, actor.userId);
     const result = await setResolution({ annotationId: params.id, resolved, sessionRole }, resolutionRepo);
     if (!result.ok) throw new ForbiddenError(); // viewer → 403 (AS-010)
@@ -365,7 +376,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   async function decideSuggestionHandler({ params, actor, validBody }: any) {
     const { decision } = validBody as z.infer<typeof decideSuggestionSchema>;
     const viewer: Viewer = { kind: "user", userId: actor.userId };
-    const parent = enforceParentAccess(await annotationLookupRepo.findSuggestionDoc(params.id), viewer);
+    const parent = await enforceParentAccess(await annotationLookupRepo.findSuggestionDoc(params.id), viewer);
     // Owner-only: deciding a suggestion is a manage-class action (AS-015).
     const sessionRole = await docRole(parent.docId, actor.userId);
     if (sessionRole !== "owner") throw new ForbiddenError();
@@ -391,7 +402,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const actor: Actor | null = await deps.resolveSession(request.headers);
     const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : { kind: "anon" };
     // Existence-hiding on the parent doc applies to BOTH the session AND guest path.
-    const parent = enforceParentAccess(await annotationLookupRepo.findAnnotationDoc(params.id), viewer);
+    const parent = await enforceParentAccess(await annotationLookupRepo.findAnnotationDoc(params.id), viewer);
 
     if (actor) {
       const sessionRole = await docRole(parent.docId, actor.userId);

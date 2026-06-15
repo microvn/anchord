@@ -8,6 +8,7 @@ import {
   createLoadShareConfig,
   createIsDocOwner,
 } from "./sharing/resolve-doc-role-repo";
+import { createResolveAccess } from "./sharing/resolve-access";
 import { createWorkspaceAccess } from "./workspace/tenancy-repo";
 import { eq } from "drizzle-orm";
 import { session as sessionTable } from "./db/schema";
@@ -90,13 +91,18 @@ const isWorkspaceAdminForDoc = async (docId: string, userId: string): Promise<bo
 const isWorkspaceAdmin = (workspaceId: string, userId: string) =>
   wsAccess.isWorkspaceAdminFor(workspaceId, userId);
 
-// canViewDoc deps (existence-hiding). These ports are SYNC (canViewDoc is synchronous),
-// so they stay permissive in this v0 wiring (treat authenticated users as invited/
-// members so a visible doc reads). The AUTHORITATIVE anyone_in_workspace gate that S-002
-// tightens is the resolve-doc-role `isWorkspaceMember` seam below (async, reads real
-// workspace_members) — that is what decides the link-role for anyone_in_workspace.
-// Tightening these sync canViewDoc ports needs an async canViewDoc refactor (out of S-002).
-const sharedAccessDeps = {
+// doc-access-routing S-001: the OLD permissive `sharedAccessDeps` stubs
+// (`isInvited: () => true, isWorkspaceMember: () => true`) are GONE from every
+// doc-centric READ gate. Authorization now flows through the single async
+// `sharedResolveAccess` (built below) backed by the real `sharedResolveDocRole`
+// (real owner + active doc_members + link role + workspace-of-doc membership). The
+// permissive ports no longer decide anything on the doc read / annotation / version
+// paths — closing the cross-tenant bypass the stubs left behind (F1).
+//
+// The sharing (management) routes keep their own structural existence-hiding `canViewDoc`
+// ports for now (they sit behind requireWorkspaceMember + the owner/admin manage gate, so
+// they are not part of S-001's doc-centric READ list); a local accessDeps is built there.
+const sharingAccessDeps = {
   isInvited: () => true,
   isWorkspaceMember: () => true,
 };
@@ -120,6 +126,12 @@ const sharedResolveDocRole = createResolveDocRole(db, {
   isWorkspaceMember: isWorkspaceMemberOfDoc,
 });
 const concreteLoadShareConfig = createLoadShareConfig(db);
+
+// doc-access-routing S-001 / C-001: the SINGLE authoritative access gate every
+// doc-centric READ flows through (viewer loaders, annotation read, version read). Built
+// on the real sharedResolveDocRole, it also handles the anon path (anon may view only an
+// anyone_with_link doc, at the link role — C-005). canView ⇔ a non-null role.
+const sharedResolveAccess = createResolveAccess(db, { resolveDocRole: sharedResolveDocRole });
 
 // workspace-project S-002 (AS-012/C-007): the MANAGE-SHARING resolver gates the owner
 // source on workspace MEMBERSHIP. We keep docs.owner_id set when a member is removed (no
@@ -164,13 +176,12 @@ const resolveViewerSession = async (request: Request): Promise<{ userId: string 
   return actor ? { userId: actor.userId } : null;
 };
 
-// The loaders gate every doc with the SAME access model the versions/annotations routes
-// use — reusing sharedAccessDeps (structural level rule) + sharedResolveDocRole (the
-// authoritative invited/link/workspace/owner read). Built in render/viewer-loaders.ts.
+// The loaders gate every doc with the SAME single access gate the versions/annotations
+// routes use — the authoritative async sharedResolveAccess (S-001). Built in
+// render/viewer-loaders.ts.
 const viewerLoaderDeps = {
   db,
-  accessDeps: sharedAccessDeps,
-  resolveDocRole: sharedResolveDocRole,
+  resolveAccess: sharedResolveAccess,
 };
 const loadViewer = createLoadViewer(viewerLoaderDeps);
 const loadContent = createLoadContent(viewerLoaderDeps);
@@ -198,7 +209,7 @@ const app = createApp({
     resolveSession,
     resolveWorkspaceRole,
     resolveDocRole: sharedResolveDocRole,
-    accessDeps: sharedAccessDeps,
+    resolveAccess: sharedResolveAccess,
     // annotation-core S-005 / C-012: when a new version is created, re-anchor the doc's
     // annotations onto the new content — carried annotations follow the text, lost ones
     // detach (never dropped). Fired off the publish path (the route doesn't await it). The
@@ -232,7 +243,7 @@ const app = createApp({
     resolveSession,
     resolveWorkspaceRole,
     resolveDocRole: sharedResolveDocRole,
-    accessDeps: sharedAccessDeps,
+    resolveAccess: sharedResolveAccess,
     loadShareConfig: concreteLoadShareConfig,
     // S-006: notify thread participants + doc owner on a reply (in-app row via the DB
     // notify repo + one email per recipient through the shared queue). Best-effort.
@@ -298,7 +309,7 @@ const app = createApp({
     // Manage-sharing gate (C-007) reads editors_can_share from here (reuses the same
     // concrete loader as annotation-core; the superset return shape covers both).
     loadShareConfig: concreteLoadShareConfig,
-    accessDeps: sharedAccessDeps,
+    accessDeps: sharingAccessDeps,
     // workspace-project S-002 (AS-012/C-007): the workspace-admin override. When a doc's
     // owner is REMOVED from the workspace they can no longer manage its sharing; the admin
     // becomes the fallback manager and can change the doc's general access.

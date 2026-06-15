@@ -58,7 +58,8 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
         resolveSession: member,
         resolveWorkspaceRole: asMember,
         resolveDocRole: async () => "editor",
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        // S-001: single read gate. The seeded doc is anyone_with_link → the member views.
+        resolveAccess: async () => ({ role: "editor" as const, canView: true }),
       },
     });
   });
