@@ -82,6 +82,11 @@ export interface ComposeApi {
    *  (editable). On send it creates a signal annotation carrying `label="looks-good"` + its root
    *  comment (one labeled-create path, riding the same doc-scoped create as a plain comment). */
   startLike: () => void;
+  /** S-004 (AS-012 / C-003): pick a Label preset on the pending selection → open the composer
+   *  pre-filled with the preset's display text (editable), carrying `label=<presetId>`. SAME labeled-
+   *  create path as Like (#9) — `send` rides the captured label into createAnnotation; the server
+   *  validates it ∈ the preset set (AS-014). The picker only ever passes a REAL preset id. */
+  startLabel: (presetId: string, presetText: string) => void;
   /** S-002 (AS-004): pick Redline on the pending selection → create a delete-kind suggestion + its
    *  root comment WITHOUT a composer (the strike conveys the proposal). Optimistically shows a red
    *  strike + a DELETE card, then rolls back on a refused/failed write (AS-009/C-007). No-op when no
@@ -325,6 +330,15 @@ export function useCompose(
   // label so the rail renders the 👍 row.
   const startLike = useCallback(
     () => openComposer({ label: LIKE_LABEL, initialBody: LIKE_BODY }),
+    [openComposer],
+  );
+
+  // S-004 (AS-012 / C-003 / #9): Label opens the composer pre-filled with the CHOSEN preset's text
+  // (editable) and stashes the preset id, which `send` rides into the createAnnotation body — the
+  // SAME labeled-create path as Like, just a different preset. The optimistic thread + rollback are
+  // identical to a comment/Like send (C-007), carrying the label so the rail renders the preset row.
+  const startLabel = useCallback(
+    (presetId: string, presetText: string) => openComposer({ label: presetId, initialBody: presetText }),
     [openComposer],
   );
 
@@ -647,6 +661,7 @@ export function useCompose(
     pending,
     startComment,
     startLike,
+    startLabel,
     startRedline,
     dismissPopover,
     send,

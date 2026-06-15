@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ViewerAnnotation, AnnotationComment } from "@/features/viewer/services/client";
+import { Icon } from "@/components/icon";
+import { labelDisplay } from "@/features/viewer/lib/label-presets";
 
 // ThreadCard (S-003): one annotation rendered as a rail thread — QuoteRef · avatar · author ·
 // time · body · flat ReplyList · Resolved badge. Styled 1:1 with Anchord-Design viewer.css
@@ -18,14 +20,12 @@ import type { ViewerAnnotation, AnnotationComment } from "@/features/viewer/serv
 // C-008: the quote snippet + comment bodies + the typed reply are UNTRUSTED strings. They render as
 // PLAINTEXT via React children (auto-escaped) — never dangerouslySetInnerHTML, never markdown.
 
-// S-003 (UI Notes — the label line): a SIGNAL annotation carries a label-preset id; the rail renders
-// an icon + display-text row (e.g. "👍 Looks good"). For S-003 only the Like preset (`looks-good`)
-// matters; the FULL preset display set + LabelPicker are S-004's job, so this is the minimal mapping.
-// An unknown/foreign id (defence-in-depth — the server already validates ∈ preset set, AS-014) renders
+// S-004 (UI Notes — the label line): a SIGNAL annotation carries a label-preset id; the rail renders
+// a preset-coloured row (icon + display text, e.g. "Looks good" / "Out of scope"). The display
+// metadata comes from the SHARED LABEL_PRESETS constant (`@/features/viewer/lib/label-presets`) — the
+// SAME source the LabelPicker reads (C-004: one v0 fixed set, no per-workspace table). An
+// unknown/foreign id (defence-in-depth — the server already validates ∈ preset set, AS-014) renders
 // no label line rather than leaking a raw id. The label text renders inert via React children (C-006).
-const LABEL_DISPLAY: Record<string, { icon: string; text: string }> = {
-  "looks-good": { icon: "👍", text: "Looks good" },
-};
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -258,9 +258,10 @@ export function ThreadCard({
   // row + the stale state derive from the served type + suggestion payload + suggestionStatus.
   const isRedline =
     annotation.type === "suggestion" && annotation.suggestion?.kind === "delete";
-  // S-003 (AS-010 / UI Notes): a signal annotation's label line (👍 "Looks good"). Looked up from the
-  // minimal display map — an unknown id renders nothing (the server validates ∈ preset set, AS-014).
-  const labelDisplay = annotation.label ? LABEL_DISPLAY[annotation.label] : undefined;
+  // S-004 (AS-012 / UI Notes): a signal annotation's label line (icon + text, e.g. "Out of scope").
+  // Looked up from the SHARED preset set — an unknown id renders nothing (the server validates ∈
+  // preset set, AS-014; this is defence-in-depth so a forged id never leaks a raw string).
+  const labelPreset = labelDisplay(annotation.label);
   const sugStatus = annotation.suggestionStatus;
   const isStale = isRedline && sugStatus === "stale";
   const isDecided = sugStatus === "accepted" || sugStatus === "rejected";
@@ -398,18 +399,23 @@ export function ThreadCard({
         &ldquo;{quote}&rdquo;
       </div>
 
-      {/* S-003 (AS-010): the label line — a preset-coloured row (👍 "Looks good") for a SIGNAL
-          annotation. Sits above the root comment so the type reads first. The icon + text render inert
-          via React children (C-006). Tinted with the accent preset colour (DESIGN.md: like/label = a
-          preset-coloured highlight; the single deep teal accent here, never purple/Claude-orange). */}
-      {labelDisplay && (
+      {/* S-004 (AS-012): the label line — a preset-coloured row (icon + text, e.g. "Out of scope")
+          for a SIGNAL annotation. Sits above the root comment so the type reads first. The text
+          renders inert via React children (C-006). Tinted with the preset's own identity colour (UI
+          Notes: a label is a preset-coloured highlight; the deep-teal accent stays the chrome accent). */}
+      {labelPreset && (
         <div
           data-testid="label-line"
           data-label={annotation.label}
-          className="mb-[6px] inline-flex items-center gap-1.5 rounded-[4px] bg-accent-soft px-1.5 py-0.5 text-[11.5px] font-semibold text-accent-strong"
+          className="mb-[6px] inline-flex items-center gap-1.5 rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-semibold"
+          style={{ color: labelPreset.color, background: `${labelPreset.color}1f` }}
         >
-          <span aria-hidden>{labelDisplay.icon}</span>
-          <span>{labelDisplay.text}</span>
+          {labelPreset.emoji ? (
+            <span aria-hidden>{labelPreset.emoji}</span>
+          ) : (
+            <Icon name={labelPreset.icon} size={12} />
+          )}
+          <span>{labelPreset.text}</span>
         </div>
       )}
 

@@ -19,6 +19,7 @@ import type { SpecMeta } from "@/features/viewer/types";
 import { toast } from "sonner";
 import { useAnnotationMarks, scrollToAnno } from "./annotation-marks";
 import { SelectionPopover } from "./selection-popover";
+import { LabelPicker } from "./label-picker";
 import { Composer } from "./composer";
 import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
 import { useDraggable } from "@/features/viewer/hooks/use-draggable";
@@ -240,6 +241,10 @@ function ViewerShell({
   // bar's version button opens it (replacing the old placeholder toast). doc.version is the current
   // version (the "Current" marker / later the default Compare target).
   const [versionsOpen, setVersionsOpen] = useState(false);
+  // S-004 (AS-012/AS-013): the LabelPicker open-state. Picking Label in the selection popover opens
+  // the picker AT the popover's anchor (the selection is still pending in useCompose). Choosing a
+  // preset runs compose.startLabel (the labeled-create path). Null → no picker.
+  const [labelPickerAt, setLabelPickerAt] = useState<{ top: number; left: number; centered?: boolean } | null>(null);
   // C-002 (Share affordance gate): only a potential manager (owner, or editor — the editor's
   // editorsCanShare is re-checked after the dialog reads the share state) is shown the Share button.
   // A viewer/commenter — or an absent role (conservative) — never gets a Share affordance that opens
@@ -516,23 +521,45 @@ function ViewerShell({
       {/* S-001: the selection popover — floats over a live selection, offering Comment. Only ever
           rendered for a comment-capable role (C-004) and a real selection (C-003), both enforced in
           useCompose; mounted here so it overlays the viewer body. */}
-      {compose.popover && (
+      {compose.popover && !labelPickerAt && (
         <SelectionPopover
           rect={compose.popover}
           onComment={compose.startComment}
           // S-002: Redline runs the real create flow (delete-kind suggestion + root comment, optimistic
           // strike + DELETE card + rollback). S-003: Like opens the composer pre-filled "Looks good"
           // (editable) → on send a signal annotation carrying label="looks-good" + its root comment.
-          // Label/Suggest land in their own stories (S-004 / suggest-image) — kept on the stub.
+          // S-004: Label opens the LabelPicker at the popover's anchor (the selection stays pending in
+          // useCompose) → choosing a preset runs the labeled-create. Suggest lands in suggest-image.
           onSelectType={(type) =>
             type === "redline"
               ? compose.startRedline()
               : type === "like"
                 ? compose.startLike()
-                : toast(`${type[0]!.toUpperCase()}${type.slice(1)} is coming soon`)
+                : type === "label"
+                  ? setLabelPickerAt(compose.popover)
+                  : toast(`${type[0]!.toUpperCase()}${type.slice(1)} is coming soon`)
           }
           onDismiss={compose.dismissPopover}
           onMeasure={compose.setPopoverSize}
+        />
+      )}
+
+      {/* S-004 (AS-012/AS-013): the LabelPicker — opened when the user picks Label in the selection
+          popover, anchored at the same spot. Choosing a preset runs the labeled-create (compose.
+          startLabel opens the composer pre-filled with the preset text, carrying label=<presetId>);
+          the picker closes either way. Outside-click/Escape dismiss reopens nothing — the pending
+          selection is dropped along with the picker. */}
+      {labelPickerAt && (
+        <LabelPicker
+          rect={labelPickerAt}
+          onPick={(preset) => {
+            setLabelPickerAt(null);
+            compose.startLabel(preset.id, preset.text);
+          }}
+          onDismiss={() => {
+            setLabelPickerAt(null);
+            compose.dismissPopover();
+          }}
         />
       )}
 
