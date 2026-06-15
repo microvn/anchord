@@ -282,7 +282,9 @@ describe("GET /api/docs/:slug/versions (AS-003 history)", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.data.items).toHaveLength(2);
-    expect(json.data.items[1].isCurrent).toBe(true); // highest version is current
+    // newest-first: the current (highest) version leads the list
+    expect(json.data.items[0].version).toBe(2);
+    expect(json.data.items[0].isCurrent).toBe(true);
     expect(json.data.pagination.total).toBe(2);
     expect(json.data.pagination.page).toBe(1);
   });
@@ -296,7 +298,8 @@ describe("GET /api/docs/:slug/versions (AS-003 history)", () => {
     const res = await app.handle(req("/api/w/ws_1/docs/doc-one/versions?limit=1&page=2"));
     const json = (await res.json()) as any;
     expect(json.data.items).toHaveLength(1);
-    expect(json.data.items[0].version).toBe(2);
+    // newest-first [v2, v1]: page 2 (the second item) is v1
+    expect(json.data.items[0].version).toBe(1);
     expect(json.data.pagination.hasPrevious).toBe(true);
   });
 

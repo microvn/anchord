@@ -71,8 +71,8 @@ function fakeRepo(seed: {
       titles.set(docId, title);
     },
     async listVersions(docId) {
-      // Mirror the production query contract: ascending by version. The service
-      // owns ordering choice + current-marker, so the fake returns raw rows.
+      // Return rows ascending on purpose: the service owns the display ordering (newest-first) and
+      // must reorder these, so an ascending fake proves the reorder rather than passing it through.
       return rows
         .filter((r) => r.docId === docId)
         .sort((a, b) => a.version - b.version)
@@ -185,16 +185,19 @@ test("C-003: only a content change creates a version; a title/metadata change do
 });
 
 // Story S-002: View version history. Read-only mapping over repo rows + a
-// current-marker. listVersionHistory returns rows ASCENDING by version number
-// (oldest first, current last) — documented order, kept consistent below.
+// current-marker. listVersionHistory returns rows NEWEST-FIRST (descending by
+// version, current first) — the versioning-diff-ui timeline contract; the service
+// owns the ordering, so the fake repo's row order must not matter.
 
-test("AS-003.T1: history returns all versions in order (ascending by version)", async () => {
+test("AS-003.T1: history returns all versions newest-first (descending by version)", async () => {
+  // The fake repo returns rows ascending; the SERVICE must reorder them newest-first
+  // (Regression: listVersionHistory preserved ascending → current rendered last in the panel).
   const f = fakeRepo({ docId: "doc-1", versions: [{ content: "a" }, { content: "b" }, { content: "c" }] });
 
   const history: VersionHistoryRow[] = await listVersionHistory("doc-1", f.repo);
 
-  // All three versions present, ascending.
-  expect(history.map((r) => r.version)).toEqual([1, 2, 3]);
+  // All three versions present, newest (current) first.
+  expect(history.map((r) => r.version)).toEqual([3, 2, 1]);
 });
 
 test("AS-003.T2: each row carries createdAt AND publishedBy (publishedBy passed through, null acceptable)", async () => {
@@ -219,7 +222,8 @@ test("AS-003.T2: each row carries createdAt AND publishedBy (publishedBy passed 
   // publishedBy is now the resolved publisher object { id, name } (S-002 / C-006),
   // not the raw id. The id is passed through truthfully (null for the unauthored row);
   // name resolution / fallback is asserted by the AS-011 / AS-012 tests below.
-  expect(history.map((r) => r.publishedBy.id)).toEqual(["user-abc", null, "user-def"]);
+  // Newest-first: v3 (user-def) · v2 (null) · v1 (user-abc).
+  expect(history.map((r) => r.publishedBy.id)).toEqual(["user-def", null, "user-abc"]);
 });
 
 test("AS-003.T3: current version (highest number) clearly marked, exactly one row", async () => {
@@ -231,8 +235,8 @@ test("AS-003.T3: current version (highest number) clearly marked, exactly one ro
   const current = history.filter((r) => r.isCurrent);
   expect(current).toHaveLength(1);
   expect(current[0].version).toBe(3);
-  // All others are explicitly not current.
-  expect(history.filter((r) => !r.isCurrent).map((r) => r.version)).toEqual([1, 2]);
+  // All others are explicitly not current (newest-first order).
+  expect(history.filter((r) => !r.isCurrent).map((r) => r.version)).toEqual([2, 1]);
 });
 
 test("AS-003.T3: single-version doc — the only row is current", async () => {
@@ -290,7 +294,8 @@ test("AS-012: a version with an unknown author shows a fallback label, never bla
   });
 
   const history = await listVersionHistory("doc-1", f.repo);
-  const [noAuthor, unresolved] = history;
+  // Newest-first: v2 (unresolved ghost author) comes before v1 (no recorded author).
+  const [unresolved, noAuthor] = history;
 
   // No recorded author: fallback label, id stays null (truthful), name not blank.
   expect(noAuthor.publishedBy.id).toBeNull();
@@ -330,10 +335,11 @@ test("C-006 (versioning-diff): publisher resolved name carried on every entry + 
       expect(row.publishedBy.name).not.toBe(row.publishedBy.id);
     }
   }
+  // Newest-first: v3 (unresolved) · v2 (no author) · v1 (resolved).
   expect(history.map((r) => r.publishedBy.name)).toEqual([
-    "Mara Lindqvist", // resolved
-    "Unknown", // no author
-    "Unknown", // unresolved author
+    "Unknown", // v3 unresolved author
+    "Unknown", // v2 no author
+    "Mara Lindqvist", // v1 resolved
   ]);
 });
 

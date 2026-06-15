@@ -8,7 +8,7 @@
 // for). This transactional behaviour is integration-verified-later against a real
 // Postgres, not in the fast unit suite.
 
-import { and, asc, eq, max, sql } from "drizzle-orm";
+import { and, desc, eq, max, sql } from "drizzle-orm";
 import { docs, docVersions, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { VersionRepo, NewVersionRow, VersionListRow, VersionKind } from "./version";
@@ -48,8 +48,9 @@ export function createVersionRepo(db: DB): VersionRepo {
     },
 
     async listVersions(docId: string): Promise<VersionListRow[]> {
-      // S-002 history read: all versions for the doc, ascending by version.
-      // The service computes the current-marker; this only selects rows.
+      // S-002 history read: all versions for the doc, newest-first (descending by version) — the
+      // versioning-diff-ui timeline contract (current at top). The service re-sorts defensively and
+      // owns the current-marker; this selects rows already in the display order.
       // C-006: LEFT JOIN user on publishedBy = user.id so each row carries the
       // author's resolved display name (publishedByName). The join is LEFT so a
       // version with a null author — or one whose author no longer resolves — still
@@ -65,7 +66,7 @@ export function createVersionRepo(db: DB): VersionRepo {
         .from(docVersions)
         .leftJoin(user, eq(docVersions.publishedBy, user.id))
         .where(eq(docVersions.docId, docId))
-        .orderBy(asc(docVersions.version));
+        .orderBy(desc(docVersions.version));
     },
 
     async getVersion(docId: string, version: number) {

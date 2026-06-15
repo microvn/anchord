@@ -202,7 +202,11 @@ export async function listVersionHistory(
   if (rows.length === 0) return []; // empty history → nothing to mark current
 
   const maxVersion = Math.max(...rows.map((r) => r.version));
-  return rows.map((r) => ({
+  // Newest-first (descending by version): the versioning-diff-ui timeline lists the current
+  // version at the top, older versions below. The service owns this ordering so it holds regardless
+  // of the repo's row order, AND so the route's in-memory pagination slices the newest page first.
+  const ordered = [...rows].sort((a, b) => b.version - a.version);
+  return ordered.map((r) => ({
     version: r.version,
     createdAt: r.createdAt,
     publishedBy: {

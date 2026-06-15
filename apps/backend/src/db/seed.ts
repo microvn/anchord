@@ -48,6 +48,59 @@ if (!session) return redirect("/signin");
 \`\`\`
 `;
 
+// auth-spec evolves across 3 published versions so the version history + diff have real data to
+// show. Each version is a small, readable edit on the previous one (a line reworded, a bullet
+// added, a section appended) so a source diff highlights concrete changes.
+const MARKDOWN_V2 = `# Auth Spec
+
+Anchord authenticates with **email + password**, magic link, and GitHub OAuth. Identity rides a server-side session cookie — there is no client-stored token.
+
+## Session model
+
+The session is a DB-backed record keyed by an opaque cookie. On expiry the client bounces to \`/signin\` without leaking which docs exist.
+
+- **Viewer** — read only
+- **Commenter** — read and comment
+- **Editor** — read, comment, and edit
+- **Owner** — full control, including share settings
+
+Hydrate the client from the [bootstrap endpoint](https://anchord.local/api/me).
+
+> Auth (how you log in) is separate from roles (what you can do after).
+
+\`\`\`ts
+const session = await auth.api.getSession({ headers });
+if (!session) return redirect("/signin");
+\`\`\`
+`;
+
+const MARKDOWN_V3 = `# Auth Spec
+
+Anchord authenticates with **email + password**, magic link, and GitHub OAuth. SSO (OIDC/SAML) lands in v0.5. Identity rides a server-side session cookie — there is no client-stored token.
+
+## Session model
+
+The session is a DB-backed record keyed by an opaque cookie. On expiry the client bounces to \`/signin\` without leaking which docs exist.
+
+- **Viewer** — read only
+- **Commenter** — read and comment
+- **Editor** — read, comment, and edit
+- **Owner** — full control, including share settings
+
+Hydrate the client from the [bootstrap endpoint](https://anchord.local/api/me).
+
+> Auth (how you log in) is separate from roles (what you can do after).
+
+## Single sign-on
+
+Self-hosted instances can wire an OIDC provider; the session model above is unchanged — SSO only swaps the credential check at sign-in.
+
+\`\`\`ts
+const session = await auth.api.getSession({ headers });
+if (!session) return redirect("/signin");
+\`\`\`
+`;
+
 const HTML = `<h1>Render Pipeline</h1><p>This artifact renders in a sandboxed iframe — author styles are preserved, the app never styles it.</p>`;
 
 async function main() {
@@ -108,7 +161,27 @@ async function main() {
     return doc!.id;
   };
 
+  // Append the later published versions of a doc (idempotent: only inserts versions above the
+  // current highest, so a re-run is a no-op). `contents` is the full ordered list starting at v1;
+  // v1 is already written by seedDoc, so this fills in v2..vN. Latest version = what the viewer
+  // renders (viewer-loaders: CURRENT = highest version row).
+  const seedVersions = async (docId: string, contents: string[]) => {
+    const rows = await db.select().from(docVersions).where(eq(docVersions.docId, docId));
+    const maxV = rows.reduce((m, r) => Math.max(m, r.version), 0);
+    for (let v = maxV + 1; v <= contents.length; v++) {
+      await db.insert(docVersions).values({
+        docId,
+        version: v,
+        content: contents[v - 1]!,
+        contentHash: hash(contents[v - 1]!),
+        publishedBy: u.id,
+      });
+    }
+  };
+
   const mdDocId = await seedDoc("Auth Spec", "auth-spec", "markdown", MARKDOWN, "anyone_with_link");
+  // auth-spec → 3 published versions (v1 from seedDoc, then v2/v3) for version-history/diff testing.
+  await seedVersions(mdDocId, [MARKDOWN, MARKDOWN_V2, MARKDOWN_V3]);
   await seedDoc("Render Pipeline RFC", "render-pipeline-rfc", "html", HTML, "anyone_with_link");
 
   // 4. One annotation + comment on the markdown doc (anchored to "email + password" in block-p-1).

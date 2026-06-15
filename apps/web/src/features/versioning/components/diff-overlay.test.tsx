@@ -87,7 +87,7 @@ beforeEach(() => {
 });
 
 describe("versioning-diff-ui S-003 — DiffOverlay", () => {
-  it("AS-007: Source tab shows a line-diff (added teal / removed red-strike, mono) + a +adds/−removed change count", async () => {
+  it("AS-007 / C-003: Source tab shows a line-diff (added teal / removed red-strike, mono) + a +adds/−removed change count (two-level diff)", async () => {
     renderOverlay();
 
     const diff = await screen.findByTestId("source-line-diff");
