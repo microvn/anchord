@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Icon } from "@/components/icon";
+import {
+  type LucideIcon,
+  MessageSquareText,
+  ThumbsUp,
+  Zap,
+  Strikethrough,
+  Replace,
+  X,
+} from "lucide-react";
 import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
 
 // SelectionPopover (S-001 — annotation-core-ui-types-modes): the floating Markup popover that
@@ -56,13 +64,13 @@ const TYPE_HUE: Record<string, string> = {
 function PopoverButton({
   type,
   testId,
-  icon,
+  icon: IconCmp,
   label,
   onClick,
 }: {
   type: string;
   testId: string;
-  icon: string;
+  icon: LucideIcon;
   label: string;
   onClick: () => void;
 }) {
@@ -83,7 +91,7 @@ function PopoverButton({
       // icon coloured its type hue at rest; hover → soft bg tint of the same hue (DESIGN.md affordance).
       style={{ color: hue, background: hovered && hue ? `${hue}24` : undefined }}
     >
-      <Icon name={icon} size={16} />
+      <IconCmp size={16} strokeWidth={2} />
     </button>
   );
 }
@@ -153,11 +161,11 @@ export function SelectionPopover({
           data-popover-anim
           className="flex items-center gap-0.5 rounded-md border border-line bg-elev p-1 shadow-lg"
         >
-      <PopoverButton type="comment" testId="popover-comment" icon="inbox" label="Comment" onClick={onComment} />
-      <PopoverButton type="like" testId="popover-like" icon="check" label="Like" onClick={() => onSelectType?.("like")} />
-      <PopoverButton type="label" testId="popover-label" icon="pin" label="Label" onClick={() => onSelectType?.("label")} />
-      <PopoverButton type="redline" testId="popover-redline" icon="trash" label="Redline" onClick={() => onSelectType?.("redline")} />
-      <PopoverButton type="suggest" testId="popover-suggest" icon="pencil" label="Suggest" onClick={() => onSelectType?.("suggest")} />
+      <PopoverButton type="comment" testId="popover-comment" icon={MessageSquareText} label="Comment" onClick={onComment} />
+      <PopoverButton type="like" testId="popover-like" icon={ThumbsUp} label="Like" onClick={() => onSelectType?.("like")} />
+      <PopoverButton type="label" testId="popover-label" icon={Zap} label="Label" onClick={() => onSelectType?.("label")} />
+      <PopoverButton type="redline" testId="popover-redline" icon={Strikethrough} label="Redline" onClick={() => onSelectType?.("redline")} />
+      <PopoverButton type="suggest" testId="popover-suggest" icon={Replace} label="Suggest" onClick={() => onSelectType?.("suggest")} />
       <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-line" />
       <button
         type="button"
@@ -166,7 +174,7 @@ export function SelectionPopover({
         onClick={onDismiss}
         className="inline-flex items-center rounded-[5px] p-1 text-subtle hover:bg-sunken hover:text-ink"
       >
-          <Icon name="x" size={14} />
+          <X size={14} strokeWidth={2} />
         </button>
         </div>
       </div>

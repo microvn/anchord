@@ -1,5 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Icon } from "@/components/icon";
+import {
+  type LucideIcon,
+  MousePointer2,
+  LocateFixed,
+  Pencil,
+  MessageSquareText,
+  Strikethrough,
+  Zap,
+} from "lucide-react";
 
 // DocModeToolbar (annotation-core-ui-types-modes S-001 + S-006, UI Notes §Component Tree): the sticky
 // toolbar at the top of the doc pane, mirroring the Anchord-Design viewer prototype. Left→right:
@@ -28,11 +36,11 @@ type DocWidth = "wide" | "focus";
 
 // DESIGN.md "Annotation type / tool colors" (PO-approved 2026-06-15): Markup teal · Comment amber ·
 // Redline red · Label gold. The hue tints a tool affordance ONLY (active/hover), never general chrome.
-const TOOL_META: Record<MarkupTool, { label: string; icon: string; hue: string }> = {
-  markup: { label: "Markup", icon: "pencil", hue: "#37b3bd" },
-  comment: { label: "Comment", icon: "inbox", hue: "#d68a3e" },
-  redline: { label: "Redline", icon: "trash", hue: "#f1655d" },
-  label: { label: "Label", icon: "pin", hue: "#cbb24a" },
+const TOOL_META: Record<MarkupTool, { label: string; icon: LucideIcon; hue: string }> = {
+  markup: { label: "Markup", icon: Pencil, hue: "#37b3bd" },
+  comment: { label: "Comment", icon: MessageSquareText, hue: "#d68a3e" },
+  redline: { label: "Redline", icon: Strikethrough, hue: "#f1655d" },
+  label: { label: "Label", icon: Zap, hue: "#cbb24a" },
 };
 
 const TOOL_ORDER: MarkupTool[] = ["markup", "comment", "redline", "label"];
@@ -55,7 +63,7 @@ function ToolChip({
   testId,
   labelTestId,
   tool,
-  icon,
+  icon: IconCmp,
   label,
   hue,
   active,
@@ -67,7 +75,7 @@ function ToolChip({
   testId: string;
   labelTestId: string;
   tool?: string;
-  icon: string;
+  icon: LucideIcon;
   label: string;
   hue: string;
   active: boolean;
@@ -139,7 +147,7 @@ function ToolChip({
           transition: padTransition,
         }}
       >
-        <Icon name={icon} size={ICON_INNER} />
+        <IconCmp size={ICON_INNER} strokeWidth={2} className="shrink-0" />
         {/* Label fades in slightly AFTER the width opens (60ms delay), fades out faster on collapse.
             Always mounted + aria-hidden when collapsed so the chip animates instead of popping. */}
         <span
@@ -246,7 +254,7 @@ export function DocModeToolbar({
         <ToolChip
           testId="input-mode-select"
           labelTestId="input-mode-select-label"
-          icon="list"
+          icon={MousePointer2}
           label="Select"
           hue="#37b3bd"
           active
@@ -258,7 +266,7 @@ export function DocModeToolbar({
         <ToolChip
           testId="input-mode-pinpoint"
           labelTestId="input-mode-pinpoint-label"
-          icon="grid"
+          icon={LocateFixed}
           label="Pinpoint"
           hue="#37b3bd"
           active={false}
