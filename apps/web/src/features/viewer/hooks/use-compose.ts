@@ -49,6 +49,12 @@ function selectionRect(sel: Selection | null): RectLike | null {
 
 let optimisticSeq = 0;
 
+// S-003 (C-003 / challenge #9): the Like preset. Picking Like opens the composer pre-filled with the
+// preset's display text (editable) and creates a signal annotation carrying `label="looks-good"`.
+// Only `looks-good` matters for S-003 — the full preset set + LabelPicker are S-004's job.
+export const LIKE_LABEL = "looks-good";
+export const LIKE_BODY = "Looks good";
+
 // S-002 (C-003): a redline has no composer, but every annotation needs a root comment and the
 // backend rejects an empty body, so the redline's root comment carries this concise default
 // (the strike conveys the deletion; this is just the thread's authored anchor). S3 guard.
@@ -61,6 +67,9 @@ export interface ComposeApi {
   popover: { top: number; left: number; centered: boolean } | null;
   /** the active quote when the composer is open (else null → no composer). */
   quote: string | null;
+  /** S-003 (C-003): the pre-filled body the composer opens with — "Looks good" for a Like, empty
+   *  for a plain Comment. The composer seeds its editable body from this. */
+  composeInitialBody: string;
   /** #3 (2026-06-12): the on-screen position for the INLINE composer popover — the same anchor the
    *  selection popover used (above-centered). Non-null only while the composer is open. */
   composerAnchor: { top: number; left: number; centered: boolean } | null;
@@ -69,6 +78,10 @@ export interface ComposeApi {
   /** true while a create write is in flight. */
   pending: boolean;
   startComment: () => void;
+  /** S-003 (AS-010): pick Like on the pending selection → open the composer pre-filled "Looks good"
+   *  (editable). On send it creates a signal annotation carrying `label="looks-good"` + its root
+   *  comment (one labeled-create path, riding the same doc-scoped create as a plain comment). */
+  startLike: () => void;
   /** S-002 (AS-004): pick Redline on the pending selection → create a delete-kind suggestion + its
    *  root comment WITHOUT a composer (the strike conveys the proposal). Optimistically shows a red
    *  strike + a DELETE card, then rolls back on a refused/failed write (AS-009/C-007). No-op when no
@@ -119,6 +132,11 @@ export function useCompose(
   const [popover, setPopover] = useState<{ top: number; left: number; centered: boolean } | null>(null);
   const [active, setActive] = useState<SelectionAnchor | null>(null);
   const [quote, setQuote] = useState<string | null>(null);
+  // S-003 (C-003): the label + pre-filled body for the open composer. A plain Comment leaves both at
+  // their resting values (no label, empty body); a Like sets label="looks-good" + body "Looks good".
+  // `send` rides `composeLabel` into the createAnnotation body (the one labeled-create path, #9).
+  const [composeLabel, setComposeLabel] = useState<string | null>(null);
+  const [composeInitialBody, setComposeInitialBody] = useState("");
   // #3: the inline composer popover anchor (the position the selection popover occupied). Kept in
   // sync on scroll/resize the same way the selection popover is, so the composer stays at the text.
   const [composerAnchor, setComposerAnchor] = useState<{ top: number; left: number; centered: boolean } | null>(null);
@@ -276,26 +294,46 @@ export function useCompose(
     liveRect.current = null;
   }, []);
 
-  const startComment = useCallback(() => {
-    const anchor = pendingAnchor.current;
-    if (!anchor) return;
-    setActive(anchor);
-    setQuote(anchor.textSnippet);
-    // #3 (2026-06-12): the composer is now an INLINE popover at the selection (not the rail). The
-    // composer card prefers BELOW the selection (Plannotator-style, Apache-2.0) — recompute from the
-    // live selection rect with prefer:"below" so it drops under the text rather than sitting where
-    // the (above) selection popover was. Falls back to the selection popover's spot when no live rect
-    // is readable (the iframe bridge path). Then close the selection popover — the composer replaces it.
-    const rect = liveRect.current?.() ?? null;
-    const below = rect ? positionFor(rect, "below") : (popover ?? { top: 0, left: 0, centered: true });
-    setComposerAnchor((prev) => prev ?? below);
-    setPopover(null);
-  }, [popover, positionFor]);
+  // Open the inline composer at the pending selection, optionally pre-filled + carrying a label.
+  // Shared by Comment (no label, empty body) and Like (label="looks-good", body "Looks good").
+  const openComposer = useCallback(
+    (opts?: { label?: string; initialBody?: string }) => {
+      const anchor = pendingAnchor.current;
+      if (!anchor) return;
+      setActive(anchor);
+      setQuote(anchor.textSnippet);
+      setComposeLabel(opts?.label ?? null);
+      setComposeInitialBody(opts?.initialBody ?? "");
+      // #3 (2026-06-12): the composer is now an INLINE popover at the selection (not the rail). The
+      // composer card prefers BELOW the selection (Plannotator-style, Apache-2.0) — recompute from the
+      // live selection rect with prefer:"below" so it drops under the text rather than sitting where
+      // the (above) selection popover was. Falls back to the selection popover's spot when no live rect
+      // is readable (the iframe bridge path). Then close the selection popover — the composer replaces it.
+      const rect = liveRect.current?.() ?? null;
+      const below = rect ? positionFor(rect, "below") : (popover ?? { top: 0, left: 0, centered: true });
+      setComposerAnchor((prev) => prev ?? below);
+      setPopover(null);
+    },
+    [popover, positionFor],
+  );
+
+  const startComment = useCallback(() => openComposer(), [openComposer]);
+
+  // S-003 (AS-010 / C-003): Like opens the composer pre-filled "Looks good" (editable) and stashes
+  // the `looks-good` label, which `send` rides into the createAnnotation body — one labeled-create
+  // path. The optimistic thread + rollback are the SAME as a comment send (C-007), just carrying the
+  // label so the rail renders the 👍 row.
+  const startLike = useCallback(
+    () => openComposer({ label: LIKE_LABEL, initialBody: LIKE_BODY }),
+    [openComposer],
+  );
 
   const cancel = useCallback(() => {
     setActive(null);
     setQuote(null);
     setComposerAnchor(null);
+    setComposeLabel(null);
+    setComposeInitialBody("");
   }, []);
 
   // S-002 (AS-004 / AS-009 / C-002 / C-007): Redline the pending selection. UNLIKE Comment, there is
@@ -435,6 +473,10 @@ export function useCompose(
     (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => {
       const anchor = active;
       if (!anchor || !slug || body.trim().length === 0) return;
+      // S-003 (C-003): capture the label for THIS send (Like → "looks-good", Comment → none). Carried
+      // into both the optimistic thread (so the rail renders the 👍 row immediately) and the real
+      // createAnnotation body (the one labeled-create path). The server validates it ∈ the preset set.
+      const label = composeLabel ?? undefined;
       // S-005: a guest send with no name is a no-op write (the composer already gates Send on a
       // non-empty name — AS-011 — but re-check here so a forced call can't post an unnamed guest).
       if (guestIdentity && guestIdentity.guestName.trim().length === 0) return;
@@ -454,6 +496,10 @@ export function useCompose(
         type: "range",
         status: "unresolved",
         isOrphaned: false,
+        // S-003 (AS-010 / AS-011): a Like carries the label optimistically so the rail shows the 👍
+        // "Looks good" row instantly; if the write is refused, the whole optimistic thread (label row
+        // included) is rolled back (C-007). A plain comment has no label.
+        ...(label ? { label } : {}),
         anchor: {
           blockId: anchor.blockId,
           textSnippet: anchor.textSnippet,
@@ -485,6 +531,8 @@ export function useCompose(
       setActive(null);
       setQuote(null);
       setComposerAnchor(null); // #3: close the inline composer popover on send.
+      setComposeLabel(null); // S-003: reset for the next compose (the label was captured above).
+      setComposeInitialBody("");
       setPending(true);
 
       // Drop the optimistic temp thread + unwrap its highlight mark. Shared by the success reconcile
@@ -519,6 +567,9 @@ export function useCompose(
               length: anchor.length,
               segments: anchor.segments,
             },
+            // S-003 (C-003 / #9): a Like rides the SAME doc-scoped create as a comment, carrying the
+            // label; the server validates it ∈ the preset set (AS-014 server-side). Omitted for a comment.
+            ...(label ? { label } : {}),
           });
           if (created.error || !created.data) {
             rollback();
@@ -551,6 +602,9 @@ export function useCompose(
             type: "range",
             status: "unresolved",
             isOrphaned: false,
+            // S-003: preserve the label on the reconciled real row so the rail keeps the 👍 row after
+            // the optimistic temp is swapped out (no flicker of the label line).
+            ...(label ? { label } : {}),
             anchor: {
               blockId: anchor.blockId,
               textSnippet: anchor.textSnippet,
@@ -581,16 +635,18 @@ export function useCompose(
         }
       })();
     },
-    [active, slug, docPaneEl, onCreatedAnnotation, onCreated],
+    [active, slug, docPaneEl, composeLabel, onCreatedAnnotation, onCreated],
   );
 
   return {
     popover,
     quote,
+    composeInitialBody,
     composerAnchor,
     optimistic,
     pending,
     startComment,
+    startLike,
     startRedline,
     dismissPopover,
     send,

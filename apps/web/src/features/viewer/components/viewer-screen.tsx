@@ -335,6 +335,9 @@ function ViewerShell({
         quote={compose.quote}
         pending={compose.pending}
         guest={guest}
+        // S-003 (C-003): a Like opens the composer pre-filled "Looks good" (editable); a plain
+        // Comment opens empty. The pre-fill is carried from useCompose's startLike.
+        initialBody={compose.composeInitialBody}
         onSend={compose.send}
         onCancel={compose.cancel}
       />
@@ -517,13 +520,16 @@ function ViewerShell({
         <SelectionPopover
           rect={compose.popover}
           onComment={compose.startComment}
-          // S-002: Redline now runs the real create flow (delete-kind suggestion + root comment, with
-          // an optimistic strike + DELETE card and rollback on a refused write). Like/Label/Suggest
-          // still land in their own stories (S-003 / S-004 / suggest-image) — kept on the stub.
+          // S-002: Redline runs the real create flow (delete-kind suggestion + root comment, optimistic
+          // strike + DELETE card + rollback). S-003: Like opens the composer pre-filled "Looks good"
+          // (editable) → on send a signal annotation carrying label="looks-good" + its root comment.
+          // Label/Suggest land in their own stories (S-004 / suggest-image) — kept on the stub.
           onSelectType={(type) =>
             type === "redline"
               ? compose.startRedline()
-              : toast(`${type[0]!.toUpperCase()}${type.slice(1)} is coming soon`)
+              : type === "like"
+                ? compose.startLike()
+                : toast(`${type[0]!.toUpperCase()}${type.slice(1)} is coming soon`)
           }
           onDismiss={compose.dismissPopover}
           onMeasure={compose.setPopoverSize}
@@ -584,6 +590,7 @@ function InlineComposerPopover({
   quote,
   pending,
   guest,
+  initialBody,
   onSend,
   onCancel,
 }: {
@@ -591,6 +598,8 @@ function InlineComposerPopover({
   quote: string;
   pending?: boolean;
   guest?: boolean;
+  /** S-003 (C-003): the composer's pre-filled body — "Looks good" for a Like, empty for a Comment. */
+  initialBody?: string;
   onSend: (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => void;
   onCancel: () => void;
 }) {
@@ -617,6 +626,7 @@ function InlineComposerPopover({
         quote={quote}
         pending={pending}
         guest={guest}
+        initialBody={initialBody}
         onSend={onSend}
         onCancel={onCancel}
         dragging={drag.dragging}

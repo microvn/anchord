@@ -73,6 +73,7 @@ export function Composer({
   quote,
   pending,
   guest,
+  initialBody,
   onSend,
   onCancel,
   dragHandleProps,
@@ -80,6 +81,10 @@ export function Composer({
 }: {
   /** the selected text, rendered inert (PendingQuoteRef). */
   quote: string;
+  /** S-003 (C-003): pre-fill the body when the composer opens from a typed action (Like → "Looks
+   *  good"). The user may edit or clear it before send (editable). Absent/empty → a plain Comment
+   *  opens with an empty body. */
+  initialBody?: string;
   /** true while the create write is in flight — disables Send (optimistic UI is in the rail). */
   pending?: boolean;
   /** S-005: this is a guest session (consumed from the read side). Shows the GuestNameField + gates
@@ -95,7 +100,10 @@ export function Composer({
   /** #2: true while a drag is in progress → the handle shows `cursor: grabbing` instead of `grab`. */
   dragging?: boolean;
 }) {
-  const [body, setBody] = useState("");
+  // S-003 (C-003): seed the body from `initialBody` so a Like opens pre-filled "Looks good"
+  // (editable). A plain Comment passes no initialBody → empty. The seed runs once on mount (the
+  // composer is remounted per pending selection), so an edit isn't clobbered by a re-render.
+  const [body, setBody] = useState(initialBody ?? "");
   // S-005: a random session name is assigned once on open (AS-009); the user may edit or Rename it.
   const [guestName, setGuestName] = useState(() => randomGuestName());
   const [guestEmail, setGuestEmail] = useState("");

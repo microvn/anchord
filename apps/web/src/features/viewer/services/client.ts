@@ -114,6 +114,12 @@ export interface ViewerAnnotation {
   status: "unresolved" | "resolved";
   isOrphaned: boolean;
   comments: AnnotationComment[];
+  /** S-003/S-004 (Linked Fields / AS-027): the label-preset id on a SIGNAL annotation
+   *  (comment/like/label). `looks-good` is the built-in Like preset (S-003); the rest are the review
+   *  labels (S-004). Served on the GET list so the rail renders the label line (👍 "Looks good") from
+   *  a real read. Mutually exclusive with `suggestion` (a redline carries no label). Absent on a plain
+   *  comment / redline / suggest. */
+  label?: string;
   /** S-002 (Linked Fields): the suggestion payload for a `type=suggestion` annotation (redline =
    *  `kind:delete`). Absent on ordinary comment/like/label annotations. */
   suggestion?: SuggestionPayload;
@@ -157,6 +163,12 @@ export interface CreateAnchor {
 export interface CreateAnnotationBody {
   type: string;
   anchor: CreateAnchor;
+  /** S-003/S-004 (C-003 / challenge #9): the ONE labeled-create path. A Like rides this same
+   *  doc-scoped create as a plain comment annotation, just carrying `label="looks-good"`; a Label
+   *  (S-004) carries the chosen preset id. The server validates `label` ∈ the preset set and refuses
+   *  a forged id (annotation-core AS-028); it is mutually exclusive with a suggestion payload (AS-029).
+   *  Omitted for a plain comment. */
+  label?: string;
 }
 
 export interface CreateAnnotationResult {

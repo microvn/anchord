@@ -18,6 +18,15 @@ import type { ViewerAnnotation, AnnotationComment } from "@/features/viewer/serv
 // C-008: the quote snippet + comment bodies + the typed reply are UNTRUSTED strings. They render as
 // PLAINTEXT via React children (auto-escaped) — never dangerouslySetInnerHTML, never markdown.
 
+// S-003 (UI Notes — the label line): a SIGNAL annotation carries a label-preset id; the rail renders
+// an icon + display-text row (e.g. "👍 Looks good"). For S-003 only the Like preset (`looks-good`)
+// matters; the FULL preset display set + LabelPicker are S-004's job, so this is the minimal mapping.
+// An unknown/foreign id (defence-in-depth — the server already validates ∈ preset set, AS-014) renders
+// no label line rather than leaking a raw id. The label text renders inert via React children (C-006).
+const LABEL_DISPLAY: Record<string, { icon: string; text: string }> = {
+  "looks-good": { icon: "👍", text: "Looks good" },
+};
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
@@ -249,6 +258,9 @@ export function ThreadCard({
   // row + the stale state derive from the served type + suggestion payload + suggestionStatus.
   const isRedline =
     annotation.type === "suggestion" && annotation.suggestion?.kind === "delete";
+  // S-003 (AS-010 / UI Notes): a signal annotation's label line (👍 "Looks good"). Looked up from the
+  // minimal display map — an unknown id renders nothing (the server validates ∈ preset set, AS-014).
+  const labelDisplay = annotation.label ? LABEL_DISPLAY[annotation.label] : undefined;
   const sugStatus = annotation.suggestionStatus;
   const isStale = isRedline && sugStatus === "stale";
   const isDecided = sugStatus === "accepted" || sugStatus === "rejected";
@@ -385,6 +397,21 @@ export function ThreadCard({
       >
         &ldquo;{quote}&rdquo;
       </div>
+
+      {/* S-003 (AS-010): the label line — a preset-coloured row (👍 "Looks good") for a SIGNAL
+          annotation. Sits above the root comment so the type reads first. The icon + text render inert
+          via React children (C-006). Tinted with the accent preset colour (DESIGN.md: like/label = a
+          preset-coloured highlight; the single deep teal accent here, never purple/Claude-orange). */}
+      {labelDisplay && (
+        <div
+          data-testid="label-line"
+          data-label={annotation.label}
+          className="mb-[6px] inline-flex items-center gap-1.5 rounded-[4px] bg-accent-soft px-1.5 py-0.5 text-[11.5px] font-semibold text-accent-strong"
+        >
+          <span aria-hidden>{labelDisplay.icon}</span>
+          <span>{labelDisplay.text}</span>
+        </div>
+      )}
 
       {root && (
         <>
