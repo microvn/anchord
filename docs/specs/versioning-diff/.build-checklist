@@ -25,3 +25,8 @@
 [N/A] link pinned to version (/d/:slug@v2) — Not in Scope (v0 = latest)                    | owner: —
 [N/A] overlay/swipe image diff; DOM structural diff; inline merged rich-diff — Not in Scope | owner: —
 [N/A] prune/retention of old versions — Not in Scope (keep all in v0)                       | owner: —
+[x] AS-011    — version.test.ts:"AS-011: …resolved display name (id→name)" (LEFT JOIN user.name)  | owner: S-002
+[x] AS-012    — version.test.ts:"AS-012: …unknown author → fallback" (name ?? "Unknown", id truthful) | owner: S-002
+[x] C-006     — version.test.ts:"C-006 (versioning-diff): …resolved name + fallback on every entry" | owner: S-002
+[x] AS-013    — versions-routes.test.ts:"AS-013: compare v2↔v3…" + diff.test.ts:"AS-013/C-007…" (per-version /v/<rowId>) | owner: S-004
+[x] C-007     — versions-routes.test.ts + diff.test.ts (renderTarget=/v/<rowId>, per-version, text+image)               | owner: S-004
