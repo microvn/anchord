@@ -251,6 +251,27 @@ test("AS-027: a create with NO label is unaffected (label optional, undefined pe
   expect(repo.inserted[0].label ?? null).toBeNull();
 });
 
+test("AS-030: listAnnotations serves a suggestion's payload + status on the read (so the viewer renders its lifecycle)", async () => {
+  const row: AnnotationRow = {
+    id: "sug-1",
+    docId: "doc-ok",
+    type: "suggestion",
+    anchor: { blockId: "block-p-1", textSnippet: "old title", offset: 0, length: 9 },
+    isOrphaned: false,
+    status: "resolved",
+    suggestion: { kind: "delete", from: "old title", againstVersion: 3 },
+    suggestionStatus: "stale",
+  };
+  const repo = fakeRepo([row]);
+
+  const res = await listAnnotations({ docId: "doc-ok", canView: true }, repo);
+
+  expect(res.allowed).toBe(true);
+  // The read carries the suggestion payload + its lifecycle status (mirrors AS-027 serving label).
+  expect(res.annotations[0].suggestion).toEqual({ kind: "delete", from: "old title", againstVersion: 3 });
+  expect(res.annotations[0].suggestionStatus).toBe("stale");
+});
+
 test("S-003: list attaches each annotation's comments[] thread (authorName | guestName)", async () => {
   const row: AnnotationRow = {
     id: "ann-1",

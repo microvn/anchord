@@ -57,6 +57,9 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
           isOrphaned: annotations.isOrphaned,
           status: annotations.status,
           label: annotations.label, // S-009/AS-027: served on read for the rail label line.
+          // S-006/AS-030: served on read so the viewer renders the suggestion lifecycle.
+          suggestion: annotations.suggestion,
+          suggestionStatus: annotations.suggestionStatus,
         })
         .from(annotations)
         .where(eq(annotations.docId, docId))
@@ -72,6 +75,9 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
         isOrphaned: r.isOrphaned,
         status: r.status,
         label: r.label, // null when unset (an ordinary annotation).
+        // AS-030: null on a non-suggestion row; the payload + lifecycle on a suggestion.
+        suggestion: (r.suggestion as SuggestionPayload | null) ?? null,
+        suggestionStatus: (r.suggestionStatus as SuggestionStatus | null) ?? null,
       }));
     },
 

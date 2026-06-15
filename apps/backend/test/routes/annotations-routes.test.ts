@@ -402,6 +402,27 @@ describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
     expect(json.data.items[1].comments).toEqual([]);
   });
 
+  test("AS-030: the GET read serves a suggestion's payload + suggestionStatus (viewer renders the redline/suggestion lifecycle from the read)", async () => {
+    const ar = fakeAnnotationRepo([
+      {
+        id: "s1",
+        docId: "doc_1",
+        type: "suggestion",
+        anchor: TEXT_ANCHOR as any,
+        isOrphaned: false,
+        status: "resolved",
+        suggestion: { kind: "delete", from: "hello", againstVersion: 2 },
+        suggestionStatus: "stale",
+      },
+    ]);
+    const app = buildApp({ resolveDocRole: asViewer, annotationRepo: ar });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.items[0].suggestion).toEqual({ kind: "delete", from: "hello", againstVersion: 2 });
+    expect(json.data.items[0].suggestionStatus).toBe("stale");
+  });
+
   test("AS-027: the GET read serves the stored label on each annotation", async () => {
     const ar = fakeAnnotationRepo([
       { id: "a1", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved", label: "out-of-scope" },

@@ -7,9 +7,14 @@
 import { can, type Role } from "../sharing/roles";
 import { type Viewer } from "../sharing/access";
 import { isLabelPreset } from "./label-presets";
+import type { SuggestionPayload, SuggestionStatus } from "./suggestion";
 
-/** Annotation type — text range for S-001; image-region (S-002) reuses the table. */
-export type AnnotationType = "range" | "multi_range" | "block" | "doc";
+/**
+ * Annotation type — text range for S-001; image-region (S-002) reuses the table;
+ * `suggestion` is a suggestion-type annotation (S-006) riding the same table, surfaced
+ * here so the list read (AS-030) can carry its kind back to the viewer.
+ */
+export type AnnotationType = "range" | "multi_range" | "block" | "doc" | "suggestion";
 
 /**
  * One segment of a (possibly multi-) range anchor. A single range has one segment;
@@ -85,6 +90,14 @@ export interface AnnotationRow {
    * the FE rail label line.
    */
   label?: string | null;
+  /**
+   * S-006 / AS-030: the suggestion payload + its lifecycle status, present ONLY on a
+   * suggestion-type annotation (null/absent otherwise). Served on the list read so the
+   * viewer renders the redline/suggestion kind + lifecycle (pending/accepted/rejected/stale)
+   * from the read alone — mirrors `label` (AS-027).
+   */
+  suggestion?: SuggestionPayload | null;
+  suggestionStatus?: SuggestionStatus | null;
 }
 
 /**
