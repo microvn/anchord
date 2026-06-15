@@ -10,6 +10,7 @@
 //        from viewer (sharing/roles.ts), so authz here is a single can() check.
 
 import { can, type Role } from "../sharing/roles";
+import type { SuggestionStatus } from "./suggestion";
 
 /** An annotation's resolution status, mirroring the `annotations.status` enum. */
 export type AnnotationStatus = "unresolved" | "resolved";
@@ -23,6 +24,12 @@ export type AnnotationStatus = "unresolved" | "resolved";
  */
 export interface ResolutionRepo {
   setAnnotationStatus(annotationId: string, status: AnnotationStatus): Promise<void>;
+  /**
+   * S-006 / AS-026 / C-016: clear a DECIDED suggestion's decision by resetting its
+   * `suggestion_status` back to `pending`. Reached ONLY on the owner-gated decided-suggestion
+   * reopen path — an ordinary resolve/reopen never calls this.
+   */
+  resetSuggestionStatusToPending(annotationId: string): Promise<void>;
 }
 
 export interface SetResolutionInput {
@@ -37,10 +44,18 @@ export interface SetResolutionInput {
    * impossible here.
    */
   sessionRole: Role;
+  /**
+   * S-006 / AS-026 / C-016: the suggestion lifecycle of this annotation WHEN it is a
+   * suggestion-type annotation; `undefined` for an ordinary annotation. Reopening
+   * (`resolved=false`) a DECIDED suggestion (accepted|rejected) is OWNER-only and ALSO
+   * resets `suggestion_status` → pending — distinct from an ordinary reopen, which any
+   * commenter may toggle (C-005). A still-pending suggestion reopens via the ordinary path.
+   */
+  suggestionStatus?: SuggestionStatus;
 }
 
 export type SetResolutionResult =
-  | { ok: true; status: AnnotationStatus }
+  | { ok: true; status: AnnotationStatus; suggestionStatus?: SuggestionStatus }
   | { ok: false; reason: "forbidden" };
 
 /**
@@ -60,7 +75,23 @@ export async function setResolution(
   input: SetResolutionInput,
   repo: ResolutionRepo,
 ): Promise<SetResolutionResult> {
-  const { annotationId, resolved, sessionRole } = input;
+  const { annotationId, resolved, sessionRole, suggestionStatus } = input;
+
+  // AS-026 / C-016: reopening a DECIDED suggestion (accepted|rejected) is a DIFFERENT
+  // transition from the ordinary resolve toggle — OWNER-only, and it clears the decision
+  // (suggestion_status → pending). This guards against a non-owner resurfacing a decided
+  // proposal or leaving `status`/`suggestion_status` desynced. A non-owner — even a commenter
+  // who could toggle an ordinary thread — is refused here. Only REOPEN is gated this way;
+  // resolving the thread (resolved=true) stays the ordinary commenter+ path below.
+  const isDecidedSuggestion = suggestionStatus === "accepted" || suggestionStatus === "rejected";
+  if (isDecidedSuggestion && !resolved) {
+    if (sessionRole !== "owner") {
+      return { ok: false, reason: "forbidden" };
+    }
+    await repo.setAnnotationStatus(annotationId, "unresolved");
+    await repo.resetSuggestionStatusToPending(annotationId);
+    return { ok: true, status: "unresolved", suggestionStatus: "pending" };
+  }
 
   // C-005: server-side re-authorization. A viewer (or any role lacking "resolve")
   // cannot change the status, no matter what an untrusted client claimed.

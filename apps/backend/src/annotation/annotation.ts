@@ -6,6 +6,7 @@
 
 import { can, type Role } from "../sharing/roles";
 import { type Viewer } from "../sharing/access";
+import { isLabelPreset } from "./label-presets";
 
 /** Annotation type — text range for S-001; image-region (S-002) reuses the table. */
 export type AnnotationType = "range" | "multi_range" | "block" | "doc";
@@ -78,6 +79,12 @@ export interface AnnotationRow {
   anchor: Anchor;
   isOrphaned: boolean;
   status: "unresolved" | "resolved";
+  /**
+   * S-009 / C-015: a label-preset id (a member of DEFAULT_LABEL_PRESETS) on a signal
+   * annotation, or null/absent on an ordinary one. Served on read (AS-027) — consumed by
+   * the FE rail label line.
+   */
+  label?: string | null;
 }
 
 /**
@@ -105,6 +112,8 @@ export interface NewAnnotation {
   docId: string;
   type: AnnotationType;
   anchor: Anchor;
+  /** S-009 / C-015: the validated label-preset id, or null for an ordinary annotation. */
+  label?: string | null;
 }
 
 /**
@@ -133,11 +142,20 @@ export interface CreateAnnotationInput {
    */
   sessionRole: Role;
   type?: AnnotationType;
+  /**
+   * S-009 / C-015: an optional label-preset id for a signal annotation (Like = `looks-good`,
+   * or a chosen label). Validated SERVER-side against DEFAULT_LABEL_PRESETS at this boundary —
+   * an unknown / forged id is refused (AS-028). Mutually exclusive with a suggestion payload
+   * (AS-029) — structurally enforced by the separate suggestion-create endpoint.
+   */
+  label?: string | null;
 }
 
 export type CreateAnnotationResult =
   | { created: true; id: string }
-  | { created: false; reason: "forbidden" };
+  | { created: false; reason: "forbidden" }
+  // S-009 / AS-028: the submitted label is not a member of the known preset set.
+  | { created: false; reason: "invalid_label" };
 
 /**
  * Create a text annotation, re-authorizing the write SERVER-side (C-009/AS-020).
@@ -156,7 +174,7 @@ export async function createAnnotation(
   input: CreateAnnotationInput,
   repo: AnnotationRepo,
 ): Promise<CreateAnnotationResult> {
-  const { docId, anchor, sessionRole, type } = input;
+  const { docId, anchor, sessionRole, type, label } = input;
 
   // C-009/AS-020: server re-authorization. Only the session-resolved role gates the
   // write — a viewer/none session cannot create an annotation no matter what the
@@ -165,10 +183,18 @@ export async function createAnnotation(
     return { created: false, reason: "forbidden" };
   }
 
+  // S-009 / C-015 (AS-028): a label, when present, MUST be a known preset id. A foreign /
+  // forged / markup-bearing id is refused here — it never reaches the repo. (The label ↔
+  // suggestion mutual exclusion, AS-029, is enforced by the separate create endpoints.)
+  if (label != null && !isLabelPreset(label)) {
+    return { created: false, reason: "invalid_label" };
+  }
+
   const { id } = await repo.insertAnnotation({
     docId,
     type: type ?? "range",
     anchor, // AS-003: the chosen block_id is stored verbatim.
+    label: label ?? null, // AS-027: persisted; null for an ordinary annotation.
   });
   return { created: true, id };
 }

@@ -41,6 +41,7 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
           docId: input.docId,
           type: input.type,
           anchor: input.anchor, // AS-003: stored verbatim with the chosen block_id.
+          label: input.label ?? null, // S-009/AS-027: validated preset id, null if none.
         })
         .returning({ id: annotations.id });
       return { id: row.id };
@@ -55,6 +56,7 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
           anchor: annotations.anchor,
           isOrphaned: annotations.isOrphaned,
           status: annotations.status,
+          label: annotations.label, // S-009/AS-027: served on read for the rail label line.
         })
         .from(annotations)
         .where(eq(annotations.docId, docId))
@@ -69,6 +71,7 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
         anchor: r.anchor as Anchor,
         isOrphaned: r.isOrphaned,
         status: r.status,
+        label: r.label, // null when unset (an ordinary annotation).
       }));
     },
 
@@ -200,6 +203,13 @@ export function createResolutionRepo(db: DB): ResolutionRepo {
     async setAnnotationStatus(annotationId: string, status: AnnotationStatus): Promise<void> {
       // AS-009: idempotent — re-setting the same status is a harmless write.
       await db.update(annotations).set({ status }).where(eq(annotations.id, annotationId));
+    },
+    async resetSuggestionStatusToPending(annotationId: string): Promise<void> {
+      // AS-026/C-016: owner reopen of a decided suggestion clears the decision.
+      await db
+        .update(annotations)
+        .set({ suggestionStatus: "pending" })
+        .where(eq(annotations.id, annotationId));
     },
   };
 }

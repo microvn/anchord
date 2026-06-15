@@ -108,6 +108,7 @@ function fakeResolutionRepo() {
     async setAnnotationStatus(annotationId, status) {
       calls.sets.push({ id: annotationId, status });
     },
+    async resetSuggestionStatusToPending() {},
   };
   return { repo, calls };
 }
@@ -347,7 +348,7 @@ describe("AS-021: reply to an existing annotation, then resolve it", () => {
 });
 
 // ── AS-022 / C-008: rate limit + mail gating ──────────────────────────────────
-describe("AS-022 / C-008: anonymous comment writes are rate-limited and don't amplify mail", () => {
+describe("AS-022 / C-008 / C-013: anonymous comment writes are rate-limited (keyed IP:doc, signed-in bypass) and don't amplify mail", () => {
   test("AS-022: an anon comment past the per-IP/per-doc rate limit → 429, no comment created", async () => {
     const gr = fakeGuestCommentRepo();
     const overLimit: CommentRateLimiter = async () => ({ allowed: false });
@@ -444,7 +445,7 @@ describe("AS-022 / C-008: anonymous comment writes are rate-limited and don't am
 });
 
 // ── AS-023 / C-009: a guest cannot impersonate a member ───────────────────────
-describe("AS-023 / C-009: a guest cannot impersonate a member", () => {
+describe("AS-023 / C-009 / C-014: a guest cannot impersonate a member or the doc owner", () => {
   test("AS-023: a guest name colliding with an active member's display name → rejected (no comment created)", async () => {
     const gr = fakeGuestCommentRepo();
     const collides: IsActiveMemberName = async (_docId, name) => name.trim().toLowerCase() === "alice chen";

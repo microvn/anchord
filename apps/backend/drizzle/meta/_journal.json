@@ -8,6 +8,13 @@
       "when": 1781146635322,
       "tag": "0000_rich_black_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781518393538,
+      "tag": "0001_robust_green_goblin",
+      "breakpoints": true
     }
   ]
 }

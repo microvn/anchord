@@ -13,8 +13,9 @@ type Status = "unresolved" | "resolved";
 function fakeRepo(initial: Status = "unresolved"): ResolutionRepo & {
   status: Status;
   writes: Status[];
+  suggestionResets: string[];
 } {
-  const state = { status: initial, writes: [] as Status[] };
+  const state = { status: initial, writes: [] as Status[], suggestionResets: [] as string[] };
   return {
     get status() {
       return state.status;
@@ -22,9 +23,16 @@ function fakeRepo(initial: Status = "unresolved"): ResolutionRepo & {
     get writes() {
       return state.writes;
     },
+    get suggestionResets() {
+      return state.suggestionResets;
+    },
     async setAnnotationStatus(_id: string, status: Status) {
       state.status = status;
       state.writes.push(status);
+    },
+    // S-006 / AS-026 / C-016: records a decided-suggestion reset to pending.
+    async resetSuggestionStatusToPending(id: string) {
+      state.suggestionResets.push(id);
     },
   };
 }
@@ -114,4 +122,71 @@ test("C-005: resolving an already-resolved annotation is an idempotent no-op", a
 
   expect(res).toEqual({ ok: true, status: "resolved" });
   expect(repo.status).toBe("resolved");
+});
+
+// ── S-006 / AS-026 / C-016: reopening a DECIDED suggestion (owner-only reset) ──
+
+test("AS-026 / C-016: the OWNER reopening an accepted suggestion resets it to pending and unresolves the thread", async () => {
+  // Given a suggestion the owner already accepted (its thread auto-resolved).
+  const repo = fakeRepo("resolved");
+
+  // When the OWNER reopens it (resolved=false) — and the annotation is a DECIDED suggestion.
+  const res = await setResolution(
+    { annotationId: "sug-1", resolved: false, sessionRole: "owner", suggestionStatus: "accepted" },
+    repo,
+  );
+
+  // Then the thread returns to unresolved AND the suggestion_status is reset to pending.
+  expect(res).toEqual({ ok: true, status: "unresolved", suggestionStatus: "pending" });
+  expect(repo.status).toBe("unresolved");
+  expect(repo.suggestionResets).toEqual(["sug-1"]);
+});
+
+test("AS-026 / C-016: a rejected suggestion is also reset to pending on owner reopen", async () => {
+  const repo = fakeRepo("resolved");
+  const res = await setResolution(
+    { annotationId: "sug-2", resolved: false, sessionRole: "owner", suggestionStatus: "rejected" },
+    repo,
+  );
+  expect(res).toEqual({ ok: true, status: "unresolved", suggestionStatus: "pending" });
+  expect(repo.suggestionResets).toEqual(["sug-2"]);
+});
+
+test("AS-026 / C-016: a NON-OWNER (commenter) reopening a DECIDED suggestion is refused — nothing changes", async () => {
+  // Distinct from an ordinary reopen (any commenter may toggle, C-005): reopening a DECIDED
+  // suggestion is OWNER-only, so even a commenter who could toggle an ordinary thread is refused.
+  const repo = fakeRepo("resolved");
+
+  const res = await setResolution(
+    { annotationId: "sug-1", resolved: false, sessionRole: "commenter", suggestionStatus: "accepted" },
+    repo,
+  );
+
+  expect(res).toEqual({ ok: false, reason: "forbidden" });
+  expect(repo.status).toBe("resolved"); // untouched
+  expect(repo.writes).toHaveLength(0);
+  expect(repo.suggestionResets).toHaveLength(0);
+});
+
+test("AS-026 / C-016: RESOLVING a decided suggestion (resolved=true) stays the ordinary commenter+ path (not owner-gated)", async () => {
+  // Only REOPEN of a decided suggestion is owner-only; resolving the thread is still C-005.
+  const repo = fakeRepo("unresolved");
+  const res = await setResolution(
+    { annotationId: "sug-1", resolved: true, sessionRole: "commenter", suggestionStatus: "accepted" },
+    repo,
+  );
+  expect(res).toEqual({ ok: true, status: "resolved" });
+  expect(repo.suggestionResets).toHaveLength(0); // resolve never resets the decision
+});
+
+test("C-016: reopening a PENDING suggestion is the ordinary path — a commenter may toggle, no reset", async () => {
+  // A pending (un-decided) suggestion has no decision to clear, so its reopen is the ordinary
+  // commenter+ toggle (C-005), NOT the owner-gated reset.
+  const repo = fakeRepo("resolved");
+  const res = await setResolution(
+    { annotationId: "sug-1", resolved: false, sessionRole: "commenter", suggestionStatus: "pending" },
+    repo,
+  );
+  expect(res).toEqual({ ok: true, status: "unresolved" });
+  expect(repo.suggestionResets).toHaveLength(0);
 });

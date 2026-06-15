@@ -268,10 +268,23 @@ const imageAnchorSchema = z.object({
   region: regionSchema,
 });
 
-const createAnnotationSchema = z.object({
-  type: z.enum(["range", "multi_range", "block", "doc"]).optional(),
-  anchor: z.union([textAnchorSchema, imageAnchorSchema]),
-});
+const createAnnotationSchema = z
+  .object({
+    type: z.enum(["range", "multi_range", "block", "doc"]).optional(),
+    anchor: z.union([textAnchorSchema, imageAnchorSchema]),
+    // S-009 / C-015 (AS-027): an optional label-preset id; validated against the preset set
+    // SERVER-side in createAnnotation (AS-028), not here, so a foreign id is a clean domain refusal.
+    label: z.string().optional(),
+    // S-009 / C-015 (AS-029): a label annotation and a suggestion are MUTUALLY EXCLUSIVE.
+    // Suggestions have their own create endpoint; we DECLARE `suggestion` here only to REFUSE a
+    // body carrying BOTH (the refine below). Without declaring it, strip semantics would silently
+    // drop it and a label+suggestion body would wrongly succeed instead of being refused.
+    suggestion: z.unknown().optional(),
+  })
+  .refine((b) => !(b.label != null && b.suggestion != null), {
+    message: "a label annotation and a suggestion are mutually exclusive",
+    path: ["label"],
+  });
 
 const replySchema = z.object({
   body: z.string(),
@@ -284,12 +297,20 @@ const resolutionSchema = z.object({
   resolved: z.boolean(),
 });
 
-const createSuggestionSchema = z.object({
-  anchor: textAnchorSchema,
-  from: z.string(),
-  to: z.string().optional(),
-  againstVersion: z.number().int().positive(),
-});
+const createSuggestionSchema = z
+  .object({
+    anchor: textAnchorSchema,
+    from: z.string(),
+    to: z.string().optional(),
+    againstVersion: z.number().int().positive(),
+    // S-009 / C-015 (AS-029): a suggestion cannot carry a label — declared only to REFUSE it
+    // (the symmetric half of the mutual-exclusion guard on the annotation-create schema).
+    label: z.unknown().optional(),
+  })
+  .refine((b) => b.label == null, {
+    message: "a suggestion cannot carry a label",
+    path: ["label"],
+  });
 
 const decideSuggestionSchema = z.object({
   decision: z.enum(["accept", "reject"]),
@@ -402,10 +423,15 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         viewer,
         sessionRole,
         type: ("region" in body.anchor ? "block" : body.type ?? "range") as AnnotationType,
+        label: body.label, // S-009: validated ∈ preset set in the service (AS-028).
       },
       annotationRepo,
     );
-    if (!result.created) throw new ForbiddenError(); // viewer/forged role → 403 (AS-020)
+    if (!result.created) {
+      // S-009/AS-028: an unknown/forged label is a bad request, not a permission failure.
+      if (result.reason === "invalid_label") throw new ValidationError("Unknown label", { field: "label" });
+      throw new ForbiddenError(); // viewer/forged role → 403 (AS-020)
+    }
     set.status = 201;
     return { annotationId: result.id };
   }
@@ -430,8 +456,15 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const viewer: Viewer = { kind: "user", userId: actor.userId };
     const parent = await enforceParentAccess(await annotationLookupRepo.findAnnotationDoc(params.id), viewer);
     const sessionRole = await docRole(parent.docId, actor.userId);
-    const result = await setResolution({ annotationId: params.id, resolved, sessionRole }, resolutionRepo);
-    if (!result.ok) throw new ForbiddenError(); // viewer → 403 (AS-010)
+    // S-006/AS-026/C-016: if this annotation is a suggestion, its lifecycle decides whether a
+    // reopen is the owner-only decision-reset path or the ordinary commenter+ toggle. null for
+    // an ordinary annotation (getSuggestion filters on type="suggestion").
+    const sug = await suggestionRepo.getSuggestion(params.id);
+    const result = await setResolution(
+      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status },
+      resolutionRepo,
+    );
+    if (!result.ok) throw new ForbiddenError(); // viewer / non-owner decided-reopen → 403 (AS-010/AS-026)
     return { status: result.status };
   }
 
@@ -601,10 +634,14 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         viewer,
         sessionRole,
         type: ("region" in body.anchor ? "block" : body.type ?? "range") as AnnotationType,
+        label: body.label, // S-009: validated ∈ preset set in the service (AS-028).
       },
       annotationRepo,
     );
-    if (!result.created) throw new ForbiddenError(); // viewer/forged role → 403
+    if (!result.created) {
+      if (result.reason === "invalid_label") throw new ValidationError("Unknown label", { field: "label" });
+      throw new ForbiddenError(); // viewer/forged role → 403
+    }
     set.status = 201;
     return { annotationId: result.id };
   }
@@ -633,8 +670,13 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const access = found ? await deps.resolveAccess(found.docId, viewer) : { role: null, canView: false };
     const parent = enforceReadAccess({ doc: found, allowed: found !== null && access.canView });
     const sessionRole = await writeRole(parent.docId, viewer, access);
-    const result = await setResolution({ annotationId: params.id, resolved, sessionRole }, resolutionRepo);
-    if (!result.ok) throw new ForbiddenError(); // viewer → 403
+    // S-006/AS-026/C-016: suggestion lifecycle gates the owner-only decided-reopen reset.
+    const sug = await suggestionRepo.getSuggestion(params.id);
+    const result = await setResolution(
+      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status },
+      resolutionRepo,
+    );
+    if (!result.ok) throw new ForbiddenError(); // viewer / non-owner decided-reopen → 403
     return { status: result.status };
   }
 

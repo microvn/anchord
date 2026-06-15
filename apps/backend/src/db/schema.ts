@@ -243,6 +243,11 @@ export const annotations = pgTable(
     anchor: jsonb("anchor").notNull(),
     isOrphaned: boolean("is_orphaned").notNull().default(false),
     status: annotationStatus("status").notNull().default("unresolved"),
+    // S-009 / C-015: a label-preset id on a SIGNAL annotation (comment/like/label) — a
+    // member of DEFAULT_LABEL_PRESETS, validated server-side at the create boundary (the set
+    // is a v0 CONSTANT, not a table; no DB CHECK, kept portable). NULL for ordinary
+    // annotations and suggestions; mutually exclusive with `suggestion` (enforced at create).
+    label: text("label"),
     // ── S-006 suggestion state (NULL for ordinary annotations) ──
     // The suggestion payload (kind replace|delete, from/to, against_version) as jsonb,
     // and its own lifecycle status, both nullable so a normal annotation carries neither

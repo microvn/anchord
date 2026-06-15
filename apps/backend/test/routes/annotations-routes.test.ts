@@ -106,10 +106,16 @@ function fakeGuestCommentRepo(shared?: ReturnType<typeof fakeCommentRepo>) {
 }
 
 function fakeResolutionRepo() {
-  const calls = { sets: [] as { id: string; status: AnnotationStatus }[] };
+  const calls = {
+    sets: [] as { id: string; status: AnnotationStatus }[],
+    resets: [] as string[],
+  };
   const repo: ResolutionRepo = {
     async setAnnotationStatus(annotationId, status) {
       calls.sets.push({ id: annotationId, status });
+    },
+    async resetSuggestionStatusToPending(annotationId) {
+      calls.resets.push(annotationId);
     },
   };
   return { repo, calls };
@@ -326,6 +332,49 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     const json = (await res.json()) as any;
     expect(json.error.code).toBe("VALIDATION_ERROR");
   });
+
+  test("AS-027/C-015: commenter creates a labeled annotation → 201, label persisted verbatim", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, label: "out-of-scope" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(ar.calls.inserts[0]?.label).toBe("out-of-scope");
+  });
+
+  test("AS-028/C-015: a create with an unknown / forged label → 400 VALIDATION_ERROR, nothing persisted", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, label: "<svg onload=alert(1)>" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
+
+  test("AS-029/C-015: a create carrying BOTH a label and a suggestion payload → 400 (mutually exclusive), nothing persisted", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, label: "looks-good", suggestion: { kind: "delete", from: "x", againstVersion: 1 } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
 });
 
 describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
@@ -351,6 +400,17 @@ describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
     expect(json.data.items[0].comments).toHaveLength(2);
     expect(json.data.items[0].comments[0]).toMatchObject({ id: "c1", authorName: "Demo", body: "root" });
     expect(json.data.items[1].comments).toEqual([]);
+  });
+
+  test("AS-027: the GET read serves the stored label on each annotation", async () => {
+    const ar = fakeAnnotationRepo([
+      { id: "a1", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved", label: "out-of-scope" },
+    ]);
+    const app = buildApp({ resolveDocRole: asViewer, annotationRepo: ar });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.items[0].label).toBe("out-of-scope");
   });
 
   test("pagination: limit=1 page=2 → second item only", async () => {
@@ -611,6 +671,45 @@ describe("PATCH /api/annotations/:id/resolution (S-004)", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  // S-006 / AS-026 / C-016: reopening a DECIDED suggestion via the resolution route is
+  // owner-only and resets the decision (suggestion_status → pending). The resolution handler
+  // detects the suggestion lifecycle via suggestionRepo.getSuggestion(:id).
+  const DECIDED_SUG: SuggestionRow = {
+    id: "sug_dec",
+    docId: "doc_1",
+    type: "suggestion",
+    anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 },
+    suggestion: { kind: "replace", from: "hello", to: "hi", againstVersion: 1 },
+    status: "accepted",
+  };
+
+  test("AS-026/C-016: the OWNER reopening a DECIDED suggestion → 200 { status: unresolved } and resets it to pending", async () => {
+    const rr = fakeResolutionRepo();
+    const sr = fakeSuggestionRepo([{ ...DECIDED_SUG }]);
+    const app = buildApp({ resolveDocRole: asOwner, resolutionRepo: rr, suggestionRepo: sr });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/sug_dec/resolution", { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.status).toBe("unresolved");
+    // the thread unresolves AND the decision is cleared (suggestion_status → pending)
+    expect(rr.calls.sets).toContainEqual({ id: "sug_dec", status: "unresolved" });
+    expect(rr.calls.resets).toEqual(["sug_dec"]);
+  });
+
+  test("AS-026/C-016: a NON-OWNER (commenter) reopening a DECIDED suggestion → 403, nothing reset (unlike an ordinary reopen)", async () => {
+    const rr = fakeResolutionRepo();
+    const sr = fakeSuggestionRepo([{ ...DECIDED_SUG, id: "sug_dec2" }]);
+    const app = buildApp({ resolveDocRole: asCommenter, resolutionRepo: rr, suggestionRepo: sr });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/sug_dec2/resolution", { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
+    );
+    expect(res.status).toBe(403);
+    expect(rr.calls.sets).toHaveLength(0);
+    expect(rr.calls.resets).toHaveLength(0);
+  });
 });
 
 describe("POST /api/docs/:slug/suggestions (S-006)", () => {
@@ -646,6 +745,21 @@ describe("POST /api/docs/:slug/suggestions (S-006)", () => {
       req("/api/w/ws_1/docs/doc-one/suggestions", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR, againstVersion: 1 }) }),
     );
     expect(res.status).toBe(400);
+  });
+
+  test("AS-029/C-015: a suggestion create carrying a label → 400 (a suggestion cannot carry a label), nothing persisted", async () => {
+    const sr = fakeSuggestionRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, suggestionRepo: sr });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/suggestions", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, from: "hello", to: "hi", againstVersion: 1, label: "looks-good" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(sr.calls.inserts).toHaveLength(0);
   });
 });
 

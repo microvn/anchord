@@ -179,6 +179,78 @@ test("C-010: an authorized reader gets the doc's annotations", async () => {
   expect(res.annotations).toEqual([{ ...row, comments: [] }]);
 });
 
+test("AS-027 / C-015: create a labeled annotation persists the label (out-of-scope)", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "scope creep", offset: 0, length: 11 })!;
+
+  const res = await createAnnotation(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "commenter", label: "out-of-scope" },
+    repo,
+  );
+
+  expect(res).toEqual({ created: true, id: "ann-1" });
+  // The chosen preset id is stored verbatim on the new annotation.
+  expect(repo.inserted[0].label).toBe("out-of-scope");
+});
+
+test("AS-027 / C-015: a Like is the same path with label looks-good", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "nice", offset: 0, length: 4 })!;
+
+  const res = await createAnnotation(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "commenter", label: "looks-good" },
+    repo,
+  );
+
+  expect(res.created).toBe(true);
+  expect(repo.inserted[0].label).toBe("looks-good");
+});
+
+test("AS-027: listAnnotations serves the stored label on read", async () => {
+  const row: AnnotationRow = {
+    id: "ann-1",
+    docId: "doc-ok",
+    type: "range",
+    anchor: { blockId: "block-p-1", textSnippet: "x", offset: 0, length: 1 },
+    isOrphaned: false,
+    status: "unresolved",
+    label: "out-of-scope",
+  };
+  const repo = fakeRepo([row]);
+
+  const res = await listAnnotations({ docId: "doc-ok", canView: true }, repo);
+
+  expect(res.allowed).toBe(true);
+  // The read returns the label on the annotation (consumed by the FE rail label line).
+  expect(res.annotations[0].label).toBe("out-of-scope");
+});
+
+test("AS-028 / C-015: a create with an unknown / forged label is refused — nothing persisted", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotation(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "commenter", label: "<svg onload=alert(1)>" },
+    repo,
+  );
+
+  expect(res).toEqual({ created: false, reason: "invalid_label" });
+  expect(repo.inserted).toHaveLength(0); // a forged label never reaches the repo
+});
+
+test("AS-027: a create with NO label is unaffected (label optional, undefined persisted as no label)", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotation(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "commenter" },
+    repo,
+  );
+
+  expect(res.created).toBe(true);
+  expect(repo.inserted[0].label ?? null).toBeNull();
+});
+
 test("S-003: list attaches each annotation's comments[] thread (authorName | guestName)", async () => {
   const row: AnnotationRow = {
     id: "ann-1",

@@ -118,7 +118,7 @@ function buildApp(opts: {
       // commentRepo. The other annotation repos are not exercised here.
       annotationRepo: { async insertAnnotation() { return { id: "x" }; }, async listByDoc() { return []; }, async listCommentsByDoc() { return []; } },
       guestCommentRepo: { async listByAnnotation() { return []; }, async insertComment() { return { id: "g" }; } },
-      resolutionRepo: { async setAnnotationStatus() {} },
+      resolutionRepo: { async setAnnotationStatus() {}, async resetSuggestionStatusToPending() {} },
       suggestionRepo: {
         async insertSuggestion() { return { id: "s" }; },
         async getSuggestion() { return null; },
