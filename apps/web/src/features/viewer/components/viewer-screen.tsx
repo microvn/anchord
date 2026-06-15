@@ -108,24 +108,26 @@ export function ViewerScreen() {
       // (no premature sign-in prompt) — it flips to the signin prompt once we know there's no
       // session.
       const variant = !sessionPending && !signedIn ? "signin" : "no-access";
+      // S-003: the no-access / not-found state is a CLEAN standalone page — NOT the 3-pane viewer
+      // shell. Wrapping it in ViewerShell leaked the viewer chrome (a "Not found" top bar, the empty
+      // annotations rail, the outline gutter), which both looked broken and hinted the doc exists.
       return (
-        <ViewerShell title="Not found">
-          <div data-testid="viewer-not-found" className="px-5 pt-10">
-            <NoAccessView variant={variant} slug={slug} onSignIn={goSignIn} />
-          </div>
-        </ViewerShell>
+        <div
+          data-testid="viewer-not-found"
+          className="flex h-dvh items-center justify-center bg-paper px-4 text-ink"
+        >
+          <NoAccessView variant={variant} slug={slug} onSignIn={goSignIn} />
+        </div>
       );
     }
     return (
-      <ViewerShell title="">
-        <div className="px-5 pt-10">
-          <ErrorState
-            message={query.error.message}
-            onRetry={() => void query.refetch()}
-            retrying={query.isFetching}
-          />
-        </div>
-      </ViewerShell>
+      <div className="flex h-dvh items-center justify-center bg-paper px-4 text-ink">
+        <ErrorState
+          message={query.error.message}
+          onRetry={() => void query.refetch()}
+          retrying={query.isFetching}
+        />
+      </div>
     );
   }
 
@@ -410,7 +412,7 @@ function ViewerShell({
             <DocModeToolbar
               width={docWidth}
               onWidth={setDocWidth}
-              onMarkupUnavailable={() => toast("Markup mode arrives with commenting")}
+              onPinpointUnavailable={() => toast("Pinpoint mode is coming soon")}
             />
           )}
           {docResponse ? (
@@ -510,6 +512,11 @@ function ViewerShell({
         <SelectionPopover
           rect={compose.popover}
           onComment={compose.startComment}
+          // S-001: the four new type intents (Like/Label/Redline/Suggest) are wired to a stub here —
+          // their create paths land in S-002 (Redline) / S-003 (Like) / S-004 (Label) and the
+          // suggest-image sibling (Suggest). The popover is the single entry; this seam is what those
+          // stories consume to open the labeled-create / picker / redline paths.
+          onSelectType={(type) => toast(`${type[0]!.toUpperCase()}${type.slice(1)} is coming soon`)}
           onDismiss={compose.dismissPopover}
           onMeasure={compose.setPopoverSize}
         />

@@ -1,8 +1,10 @@
-// DocModeToolbar (annotation-core-ui S-001, UI Notes §Component Tree): the sticky toolbar at the
-// top of the doc pane, mirroring Anchord-Design viewer.css `.doc-toolbar`. Two segmented controls:
-//   • Select | Markup — Select is the read/selection mode owned HERE; Markup (compose-on-the-doc)
-//     belongs to the commenting spec and is not built yet, so it surfaces a "later" toast instead
-//     of dead UI (kept visible so the shell matches the prototype).
+// DocModeToolbar (annotation-core-ui-types-modes S-001, UI Notes §Component Tree): the sticky
+// toolbar at the top of the doc pane, mirroring Anchord-Design viewer.css `.doc-toolbar`. Two
+// segmented controls:
+//   • Select | Pinpoint — Select is the active read/selection mode owned HERE (Markup is now the
+//     popover-on-a-selection, not a toolbar mode). Pinpoint (the whole-block element picker) is
+//     deferred to Phase 2, so it surfaces a "coming" note instead of dead UI (kept visible so the
+//     shell matches the prototype).
 //   • Wide | Focus — the doc measure (Wide = full column width, Focus = 800px capped), driven via
 //     `data-doc-width` on the docpane (widths live in styles.css .doc-prose).
 
@@ -45,12 +47,12 @@ function Seg({
 export function DocModeToolbar({
   width,
   onWidth,
-  onMarkupUnavailable,
+  onPinpointUnavailable,
 }: {
   width: DocWidth;
   onWidth: (w: DocWidth) => void;
-  /** Markup mode is the commenting spec — surface a note instead of a no-op toggle. */
-  onMarkupUnavailable: () => void;
+  /** Pinpoint mode is Phase 2 — surface a "coming" note instead of a no-op toggle. */
+  onPinpointUnavailable: () => void;
 }) {
   return (
     <div
@@ -60,11 +62,13 @@ export function DocModeToolbar({
       <Seg
         options={[
           { key: "select", label: "Select" },
-          { key: "markup", label: "Markup" },
+          { key: "pinpoint", label: "Pinpoint" },
         ]}
         value="select"
         onChange={(k) => {
-          if (k === "markup") onMarkupUnavailable();
+          // Pinpoint (whole-block element picker) is Phase 2 — never becomes the active mode; it
+          // surfaces a "coming" note so the shell matches the prototype without dead UI.
+          if (k === "pinpoint") onPinpointUnavailable();
         }}
       />
       <Seg
