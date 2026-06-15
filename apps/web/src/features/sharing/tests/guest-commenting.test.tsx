@@ -33,6 +33,8 @@ function canComment(role: string | undefined) {
 }
 
 mock.module("@/features/viewer/services/client", () => ({
+  createRedline: mock(async () => ({ data: { success: true, data: { suggestionId: "rl-x" } }, error: null })),
+  decideSuggestion: mock(async () => ({ data: { success: true, data: { status: "accepted" } }, error: null })),
   fetchViewerDoc,
   listAnnotations,
   createAnnotation,

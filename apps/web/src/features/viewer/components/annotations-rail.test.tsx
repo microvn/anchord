@@ -52,6 +52,10 @@ const fetchViewerDoc = mock(async () => docResponse);
 const listAnnotations = mock(async () => annoResponse);
 
 mock.module("@/features/viewer/services/client", () => ({
+  // S-002: stub the redline create/decide so this file's partial client mock still satisfies the
+  // imports useCompose/viewer-screen now make (bun mock.module binds exports at load).
+  createRedline: mock(async () => ({ data: { success: true, data: { suggestionId: "rl-x" } }, error: null })),
+  decideSuggestion: mock(async () => ({ data: { success: true, data: { status: "accepted" } }, error: null })),
   fetchViewerDoc,
   listAnnotations,
   // S-001 grew the client surface; use-compose imports these at module eval, so the whole-module

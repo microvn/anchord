@@ -94,6 +94,19 @@ export interface AnnotationAnchor {
   segments?: { blockId: string; textSnippet: string; offset: number; length: number }[];
 }
 
+/** annotation-core-ui-types-modes S-002 (C-002): a suggestion's lifecycle, distinct from the
+ *  thread `status`. A redline rides `type=suggestion` + `suggestion.kind=delete`. `stale` means the
+ *  pinned `from` span drifted out of the current version → rendered muted/dashed, never a confident
+ *  strike, and not acceptable (AS-007). */
+export type SuggestionStatus = "pending" | "accepted" | "rejected" | "stale";
+
+/** The suggestion payload served on the annotation read (Linked Fields). A redline is `kind:delete`
+ *  (no `to`); a replace suggestion carries `to`. The viewer reads `kind` to render the redline strike
+ *  and `from` for the struck quote. */
+export type SuggestionPayload =
+  | { kind: "delete"; from: string; againstVersion: number }
+  | { kind: "replace"; from: string; to: string; againstVersion: number };
+
 export interface ViewerAnnotation {
   id: string;
   type: string;
@@ -101,6 +114,12 @@ export interface ViewerAnnotation {
   status: "unresolved" | "resolved";
   isOrphaned: boolean;
   comments: AnnotationComment[];
+  /** S-002 (Linked Fields): the suggestion payload for a `type=suggestion` annotation (redline =
+   *  `kind:delete`). Absent on ordinary comment/like/label annotations. */
+  suggestion?: SuggestionPayload;
+  /** S-002 (C-002/AS-007): the suggestion's lifecycle status, served on read so the rail renders
+   *  accepted/rejected/stale at read time. Absent on non-suggestion annotations. */
+  suggestionStatus?: SuggestionStatus;
 }
 
 export interface ListAnnotationsResponse {
@@ -199,7 +218,10 @@ export interface SetResolutionResult {
   status: "unresolved" | "resolved";
 }
 
-/** PATCH /api/docs/:slug/annotations/:id/resolution — toggle resolved status (S-004 backend). */
+/** PATCH /api/docs/:slug/annotations/:id/resolution — toggle resolved status (S-004 backend).
+ *  S-002 (AS-008/C-002): the backend makes reopen of a DECIDED suggestion owner-only and resets its
+ *  suggestion_status → pending; a non-owner reopen of a decided redline comes back 403 (the FE rolls
+ *  the optimistic toggle back). Ordinary resolve/reopen stays commenter+. */
 export function setResolution(
   slug: string,
   annotationId: string,
@@ -209,4 +231,67 @@ export function setResolution(
     .docs({ slug })
     .annotations({ id: annotationId })
     .resolution.patch(body) as Promise<EdenResult<SetResolutionResult>>;
+}
+
+// --- Redline: suggestion create + decide (S-002) -------------------------------------------
+// A redline is a delete-kind suggestion (C-002). The suggestion routes are WORKSPACE-scoped only —
+// there is NO doc-scoped suggestion route (verified backend annotations.ts):
+//   POST  /api/w/:workspaceId/docs/:slug/suggestions  → create (commenter+); omit `to` → kind=delete
+//   PATCH /api/w/:workspaceId/suggestions/:id          → decide (OWNER-only); { status } | 409 stale
+// So the redline create/decide path requires a workspaceId. The slug-only public viewer sources it
+// from the doc-read response (`doc.workspaceId`, the same field that feeds the member Share/Version
+// panels) — reachable only for a signed-in member viewing a doc that has a workspace. An anon or a
+// project-less doc has no workspaceId, so it cannot redline (the markup affordance is already member-
+// gated by canCompose). REOPEN of a decided redline rides the doc-scoped resolution route above
+// (the backend detects the decided suggestion and gates owner-only there).
+
+/** A delete-kind redline: the `from` span to strike, pinned `againstVersion` (the current doc version
+ *  — the backend uses it for the stale check). `to` is omitted so the backend sets kind=delete. */
+export interface CreateRedlineBody {
+  anchor: CreateAnchor;
+  /** the exact text span proposed for deletion (the selected quote). */
+  from: string;
+  /** the version the `from` span was captured against (the doc read's `version`). */
+  againstVersion: number;
+}
+
+export interface CreateRedlineResult {
+  suggestionId: string;
+}
+
+/** POST /api/w/:workspaceId/docs/:slug/suggestions — create a delete-kind redline (S-002 / AS-004).
+ *  Omits `to` so the backend records kind=delete. Workspace-scoped (no doc-scoped suggestion route). */
+export function createRedline(
+  workspaceId: string,
+  slug: string,
+  body: CreateRedlineBody,
+): Promise<EdenResult<CreateRedlineResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .docs({ slug })
+    .suggestions.post(body) as Promise<EdenResult<CreateRedlineResult>>;
+}
+
+/** accept → the proposal is accepted; reject → rejected. Either auto-resolves the thread (C-002). */
+export interface DecideSuggestionBody {
+  decision: "accept" | "reject";
+}
+
+export interface DecideSuggestionResult {
+  /** the new suggestion status. `stale` (409) when the pinned span drifted on accept (AS-007). */
+  status: SuggestionStatus;
+}
+
+/** PATCH /api/w/:workspaceId/suggestions/:id — owner accept/reject a redline (S-002 / AS-005/006).
+ *  OWNER-only server-side. Returns the decided status; a 409 (stale) carries `details.status:"stale"`
+ *  — an accept on a drifted redline does NOT apply it (AS-007). Workspace-scoped. */
+export function decideSuggestion(
+  workspaceId: string,
+  suggestionId: string,
+  body: DecideSuggestionBody,
+): Promise<EdenResult<DecideSuggestionResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .suggestions({ id: suggestionId })
+    .patch(body) as Promise<EdenResult<DecideSuggestionResult>>;
 }

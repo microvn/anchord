@@ -366,6 +366,28 @@ main[data-doc-width="focus"] .doc-prose {
   background: color-mix(in oklab, var(--green) 12%, transparent);
   border-bottom-color: var(--green);
 }
+/* Redline (S-002 / C-002): a delete-proposal strike — red strikethrough + red-tint bg, NEVER an
+   edit of the doc content. Overrides the teal highlight when the mark is a redline. */
+.anno-mark[data-anno-kind="redline"] {
+  background: color-mix(in oklab, var(--red) 14%, transparent);
+  border-bottom: none;
+  text-decoration: line-through;
+  text-decoration-color: var(--red);
+  text-decoration-thickness: 1.5px;
+  color: inherit;
+}
+.anno-mark[data-anno-kind="redline"]:hover,
+.anno-mark[data-anno-kind="redline"].anno-mark--focus {
+  background: color-mix(in oklab, var(--red) 24%, transparent);
+}
+/* A STALE redline (AS-007): the pinned span drifted, so render a DISTINCT muted/dashed style — NOT a
+   confident strike on possibly-wrong text. Muted dashed underline, no line-through, no red tint. */
+.anno-mark[data-anno-stale="true"] {
+  background: transparent;
+  border-bottom: 1.5px dashed var(--color-subtle, currentColor);
+  text-decoration: none;
+  opacity: 0.7;
+}
 /* One annotation can wrap as MULTIPLE adjacent <mark> (per-node, cross-inline ranges).
    Collapse the inner 1px padding between back-to-back marks so the run reads as ONE
    continuous highlight — no doubled gap. Only the run's outer edges keep their 1px. */

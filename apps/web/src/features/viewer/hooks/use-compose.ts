@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { createAnnotation, addComment, type ViewerAnnotation } from "@/features/viewer/services/client";
+import {
+  createAnnotation,
+  addComment,
+  createRedline,
+  type ViewerAnnotation,
+} from "@/features/viewer/services/client";
 import { selectionToAnchor, type SelectionAnchor } from "@/features/viewer/lib/selection-anchor";
 import { placeAnnotations } from "@/features/viewer/components/annotation-marks";
 import { placePopover, isRectOutOfViewport, type RectLike } from "@/features/viewer/lib/place-popover";
@@ -44,6 +49,11 @@ function selectionRect(sel: Selection | null): RectLike | null {
 
 let optimisticSeq = 0;
 
+// S-002 (C-003): a redline has no composer, but every annotation needs a root comment and the
+// backend rejects an empty body, so the redline's root comment carries this concise default
+// (the strike conveys the deletion; this is just the thread's authored anchor). S3 guard.
+const REDLINE_ROOT_BODY = "Suggested deletion";
+
 export interface ComposeApi {
   /** popover position when a valid selection is live (else null → no popover). `centered` means
    *  `left` is the CENTER x of the selection and the popover applies translateX(-50%) (above-
@@ -59,6 +69,11 @@ export interface ComposeApi {
   /** true while a create write is in flight. */
   pending: boolean;
   startComment: () => void;
+  /** S-002 (AS-004): pick Redline on the pending selection → create a delete-kind suggestion + its
+   *  root comment WITHOUT a composer (the strike conveys the proposal). Optimistically shows a red
+   *  strike + a DELETE card, then rolls back on a refused/failed write (AS-009/C-007). No-op when no
+   *  workspaceId is reachable (the workspace-scoped suggestion route is unreachable). */
+  startRedline: () => void;
   dismissPopover: () => void;
   /** S-005: a guest send carries its self-entered name + optional email (AS-010); a member send
    *  omits `guestIdentity`. The fields ride to addComment alongside the body — no userId either way
@@ -90,6 +105,9 @@ export function useCompose(
   slug: string | undefined,
   docPaneEl: HTMLElement | null,
   canCompose: boolean,
+  /** S-002: the doc's workspace (member-only) + current version — required for the workspace-scoped
+   *  redline create + its stale pin. Null/undefined → redline is unavailable (startRedline no-ops). */
+  redlineCtx: { workspaceId: string | null; version: number } | null,
   /** PERF (no-refetch reconcile): called on a successful create with the REAL annotation built from
    *  the server-returned ids. The screen PREPENDS it into the react-query cache (newest-first) so the
    *  rail re-renders WITHOUT a network reload — replacing the old onSent()→refetch reconcile. */
@@ -280,6 +298,139 @@ export function useCompose(
     setComposerAnchor(null);
   }, []);
 
+  // S-002 (AS-004 / AS-009 / C-002 / C-007): Redline the pending selection. UNLIKE Comment, there is
+  // NO composer step — the strike itself conveys the deletion proposal (Data Model: redline root body
+  // is empty), so picking Redline creates immediately. We optimistically show a red strike + a DELETE
+  // card, then POST the delete-kind suggestion → attach its root comment. On a refused/failed write we
+  // roll BOTH the optimistic strike + card back (no ghost) and toast. The redline create is workspace-
+  // scoped (the only suggestion route), so it no-ops without a reachable workspaceId.
+  const startRedline = useCallback(() => {
+    const anchor = pendingAnchor.current;
+    if (!anchor) return;
+    const workspaceId = redlineCtx?.workspaceId;
+    if (!slug || !workspaceId || redlineCtx == null) {
+      // No workspace reachable (anon / project-less doc) → the workspace-scoped suggestion route is
+      // unreachable. Close the popover; don't create a ghost that can never persist.
+      setPopover(null);
+      pendingAnchor.current = null;
+      return;
+    }
+    const tempId = `optimistic-${++optimisticSeq}`;
+    const createdAt = new Date().toISOString();
+    // The optimistic redline thread: type=suggestion + kind=delete + pending status, with its root
+    // comment. The rail renders the DELETE card; the mark renders the red strike (kind=redline).
+    const optimisticRedline: ViewerAnnotation = {
+      id: tempId,
+      type: "suggestion",
+      status: "unresolved",
+      isOrphaned: false,
+      anchor: {
+        blockId: anchor.blockId,
+        textSnippet: anchor.textSnippet,
+        offset: anchor.offset,
+        length: anchor.length,
+        segments: anchor.segments,
+      },
+      suggestion: { kind: "delete", from: anchor.textSnippet, againstVersion: redlineCtx.version },
+      suggestionStatus: "pending",
+      comments: [
+        {
+          id: `${tempId}-c`,
+          parentId: null,
+          authorName: "You",
+          // C-003: every annotation has a root comment. Redline's default is the deletion intent; the
+          // backend rejects an empty body, so a concise non-empty default stands in (S3 guard).
+          body: REDLINE_ROOT_BODY,
+          createdAt,
+        },
+      ],
+    };
+
+    setOptimistic((prev) => [optimisticRedline, ...prev]);
+    if (docPaneEl) {
+      placeAnnotations(docPaneEl, [
+        {
+          id: tempId,
+          anchor: { blockId: anchor.blockId, textSnippet: anchor.textSnippet, offset: anchor.offset, length: anchor.length },
+          kind: "redline",
+        },
+      ]);
+    }
+    setPopover(null);
+    pendingAnchor.current = null;
+    setPending(true);
+
+    const clearOptimistic = () => {
+      setOptimistic((prev) => prev.filter((a) => a.id !== tempId));
+      if (docPaneEl) {
+        const mark = docPaneEl.querySelector<HTMLElement>(`[data-anno="${tempId}"]`);
+        if (mark?.parentNode) {
+          const parent = mark.parentNode;
+          while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+          parent.removeChild(mark);
+          parent.normalize?.();
+        }
+      }
+    };
+    const rollback = () => {
+      // C-007/AS-009: remove the optimistic strike + card; no ghost mark remains.
+      clearOptimistic();
+      toast.error("Couldn't create your redline");
+    };
+
+    void (async () => {
+      try {
+        const created = await createRedline(workspaceId, slug, {
+          anchor: {
+            blockId: anchor.blockId,
+            textSnippet: anchor.textSnippet,
+            offset: anchor.offset,
+            length: anchor.length,
+            segments: anchor.segments,
+          },
+          from: anchor.textSnippet,
+          againstVersion: redlineCtx.version,
+        });
+        if (created.error || !created.data) {
+          rollback();
+          return;
+        }
+        const suggestionId = peelSuggestionId(created.data);
+        // C-003: attach the root comment so the redline carries an authored thread (the create route
+        // does not auto-create one). A refused comment write also rolls the redline back (no half row).
+        const commented = await addComment(slug, suggestionId, { body: REDLINE_ROOT_BODY });
+        if (commented.error) {
+          rollback();
+          return;
+        }
+        const real: ViewerAnnotation = {
+          id: suggestionId,
+          type: "suggestion",
+          status: "unresolved",
+          isOrphaned: false,
+          anchor: {
+            blockId: anchor.blockId,
+            textSnippet: anchor.textSnippet,
+            offset: anchor.offset,
+            length: anchor.length,
+            segments: anchor.segments,
+          },
+          suggestion: { kind: "delete", from: anchor.textSnippet, againstVersion: redlineCtx.version },
+          suggestionStatus: "pending",
+          comments: [
+            { id: peelCommentId(commented.data), parentId: null, authorName: "You", body: REDLINE_ROOT_BODY, createdAt },
+          ],
+        };
+        onCreatedAnnotation(real);
+        clearOptimistic();
+      } catch {
+        rollback();
+      } finally {
+        setPending(false);
+      }
+    })();
+  }, [slug, docPaneEl, redlineCtx, onCreatedAnnotation]);
+
   const send = useCallback(
     (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => {
       const anchor = active;
@@ -440,6 +591,7 @@ export function useCompose(
     optimistic,
     pending,
     startComment,
+    startRedline,
     dismissPopover,
     send,
     cancel,
@@ -460,6 +612,20 @@ function peelId(data: unknown): string {
     const inner = obj.data;
     if (inner && typeof inner === "object" && typeof (inner as Record<string, unknown>).annotationId === "string") {
       return (inner as Record<string, string>).annotationId;
+    }
+  }
+  return "";
+}
+
+// S-002: envelope-defensive peel for the redline create result (`{ suggestionId }`, possibly
+// wrapped in the success envelope) — same shape-tolerance as peelId.
+function peelSuggestionId(data: unknown): string {
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    if (typeof obj.suggestionId === "string") return obj.suggestionId;
+    const inner = obj.data;
+    if (inner && typeof inner === "object" && typeof (inner as Record<string, unknown>).suggestionId === "string") {
+      return (inner as Record<string, string>).suggestionId;
     }
   }
   return "";

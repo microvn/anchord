@@ -207,6 +207,7 @@ export function ThreadCard({
   onFocus,
   onReply,
   onResolve,
+  onDecide,
 }: {
   annotation: ViewerAnnotation;
   focused: boolean;
@@ -220,6 +221,11 @@ export function ThreadCard({
    *  (AS-008). Resolves to `false` on a refused/failed write so the card rolls back its optimistic
    *  toggle (the toggle reflects the SERVER result). Absent → no Resolve control (viewer, C-004). */
   onResolve?: (resolved: boolean) => Promise<boolean>;
+  /** S-002 (AS-005/006/C-002): OWNER-only accept/reject of a pending redline. The consumer wires
+   *  decideSuggestion({ decision }); deciding auto-resolves the thread (the backend flips status, the
+   *  consumer reconciles it). Absent → no Accept/Reject row (non-owner, or not a redline). A drifted
+   *  (stale) redline cannot be accepted (AS-007), so the row is not offered when stale. */
+  onDecide?: (decision: "accept" | "reject") => Promise<boolean>;
 }) {
   // The resolved state the CARD shows. It starts from the server status, but a local optimistic
   // override (AS-007) drives it the moment the user toggles, before the refetch reconciles. When the
@@ -238,6 +244,17 @@ export function ThreadCard({
   // (destructuring `undefined` throws "not iterable"). An empty thread renders quote-only.
   const [root, ...replies] = annotation.comments ?? [];
   const quote = annotation.anchor.textSnippet;
+
+  // S-002 (C-002): a redline is a delete-kind suggestion. The DELETE badge + the owner Accept/Reject
+  // row + the stale state derive from the served type + suggestion payload + suggestionStatus.
+  const isRedline =
+    annotation.type === "suggestion" && annotation.suggestion?.kind === "delete";
+  const sugStatus = annotation.suggestionStatus;
+  const isStale = isRedline && sugStatus === "stale";
+  const isDecided = sugStatus === "accepted" || sugStatus === "rejected";
+  // The owner Accept/Reject row shows ONLY for a PENDING redline (a decided one is resolved; a stale
+  // one cannot be accepted, AS-007) AND only when the owner-gated onDecide is supplied (C-002).
+  const showDecide = Boolean(onDecide) && isRedline && sugStatus === "pending";
 
   // Optimistic replies the user sent this session, shown flat alongside server replies until a
   // refetch reconciles them (consistency with S-001's optimistic create, C-011). They live at the
@@ -290,6 +307,30 @@ export function ThreadCard({
   // row can drop the Resolve button while composing — the composer then takes the full width instead
   // of sharing the row with Resolve (which used to pin awkwardly to the textarea's top-right corner).
   const [replyOpen, setReplyOpen] = useState(false);
+  // S-002 (AS-005/006/C-002): owner accepts/rejects a redline. Optimistically resolve the thread
+  // (deciding auto-resolves it, dimmed) the moment the owner clicks, then call the consumer's
+  // onDecide. On a refused/failed/stale decide (resolves false) roll the optimistic resolve back —
+  // the card reflects the SERVER result, never an unconfirmed decision.
+  const [deciding, setDeciding] = useState(false);
+  const handleDecide = onDecide
+    ? (decision: "accept" | "reject") => (e: { stopPropagation: () => void }) => {
+        e.stopPropagation(); // never trigger the card's focus onClick
+        if (deciding) return;
+        setOptimisticResolved(true); // deciding auto-resolves (C-002) — dim immediately
+        setDeciding(true);
+        void (async () => {
+          try {
+            const ok = await onDecide(decision);
+            if (!ok) setOptimisticResolved(null); // refused/stale → fall back to the server status
+          } catch {
+            setOptimisticResolved(null);
+          } finally {
+            setDeciding(false);
+          }
+        })();
+      }
+    : undefined;
+
   const handleResolveToggle = onResolve
     ? (e: { stopPropagation: () => void }) => {
         e.stopPropagation(); // never trigger the card's focus onClick
@@ -353,9 +394,44 @@ export function ThreadCard({
         </>
       )}
 
-      {(resolved || unplaceable) && (
+      {(resolved || unplaceable || isRedline) && (
         // .cmt-badges: 8px above, 6px gap. .sg-badge: mono 9px UPPERCASE pill, 4px radius.
         <div className="mt-2 flex flex-wrap gap-1.5">
+          {/* S-002 (AS-004): a redline carries a DELETE type badge (red-tinted). */}
+          {isRedline && (
+            <span
+              data-testid="type-badge-delete"
+              className="rounded-[4px] bg-error/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-error"
+            >
+              Delete
+            </span>
+          )}
+          {/* S-002 (AS-005/006): the decided outcome — accepted / rejected. */}
+          {sugStatus === "accepted" && (
+            <span
+              data-testid="redline-accepted-badge"
+              className="rounded-[4px] bg-success/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-success"
+            >
+              Accepted
+            </span>
+          )}
+          {sugStatus === "rejected" && (
+            <span
+              data-testid="redline-rejected-badge"
+              className="rounded-[4px] bg-error/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-error"
+            >
+              Rejected
+            </span>
+          )}
+          {/* S-002 (AS-007): a drifted redline shows STALE — muted, NOT a confident outcome. */}
+          {isStale && (
+            <span
+              data-testid="redline-stale-badge"
+              className="rounded-[4px] bg-sunken px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-muted"
+            >
+              Stale
+            </span>
+          )}
           {resolved && (
             <span
               data-testid="resolved-badge"
@@ -389,6 +465,32 @@ export function ThreadCard({
               <div className="mt-1 text-[12.5px] leading-[1.5] text-ink">{r.body}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* S-002 (AS-005/006/C-002): the OWNER-only Accept / Reject row for a PENDING redline. Deciding
+          auto-resolves the thread (handled in handleDecide). A non-owner gets no onDecide → no row; a
+          decided or stale redline is not pending → no row (a stale redline cannot be accepted, AS-007). */}
+      {showDecide && handleDecide && (
+        <div data-testid="redline-decide" className="mt-[9px] flex items-center gap-1.5">
+          <button
+            type="button"
+            data-testid="redline-accept"
+            disabled={deciding}
+            onClick={handleDecide("accept")}
+            className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Accept
+          </button>
+          <button
+            type="button"
+            data-testid="redline-reject"
+            disabled={deciding}
+            onClick={handleDecide("reject")}
+            className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-error hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Reject
+          </button>
         </div>
       )}
 

@@ -19,6 +19,10 @@ mock.module("sonner", () => ({
 }));
 // Keep the network client inert — these tests only exercise selection→popover + dismiss, not writes.
 mock.module("@/features/viewer/services/client", () => ({
+  // S-002: stub the redline create/decide so this file's partial client mock still satisfies the
+  // imports useCompose/viewer-screen now make (bun mock.module binds exports at load).
+  createRedline: mock(async () => ({ data: { success: true, data: { suggestionId: "rl-x" } }, error: null })),
+  decideSuggestion: mock(async () => ({ data: { success: true, data: { status: "accepted" } }, error: null })),
   createAnnotation: mock(async () => ({ data: { annotationId: "a1" }, error: null })),
   addComment: mock(async () => ({ data: {}, error: null })),
 }));

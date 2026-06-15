@@ -15,12 +15,17 @@ export function AnnotationsRail({
   onFocusThread,
   onReply,
   onResolve,
+  onDecide,
 }: {
   annotations: ViewerAnnotation[];
   focusedId: string | null;
   /** ids the FE couldn't anchor at runtime (GAP-005) — flagged, no scroll target. */
   unplaceableIds: Set<string>;
   onFocusThread: (id: string) => void;
+  /** S-002: OWNER-only accept/reject of a redline. The rail binds it per-thread to the ThreadCard's
+   *  onDecide(decision); the consumer wires decideSuggestion. Absent → no Accept/Reject row (non-
+   *  owner, C-002). Deciding auto-resolves the thread. */
+  onDecide?: (annotation: ViewerAnnotation, decision: "accept" | "reject") => Promise<boolean>;
   /** S-003: send a reply to a specific anchored thread. The rail binds this per-thread to the
    *  ThreadCard's onReply(body); the consumer wires addComment({ body, parentId }) with parentId =
    *  the annotation's first/root comment. Returns false on a refused/failed write so the card rolls
@@ -75,6 +80,8 @@ export function AnnotationsRail({
               onReply={onReply ? (body) => onReply(a, body) : undefined}
               // S-004: bind resolve/reopen to THIS thread; the card hands us only the next state.
               onResolve={onResolve ? (resolved) => onResolve(a, resolved) : undefined}
+              // S-002: bind owner accept/reject to THIS thread; the card hands us only the decision.
+              onDecide={onDecide ? (decision) => onDecide(a, decision) : undefined}
             />
           ))}
 

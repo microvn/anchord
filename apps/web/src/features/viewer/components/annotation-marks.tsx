@@ -31,6 +31,12 @@ export interface PlaceableAnnotation {
    *  detached section instead. They are skipped here so they never render as if still anchored. */
   isOrphaned?: boolean;
   status?: "unresolved" | "resolved";
+  /** S-002 (C-002): a `redline` mark renders the red strikethrough + red-tint instead of the teal
+   *  highlight. Absent → an ordinary comment/like/label highlight. */
+  kind?: "redline";
+  /** S-002 (AS-007): a drifted redline whose pinned span no longer matches the current version —
+   *  rendered in a DISTINCT muted/dashed style (not a confident strike), and not acceptable. */
+  stale?: boolean;
 }
 
 export interface PlaceResult {
@@ -267,6 +273,14 @@ export function placeAnnotations(
     }
     // One id → N marks (cross-inline range). Tag resolved on each; report the first as the anchor el.
     if (ann.status === "resolved") marks.forEach((m) => (m.dataset.resolved = "true"));
+    // S-002: tag the redline kind + stale state so the CSS renders the red strike / muted-dashed
+    // stale style (C-002/AS-007). A stale redline is the muted-dashed, NOT a confident red strike.
+    if (ann.kind === "redline") {
+      marks.forEach((m) => {
+        m.dataset.annoKind = "redline";
+        if (ann.stale) m.dataset.annoStale = "true";
+      });
+    }
     placed.push({ id: ann.id, el: marks[0]! });
   }
 

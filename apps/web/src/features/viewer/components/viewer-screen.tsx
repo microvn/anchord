@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/api/auth-client";
@@ -31,6 +31,7 @@ import {
   listAnnotations,
   addComment,
   setResolution,
+  decideSuggestion,
   canComment,
   type ViewerDocResponse,
   type ListAnnotationsResponse,
@@ -256,7 +257,7 @@ function ViewerShell({
 
   // S-003/S-006: the annotations are read here (lifted above the rail) so the CommentFab can show
   // the count and the highlight-tap can open the rail drawer, while the rail still renders them.
-  const anno = useAnnotations(slug, docPaneEl, hasDoc, canCompose, () => {
+  const anno = useAnnotations(slug, docPaneEl, hasDoc, canCompose, memberWorkspaceId, effectiveRole, () => {
     if (drawerMode) setRailOpen(true); // AS-014: tapping a highlight opens the rail drawer
   });
 
@@ -276,6 +277,10 @@ function ViewerShell({
     slug,
     docPaneEl,
     canCompose,
+    // S-002: the redline create + decide are workspace-scoped (no doc-addressed suggestion route), so
+    // the slug-only viewer sources the workspaceId from the doc read (member-only). `version` pins the
+    // redline's stale check. Null workspaceId (anon / project-less doc) → startRedline no-ops.
+    doc ? { workspaceId: memberWorkspaceId, version: doc.version } : null,
     (real) => {
       // PERF: reconcile the create WITHOUT a refetch — prepend the real server row into the
       // react-query cache (newest-first, deduped). The rail re-renders with no network reload.
@@ -512,11 +517,14 @@ function ViewerShell({
         <SelectionPopover
           rect={compose.popover}
           onComment={compose.startComment}
-          // S-001: the four new type intents (Like/Label/Redline/Suggest) are wired to a stub here —
-          // their create paths land in S-002 (Redline) / S-003 (Like) / S-004 (Label) and the
-          // suggest-image sibling (Suggest). The popover is the single entry; this seam is what those
-          // stories consume to open the labeled-create / picker / redline paths.
-          onSelectType={(type) => toast(`${type[0]!.toUpperCase()}${type.slice(1)} is coming soon`)}
+          // S-002: Redline now runs the real create flow (delete-kind suggestion + root comment, with
+          // an optimistic strike + DELETE card and rollback on a refused write). Like/Label/Suggest
+          // still land in their own stories (S-003 / S-004 / suggest-image) — kept on the stub.
+          onSelectType={(type) =>
+            type === "redline"
+              ? compose.startRedline()
+              : toast(`${type[0]!.toUpperCase()}${type.slice(1)} is coming soon`)
+          }
           onDismiss={compose.dismissPopover}
           onMeasure={compose.setPopoverSize}
         />
@@ -638,6 +646,11 @@ function useAnnotations(
   docPaneEl: HTMLElement | null,
   enabled: boolean,
   canCompose: boolean,
+  /** S-002: the doc's workspace (member-only, sourced from the read response). The redline DECIDE
+   *  route is workspace-scoped, so a non-null workspaceId is required to offer Accept/Reject. */
+  workspaceId: string | null,
+  /** S-002 (C-002): deciding a redline is OWNER-only — the Accept/Reject row only appears for owner. */
+  effectiveRole: ViewerDocResponse["doc"]["effectiveRole"],
   onHighlightTap: () => void,
 ): {
   count: number;
@@ -652,6 +665,7 @@ function useAnnotations(
     onFocusThread: (id: string) => void;
     onReply?: (annotation: ViewerAnnotation, body: string) => Promise<boolean>;
     onResolve?: (annotation: ViewerAnnotation, resolved: boolean) => Promise<boolean>;
+    onDecide?: (annotation: ViewerAnnotation, decision: "accept" | "reject") => Promise<boolean>;
   };
 } {
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -700,10 +714,27 @@ function useAnnotations(
     });
   }, []);
 
+  // S-002 (C-002/AS-007): derive the redline kind + stale flag onto each placeable annotation so the
+  // mark renders the red strike (a delete-kind suggestion) or the muted-dashed stale style (a drifted
+  // redline). Ordinary annotations carry neither. Memoized so the marks effect's `annotations` dep
+  // stays referentially stable across a selection re-render (the single-place guarantee, BUG #1).
+  const placeable = useMemo(
+    () =>
+      annotations.map((a) => ({
+        ...a,
+        kind:
+          a.type === "suggestion" && a.suggestion?.kind === "delete"
+            ? ("redline" as const)
+            : undefined,
+        stale: a.suggestionStatus === "stale",
+      })),
+    [annotations],
+  );
+
   // Place marks + wire click-on-highlight → focus thread (AS-008) AND open the rail drawer (AS-014).
   useAnnotationMarks(
     docPaneEl,
-    annotations,
+    placeable,
     focusedId,
     (id) => {
       setFocusedId(id);
@@ -811,10 +842,62 @@ function useAnnotations(
         }
       : undefined;
 
+  // S-002 (AS-005/006/008/C-002): the OWNER accepts/rejects a redline. Workspace-scoped (the decide
+  // route has no doc-addressed form) + OWNER-only, so it's wired ONLY when a workspaceId is reachable
+  // AND the effective role is owner. Deciding auto-resolves the thread: on success we patch the
+  // suggestionStatus AND flip status→resolved in the cache (no refetch), and dim the highlight. On a
+  // refused / stale (409) / failed decide we return false (the card rolls its optimistic resolve
+  // back) and toast — an accept on a drifted redline does NOT apply it (AS-007).
+  const onDecide =
+    workspaceId && effectiveRole === "owner" && slug
+      ? async (annotation: ViewerAnnotation, decision: "accept" | "reject"): Promise<boolean> => {
+          try {
+            const res = await decideSuggestion(workspaceId, annotation.id, { decision });
+            if (res.error) {
+              // 409 stale (AS-007) or a refused write — keep the redline pending, surface it. The
+              // eden error is `unknown` at the type layer; read its status defensively.
+              const stale = (res.error as { status?: number } | null)?.status === 409;
+              toast.error(stale ? "This redline is stale and can't be accepted" : "Couldn't decide this redline");
+              if (stale) {
+                queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) =>
+                  old
+                    ? {
+                        ...old,
+                        items: old.items.map((a) =>
+                          a.id === annotation.id ? { ...a, suggestionStatus: "stale" } : a,
+                        ),
+                      }
+                    : old,
+                );
+              }
+              return false;
+            }
+            // Success: deciding auto-resolves (C-002). Patch the suggestionStatus + resolve the thread
+            // in the cache, and dim the in-text strike.
+            dimMark(annotation.id, true);
+            queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) => {
+              if (!old) return old;
+              return {
+                ...old,
+                items: old.items.map((a) =>
+                  a.id === annotation.id
+                    ? { ...a, status: "resolved", suggestionStatus: decision === "accept" ? "accepted" : "rejected" }
+                    : a,
+                ),
+              };
+            });
+            return true;
+          } catch {
+            toast.error("Couldn't decide this redline");
+            return false;
+          }
+        }
+      : undefined;
+
   return {
     count: annotations.length,
     refetch: () => annoQuery.refetch(),
     prependAnnotation,
-    railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread, onReply, onResolve },
+    railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread, onReply, onResolve, onDecide },
   };
 }

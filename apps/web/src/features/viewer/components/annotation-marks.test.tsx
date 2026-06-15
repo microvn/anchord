@@ -194,6 +194,45 @@ describe("placeAnnotations (S-003)", () => {
     expect(before).toContain("true");
   });
 
+  it("AS-004: a redline mark carries the redline kind hook (red strike), NOT the teal highlight", () => {
+    // annotation-core-ui-types-modes S-002: a delete-kind suggestion renders the red strikethrough +
+    // red-tint. placeAnnotations tags the mark `data-anno-kind=redline` so the CSS applies the strike;
+    // it must NOT carry the stale hook (the span still matches the current version).
+    const root = mountDoc(`<p id="b">Implementation Plan: Real-time Collaboration.</p>`);
+    const { placed, unplaceable } = placeAnnotations(root, [
+      {
+        id: "rl",
+        kind: "redline",
+        anchor: { blockId: "b", textSnippet: "Real-time Collaboration", offset: 20, length: 23 },
+      },
+    ]);
+    expect(unplaceable).toEqual([]);
+    expect(placed.map((p) => p.id)).toEqual(["rl"]);
+    const mark = root.querySelector('[data-anno="rl"]') as HTMLElement;
+    expect(mark.dataset.annoKind).toBe("redline");
+    expect(mark.dataset.annoStale).toBeUndefined();
+    // C-002: the doc content is NOT edited — the struck text is still present in the block.
+    expect(root.querySelector("#b")!.textContent).toBe("Implementation Plan: Real-time Collaboration.");
+  });
+
+  it("AS-007: a STALE redline mark carries the stale hook (muted/dashed), distinct from a confident strike", () => {
+    // S-002 (C-002): a drifted redline renders a DISTINCT stale style, not a confident strike on
+    // possibly-wrong text. placeAnnotations tags `data-anno-stale=true` so the CSS uses the muted-
+    // dashed treatment. (The kind hook is still present so the rail/badge can identify it as a redline.)
+    const root = mountDoc(`<p id="b">Implementation Plan: Real-time Collaboration.</p>`);
+    placeAnnotations(root, [
+      {
+        id: "stale-rl",
+        kind: "redline",
+        stale: true,
+        anchor: { blockId: "b", textSnippet: "Real-time Collaboration", offset: 20, length: 23 },
+      },
+    ]);
+    const mark = root.querySelector('[data-anno="stale-rl"]') as HTMLElement;
+    expect(mark.dataset.annoKind).toBe("redline");
+    expect(mark.dataset.annoStale).toBe("true");
+  });
+
   it("AS-010: a resolved annotation's mark carries the resolved style hook", () => {
     const root = mountDoc(`<p id="b">The last-admin invariant blocks demotion.</p>`);
     placeAnnotations(root, [
