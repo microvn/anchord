@@ -97,9 +97,12 @@ describe("DocModeToolbar S-006 markup tool palette (C-009)", () => {
     expect(redline.getAttribute("data-expanded")).toBe("true");
     expect(within(redline).getByTestId("markup-tool-redline-label")).toHaveTextContent(/redline/i);
     expect(redline.getAttribute("style") ?? "").toContain("color");
-    // Inactive (Comment) → collapsed: icon-only, no label revealed.
+    // Inactive (Comment) → collapsed: the label is mounted (so it can animate open/closed) but
+    // hidden — clipped + aria-hidden, the chip not expanded. Icon-only to the eye + to a11y.
     const comment = screen.getByTestId("markup-tool-comment");
     expect(comment.getAttribute("data-expanded")).not.toBe("true");
-    expect(within(comment).queryByTestId("markup-tool-comment-label")).toBeNull();
+    const commentLabel = within(comment).getByTestId("markup-tool-comment-label");
+    expect(commentLabel.getAttribute("data-collapsed")).toBe("true");
+    expect(commentLabel.getAttribute("aria-hidden")).toBe("true");
   });
 });

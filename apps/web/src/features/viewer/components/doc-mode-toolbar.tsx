@@ -93,8 +93,10 @@ function ToolChip({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       className={[
-        "inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[12px] font-medium transition-colors",
-        expanded ? "px-2" : "text-subtle",
+        // transition-all so the padding + bg + colour ease together with the label reveal below.
+        // DESIGN.md motion: short 150ms, ease-out; respect reduced-motion.
+        "inline-flex h-7 items-center rounded-md text-[12px] font-medium transition-all duration-150 ease-out motion-reduce:transition-none",
+        expanded ? "px-2" : "px-1.5 text-subtle",
       ].join(" ")}
       // Active/hover → the tool's hue (coloured icon/text + a soft bg tint, DESIGN.md affordance
       // pattern). Inactive/resting → icon-only + muted (the className handles the muted colour).
@@ -105,8 +107,22 @@ function ToolChip({
       }
     >
       <Icon name={meta.icon} size={14} />
-      {/* COLLAPSED at rest → icon-only; EXPANDED (active/hover) → reveal the label. */}
-      {expanded && <span data-testid={`markup-tool-${tool}-label`}>{meta.label}</span>}
+      {/* The label is ALWAYS mounted and animated open/closed (max-width + opacity + the icon gap),
+          so the chip expands/collapses smoothly instead of the label popping in/out. Collapsed →
+          clipped to 0 width, faded out, aria-hidden (the button's aria-label keeps the a11y name). */}
+      <span
+        data-testid={`markup-tool-${tool}-label`}
+        data-collapsed={expanded ? undefined : "true"}
+        aria-hidden={!expanded}
+        className="overflow-hidden whitespace-nowrap transition-all duration-150 ease-out motion-reduce:transition-none"
+        style={{
+          maxWidth: expanded ? "6rem" : 0,
+          opacity: expanded ? 1 : 0,
+          marginLeft: expanded ? "0.375rem" : 0,
+        }}
+      >
+        {meta.label}
+      </span>
     </button>
   );
 }
