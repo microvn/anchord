@@ -23,6 +23,8 @@ import {
   createReanchorLedgerRepo,
 } from "./annotation/repo";
 import { runReanchorForNewVersion } from "./annotation/reanchor-job";
+import { createIsActiveMemberName } from "./routes/annotations";
+import { createCommentRateLimiter } from "./annotation/comment-rate-limit";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -254,6 +256,12 @@ const app = createApp({
     resolveDocRole: sharedResolveDocRole,
     resolveAccess: sharedResolveAccess,
     loadShareConfig: concreteLoadShareConfig,
+    // doc-access-routing S-004: the anon comment write surface. rateLimitComment throttles
+    // anonymous writes per IP+doc (C-008/AS-022) — a refused write 429s AND skips the reply
+    // mail dispatch (no flood). isActiveMemberName rejects a guest name colliding with an
+    // active member / doc-owner display name (C-009/AS-023) so a guest can't read as a member.
+    rateLimitComment: createCommentRateLimiter(),
+    isActiveMemberName: createIsActiveMemberName(db),
     // S-006: notify thread participants + doc owner on a reply (in-app row via the DB
     // notify repo + one email per recipient through the shared queue). Best-effort.
     notify: { mail: notifyMail },

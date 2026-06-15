@@ -35,7 +35,7 @@ import {
   type Actor,
 } from "../http/auth-gate";
 import { withValidation } from "../http/validate";
-import { ValidationError, ForbiddenError, NotFoundError, ConflictError, UnauthenticatedError } from "../http/errors";
+import { ValidationError, ForbiddenError, NotFoundError, ConflictError, UnauthenticatedError, RateLimitedError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
 import { type Viewer, type GeneralAccessLevel } from "../sharing/access";
@@ -63,8 +63,8 @@ import {
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
 import { notifyOnReply, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
-import { and, desc, eq } from "drizzle-orm";
-import { annotations as annotationsTable, docs as docsTable, docVersions } from "../db/schema";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { annotations as annotationsTable, docs as docsTable, docVersions, docMembers, user } from "../db/schema";
 import type { DB } from "../db/client";
 
 /**
@@ -124,6 +124,37 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
 }
 
 /**
+ * doc-access-routing S-004 / C-009: concrete `isActiveMemberName(docId, name)` — true when
+ * `name` (case/space-insensitive) matches an ACTIVE doc-member's display name OR the doc
+ * owner's display name. A guest comment whose typed name collides is rejected so it can't
+ * read as the member (the non-spoofable guest marker — author_id null — is enforced
+ * separately by createGuestComment). Thin read glue; the comparison normalizes both sides.
+ */
+export function createIsActiveMemberName(db: DB): IsActiveMemberName {
+  return async (docId, name) => {
+    const needle = name.trim().toLowerCase();
+    if (needle.length === 0) return false;
+    const norm = (col: unknown) => sql`lower(trim(${col})) = ${needle}`;
+    // Active invited members bound to an account.
+    const [m] = await db
+      .select({ id: docMembers.id })
+      .from(docMembers)
+      .innerJoin(user, eq(user.id, docMembers.userId))
+      .where(and(eq(docMembers.docId, docId), eq(docMembers.status, "active"), norm(user.name)))
+      .limit(1);
+    if (m) return true;
+    // The doc owner (AS-023 uses the owner's display name).
+    const [o] = await db
+      .select({ id: user.id })
+      .from(docsTable)
+      .innerJoin(user, eq(user.id, docsTable.ownerId))
+      .where(and(eq(docsTable.id, docId), norm(user.name)))
+      .limit(1);
+    return Boolean(o);
+  };
+}
+
+/**
  * GUEST-COMMENTING TOGGLE SEAM (sharing-permissions cluster).
  *
  * Whether a doc allows guest commenting (anyone-with-link sub-toggle) lives in the
@@ -133,6 +164,27 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
  * commenting is off → a guest (no session) comment is rejected (400).
  */
 export type LoadShareConfig = (docId: string) => Promise<{ guestCommentingEnabled: boolean }>;
+
+/**
+ * doc-access-routing S-004 / C-008: per-IP + per-doc rate limiter for the ANONYMOUS
+ * comment write surface. Keyed on a string the route builds from the caller IP and the
+ * parent doc id, so a flood from one source on one doc is throttled independently. Returns
+ * `{ allowed: false }` once the window is exceeded → the route refuses the write (429) AND
+ * skips the reply-notification dispatch (no per-comment mail flood). The concrete limiter
+ * (a token bucket / fixed window) lands in index.ts; a fake in tests. An allow-all default
+ * keeps existing route tests that don't exercise the limit unchanged.
+ */
+export type CommentRateLimiter = (key: string) => Promise<{ allowed: boolean }>;
+
+/**
+ * doc-access-routing S-004 / C-009: "is `name` the display name of an ACTIVE member on this
+ * doc". A GUEST comment whose typed name collides with a real member's display name is
+ * rejected so the guest cannot read as the member (the guest marker is already non-spoofable
+ * server-side; this stops the NAME from impersonating). The concrete resolver (a
+ * doc_members ⋈ user.name lookup) lands in index.ts; a fake in tests. A never-collides
+ * default keeps existing tests unchanged.
+ */
+export type IsActiveMemberName = (docId: string, name: string) => Promise<boolean>;
 
 export interface AnnotationsRoutesDeps {
   /** Drizzle handle — builds the concrete repos per request. */
@@ -159,6 +211,19 @@ export interface AnnotationsRoutesDeps {
   resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
   /** Guest-commenting toggle resolver (the sharing seam — see LoadShareConfig). */
   loadShareConfig: LoadShareConfig;
+  /**
+   * doc-access-routing S-004 / C-008 (AS-022): per-IP+per-doc rate limiter applied to the
+   * ANONYMOUS comment write surface. OMIT to disable throttling (allow-all) — keeps the
+   * older annotation route tests unchanged. When the limiter refuses, the write is 429'd
+   * AND no reply-notification mail is dispatched (the same limiter gates both).
+   */
+  rateLimitComment?: CommentRateLimiter;
+  /**
+   * doc-access-routing S-004 / C-009 (AS-023): guest-name → active-member-name collision
+   * check. OMIT to skip (never collides). Applied ONLY to guest (no-session) writes — a
+   * member's identity is the session, never a typed name.
+   */
+  isActiveMemberName?: IsActiveMemberName;
   /**
    * workspace-project S-006 (AS-011 / C-004): notify-on-reply wiring. After a
    * SUCCESSFUL reply (session OR guest), the route dispatches a best-effort
@@ -255,6 +320,12 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   const annotationLookupRepo =
     deps.annotationLookupRepo ?? (deps.db ? createAnnotationLookupRepo(deps.db) : need("annotationLookupRepo"));
 
+  // S-004 seams (defaulted so older route tests that don't pass them stay green):
+  //  - rateLimitComment: allow-all → no throttle (the concrete window lands in index.ts).
+  //  - isActiveMemberName: never-collides → no impersonation guard fires.
+  const rateLimitComment: CommentRateLimiter = deps.rateLimitComment ?? (async () => ({ allowed: true }));
+  const isActiveMemberName: IsActiveMemberName = deps.isActiveMemberName ?? (async () => false);
+
   // S-006 notify-on-reply: built only when the `notify` block is provided. The repo is
   // pre-built (tests) or built from `db`; the mail enqueuer is the shared MailQueue
   // (prod) / a fake (tests). Absent → notify is a no-op (a reply still succeeds).
@@ -303,6 +374,18 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   /** The caller's effective doc-scoped role (null → least privilege, viewer). */
   async function docRole(docId: string, userId: string): Promise<Role> {
     return (await deps.resolveDocRole(docId, userId)) ?? "viewer";
+  }
+
+  /**
+   * Best-effort client IP for the anon rate-limit key (C-008). Prefers the first
+   * `x-forwarded-for` hop (the real client behind a reverse proxy), falling back to
+   * `x-real-ip`, then a literal "unknown" so a missing header still rate-limits per-doc
+   * (degrading to a per-doc bucket rather than no limit at all).
+   */
+  function clientIp(request: Request): string {
+    const fwd = request.headers.get("x-forwarded-for");
+    if (fwd) return fwd.split(",")[0]!.trim();
+    return request.headers.get("x-real-ip")?.trim() || "unknown";
   }
 
   // ── handlers (extracted so the route tree below reads as a contract) ──
@@ -440,6 +523,27 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       return { commentId: result.id };
     }
 
+    // ── ANON (guest) write path ──────────────────────────────────────────────
+    // C-008 (AS-022): rate-limit the anonymous write surface per IP + per doc BEFORE any
+    // work (and before notify) so a flood is refused (429) and can't amplify mail — the
+    // SAME limiter gates the reply-notification dispatch below (a refused write never
+    // reaches dispatchReplyNotify because we throw here first).
+    const limit = await rateLimitComment(`${clientIp(request)}:${parent.docId}`);
+    if (!limit.allowed) {
+      throw new RateLimitedError("Too many comments — slow down and try again shortly");
+    }
+
+    // C-009 (AS-023): a guest whose typed name collides with an ACTIVE member's display name
+    // on this doc is rejected, so the guest cannot read AS that member (the guest marker is
+    // already non-spoofable server-side — author_id stays null; this stops the NAME spoof).
+    // Member identity is the session, never a typed name, so this guard is guest-only.
+    const guestName = body.guestName ?? "";
+    if (guestName.trim().length > 0 && (await isActiveMemberName(parent.docId, guestName))) {
+      throw new ValidationError("That name belongs to a member of this doc; choose another", {
+        field: "guestName",
+      });
+    }
+
     const { guestCommentingEnabled } = await deps.loadShareConfig(parent.docId);
     const result = await createGuestComment(
       {
@@ -466,6 +570,74 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     return { commentId: result.id };
   }
 
+  // ── doc-access-routing S-004: DOC-ADDRESSED, SESSION-OPTIONAL handlers ──────
+  //
+  // These are the routes the slug-only viewer (S-003) calls: no workspace in the path,
+  // no requireSession / requireWorkspaceMember gate. Each resolves the session itself
+  // (anon → guest), gates the parent doc with the single resolveAccess (existence-hiding
+  // 404), and resolves the WRITE role server-side — for a user via resolveDocRole, for an
+  // anon via the access result's link role (C-005: an anon may write only on an
+  // anyone_with_link doc with guest commenting on, where the link role is commenter+).
+
+  /** The effective write-role for a viewer on a doc: a user's doc role, or an anon's
+   *  link role from the access decision (null → viewer, least privilege). */
+  async function writeRole(docId: string, viewer: Viewer, access: AccessResult): Promise<Role> {
+    if (viewer.kind === "user") return docRole(docId, viewer.userId);
+    return access.role ?? "viewer";
+  }
+
+  async function docCreateAnnotationHandler({ params, request, validBody, set }: any) {
+    const body = validBody as z.infer<typeof createAnnotationSchema>;
+    const actor: Actor | null = await deps.resolveSession(request.headers);
+    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : { kind: "anon" };
+    const found = await lookupRepo.findDocBySlug(params.slug);
+    const access = found ? await deps.resolveAccess(found.id, viewer) : { role: null, canView: false };
+    const doc = enforceReadAccess({ doc: found, allowed: found !== null && access.canView }); // 404 if missing/hidden
+    const sessionRole = await writeRole(doc.id, viewer, access); // server re-auth (AS-017/AS-020)
+    const result = await createAnnotation(
+      {
+        docId: doc.id,
+        anchor: toAnchor(body.anchor),
+        viewer,
+        sessionRole,
+        type: ("region" in body.anchor ? "block" : body.type ?? "range") as AnnotationType,
+      },
+      annotationRepo,
+    );
+    if (!result.created) throw new ForbiddenError(); // viewer/forged role → 403
+    set.status = 201;
+    return { annotationId: result.id };
+  }
+
+  async function docListAnnotationsHandler({ params, request, query }: any) {
+    const actor: Actor | null = await deps.resolveSession(request.headers);
+    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : { kind: "anon" };
+    // AS-017 read: the single resolveAccess gate decides the doc-scoped list too — a denied
+    // viewer 404s exactly like the doc read (no thread leak).
+    const found = await lookupRepo.findDocBySlug(params.slug);
+    const allowed = found !== null && (await deps.resolveAccess(found.id, viewer)).canView;
+    const doc = enforceReadAccess({ doc: found, allowed });
+    const page = paginationQuery().parse(query) as PaginationParams;
+    const result = await listAnnotations({ docId: doc.id, canView: true }, annotationRepo);
+    const all = result.allowed ? result.annotations : [];
+    const total = all.length;
+    const start = (page.page - 1) * page.limit;
+    return paginate(all.slice(start, start + page.limit), { page: page.page, limit: page.limit, total });
+  }
+
+  async function docResolutionHandler({ params, request, validBody }: any) {
+    const { resolved } = validBody as z.infer<typeof resolutionSchema>;
+    const actor: Actor | null = await deps.resolveSession(request.headers);
+    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : { kind: "anon" };
+    const found = await annotationLookupRepo.findAnnotationDoc(params.id);
+    const access = found ? await deps.resolveAccess(found.docId, viewer) : { role: null, canView: false };
+    const parent = enforceReadAccess({ doc: found, allowed: found !== null && access.canView });
+    const sessionRole = await writeRole(parent.docId, viewer, access);
+    const result = await setResolution({ annotationId: params.id, resolved, sessionRole }, resolutionRepo);
+    if (!result.ok) throw new ForbiddenError(); // viewer → 403
+    return { status: result.status };
+  }
+
   // ONE enveloped Elysia for the whole cluster. The session-only routes live in a
   // `.group` that mounts requireSession (scoped to that group); the guest-capable
   // comment route is a sibling OUTSIDE that group so it carries no session gate.
@@ -481,5 +653,13 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         .group("", (a) => a.use(withValidation(createSuggestionSchema)).post("/api/w/:workspaceId/docs/:slug/suggestions", createSuggestionHandler))
         .group("", (a) => a.use(withValidation(decideSuggestionSchema)).patch("/api/w/:workspaceId/suggestions/:id", decideSuggestionHandler)),
     )
-    .group("", (g) => g.use(withValidation(replySchema)).post("/api/w/:workspaceId/annotations/:id/comments", commentHandler));
+    .group("", (g) => g.use(withValidation(replySchema)).post("/api/w/:workspaceId/annotations/:id/comments", commentHandler))
+    // doc-access-routing S-004: the DOC-ADDRESSED, session-OPTIONAL routes the slug-only
+    // viewer (S-003) calls — gated by resolveAccess, NO requireWorkspaceMember. A guest may
+    // write on an anyone_with_link + guest-on doc (C-005); anon writes are rate-limited
+    // (C-008) and guest-name impersonation is rejected (C-009) inside commentHandler.
+    .group("", (a) => a.use(withValidation(createAnnotationSchema)).post("/api/docs/:slug/annotations", docCreateAnnotationHandler))
+    .get("/api/docs/:slug/annotations", docListAnnotationsHandler)
+    .group("", (a) => a.use(withValidation(replySchema)).post("/api/docs/:slug/annotations/:id/comments", commentHandler))
+    .group("", (a) => a.use(withValidation(resolutionSchema)).patch("/api/docs/:slug/annotations/:id/resolution", docResolutionHandler));
 }
