@@ -28,6 +28,16 @@ export interface ViewerLoaderDeps {
    * annotation + version read paths gate on, so authorization is decided in one place.
    */
   resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
+  /**
+   * doc-access-routing S-003/AS-030: resolve the doc's OWN workspace
+   * (docs.project_id → projects.workspace_id), `null` when the doc has no project (C-011).
+   * The doc-read response carries this so the doc-scoped public viewer can feed the
+   * member-only, workspace-addressed Share dialog + Version history their workspaceId
+   * (there is no `:workspaceId` URL param on the doc-scoped route). Reuses the same
+   * tenancy helper (`createWorkspaceAccess.workspaceOfDoc`) the access resolver uses.
+   * Optional so existing callers/tests that don't supply it stay compatible (→ null).
+   */
+  workspaceOfDoc?: (docId: string) => Promise<string | null>;
 }
 
 /**
@@ -114,6 +124,15 @@ export interface ViewerDocPayload {
    * none. Without it the owner's Share button never renders (the consumer's linked-field).
    */
   effectiveRole: Role | null;
+  /**
+   * doc-access-routing S-003/AS-030: the doc's OWN workspace id (resolved via
+   * project → workspace), or `null` when the doc has no project (C-011). The doc-scoped
+   * public viewer has no `:workspaceId` URL param, so the member-only Share dialog +
+   * Version history (kept workspace-addressed per C-007) source their workspace from THIS
+   * field. A signed-in member with a non-null workspaceId sees those panels; an anon or a
+   * project-less doc (null) → panels hidden. Response field only — no schema change.
+   */
+  workspaceId: string | null;
   /** Raw current-version content (markdown text / html / image url) — the route renders it. */
   content: string;
 }
@@ -154,6 +173,10 @@ export function createLoadViewerDoc(
 
     const effectiveRole = access.role;
 
+    // AS-030: the doc's OWN workspace (project → workspace), null when project-less (C-011).
+    // Resolved only when the dep is wired (prod); absent (older callers/tests) → null.
+    const workspaceId = deps.workspaceOfDoc ? await deps.workspaceOfDoc(doc.id) : null;
+
     return {
       versionId: ver.id,
       title: doc.title,
@@ -162,6 +185,7 @@ export function createLoadViewerDoc(
       status: "published",
       generalAccess: doc.generalAccess,
       effectiveRole,
+      workspaceId,
       content: ver.content,
     };
   };

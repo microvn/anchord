@@ -182,6 +182,11 @@ const resolveViewerSession = async (request: Request): Promise<{ userId: string 
 const viewerLoaderDeps = {
   db,
   resolveAccess: sharedResolveAccess,
+  // doc-access-routing S-003/AS-030: the doc-read response carries the doc's OWN workspace
+  // (project → workspace; null when project-less, C-011) so the doc-scoped public viewer can
+  // feed the member-only Share/Version panels their workspaceId (C-007). Reuses the same
+  // tenancy helper the access resolver above already uses (wsAccess.workspaceOfDoc).
+  workspaceOfDoc: (docId: string) => wsAccess.workspaceOfDoc(docId),
 };
 const loadViewer = createLoadViewer(viewerLoaderDeps);
 const loadContent = createLoadContent(viewerLoaderDeps);

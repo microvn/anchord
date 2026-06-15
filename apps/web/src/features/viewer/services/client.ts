@@ -49,6 +49,13 @@ export interface ViewerDocResponse {
      *  commenting is owned by sharing-permissions. Drives the composer's GuestNameField + the
      *  name-required gate + the guest attribution badge (C-010). Absent → a logged-in member. */
     guest?: boolean;
+    /** doc-access-routing S-003/AS-030: the doc's OWN workspace (project → workspace), or `null`
+     *  when the doc has no project (C-011). The doc-scoped public viewer has no :workspaceId URL
+     *  param, so a signed-in member sources it from HERE to open the workspace-addressed Share
+     *  dialog + Version history (C-007). A signed-in member with a non-null workspaceId sees those
+     *  panels; an anon or a null workspaceId → panels hidden. Absent/null (older payload or
+     *  project-less doc) → treated as no workspace → panels hidden. */
+    workspaceId?: string | null;
   };
   /** markdown → sanitized HTML string; html/image → a { contentUrl } sandbox reference. */
   content: string | { contentUrl: string };

@@ -143,6 +143,9 @@ export function ViewerScreen() {
       specMeta={specMeta}
       slug={slug}
       effectiveRole={doc.doc.effectiveRole}
+      // S-003/AS-030: the doc's OWN workspace from the read response (null when project-less).
+      // Feeds the member-only, workspace-addressed Share dialog + Version history; null/anon → hidden.
+      workspaceId={doc.doc.workspaceId ?? null}
       canCompose={canComment(doc.doc.effectiveRole)}
       // S-005: a logged-out guest session (consumed from the read side) → the composer shows the
       // GuestNameField + name-required gate; the rail badges the guest comment (C-010).
@@ -172,6 +175,7 @@ function ViewerShell({
   children,
   slug,
   effectiveRole,
+  workspaceId = null,
   canCompose = false,
   guest = false,
   anonymous = false,
@@ -182,6 +186,11 @@ function ViewerShell({
   doc?: { title: string; kind: ViewerDocResponse["doc"]["kind"]; version: number; status: string };
   /** the session's effective role on this doc — gates the Share affordance (S-001 / C-002). */
   effectiveRole?: ViewerDocResponse["doc"]["effectiveRole"];
+  /** S-003/AS-030: the doc's OWN workspace from the read response (null when project-less, C-011).
+   *  The doc-scoped viewer has no :workspaceId URL param, so the member-only, workspace-addressed
+   *  Share dialog + Version history source it from here. Panels render only when this is non-null
+   *  AND the session is a signed-in member (!anonymous); anon or null → panels hidden. */
+  workspaceId?: string | null;
   /** the full doc read on the success path — rendered into the center pane (DocPane). Absent on
    *  the loading / not-found / error shells (no doc to render). */
   docResponse?: ViewerDocResponse;
@@ -234,6 +243,14 @@ function ViewerShell({
   // the editable dialog (AS-003). canManageShare(role, true) treats owner→true, editor→true (the
   // toggle is verified post-open), viewer/commenter/absent→false.
   const canShare = canManageShare(effectiveRole, true);
+
+  // S-003/AS-030: the member-only, workspace-addressed panels (Share dialog + Version history,
+  // kept workspace-addressed per C-007) need a workspaceId. The doc-scoped viewer has no
+  // :workspaceId URL param, so it comes from the read response. Show them ONLY when the session
+  // is a signed-in member (!anonymous, complements AS-029) AND the response carries a non-null
+  // workspaceId (a project-less doc has no workspace → null → panels hidden, C-011). This
+  // replaces the S-003 interim stub (workspaceId="").
+  const memberWorkspaceId = !anonymous && workspaceId ? workspaceId : null;
 
   // S-003/S-006: the annotations are read here (lifted above the rail) so the CommentFab can show
   // the count and the highlight-tap can open the rail drawer, while the rail still renders them.
@@ -340,7 +357,10 @@ function ViewerShell({
           onBack={!anonymous ? () => navigate("/") : undefined}
           onVersion={() => setVersionsOpen(true)}
           onShare={() => setShareOpen(true)}
-          showShare={canShare}
+          // AS-030: the Share button shows only when the dialog can actually mount — a signed-in
+          // member (canShare gates owner/editor) AND a non-null response workspaceId (the panel is
+          // workspace-addressed, C-007). A project-less doc (null workspaceId) → no Share button.
+          showShare={canShare && Boolean(memberWorkspaceId)}
           onOverflow={() => toast("More actions")}
           anonymous={anonymous}
           onSignIn={onSignIn}
@@ -499,30 +519,31 @@ function ViewerShell({
           the user picks Comment. Mounted here (overlays the viewer body), not in the rail. */}
       {composerNode}
 
-      {/* S-001: the ShareDialog — opened by the top bar's Share button. Share is member-only +
-          workspace-addressed (C-007 keeps Share workspace-scoped), and the Share button is gated by
-          canShare (owner/editor) AND hidden for an anon (AS-029), so this never mounts for an anon.
-          SPEC SIGNAL (S-003): the doc-scoped viewer dropped workspaceId, but ShareDialog still
-          needs it (workspace-addressed sharing endpoints) — the doc read doesn't return one. Wired
-          for signed-in members only; the workspace-context plumbing for the doc-scoped viewer is
-          owed to a follow-up (sharing/versioning are not S-003 surfaces). */}
-      {hasDoc && doc && !anonymous && (
+      {/* S-001 / S-003 AS-030: the ShareDialog — opened by the top bar's Share button. Share is
+          member-only + workspace-addressed (C-007 keeps Share workspace-scoped). It mounts ONLY for
+          a signed-in member (memberWorkspaceId is null for an anon — complements AS-029) whose doc
+          carries a non-null workspaceId (a project-less doc → null → no panel, C-011). The
+          workspaceId is sourced from the doc-read response (the doc-scoped viewer has no URL param),
+          replacing the S-003 interim stub (workspaceId=""). */}
+      {hasDoc && doc && memberWorkspaceId && (
         <ShareDialog
           open={shareOpen}
           onOpenChange={setShareOpen}
-          workspaceId=""
+          workspaceId={memberWorkspaceId}
           slug={slug!}
           docTitle={doc.title}
           effectiveRole={effectiveRole}
         />
       )}
 
-      {/* versioning-diff-ui S-001: the version history panel — opened by the top bar's version
-          button. Compare/Restore are wired in later stories (S-002/S-003); for now they toast. */}
-      {hasDoc && doc && !anonymous && (
+      {/* versioning-diff-ui S-001 / S-003 AS-030: the version history panel — opened by the top
+          bar's version button. Workspace-addressed (C-007), so it mounts ONLY for a signed-in member
+          with a non-null response workspaceId (anon or project-less doc → hidden). The workspaceId
+          is sourced from the read response, replacing the S-003 interim stub (workspaceId=""). */}
+      {hasDoc && doc && memberWorkspaceId && (
         <VersionHistoryPanel
           open={versionsOpen}
-          workspaceId=""
+          workspaceId={memberWorkspaceId}
           slug={slug!}
           onClose={() => setVersionsOpen(false)}
           onCompare={() => toast("Compare arrives with the diff view")}

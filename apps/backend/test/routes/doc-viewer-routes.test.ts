@@ -36,6 +36,7 @@ function markdownPayload(): ViewerDocPayload {
     status: "published",
     generalAccess: "anyone_with_link",
     effectiveRole: "viewer",
+    workspaceId: "ws_md",
     content: "# Release Notes\n\n- one\n\n<script>alert(1)</script>",
   };
 }
@@ -50,6 +51,7 @@ function htmlPayload(): ViewerDocPayload {
     status: "published",
     generalAccess: "anyone_with_link",
     effectiveRole: null,
+    workspaceId: null,
     content: "<h1>untrusted</h1><script>document.cookie</script>",
   };
 }
@@ -155,6 +157,29 @@ describe("GET /api/docs/:slug — doc-addressed viewer route glue", () => {
     // The raw <script> in the markdown source must be gone from the app-origin HTML.
     expect(json.data.content).not.toContain("<script>");
     expect(json.data.content).not.toContain("alert(1)");
+  });
+
+  test("AS-030: the doc-read response carries the doc's OWN workspaceId (member-only Share/Version source it)", async () => {
+    // A doc WITH a project → its resolved workspaceId rides the read response so the doc-scoped
+    // viewer can feed the workspace-addressed Share dialog + Version history (C-007), which have
+    // no :workspaceId URL param on the public route.
+    const { app } = buildApp({ resolveViewerSession: signedIn, grant: markdownPayload() });
+    const res = await app.handle(get("release-notes"));
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.doc.workspaceId).toBe("ws_md");
+  });
+
+  test("AS-030: a project-less doc reports workspaceId null (no workspace → member panels hidden)", async () => {
+    // C-011: a doc with no project has no workspace → workspaceId is null on the response, so the
+    // FE hides the member-only Share/Version panels (they have nothing to address).
+    const { app } = buildApp({ resolveViewerSession: signedIn, grant: htmlPayload() });
+    const res = await app.handle(get("untrusted-doc"));
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.doc.workspaceId).toBeNull();
   });
 
   test("C-002 / C-007: the doc resolves by slug alone — no workspace param in the path", async () => {

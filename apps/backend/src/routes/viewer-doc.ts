@@ -62,6 +62,7 @@ function toResponse(payload: ViewerDocPayload): {
     status: "published";
     generalAccess: ViewerDocPayload["generalAccess"];
     effectiveRole?: ViewerDocPayload["effectiveRole"];
+    workspaceId: ViewerDocPayload["workspaceId"];
   };
   content: string | { contentUrl: string };
 } {
@@ -74,6 +75,11 @@ function toResponse(payload: ViewerDocPayload): {
     // S-001/C-002: the consumer (ShareDialog gate) reads this to show the Share affordance for an
     // owner/editor. Omit when null (anon) so the optional FE field stays absent rather than null.
     ...(payload.effectiveRole ? { effectiveRole: payload.effectiveRole } : {}),
+    // doc-access-routing S-003/AS-030: the doc's OWN workspace (null when project-less, C-011).
+    // The doc-scoped viewer has no :workspaceId path param, so a signed-in member sources it
+    // from here to open the workspace-addressed Share dialog + Version history (C-007). Always
+    // present (may be null) — the FE gates those member-only panels on a non-null value.
+    workspaceId: payload.workspaceId,
   };
   if (payload.kind === "markdown") {
     // C-002/C-008: markdown is rendered in the APP origin → MUST be sanitized (dompurify).
