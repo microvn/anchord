@@ -30,6 +30,14 @@ import { injectBlockIds } from "../annotation/block-id";
 import { createLoadViewerDoc, type ViewerLoaderDeps, type ViewerDocPayload } from "../render/viewer-loaders";
 import type { Viewer } from "../sharing/access";
 
+/**
+ * doc-access-routing S-002: resolve the viewer session OPTIONALLY from the raw Request.
+ * `{ userId }` for a logged-in caller (better-auth cookie), `null` for an anonymous one —
+ * exactly the seam the /d and /v viewer routes already use (app.ts `resolveViewerSession`).
+ * Injected so the doc-addressed route gates without a real better-auth instance in tests.
+ */
+export type ViewerSessionResolver = (request: Request) => Promise<{ userId: string } | null>;
+
 export interface ViewerDocRoutesDeps {
   /** Resolves the better-auth session → actor; gates the route (401 if none). */
   resolveSession: SessionResolver;
@@ -106,4 +114,69 @@ export function viewerDocRoutes(deps: ViewerDocRoutesDeps) {
       if (!payload) throw new NotFoundError();
       return toResponse(payload);
     });
+}
+
+export interface DocViewerRoutesDeps {
+  /**
+   * Resolves the viewer's session OPTIONALLY from the raw Request — anon allowed.
+   * `null` → an anonymous viewer. The route is NOT session-gated (C-004): a missing
+   * session never 401s; the access decision is made by the doc via resolveAccess.
+   */
+  resolveViewerSession?: ViewerSessionResolver;
+  /**
+   * The access-gated doc-by-slug loader (render/viewer-loaders.createLoadViewerDoc).
+   * Pre-built for tests; built from `loaderDeps` when those are supplied instead.
+   * Returns null for a missing OR no-access doc (existence-hiding).
+   */
+  loadViewerDoc?: (slug: string, viewer: Viewer) => Promise<ViewerDocPayload | null>;
+  /** Loader deps (db + access model) — used to build loadViewerDoc when it isn't passed. */
+  loaderDeps?: ViewerLoaderDeps;
+}
+
+/**
+ * doc-access-routing S-002: the DOC-ADDRESSED read endpoint `GET /api/docs/:slug`
+ * (no `/api/w/:workspaceId` prefix). The slug is globally unique (schema.ts:29), so the
+ * link alone identifies the doc (C-002/C-007/C-010) and access is decided by the doc via
+ * the single `resolveAccess` gate (S-001), not by a workspace in the path.
+ *
+ * It differs from the workspace-scoped `viewerDocRoutes` in exactly three ways:
+ *   (a) no `:workspaceId` path param — addressed by slug alone (C-007);
+ *   (b) the session is OPTIONAL, resolved from the raw Request — an anon is allowed
+ *       (C-004), so there is NO `requireSession`/`requireWorkspaceMember` gate;
+ *   (c) a no-access OR missing doc → the SAME 404 NOT_FOUND (existence-hiding, C-004),
+ *       byte-identical for anon and signed-in, and NEVER a 401/UNAUTHENTICATED that the
+ *       frontend's global handler would turn into a sign-in redirect.
+ *
+ * It reuses the SAME loader (createLoadViewerDoc) + `toResponse` shape as the
+ * workspace-scoped route: markdown → sanitized app-origin HTML (C-006); html/image →
+ * a `{ contentUrl: "/v/:versionId" }` sandbox reference, never inline (C-006).
+ */
+export function docViewerRoutes(deps: DocViewerRoutesDeps) {
+  const loadViewerDoc =
+    deps.loadViewerDoc ??
+    (() => {
+      if (!deps.loaderDeps) {
+        throw new Error("docViewerRoutes requires either `loadViewerDoc` or `loaderDeps`");
+      }
+      return createLoadViewerDoc(deps.loaderDeps);
+    })();
+
+  // Optional session: no resolver, or no cookie → an anonymous viewer (C-004). The
+  // route never throws UnauthenticatedError, so the response for a no-access doc is the
+  // same 404 whether the caller is signed in or not.
+  const resolveViewer = async (request: Request): Promise<Viewer> => {
+    if (!deps.resolveViewerSession) return { kind: "anon" };
+    const session = await deps.resolveViewerSession(request);
+    return session ? { kind: "user", userId: session.userId } : { kind: "anon" };
+  };
+
+  return apiEnvelope(new Elysia()).get("/api/docs/:slug", async ({ params, request }) => {
+    const viewer = await resolveViewer(request);
+    const payload = await loadViewerDoc(params.slug, viewer);
+    // Existence-hiding (C-004): a missing doc AND a no-access doc return the SAME
+    // NOT_FOUND — never a 401 — so anon and signed-in callers get byte-identical bodies
+    // and the FE's global 401 handler can never turn this into a sign-in redirect.
+    if (!payload) throw new NotFoundError();
+    return toResponse(payload);
+  });
 }

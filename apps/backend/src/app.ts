@@ -5,7 +5,7 @@ import { renderMarkdown } from "./render/markdown";
 import { injectBlockIds } from "./annotation/block-id";
 import { injectBridge, generateNonce } from "./annotation/sandbox-bridge";
 import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
-import { viewerDocRoutes, type ViewerDocRoutesDeps } from "./routes/viewer-doc";
+import { viewerDocRoutes, docViewerRoutes, type ViewerDocRoutesDeps, type DocViewerRoutesDeps } from "./routes/viewer-doc";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
@@ -78,6 +78,17 @@ export type AppDeps = {
    * loadViewerDoc (tests). Omit to leave the route unmounted.
    */
   viewerDoc?: ViewerDocRoutesDeps;
+  /**
+   * doc-access-routing S-002: enables the DOC-ADDRESSED GET /api/docs/:slug for the
+   * in-app React viewer — addressed by slug alone (no workspace in the path, C-002/C-007),
+   * session OPTIONAL (anon-capable, C-004). Access is decided by the doc via the single
+   * resolveAccess gate; a missing OR no-access doc → the SAME 404 NOT_FOUND (existence-
+   * hiding), never a 401 the FE would turn into a sign-in redirect. Markdown → sanitized
+   * app-origin HTML; html/image → a `{ contentUrl: /v/:id }` sandbox reference (C-006).
+   * Provide loader deps (db + access model) + the optional session resolver, or a pre-built
+   * loadViewerDoc (tests). Omit to leave the route unmounted.
+   */
+  docViewer?: DocViewerRoutesDeps;
   /**
    * versioning-diff S-001..S-004: enables the enveloped, session-gated version
    * create/title-patch/history/restore/diff routes under /api/docs/:slug. Provide
@@ -234,6 +245,15 @@ export function createApp(deps: AppDeps) {
   // /v reference (C-008: untrusted HTML never inline); existence-hiding 404 (AS-018).
   if (deps.viewerDoc) {
     app.use(viewerDocRoutes(deps.viewerDoc));
+  }
+
+  // GET /api/docs/:slug — doc-access-routing S-002, the DOC-ADDRESSED viewer loader. Self-
+  // enveloped, NO workspace path param, session OPTIONAL (anon-capable). Mounted outside the
+  // /api/auth/* catch-all. A missing OR no-access doc → the SAME 404 (existence-hiding), never
+  // a 401: anon and signed-in callers get byte-identical not-found, so the FE never bounces to
+  // sign-in. Markdown → sanitized app-origin HTML; html/image → a /v sandbox reference (C-006).
+  if (deps.docViewer) {
+    app.use(docViewerRoutes(deps.docViewer));
   }
 
   // /api/docs/:slug/... — versioning-diff S-001..S-004. Self-enveloped + session-

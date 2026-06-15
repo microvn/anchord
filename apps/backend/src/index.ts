@@ -203,6 +203,10 @@ const app = createApp({
   // the in-app React viewer. Reuses the SAME access model (viewerLoaderDeps) the /d viewer
   // uses; markdown → sanitized app-theme HTML, html/image → /v sandbox reference (C-008).
   viewerDoc: { resolveSession, resolveWorkspaceRole, loaderDeps: viewerLoaderDeps },
+  // doc-access-routing S-002: DOC-ADDRESSED GET /api/docs/:slug — slug-only (no workspace
+  // path), session OPTIONAL (anon-capable). Same loader/access model as the /d viewer; a
+  // no-access OR missing doc → 404 (existence-hiding), never a 401 → no FE sign-in bounce.
+  docViewer: { resolveViewerSession, loaderDeps: viewerLoaderDeps },
   // versioning-diff S-001..S-004: version create/title/history/restore/diff.
   versions: {
     db,
