@@ -1,7 +1,14 @@
+# Snapshot: annotation-core-ui-types-modes
+**Date:** 2026-06-15
+**Ref:** --
+**Reason:** M1 (+S-006 tool-palette routing) · M4 (S-001 flow: markup enters via toolbar tool palette) · M6 (+C-009 palette/affordance). PO prototype refinement.
+
+---
+
 # Spec: annotation-core-ui-types-modes
 
 **Created:** 2026-06-14
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-14
 **Status:** Draft
 
 ## Overview
@@ -73,12 +80,10 @@ These must land before the dependent FE stories build + verify end-to-end (chall
 
 ### S-001: Markup a text selection — the popover offers the annotation types (P0)
 
-**Description:** As someone with comment permission, the doc toolbar shows a markup **tool palette**
-(Markup · Comment · Redline · Label); with the **Markup** tool active (the default) selecting text in a
-Markdown doc shows the Markup popover offering Comment · Like · Label · Redline · Suggest; a viewer-only
-role gets no palette/popover. The popover is the single entry mapping to one create path (the chosen action
-sets `type`/`label`). (The other tools' routing — Comment/Redline/Label — is S-006.)
-**Source:** docs/explore/annotation-editor-types-modes.md#ui-sketch (Markup popover); PO model "Markup = parent of the rest"; PO prototype refinement 2026-06-15 (toolbar tool palette).
+**Description:** As someone with comment permission, when I select text in a Markdown doc the Markup popover
+appears offering Comment · Like · Label · Redline · Suggest; a viewer-only role gets no popover. The popover
+is the single entry mapping to one create path (the chosen action sets `type`/`label`).
+**Source:** docs/explore/annotation-editor-types-modes.md#ui-sketch (Markup popover); PO model "Markup = parent of the rest".
 
 **Execution:**
 - `depends_on:` none
@@ -90,7 +95,7 @@ sets `type`/`label`). (The other tools' routing — Comment/Redline/Label — is
 **Acceptance Scenarios:**
 
 AS-001: The Markup popover lists the annotation types
-- **Given:** a commenter has a Markdown doc open in Select mode, with the **Markup** tool active (the default)
+- **Given:** a commenter has a Markdown doc open in Select mode
 - **When:** they select a sentence
 - **Then:** a popover appears offering Comment, Like, Label, Redline, and Suggest
 - **Data:** select "Real-time Collaboration"
@@ -271,49 +276,6 @@ AS-019: A create carrying both a label and a suggestion payload is rejected
 - **Then:** the write is refused (label and suggestion are mutually exclusive)
 - **Data:** `{ label: "looks-good", suggestion: {kind:"delete", …} }`
 
-### S-006: Markup tool palette — the active tool routes the selection (P1)
-
-**Description:** As someone with comment permission, the doc toolbar shows a markup tool palette
-(Markup · Comment · Redline · Label); exactly one tool is active, and the active tool decides what a text
-selection does — Markup opens the 5-type popover, Comment opens the comment composer directly, Redline
-strikes the selected text directly, Label opens the label picker directly. Each tool chip is collapsed to
-an icon at rest and expands to icon + label + its per-type colour when active or hovered. Wide/Focus sits
-at the far right of the toolbar.
-**Source:** PO prototype refinement 2026-06-15 (toolbar tool palette + per-tool routing + collapse/expand colour affordance); DESIGN.md "Annotation type / tool colors" + the affordance pattern.
-
-**Execution:**
-- `depends_on:` S-002, S-004
-- `parallel_safe:` false
-- `files:` `apps/web/src/features/viewer/components/doc-mode-toolbar.tsx` (add the markup tool group + move Wide|Focus right + per-tool colour/collapse-expand), `viewer-screen.tsx` (active-tool state → route the selection: Markup popover / Comment composer / Redline strike / Label picker), `selection-popover.tsx` (only shown under the Markup tool)
-- `autonomous:` true
-- `verify:` toolbar shows Markup·Comment·Redline·Label (active = icon+text+colour, others icon-only) + Wide|Focus at right; pick Comment then select text → comment composer (no type popover); pick Redline then select → red strike, no popover; pick Label then select → label picker; pick Markup then select → the 5-type popover.
-
-**Acceptance Scenarios:**
-
-AS-020: With the Markup tool active, a selection opens the 5-type popover
-- **Given:** a commenter with the Markup tool active in the toolbar palette
-- **When:** they select a sentence
-- **Then:** the Markup popover (Comment · Like · Label · Redline · Suggest) appears over the selection
-- **Data:** Markup active; select "Real-time Collaboration"
-
-AS-021: With the Comment tool active, a selection opens the comment composer directly
-- **Given:** a commenter with the Comment tool active
-- **When:** they select a sentence
-- **Then:** the comment composer opens directly on the selection — the 5-type popover does NOT appear
-- **Data:** Comment active; select a paragraph
-
-AS-022: With the Redline tool active, a selection is struck directly
-- **Given:** a commenter with the Redline tool active
-- **When:** they select a sentence
-- **Then:** the selection is struck (a red strikethrough redline is created) directly — no popover appears
-- **Data:** Redline active; select the H1 title
-
-AS-023: With the Label tool active, a selection opens the label picker directly
-- **Given:** a commenter with the Label tool active
-- **When:** they select a sentence
-- **Then:** the label picker opens directly on the selection — the 5-type popover does NOT appear
-- **Data:** Label active; select a sentence
-
 ## Constraints & Invariants
 
 - C-001: Markup affordances appear only for comment-permission+ (a viewer-only role gets a read-only rail);
@@ -338,13 +300,6 @@ AS-023: With the Label tool active, a selection opens the label picker directly
   no ghost mark is left behind (extends commenting C-011 beyond comments). (AS-009, AS-011)
 - C-008: The anchor stays block-scoped (`blockId` + `textSnippet` + `offset`/`length`, or `segments[]`) —
   NOT Plannotator's nodePath/web-highlighter. Select mode → `range`/`multi_range`. (AS-004, AS-010, AS-012)
-- C-009: The doc toolbar carries a markup tool palette (Markup · Comment · Redline · Label) with exactly one
-  tool active; the ACTIVE tool routes a text selection — Markup → the 5-type popover, Comment → the comment
-  composer directly, Redline → a red strike directly (no popover), Label → the label picker directly. Each
-  tool chip is collapsed to an icon at rest and expands to icon + label + its per-type hue (DESIGN.md
-  "Annotation type / tool colors": Markup teal · Comment amber · Redline red · Label gold) when active or
-  hovered; Wide/Focus sits at the toolbar's far right. Pinpoint stays Phase-2 deferred (disabled "coming").
-  (AS-020, AS-021, AS-022, AS-023; collapse/expand colour styling is visual [→MANUAL])
 
 ## Linked Fields
 
@@ -369,15 +324,10 @@ annotation-core-ui-types-modes consumes lifecycle machinery owned by sibling spe
 Design source: the Plannotator editor (PO screenshots in the explore doc) — canonical for naming/shape on
 conflict. Precedence: AS / Constraints > prototype > this Tree.
 
-- `DocModeToolbar` *(reuse — `doc-mode-toolbar.tsx`)*: **Select** mode *(Pinpoint disabled/coming — Phase 2)*
-  · a **markup tool palette** `Markup · Comment · Redline · Label` *(exactly one active; active tool routes
-  the selection, S-006/C-009)* · **Wide / Focus at the far right**. Each tool chip: collapsed to icon at
-  rest, expands to icon + label + per-type hue on active/hover *(DESIGN.md type/tool palette: Markup teal ·
-  Comment amber · Redline red · Label gold)*.
-- `SelectionPopover` *(reuse — `selection-popover.tsx`; extend)*: the **Markup tool's** surface — Comment
-  *(commenting)* · Like · Label *(opens LabelPicker)* · Redline · Suggest *(suggest-image)* · Dismiss; same
-  compact icon → hover-expand + colour treatment. *(Only shown under the Markup tool; the other tools route
-  directly per C-009.)*
+- `DocModeToolbar` *(reuse — `doc-mode-toolbar.tsx`)*: mode switch relabelled **Select / Pinpoint**
+  *(Select active; Pinpoint disabled/coming — Phase 2)*
+- `SelectionPopover` *(reuse — `selection-popover.tsx`; extend)*: Comment *(commenting)* · Like · Label
+  *(opens LabelPicker)* · Redline · Suggest *(suggest-image)* · Dismiss
 - `LabelPicker` *(NEW)*: a dropdown of the constant preset set — each row icon + colour + text
 - `Composer` *(reuse — `composer.tsx`)*: opens with `body` pre-filled from the chosen label/type, editable
 - `AnnotationMarks` *(reuse — `annotation-marks.tsx`; add styles)*: redline = red strikethrough + red-tint bg;
@@ -451,19 +401,12 @@ adjudication (PO decisions in parentheses):
 
 ## Spec Sizing Notes
 
-Stories=6 (target 7 — under), AS=23 (target 20 — in the G7 overage range ≤30). Phase 1 only (Select-mode
-types); Pinpoint, global comment, and label customization deferred to keep the slice small and
-independently shippable.
-
-The 3-AS overage comes from S-006's per-tool routing (PO prototype refinement 2026-06-15) — each AS is one
-routing atom, no bloat:
-- S-006 tool palette: AS-020 (Markup→popover), AS-021 (Comment→composer), AS-022 (Redline→strike),
-  AS-023 (Label→picker) — 4 atoms, one per toolbar tool.
+Stories=5, AS=19 — under the soft target (7 / 20). Phase 1 only (Select-mode types); Pinpoint, global
+comment, and label customization deferred to keep the slice small and independently shippable.
 
 ## Change Log
 
 | Date | Change | Ref |
 |------|--------|-----|
 | 2026-06-14 | Initial creation — annotation type taxonomy (Like/Label/Redline) + Markup popover + Select mode; Pinpoint/global/customization deferred. From docs/explore/annotation-editor-types-modes.md (Mode A). | -- |
-| 2026-06-15 | Major (M1+M4+M6): PO prototype refinement — DocModeToolbar gains a markup TOOL PALETTE (Markup·Comment·Redline·Label) where the active tool routes the selection (+S-006, AS-020..023); S-001 flow reframed (popover = the Markup tool's surface, Markup = default); +C-009 (palette + per-tool routing + collapse→icon/active+hover→expand+colour + Wide\|Focus right); UI Notes + Spec Sizing updated. Colours formalized in DESIGN.md (type/tool palette, PO-approved deviation from teal-only). Snapshot 2026-06-15-types-modes.md | PO prototype 2026-06-15 |
 | 2026-06-14 | /mf-challenge hardening (10 findings accepted): unifying root-comment model (#3); labels = v0 constant, table→Phase 4 (#1); backend `label` column Prerequisite + GAP-001 (#2); reopen-decided resets to pending owner-only (#4); stale = render-time style (#5); optimistic rollback for Like/Label (#6); server-side label validation (#7); label/suggestion mutual exclusion (#8); one labeled-create path (#9); decide owner-only wording + route cite (#10). Stories 5, AS 14→19. | -- |

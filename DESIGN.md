@@ -51,7 +51,31 @@ Dark is the **canonical** theme (operator); light is **first-class** (equal foot
 - resolved → **green** (`#43b873` / `#1c7a4a`)
 - suggestion / active highlight → **teal-soft** bg + teal underline
 - priority badge: P0 = red, P1 = amber, P2 = subtle gray
-- **Teal is the ONLY accent.** No second accent. No purple/violet gradient.
+- **Teal is the only CHROME accent** (buttons, links, active nav, Share). No purple/violet gradient.
+  The **annotation type/tool palette** below is the one sanctioned exception — type hues appear ONLY on
+  markup-tool affordances + their type marks/rail rows, never as general chrome accent.
+
+**Annotation type / tool colors (PO-approved deviation, 2026-06-15):**
+The markup toolbar tools + their annotation marks/rail rows carry a per-type hue so the toolbar and the
+rail read by colour. This is a **TYPE** dimension, orthogonal to the **STATUS** colours above
+(detached/error/resolved): a type hue tints a *tool affordance / type mark*; a status hue tints
+*lifecycle* (orphaned/resolved/stale). They may share a colour family because they never tint the same
+element at the same time.
+
+| Tool / type | Hue (dark) | Note |
+|---|---|---|
+| Markup *(parent / default)* | teal `#37b3bd` | the accent — the neutral "open the type popover" tool |
+| Comment | amber `#d68a3e` | warm; **deliberately NOT Claude-orange `#d97757`** (more golden, less terracotta) |
+| Redline *(delete proposal)* | red `#f1655d` | = the danger/delete semantic (reuses the error red) |
+| Label | gold `#cbb24a` | yellow-gold, distinct from Comment's amber |
+| Like | green `#43b873` | = the positive/resolved family |
+| Pinpoint *(Phase 2)* | blue `#5b9cf0` | forward-looking; not yet active in v0 |
+
+**Affordance pattern (toolbar tools + selection popover):** a tool/type chip is **collapsed to icon-only at
+rest**; the **active** tool and any **hovered** tool **expand to icon + label + its hue** (soft bg tint +
+coloured icon/text). Inactive chips stay icon-only + muted. Redline applies its red strike to the selected
+text directly (no popover). Exact shades are validated against the Anchord-Design prototype via screenshot
+during build (viewer visual-fidelity rule).
 
 ## Spacing
 - **Base:** 4px. Scale: 2(2) xs(4) sm(8) md(12-16) lg(24) xl(32) 2xl(48).
@@ -151,4 +175,5 @@ purple/violet gradient · 3-col icon grid · centered-everything · gradient CTA
 | 2026-06-07 | Created the design system (dark-operator, teal, Geist+Fraunces+Geist Mono) | /design-consultation; researched uselink/Plannotator/Linear; memorable = "serious, trustworthy, mine"; user picked variant B (dark operator), full mocks for 5 screens. |
 | 2026-06-07 | Added the Responsive section (breakpoints + per-screen mobile behavior) | User mandated responsive; 3-pane → drawer/bottom-sheet on tablet/mobile. |
 | 2026-06-09 | Added the App shell spec (left sidebar + header) and the Empty/loading/error states section; translated the file to English | /design-consultation; user added management chrome for workspace/project UI. Sidebar = brand + `New doc` + workspace switcher + nav (uselink-referenced); the app shell is distinct from the doc-viewer focus mode. |
+| 2026-06-15 | Added the **annotation type/tool colour palette** + the collapse→icon / active+hover→expand affordance (markup toolbar tools + selection popover). PO-approved deviation from strict teal-only: type hues (Markup teal · Comment amber · Redline red · Label gold · Like green · Pinpoint blue) tint tool affordances + type marks only, kept orthogonal to status colours; Comment amber chosen distinct from the banned Claude-orange #d97757. | PO showed the refined Anchord-Design prototype (toolbar tool group + compact popover) and approved adopting per-tool colour; drives the annotation-core-ui-types-modes UI Notes update + FE polish. |
 | 2026-06-09 | Header right holds the account, not the sidebar | User: avatar/account + context + theme + search + notifications all live in the header right (uselink reference); the sidebar keeps the workspace switcher (the single workspace anchor) + nav. Sign-out moved into the header avatar menu. |
