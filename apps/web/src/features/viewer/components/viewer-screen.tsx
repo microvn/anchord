@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/api/auth-client";
@@ -10,7 +10,7 @@ import { ErrorState } from "@/components/error-state";
 import { Skeleton } from "@/components/skeleton";
 import { DocPane } from "./doc-pane";
 import type { HtmlSandboxFrameHandle } from "./html-sandbox-frame";
-import { DocModeToolbar } from "./doc-mode-toolbar";
+import { DocModeToolbar, type MarkupTool } from "./doc-mode-toolbar";
 import { TocSidebar } from "./toc-sidebar";
 import { AnnotationsRail } from "./annotations-rail";
 import { ViewerTopBar } from "./viewer-top-bar";
@@ -245,6 +245,10 @@ function ViewerShell({
   // the picker AT the popover's anchor (the selection is still pending in useCompose). Choosing a
   // preset runs compose.startLabel (the labeled-create path). Null → no picker.
   const [labelPickerAt, setLabelPickerAt] = useState<{ top: number; left: number; centered?: boolean } | null>(null);
+  // S-006 (C-009): the active markup tool. Default Markup → preserves S-001 (Markup + select → the
+  // 5-type popover). The ACTIVE tool routes a text selection (the effect below): Markup → the popover,
+  // Comment → the composer directly, Redline → a red strike directly, Label → the picker directly.
+  const [activeTool, setActiveTool] = useState<MarkupTool>("markup");
   // C-002 (Share affordance gate): only a potential manager (owner, or editor — the editor's
   // editorsCanShare is re-checked after the dialog reads the share state) is shown the Share button.
   // A viewer/commenter — or an absent role (conservative) — never gets a Share affordance that opens
@@ -298,6 +302,31 @@ function ViewerShell({
       if (isHtml) htmlFrameRef.current?.postHighlight(anchor, annotationId);
     },
   );
+
+  // S-006 (C-009 / AS-020..023): the ACTIVE tool routes a text selection. useCompose raises
+  // `compose.popover` on every valid selection (block-scoped, comment-capable — C-001/C-008); the
+  // active tool then decides what that selection DOES:
+  //   • Markup (default)  → leave the popover up → the 5-type popover (AS-020, the S-001 surface).
+  //   • Comment           → open the comment composer directly (no 5-type popover). (AS-021)
+  //   • Redline           → strike the selection directly (the existing startRedline). (AS-022)
+  //   • Label             → open the LabelPicker directly at the selection. (AS-023)
+  // Re-pointing the existing create paths by tool — it does NOT rebuild any create path (S-002/3/4).
+  // Guarded so it fires once per fresh popover (depends on the popover identity + the active tool);
+  // a viewer-only role never raises a popover (C-001) so this never runs read-only.
+  useEffect(() => {
+    if (!compose.popover) return;
+    if (activeTool === "markup") return; // Markup → keep the 5-type popover (S-001/AS-020).
+    if (activeTool === "comment") {
+      compose.startComment(); // AS-021: composer directly, no popover.
+    } else if (activeTool === "redline") {
+      compose.startRedline(); // AS-022: red strike directly, no popover.
+    } else if (activeTool === "label") {
+      setLabelPickerAt(compose.popover); // AS-023: the label picker directly, no popover.
+    }
+    // compose handlers are stable callbacks; key the effect on the popover identity + the tool so a
+    // new selection (a new popover object) re-routes, but a re-render with the same popover doesn't.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compose.popover, activeTool]);
 
   const toggleRail = () => (drawerMode ? setRailOpen((o) => !o) : setRailVisible((v) => !v));
   // The outline-toggle: in tocDrawer mode it opens/closes the TOC overlay drawer; on desktop it
@@ -426,6 +455,16 @@ function ViewerShell({
               width={docWidth}
               onWidth={setDocWidth}
               onPinpointUnavailable={() => toast("Pinpoint mode is coming soon")}
+              // S-006/C-009: the markup tool palette — the active tool routes the selection (effect above).
+              activeTool={activeTool}
+              onTool={(t) => {
+                setActiveTool(t);
+                // Switching tool mid-selection clears any in-flight popover/picker so the new tool's
+                // routing only applies to the NEXT selection (no stale 5-type popover under a non-Markup
+                // tool). The pending selection is dropped along with the popover.
+                setLabelPickerAt(null);
+                compose.dismissPopover();
+              }}
             />
           )}
           {docResponse ? (
@@ -521,7 +560,10 @@ function ViewerShell({
       {/* S-001: the selection popover — floats over a live selection, offering Comment. Only ever
           rendered for a comment-capable role (C-004) and a real selection (C-003), both enforced in
           useCompose; mounted here so it overlays the viewer body. */}
-      {compose.popover && !labelPickerAt && (
+      {/* S-006/C-009: the 5-type popover is the MARKUP tool's surface — shown ONLY when Markup is the
+          active tool. The other tools route the selection directly (the effect above), so the popover
+          never appears under Comment/Redline/Label (AS-021/022/023). */}
+      {compose.popover && activeTool === "markup" && !labelPickerAt && (
         <SelectionPopover
           rect={compose.popover}
           onComment={compose.startComment}
