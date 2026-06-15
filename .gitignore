@@ -6,3 +6,11 @@ dist
 
 .idea/
 .playwright-mcp/
+.gstack/
+
+# local artifacts (screenshots, design refs, e2e scratch)
+/*.png
+Anchord-Design/
+anchord-e2e/
+apps/web/anchord-e2e/
+brand/
