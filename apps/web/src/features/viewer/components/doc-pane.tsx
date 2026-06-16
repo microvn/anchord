@@ -21,6 +21,8 @@ export function DocPane({
   onClearSelection,
   onSelectionRect,
   htmlFrameRef,
+  htmlAnnotations,
+  onHtmlPlaceFailed,
 }: {
   doc: ViewerDocResponse;
   /** S-002: a real selection relayed from the HTML sandbox iframe (gated by role upstream). */
@@ -29,6 +31,10 @@ export function DocPane({
   /** MƯỢT TASK 3: the iframe re-posted the live selection rect on its own in-iframe scroll. */
   onSelectionRect?: (rect: { x: number; y: number; width: number; height: number }) => void;
   htmlFrameRef?: Ref<HtmlSandboxFrameHandle>;
+  /** HTML-PLACE: the placeable annotation set to draw inside the iframe via the bridge (html only). */
+  htmlAnnotations?: { id: string; anchor: BridgeAnchor }[];
+  /** HTML-PLACE: an in-iframe placement failure → the rail badges only that id "couldn't place". */
+  onHtmlPlaceFailed?: (id: string) => void;
 }) {
   const { kind } = doc.doc;
 
@@ -51,6 +57,8 @@ export function DocPane({
       onSelection={onSelection}
       onClearSelection={onClearSelection}
       onSelectionRect={onSelectionRect}
+      annotations={htmlAnnotations}
+      onPlaceFailed={onHtmlPlaceFailed}
     />
   );
 }

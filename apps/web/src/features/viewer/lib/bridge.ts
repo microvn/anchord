@@ -62,6 +62,10 @@ export interface BridgeHandlers {
   onClearSelection?: () => void;
   /** The in-iframe bridge could not place a highlight for this annotation (optional). */
   onPlaceFailed?: (annotationId: string) => void;
+  /** HTML-PLACE: the handshake was accepted and the port captured. Fires ONCE (the first trusted
+   *  ready binds the transport). The parent uses this to flush the existing annotation set down the
+   *  port — `postHighlight` no-ops before this, so a naive post-on-mount would race the handshake. */
+  onReady?: () => void;
   /** MƯỢT TASK 3: the iframe re-posted the live selection's rect on its own scroll → reposition the
    *  open popover. A null rect means the selection scrolled out of view → dismiss. */
   onSelectionRect?: (rect: { x: number; y: number; width: number; height: number } | null) => void;
@@ -161,6 +165,10 @@ export function connectBridge(
       // Any other port message shape is ignored (defensive; the protocol is fixed).
     };
     port.start?.();
+    // HTML-PLACE: the transport is live now → let the parent flush the existing annotation set
+    // (postHighlight silently dropped before this). Fires once (a later ready can't rebind — `port`
+    // is set, so onWindowMessage early-returns above).
+    handlers.onReady?.();
   };
 
   win.addEventListener("message", onWindowMessage);

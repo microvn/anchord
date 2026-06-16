@@ -10,6 +10,7 @@ import { ErrorState } from "@/components/error-state";
 import { Skeleton } from "@/components/skeleton";
 import { DocPane } from "./doc-pane";
 import type { HtmlSandboxFrameHandle } from "./html-sandbox-frame";
+import type { BridgeAnchor } from "@/features/viewer/lib/bridge";
 import { DocModeToolbar, type MarkupTool } from "./doc-mode-toolbar";
 import { TocSidebar } from "./toc-sidebar";
 import { AnnotationsRail } from "./annotations-rail";
@@ -17,7 +18,7 @@ import { ViewerTopBar } from "./viewer-top-bar";
 import { MetaStrip } from "./meta-strip";
 import type { SpecMeta } from "@/features/viewer/types";
 import { toast } from "sonner";
-import { useAnnotationMarks, scrollToAnno } from "./annotation-marks";
+import { useAnnotationMarks, scrollToAnno, type PlaceableAnnotation } from "./annotation-marks";
 import { SelectionPopover } from "./selection-popover";
 import { LabelPicker } from "./label-picker";
 import { Composer } from "./composer";
@@ -28,6 +29,10 @@ import { Composer } from "./composer";
 // amber is deliberately NOT the banned Claude-orange #d97757.
 const COMMENT_HUE = "#d68a3e"; // amber
 const LABEL_HUE = "#cbb24a"; // gold (all labels + like)
+// HTML-PLACE: a stable empty placeable array — fed to the light-DOM placer for non-markdown docs so
+// it never false-flags iframe-resident anchors "couldn't place" (a fresh `[]` each render would
+// re-run the placer effect every commit; this identity-stable const keeps the single-place guarantee).
+const EMPTY_PLACEABLE: PlaceableAnnotation[] = [];
 import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
 import { useDraggable } from "@/features/viewer/hooks/use-draggable";
 import { useCompose, peelCommentId } from "@/features/viewer/hooks/use-compose";
@@ -285,7 +290,7 @@ function ViewerShell({
 
   // S-003/S-006: the annotations are read here (lifted above the rail) so the CommentFab can show
   // the count and the highlight-tap can open the rail drawer, while the rail still renders them.
-  const anno = useAnnotations(slug, docPaneEl, hasDoc, canCompose, memberWorkspaceId, effectiveRole, () => {
+  const anno = useAnnotations(slug, docPaneEl, hasDoc, canCompose, memberWorkspaceId, effectiveRole, doc?.kind === "markdown", () => {
     if (drawerMode) setRailOpen(true); // AS-014: tapping a highlight opens the rail drawer
   });
 
@@ -512,6 +517,11 @@ function ViewerShell({
                   ? (rect) => compose.repositionFromRect(frameRectToViewport(rect))
                   : undefined
               }
+              // HTML-PLACE: draw EVERY existing annotation inside the iframe via the bridge (the only
+              // path for an opaque iframe). Role-independent — a read-only viewer must see highlights
+              // too (commenting stays gated by onSelection above). A placement miss → reportUnplaceableHtml.
+              htmlAnnotations={isHtml ? anno.htmlPlaceable : undefined}
+              onHtmlPlaceFailed={isHtml ? anno.reportUnplaceableHtml : undefined}
             />
           ) : (
             children
@@ -754,6 +764,8 @@ function useAnnotations(
   workspaceId: string | null,
   /** S-002 (C-002): deciding a redline is OWNER-only — the Accept/Reject row only appears for owner. */
   effectiveRole: ViewerDocResponse["doc"]["effectiveRole"],
+  /** HTML-PLACE: markdown places via the light-DOM placer; html/image place via the iframe bridge. */
+  isMarkdown: boolean,
   onHighlightTap: () => void,
 ): {
   count: number;
@@ -761,6 +773,11 @@ function useAnnotations(
   /** PERF: prepend a freshly-created real annotation into the cache (newest-first, deduped) so the
    *  rail re-renders without a refetch. Called from useCompose's create-success reconcile. */
   prependAnnotation: (real: ViewerAnnotation) => void;
+  /** HTML-PLACE: the placeable anchors to post down the iframe bridge (html docs only draw this way).
+   *  Non-orphaned, anchored annotations mapped to the bridge's `{id, anchor}` shape. */
+  htmlPlaceable: { id: string; anchor: BridgeAnchor }[];
+  /** HTML-PLACE: route an in-iframe placement failure to the rail's couldn't-place badge (additive). */
+  reportUnplaceableHtml: (id: string) => void;
   railProps: {
     annotations: ViewerAnnotation[];
     focusedId: string | null;
@@ -820,6 +837,13 @@ function useAnnotations(
       return new Set(ids);
     });
   }, []);
+  // HTML-PLACE: the light-DOM placer never runs for an HTML doc (the blocks live in the opaque
+  // iframe — it could only ever false-flag every id "couldn't place"). Instead the in-iframe bridge
+  // reports a per-id placement failure over the port. This adds that single id additively (the set
+  // starts empty for HTML, so a matched annotation never lands here — only genuinely-unlocatable ones).
+  const reportUnplaceableHtml = useCallback((id: string) => {
+    setUnplaceableIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
 
   // S-002 (C-002/AS-007): derive the redline kind + stale flag onto each placeable annotation so the
   // mark renders the red strike (a delete-kind suggestion) or the muted-dashed stale style (a drifted
@@ -843,10 +867,27 @@ function useAnnotations(
     [annotations],
   );
 
+  // HTML-PLACE: the placeable set in the bridge's `{id, anchor}` shape, for an HTML doc to post down
+  // the port (the parent can't draw into the opaque iframe). Orphaned annotations get no highlight
+  // (C-004) — they live in the rail's detached section — so they're excluded here, mirroring the
+  // light-DOM placer's isOrphaned skip. Derived from `placeable` so it stays referentially stable.
+  const htmlPlaceable = useMemo(
+    () =>
+      placeable
+        .filter((a) => !a.isOrphaned)
+        .map((a) => ({ id: a.id, anchor: a.anchor as BridgeAnchor })),
+    [placeable],
+  );
+
   // Place marks + wire click-on-highlight → focus thread (AS-008) AND open the rail drawer (AS-014).
+  // HTML-PLACE: the light-DOM placer is MARKDOWN-only. For an HTML doc the content lives inside the
+  // opaque sandbox iframe, so docPaneEl holds only the <iframe> — placeAnnotations would findBlock
+  // null for every anchor and false-flag ALL of them "couldn't place". HTML is drawn the only way it
+  // can be: each anchor posted down the bridge by HtmlSandboxFrame (placement failures come back via
+  // onPlaceFailed → reportUnplaceableHtml). So feed the placer an empty set for non-markdown.
   useAnnotationMarks(
     docPaneEl,
-    placeable,
+    isMarkdown ? placeable : EMPTY_PLACEABLE,
     focusedId,
     (id) => {
       setFocusedId(id);
@@ -1070,6 +1111,8 @@ function useAnnotations(
     count: annotations.length,
     refetch: () => annoQuery.refetch(),
     prependAnnotation,
+    htmlPlaceable,
+    reportUnplaceableHtml,
     railProps: { annotations, focusedId, unplaceableIds, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete },
   };
 }

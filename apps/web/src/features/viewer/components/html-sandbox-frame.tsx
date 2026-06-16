@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { connectBridge, type BridgeAnchor, type BridgeConnection } from "@/features/viewer/lib/bridge";
 
 // HtmlSandboxFrame (S-001/AS-002, C-001/C-008; S-002/AS-004/AS-005, C-002/C-009): renders a
@@ -33,21 +33,38 @@ export const HtmlSandboxFrame = forwardRef<
     onClearSelection?: () => void;
     /** MƯỢT TASK 3: the iframe re-posted the live selection rect on its own in-iframe scroll. */
     onSelectionRect?: (rect: { x: number; y: number; width: number; height: number }) => void;
+    /** HTML-PLACE: the current placeable annotation set. The parent can't draw <mark>s into the
+     *  opaque iframe, so we post EACH anchor down the bridge once the handshake is ready and again
+     *  whenever this set changes. Without this, existing HTML annotations are never highlighted. */
+    annotations?: { id: string; anchor: BridgeAnchor }[];
+    /** HTML-PLACE: the in-iframe bridge couldn't place a posted highlight → surface it so the rail
+     *  can badge only that annotation "couldn't place" (markdown reports this via the light-DOM placer). */
+    onPlaceFailed?: (id: string) => void;
   }
->(function HtmlSandboxFrame({ contentUrl, onSelection, onClearSelection, onSelectionRect }, ref) {
+>(function HtmlSandboxFrame(
+  { contentUrl, onSelection, onClearSelection, onSelectionRect, annotations, onPlaceFailed },
+  ref,
+) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const connRef = useRef<BridgeConnection | null>(null);
   // Hold the latest handlers in a ref so the bridge connection (wired once on mount) always calls
   // the current callbacks without re-running the connect effect (which would re-add a window
   // listener and could accept a stale/duplicate handshake).
-  const handlersRef = useRef({ onSelection, onClearSelection, onSelectionRect });
-  handlersRef.current = { onSelection, onClearSelection, onSelectionRect };
+  const handlersRef = useRef({ onSelection, onClearSelection, onSelectionRect, onPlaceFailed });
+  handlersRef.current = { onSelection, onClearSelection, onSelectionRect, onPlaceFailed };
+  // HTML-PLACE: true once the bridge handshake is accepted (onReady). The post-existing effect below
+  // depends on it so the initial flush waits for the port (postHighlight no-ops before the handshake).
+  const [ready, setReady] = useState(false);
 
-  // S-002: wire the parent side of the bridge ONCE on mount. Only connect when there's a consumer
-  // for selections (the viewer passes onSelection only for a comment-capable role — C-004).
+  // S-002 / HTML-PLACE: wire the parent side of the bridge ONCE on mount. Connect when there's
+  // EITHER a selection consumer (comment-capable role — C-004 — the create round-trip) OR existing
+  // annotations to DRAW (every role, incl. read-only viewers, must see highlights). A viewer-only
+  // role still passes no `onSelection`, so a relayed selection can't open a composer (AS-005/C-004) —
+  // the bridge then only ever draws, never creates.
+  const hasAnnotations = Boolean(annotations && annotations.length > 0);
   useEffect(() => {
     const iframe = iframeRef.current;
-    if (!iframe || !onSelection) return;
+    if (!iframe || (!onSelection && !hasAnnotations)) return;
     // The bridge relays a selection rect in the IFRAME's own viewport coordinates (its
     // getBoundingClientRect, relative to the iframe's top-left, after the iframe's internal scroll).
     // The parent positions the popover in PAGE/window coordinates, so add the iframe's current
@@ -67,16 +84,34 @@ export const HtmlSandboxFrame = forwardRef<
         if (rect) handlersRef.current.onSelectionRect?.(toPageRect(rect));
         else handlersRef.current.onClearSelection?.();
       },
+      // HTML-PLACE: relay the in-iframe placement failure up so the rail badges only that id.
+      onPlaceFailed: (id) => handlersRef.current.onPlaceFailed?.(id),
+      // HTML-PLACE: the port is live → flip `ready` so the post-existing effect flushes the set.
+      onReady: () => setReady(true),
     });
     connRef.current = conn;
     return () => {
       conn.dispose();
       connRef.current = null;
+      setReady(false);
     };
-    // Connect once; `onSelection` presence (not identity) gates it. Identity changes are absorbed by
-    // handlersRef so we never tear down + re-add the window listener on every render.
+    // Connect once; the GATE (a selection consumer OR annotations to draw), not handler identity,
+    // keys it. Identity changes are absorbed by handlersRef so we never tear down + re-add the window
+    // listener on every render. `hasAnnotations` is a boolean so a viewer whose annotations arrive
+    // after mount (async read) connects then — and a 0→N transition rewires once, not per item.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Boolean(onSelection)]);
+  }, [Boolean(onSelection), hasAnnotations]);
+
+  // HTML-PLACE: once the bridge is ready, post EVERY existing annotation's anchor down the port so
+  // the in-iframe bridge draws a <mark> for each (the parent can't draw into the opaque iframe). Re-runs
+  // when `annotations` changes (a create/delete) — re-posting an already-drawn id is a no-op in-iframe
+  // (the bridge re-locates + re-wraps), and a genuinely-unplaceable one posts place-failed → the rail.
+  useEffect(() => {
+    if (!ready || !annotations) return;
+    const conn = connRef.current;
+    if (!conn) return;
+    for (const a of annotations) conn.postHighlight(a.anchor, a.id);
+  }, [ready, annotations]);
 
   useImperativeHandle(
     ref,

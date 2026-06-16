@@ -274,6 +274,35 @@ describe("connectBridge (S-002 parent transport)", () => {
     await waitFor(() => expect(onSelection).toHaveBeenCalledTimes(1));
     conn.dispose();
   });
+
+  it("HTML-PLACE: onReady fires once when a trusted ready is accepted + the port is captured", () => {
+    const contentWindow = {} as Window;
+    const onReady = mock(() => {});
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}), onReady });
+    expect(onReady).not.toHaveBeenCalled();
+    const { ev } = handshake(contentWindow);
+    window.dispatchEvent(ev);
+    expect(conn.isConnected()).toBe(true);
+    expect(onReady).toHaveBeenCalledTimes(1);
+    // A later (duplicate) ready does NOT re-fire onReady — the port is already captured.
+    const { ev: ev2 } = handshake(contentWindow);
+    window.dispatchEvent(ev2);
+    expect(onReady).toHaveBeenCalledTimes(1);
+    conn.dispose();
+  });
+
+  it("HTML-PLACE: a place-failed message over the port reaches onPlaceFailed with the annotation id", async () => {
+    const contentWindow = {} as Window;
+    const onPlaceFailed = mock(() => {});
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}), onPlaceFailed });
+    const { ch, ev } = handshake(contentWindow);
+    window.dispatchEvent(ev);
+    // The in-iframe bridge couldn't draw a highlight → it posts place-failed back UP the port.
+    ch.port1.postMessage({ type: "place-failed", annotationId: "anno-miss-1" });
+    await waitFor(() => expect(onPlaceFailed).toHaveBeenCalledTimes(1));
+    expect(onPlaceFailed.mock.calls[0]![0]).toBe("anno-miss-1");
+    conn.dispose();
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
