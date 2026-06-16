@@ -37,6 +37,12 @@ export interface PlaceableAnnotation {
   /** S-002 (AS-007): a drifted redline whose pinned span no longer matches the current version —
    *  rendered in a DISTINCT muted/dashed style (not a confident strike), and not acceptable. */
   stale?: boolean;
+  /** DESIGN.md type/tool palette: the highlight HUE (a CSS colour) for this mark — a label/like mark
+   *  carries its preset colour, a plain comment the Comment amber, so the content reads multi-colour
+   *  (the mark + its rail row share the hue). A redline ignores this (the red strike wins via `kind`);
+   *  absent → the default teal accent. Set as a `--mark-hue` custom prop the CSS reads, so ONE rule
+   *  tints any hue without N type classes. */
+  hue?: string;
 }
 
 export interface PlaceResult {
@@ -279,6 +285,14 @@ export function placeAnnotations(
       marks.forEach((m) => {
         m.dataset.annoKind = "redline";
         if (ann.stale) m.dataset.annoStale = "true";
+      });
+    } else if (ann.hue) {
+      // DESIGN.md type/tool palette: tint a non-redline mark with its type/label hue (the rail row +
+      // its mark share a colour) via a --mark-hue custom prop the CSS reads. Skipped for redlines
+      // (the red strike wins) and for a hue-less default (the teal accent).
+      marks.forEach((m) => {
+        m.dataset.annoHue = "true";
+        m.style.setProperty("--mark-hue", ann.hue!);
       });
     }
     placed.push({ id: ann.id, el: marks[0]! });

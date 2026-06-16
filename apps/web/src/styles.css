@@ -362,6 +362,18 @@ main[data-doc-width="focus"] .doc-prose {
 .anno-mark--focus {
   background: color-mix(in oklab, var(--accent) 26%, var(--accent-soft));
 }
+/* DESIGN.md type/tool palette: a per-type/per-label mark hue (set as --mark-hue by annotation-marks
+   — a label/like carries its preset colour, a plain comment the Comment amber). So the in-content
+   highlights read multi-colour, matching their rail rows, instead of a single teal. Placed BEFORE
+   resolved/redline/stale so those status styles still override (same specificity → later wins). */
+.anno-mark[data-anno-hue] {
+  background: color-mix(in oklab, var(--mark-hue) 15%, transparent);
+  border-bottom-color: var(--mark-hue);
+}
+.anno-mark[data-anno-hue]:hover,
+.anno-mark[data-anno-hue].anno-mark--focus {
+  background: color-mix(in oklab, var(--mark-hue) 28%, transparent);
+}
 .anno-mark[data-resolved="true"] {
   background: color-mix(in oklab, var(--green) 12%, transparent);
   border-bottom-color: var(--green);

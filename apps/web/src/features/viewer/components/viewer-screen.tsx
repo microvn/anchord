@@ -21,6 +21,13 @@ import { useAnnotationMarks, scrollToAnno } from "./annotation-marks";
 import { SelectionPopover } from "./selection-popover";
 import { LabelPicker } from "./label-picker";
 import { Composer } from "./composer";
+
+// DESIGN.md type/tool palette — the marks use the SAME 4 basic tool hues as the toolbar (NOT a
+// per-label rainbow, which reads chaotic): Markup = teal (the default, no override), Comment = amber,
+// Redline = red (the strike), Label = gold (every label, incl. the Like "looks-good" preset). Comment
+// amber is deliberately NOT the banned Claude-orange #d97757.
+const COMMENT_HUE = "#d68a3e"; // amber
+const LABEL_HUE = "#cbb24a"; // gold (all labels + like)
 import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
 import { useDraggable } from "@/features/viewer/hooks/use-draggable";
 import { useCompose, peelCommentId } from "@/features/viewer/hooks/use-compose";
@@ -820,14 +827,19 @@ function useAnnotations(
   // stays referentially stable across a selection re-render (the single-place guarantee, BUG #1).
   const placeable = useMemo(
     () =>
-      annotations.map((a) => ({
-        ...a,
-        kind:
-          a.type === "suggestion" && a.suggestion?.kind === "delete"
-            ? ("redline" as const)
-            : undefined,
-        stale: a.suggestionStatus === "stale",
-      })),
+      annotations.map((a) => {
+        const isRedline = a.type === "suggestion" && a.suggestion?.kind === "delete";
+        // DESIGN.md type/tool palette: 4 basic tool hues (NOT per-label). A redline strikes red (via
+        // kind, no hue); ANY label (incl. the Like "looks-good" preset) → Label gold; a plain comment
+        // → Comment amber; everything else (a replace-suggestion, etc.) stays the default Markup teal.
+        const hue = isRedline ? undefined : a.label ? LABEL_HUE : a.suggestion ? undefined : COMMENT_HUE;
+        return {
+          ...a,
+          kind: isRedline ? ("redline" as const) : undefined,
+          stale: a.suggestionStatus === "stale",
+          hue,
+        };
+      }),
     [annotations],
   );
 
