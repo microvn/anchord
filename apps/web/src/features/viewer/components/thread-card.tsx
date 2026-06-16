@@ -444,6 +444,17 @@ export function ThreadCard({
   // gets no Resolve even when the family would offer one (the affordance is a hint, not the authority).
   const slots = actionBarSlots({ isProposal, sugStatus, isOwner, isOwn, resolved });
 
+  // annotation-actions-ui S-002 (AS-020 / C-003): WITHHOLD the owner-decide affordance until the
+  // session has resolved (the current user id is known). The no-self-approve gate keys on `isOwn`,
+  // which is false while `currentUserId` is null — so during the brief sign-in load window a
+  // signed-in owner's OWN pending proposal would otherwise flash Accept/Reject before `isOwn`
+  // corrects it to Resolve. An owner is ALWAYS signed in, so `currentUserId == null` in the card
+  // means "session not resolved yet" → don't show decide. A signed-out viewer is never owner (no
+  // decide anyway), so this only suppresses the owner-pending flash. The pure `actionBarSlots`
+  // logic is untouched; the guard is applied at the render boundary only.
+  const sessionResolved = currentUserId != null;
+  const showDecide = slots.showDecide && sessionResolved;
+
   // Optimistic replies the user sent this session, shown flat alongside server replies until a
   // refetch reconciles them (consistency with S-001's optimistic create, C-011). They live at the
   // SAME flat level — appended to the one reply list, never nested (C-005).
@@ -571,7 +582,10 @@ export function ThreadCard({
   // the dim, not a stacked Resolved chip. So this is gated on `!isProposal`.
   const showResolvedRemarkBadge = resolved && !isProposal;
   const showResolveToggle = Boolean(handleResolveToggle) && (slots.showResolve || slots.showReopen);
-  const rootName = root ? (isOwn ? "You" : commentAuthor(root)) : null;
+  // C-001: the rail ALWAYS shows the REAL author name + avatar — own and others identically, NO "You"
+  // relabel and no visible own marker. Own-vs-others stays INTERNAL (the `isOwn` flag above + the
+  // non-visible `data-own` hook), driving only the no-self-approve + delete-own gates.
+  const rootName = root ? commentAuthor(root) : null;
 
   return (
     <div
@@ -601,19 +615,15 @@ export function ThreadCard({
       ].join(" ")}
     >
       {/* 1. HEADER ROW — avatar · author · time on the LEFT; the single status pill + the overflow ⋯
-          on the RIGHT. The author name is the root comment's author; for an OWN annotation it reads
-          "You" (the own-badge marker, C-001). With no root comment the header omits author/time. */}
+          on the RIGHT. The author name + avatar are ALWAYS the REAL root-comment author — own and
+          others identically, NO "You" relabel / no visible own marker (C-001). Own-vs-others is
+          INTERNAL (the data-own hook). With no root comment the header omits author/time. */}
       <div data-testid="thread-header" className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          {root && <Avatar name={isOwn ? "You" : commentAuthor(root)} />}
-          {rootName != null &&
-            (isOwn ? (
-              <span data-testid="own-badge" className="truncate text-[12.5px] font-semibold text-accent">
-                You
-              </span>
-            ) : (
-              <span className="truncate text-[12.5px] font-semibold text-ink">{rootName}</span>
-            ))}
+          {root && <Avatar name={commentAuthor(root)} />}
+          {rootName != null && (
+            <span className="truncate text-[12.5px] font-semibold text-ink">{rootName}</span>
+          )}
           {/* C-010: a guest comment is visibly attributed as a guest (a display label, not identity). */}
           {root && isGuestComment(root) && (
             <span
@@ -800,7 +810,7 @@ export function ThreadCard({
           reply composer is open it OWNS the bar full-width (F3). The RIGHT slot is the owner Accept/
           Reject (a pending proposal) XOR the Resolve/Reopen toggle (a remark / decided proposal); a
           non-owner / stale proposal shows neither → Reply only. Handlers unchanged — only placement. */}
-      {(handleReply || slots.showDecide || showResolveToggle) && (
+      {(handleReply || showDecide || showResolveToggle) && (
         <div className="mt-[9px] border-t border-line pt-[9px]">
           {replyOpen && handleReply ? (
             <ReplyComposer onReply={handleReply} onClose={() => setReplyOpen(false)} />
@@ -822,7 +832,7 @@ export function ThreadCard({
                 )}
               </div>
               <div className="flex items-center gap-1.5">
-                {slots.showDecide && handleDecide ? (
+                {showDecide && handleDecide ? (
                   <div data-testid="redline-decide" className="flex items-center gap-1.5">
                     <button
                       type="button"

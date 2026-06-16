@@ -1,15 +1,16 @@
 import { describe, it, expect } from "bun:test";
 import { render, screen, within } from "@testing-library/react";
 
-// annotation-actions-ui S-001 — own-vs-others attribution from the durable creator id.
+// annotation-actions-ui S-001 (C-001) — own-vs-others is INTERNAL; the rail ALWAYS shows the real name.
 //
-// Each rail item is attributed to its creator using the annotation's durable `authorId` (served on
-// the annotations list read), NOT inferred from the first/root comment. The ThreadCard takes a
-// `currentUserId` prop and marks an item as the current user's OWN only when its `authorId` is
-// non-null AND equals that id — mirroring the backend null-guard. A guest-created annotation carries
-// a null `authorId` and so can never match a signed-in user (it reads as a guest, never own). This
-// is the foundation for the later no-self-approve gate (S-002) and delete-own (S-003), so the
-// `isOwn` derivation keys on `authorId` alone — never on who wrote the root comment.
+// The rail ALWAYS shows an annotation's REAL author name + avatar — own and others displayed
+// identically: NO "You" relabel, NO visible own marker (an authenticated user has an identity). The
+// own-vs-others determination keys on the annotation's durable `authorId` (served on the list read),
+// NOT inferred from the first/root comment, and is kept purely INTERNAL — it only drives the
+// no-self-approve gate (S-002) and delete-own (S-003). An item is the current user's OWN only when
+// its `authorId` is non-null AND equals `currentUserId` (mirroring the backend null-guard); a
+// guest-created annotation (null `authorId`) matches no signed-in user. The internal flag is exposed
+// to tests/gates via the non-visible `data-own` attribute on the card — there is no visible badge.
 //
 // We render ThreadCard directly with explicit `authorId` + `currentUserId` so the test asserts the
 // own-vs-others flag in isolation, not a real round-trip.
@@ -53,46 +54,92 @@ function renderCard(annotation: ViewerAnnotation, currentUserId?: string | null)
 }
 
 describe("ThreadCard own-vs-others from authorId (annotation-actions-ui S-001)", () => {
-  it("AS-001: a member's own annotation (authorId === my id) is attributed to me AND marked own", () => {
-    // The root comment author ("Mara") is irrelevant to the OWN flag — only authorId === currentUserId
-    // decides own. Here authorId is my id, so the card is marked own even though the root says "Mara".
-    renderCard(thread({ authorId: ME }), ME);
+  it("AS-001: a member's own annotation shows their REAL name + avatar (no 'You' relabel), own kept internal", () => {
+    // The rail shows the real comment-author name ("Demo User") the SAME way as any other author —
+    // NO "You" relabel, NO visible own marker. The own-vs-others determination (authorId === my id)
+    // stays INTERNAL, exposed only via the non-visible data-own hook for the gates.
+    renderCard(
+      thread({
+        authorId: ME,
+        comments: [
+          { id: "c", parentId: null, authorName: "Demo User", body: "mine", createdAt: new Date().toISOString() },
+        ],
+      }),
+      ME,
+    );
 
     const card = screen.getByTestId("thread-card");
+    const header = within(card).getByTestId("thread-header");
+    // The REAL author name is shown — not "You".
+    expect(within(header).getByText("Demo User")).toBeInTheDocument();
+    expect(within(header).queryByText("You")).toBeNull();
+    // No visible own marker.
+    expect(within(card).queryByTestId("own-badge")).toBeNull();
+    // Own stays INTERNAL — recorded on the non-visible data-own hook (drives the gates).
     expect(card.getAttribute("data-own")).toBe("true");
-    // The own marker is surfaced on the card (the basis for the later self-only affordances).
-    expect(within(card).getByTestId("own-badge")).toBeInTheDocument();
   });
 
-  it("AS-002: another member's annotation (authorId is a different member) is NOT marked own", () => {
-    // authorId is another member — the card attributes it to that member and is NOT marked own,
-    // even when I am signed in.
-    renderCard(thread({ authorId: OTHER }), ME);
+  it("AS-002: another member's annotation shows that member's name (same treatment, not own)", () => {
+    // authorId is another member — the card attributes it to that member, with NO visible own/other
+    // distinction, and is NOT internally own even when I am signed in.
+    renderCard(
+      thread({
+        authorId: OTHER,
+        comments: [
+          { id: "c", parentId: null, authorName: "Mara", body: "theirs", createdAt: new Date().toISOString() },
+        ],
+      }),
+      ME,
+    );
 
     const card = screen.getByTestId("thread-card");
+    expect(within(card).getByText("Mara")).toBeInTheDocument();
     expect(card.getAttribute("data-own")).toBeNull();
     expect(within(card).queryByTestId("own-badge")).toBeNull();
   });
 
-  it("AS-003: a guest-created annotation (authorId null) reads as a guest, never own", () => {
-    // A null authorId matches NO signed-in user — the keystone. Even rendered for a signed-in user,
-    // a guest-created annotation is never marked own.
-    renderCard(thread({ authorId: null }), ME);
+  it("AS-003: a guest-created annotation (authorId null) shows the guest name + Guest pill, never own", () => {
+    // A null authorId matches NO signed-in user — the keystone. The guest's self-entered name + the
+    // Guest pill show; the item is never internally own.
+    renderCard(
+      thread({
+        authorId: null,
+        comments: [
+          { id: "c", parentId: null, authorName: null, guestName: "Visitor Vee", body: "guest note", createdAt: new Date().toISOString() },
+        ],
+      }),
+      ME,
+    );
 
     const card = screen.getByTestId("thread-card");
+    const header = within(card).getByTestId("thread-header");
+    expect(within(header).getByText("Visitor Vee")).toBeInTheDocument();
+    expect(within(header).getByTestId("guest-badge")).toBeInTheDocument();
+    expect(within(header).queryByText("You")).toBeNull();
     expect(card.getAttribute("data-own")).toBeNull();
     expect(within(card).queryByTestId("own-badge")).toBeNull();
   });
 
-  it("C-001: own-vs-others derives from the durable authorId (not the root comment), and null = no one", () => {
-    // Edge 1 — authorId present but NO current user (signed-out viewer): never own.
-    const { unmount } = renderCard(thread({ authorId: ME }), null);
-    expect(screen.getByTestId("thread-card").getAttribute("data-own")).toBeNull();
-    expect(screen.queryByTestId("own-badge")).toBeNull();
+  it("C-001: own derives from the durable authorId (not the root comment); null = no one; never a 'You' relabel", () => {
+    // Edge 1 — authorId present but NO current user (signed-out viewer): never own, shows real name.
+    const { unmount } = renderCard(
+      thread({
+        authorId: ME,
+        comments: [
+          { id: "c", parentId: null, authorName: "Demo User", body: "x", createdAt: new Date().toISOString() },
+        ],
+      }),
+      null,
+    );
+    let card = screen.getByTestId("thread-card");
+    expect(card.getAttribute("data-own")).toBeNull();
+    expect(within(card).getByText("Demo User")).toBeInTheDocument();
+    expect(within(card).queryByTestId("own-badge")).toBeNull();
     unmount();
 
     // Edge 2 — the root comment author is ME by name, but authorId is a DIFFERENT member: the OWN
     // flag must follow authorId (not own), proving it never derives from the root comment author.
+    // The real name still shows (no "You" relabel regardless).
     renderCard(
       thread({
         authorId: OTHER,
@@ -102,7 +149,9 @@ describe("ThreadCard own-vs-others from authorId (annotation-actions-ui S-001)",
       }),
       ME,
     );
-    expect(screen.getByTestId("thread-card").getAttribute("data-own")).toBeNull();
-    expect(screen.queryByTestId("own-badge")).toBeNull();
+    card = screen.getByTestId("thread-card");
+    expect(card.getAttribute("data-own")).toBeNull();
+    expect(within(card).getByText("Me Myself")).toBeInTheDocument();
+    expect(within(card).queryByTestId("own-badge")).toBeNull();
   });
 });

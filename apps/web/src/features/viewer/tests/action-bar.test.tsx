@@ -195,8 +195,60 @@ describe("ThreadCard action bar — the 2-family scenarios (S-002)", () => {
     expect(within(card).queryByTestId("redline-accept")).toBeNull();
     expect(within(card).queryByTestId("redline-reject")).toBeNull();
     expect(within(card).queryByTestId("redline-decide")).toBeNull();
-    // The own marker is present (the visible basis for the no-self-approve treatment, S-001).
-    expect(within(card).getByTestId("own-badge")).toBeInTheDocument();
+    // No visible own marker (C-001) — own is INTERNAL, recorded on the data-own hook.
+    expect(within(card).queryByTestId("own-badge")).toBeNull();
+    expect(card.getAttribute("data-own")).toBe("true");
+  });
+
+  it("AS-020: my OWN pending proposal does NOT flash Accept/Reject while the session is still resolving (currentUserId null)", () => {
+    // An owner is always signed in, so currentUserId == null in the card means the session has not
+    // resolved yet. The owner-decide row (redline-decide) must be WITHHELD until the user is known,
+    // so a signed-in owner's OWN pending proposal never flashes Accept/Reject before correcting to
+    // Resolve. authorId is mine, but the card can't yet know that — so it shows no decide row.
+    const { rerender } = renderCard(proposal({ authorId: ME }), {
+      currentUserId: null, // session still loading
+      isOwner: true,
+      onDecide: mock(async () => true),
+      onResolve: mock(async () => true),
+    });
+    let card = screen.getByTestId("thread-card");
+    expect(within(card).queryByTestId("redline-decide")).toBeNull();
+    expect(within(card).queryByTestId("redline-accept")).toBeNull();
+    expect(within(card).queryByTestId("redline-reject")).toBeNull();
+
+    // Once the session resolves (currentUserId known === ME), the no-self-approve gate kicks in:
+    // it's my own proposal → Resolve, still no decide row.
+    rerender(
+      <ThreadCard
+        annotation={proposal({ authorId: ME })}
+        focused={false}
+        unplaceable={false}
+        onFocus={() => {}}
+        currentUserId={ME}
+        isOwner
+        onDecide={mock(async () => true)}
+        onResolve={mock(async () => true)}
+      />,
+    );
+    card = screen.getByTestId("thread-card");
+    expect(within(card).queryByTestId("redline-decide")).toBeNull();
+    expect(within(card).getByTestId("resolve-toggle")).toHaveTextContent("Resolve");
+  });
+
+  it("AS-020: an owner's decide row SHOWS for a resolved session on someone else's pending proposal", () => {
+    // The complement: when the session HAS resolved (currentUserId known) and the proposal is by
+    // someone else, the decide row shows. This proves the withhold guard only affects the unresolved
+    // window, not the normal owner-decide path.
+    renderCard(proposal({ authorId: OTHER }), {
+      currentUserId: ME,
+      isOwner: true,
+      onDecide: mock(async () => true),
+      onResolve: mock(async () => true),
+    });
+    const card = screen.getByTestId("thread-card");
+    expect(within(card).getByTestId("redline-decide")).toBeInTheDocument();
+    expect(within(card).getByTestId("redline-accept")).toBeInTheDocument();
+    expect(within(card).getByTestId("redline-reject")).toBeInTheDocument();
   });
 
   it("C-002: at most TWO primary close affordances — a pending proposal shows exactly Accept + Reject (the affordance is a hint)", () => {

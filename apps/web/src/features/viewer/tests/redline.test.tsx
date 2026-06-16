@@ -37,6 +37,9 @@ function redline(overrides: Partial<ViewerAnnotation> = {}): ViewerAnnotation {
   };
 }
 
+// AS-020 / C-003: the owner-decide row is withheld until the session resolves (currentUserId known).
+// An owner is always signed in, so these owner-decide cases model a RESOLVED session by defaulting a
+// currentUserId. The redline() fixture has no authorId, so isOwn stays false → still owner-decided.
 function renderCard(annotation: ViewerAnnotation, props: Partial<Parameters<typeof ThreadCard>[0]> = {}) {
   return render(
     <ThreadCard
@@ -44,6 +47,7 @@ function renderCard(annotation: ViewerAnnotation, props: Partial<Parameters<type
       focused={false}
       unplaceable={false}
       onFocus={() => {}}
+      currentUserId="owner-user"
       {...props}
     />,
   );
@@ -179,6 +183,7 @@ describe("Redline rail wiring (S-002)", () => {
         annotations={served}
         focusedId={null}
         unplaceableIds={new Set()}
+        currentUserId="owner-user"
         isOwner
         onFocusThread={() => {}}
         onDecide={onDecide}
