@@ -64,6 +64,8 @@ mock.module("@/features/viewer/services/client", () => ({
   createAnnotation: mock(async () => ({ data: { success: true, data: { annotationId: "a" } }, error: null })),
   addComment: mock(async () => ({ data: { success: true, data: { commentId: "c" } }, error: null })),
   setResolution: mock(async () => ({ data: { success: true, data: { status: "resolved" } }, error: null })),
+  deleteAnnotation: mock(async () => ({ data: { success: true, data: { deleted: true } }, error: null })),
+  restoreAnnotation: mock(async () => ({ data: { success: true, data: { restored: true } }, error: null })),
   canComment: (role: string | undefined) => role !== "viewer",
 }));
 

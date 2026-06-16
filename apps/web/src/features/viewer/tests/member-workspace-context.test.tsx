@@ -31,6 +31,8 @@ mock.module("@/features/viewer/services/client", () => ({
   // S-002: stub the redline create/decide so this partial client mock satisfies useCompose/viewer-screen.
   createRedline: mock(async () => ({ data: { success: true, data: { suggestionId: "rl-x" } }, error: null })),
   decideSuggestion: mock(async () => ({ data: { success: true, data: { status: "accepted" } }, error: null })),
+  deleteAnnotation: mock(async () => ({ data: { success: true, data: { deleted: true } }, error: null })),
+  restoreAnnotation: mock(async () => ({ data: { success: true, data: { restored: true } }, error: null })),
   canComment: (role: string | undefined) => role !== "viewer",
 }));
 

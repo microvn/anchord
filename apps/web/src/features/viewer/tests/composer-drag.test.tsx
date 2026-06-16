@@ -17,6 +17,8 @@ mock.module("@/features/viewer/services/client", () => ({
   decideSuggestion: mock(async () => ({ data: { success: true, data: { status: "accepted" } }, error: null })),
   createAnnotation: mock(async () => ({ data: { annotationId: "a1" }, error: null })),
   addComment: mock(async () => ({ data: {}, error: null })),
+  deleteAnnotation: mock(async () => ({ data: { success: true, data: { deleted: true } }, error: null })),
+  restoreAnnotation: mock(async () => ({ data: { success: true, data: { restored: true } }, error: null })),
 }));
 
 const { useDraggable } = await import("@/features/viewer/hooks/use-draggable");

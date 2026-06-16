@@ -217,6 +217,8 @@ mock.module("@/features/viewer/services/client", () => ({
   setResolution: mock(async () => okEnv({ status: "resolved" })),
   createRedline,
   decideSuggestion: mock(async () => okEnv({ status: "accepted" })),
+  deleteAnnotation: mock(async () => okEnv({ deleted: true })),
+  restoreAnnotation: mock(async () => okEnv({ restored: true })),
   canComment,
 }));
 

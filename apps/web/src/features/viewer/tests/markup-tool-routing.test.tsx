@@ -43,6 +43,8 @@ mock.module("@/features/viewer/services/client", () => ({
   decideSuggestion: mock(async () => okEnv({ status: "accepted" })),
   addComment,
   setResolution: mock(async () => okEnv({ status: "resolved" })),
+  deleteAnnotation: mock(async () => okEnv({ deleted: true })),
+  restoreAnnotation: mock(async () => okEnv({ restored: true })),
   canComment,
 }));
 
