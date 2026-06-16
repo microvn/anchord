@@ -170,7 +170,9 @@ function fakeAnnotationLookupRepo(opts: {
       return parent === null ? null : { ...parent, authorId: parent.authorId ?? null };
     },
     async findSuggestionDoc() {
-      return parent;
+      // S-003/C-004: surface the proposal's durable creator (null unless the test seeds one)
+      // so the decide route can gate owner-no-self-approve.
+      return parent === null ? null : { ...parent, authorId: parent.authorId ?? null };
     },
     async getCurrentVersionContent() {
       return opts.currentHtml ?? null;
@@ -918,5 +920,138 @@ describe("PATCH /api/suggestions/:id (S-006)", () => {
       req("/api/w/ws_1/suggestions/sug_1", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
     );
     expect(res.status).toBe(401);
+  });
+});
+
+// annotation-actions S-003 / C-004: the owner cannot self-approve their OWN proposal. The
+// decide (Accept/Reject) is refused server-side when the proposal's persisted creator
+// (`author_id`) equals the acting SESSION user-id — keyed on USER-ID equality, never on role,
+// so it holds under multiple/transferred owners. The author-owner closes their own proposal via
+// Resolve instead (the S-002 owner path → status `resolved`). A proposal authored by someone else
+// or by a guest (null creator) stays owner-decidable: a null creator is NEVER the acting user.
+describe("PATCH /api/suggestions/:id — owner no self-approve (S-003)", () => {
+  const SUG: SuggestionRow = {
+    id: "sug_1",
+    docId: "doc_1",
+    type: "suggestion",
+    anchor: { blockId: "block-p-1", textSnippet: "hello world", offset: 0, length: 11 },
+    suggestion: { kind: "replace", from: "hello", to: "hi", againstVersion: 1 },
+    status: "pending",
+  };
+
+  // The session actor is u_member (the default `member` resolver). When the lookup reports the
+  // proposal's authorId === u_member, the acting user IS the creator.
+  const ownerIsAuthor = fakeAnnotationLookupRepo({
+    doc: { docId: "doc_1", generalAccess: "anyone_with_link", authorId: "u_member" },
+    currentHtml: "<p>hello world</p>",
+  });
+
+  test("AS-005: the acting user is the proposal's creator (author_id === acting user-id) → Accept is REFUSED server-side (keyed on user-id, not role), proposal unchanged", async () => {
+    const sr = fakeSuggestionRepo([{ ...SUG }]);
+    // resolveDocRole=asOwner → the actor IS an owner, yet because they authored it the decide
+    // is refused. This isolates the user-id self-check from the role: an owner is normally
+    // allowed to decide, but not their OWN proposal.
+    const app = buildApp({ resolveDocRole: asOwner, suggestionRepo: sr, annotationLookupRepo: ownerIsAuthor });
+    const res = await app.handle(
+      req("/api/w/ws_1/suggestions/sug_1", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+    );
+    expect(res.status).toBe(403); // forbidden, distinct from the 404 not-found (deleted/no-access) cases
+    // the proposal is unchanged — no status write reached the repo
+    expect(sr.calls.statuses).toHaveLength(0);
+  });
+
+  test("AS-005: the same self-authored proposal — Reject is ALSO refused server-side, proposal unchanged", async () => {
+    const sr = fakeSuggestionRepo([{ ...SUG, id: "sug_self_rej" }]);
+    const lookup = fakeAnnotationLookupRepo({
+      doc: { docId: "doc_1", generalAccess: "anyone_with_link", authorId: "u_member" },
+      currentHtml: "<p>hello world</p>",
+    });
+    const app = buildApp({ resolveDocRole: asOwner, suggestionRepo: sr, annotationLookupRepo: lookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/suggestions/sug_self_rej", { method: "PATCH", body: JSON.stringify({ decision: "reject" }) }),
+    );
+    expect(res.status).toBe(403);
+    expect(sr.calls.statuses).toHaveLength(0);
+  });
+
+  test("C-004: a DIFFERENT owner/decider (author_id !== acting user-id) CAN decide someone else's proposal — the gate keys on user-id, not role", async () => {
+    const sr = fakeSuggestionRepo([{ ...SUG, id: "sug_other" }]);
+    // author is u_someone_else; the acting session user (u_member) is a different owner.
+    const lookup = fakeAnnotationLookupRepo({
+      doc: { docId: "doc_1", generalAccess: "anyone_with_link", authorId: "u_someone_else" },
+      currentHtml: "<p>hello world</p>",
+    });
+    const app = buildApp({ resolveDocRole: asOwner, suggestionRepo: sr, annotationLookupRepo: lookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/suggestions/sug_other", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.status).toBe("accepted");
+  });
+
+  test("AS-007: a proposal with a NULL creator (guest-authored, author_id null) is owner-decidable — null === actingUserId is NOT self", async () => {
+    const sr = fakeSuggestionRepo([{ ...SUG, id: "sug_guest" }]);
+    // guest-authored: author_id is null. The acting user (u_member) is non-null, so null is
+    // never treated as self — the owner can Accept it.
+    const lookup = fakeAnnotationLookupRepo({
+      doc: { docId: "doc_1", generalAccess: "anyone_with_link", authorId: null },
+      currentHtml: "<p>hello world</p>",
+    });
+    const app = buildApp({ resolveDocRole: asOwner, suggestionRepo: sr, annotationLookupRepo: lookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/suggestions/sug_guest", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.status).toBe("accepted");
+  });
+
+  test("C-004: the self-id comes from the SESSION, not the request body — a forged body author/actor cannot bypass the refusal", async () => {
+    const sr = fakeSuggestionRepo([{ ...SUG, id: "sug_forge" }]);
+    // The real creator is u_member (the session actor). A forged body claiming a different
+    // author/actor is stripped by validation; the gate still refuses because the SESSION
+    // user-id matches the persisted creator.
+    const app = buildApp({ resolveDocRole: asOwner, suggestionRepo: sr, annotationLookupRepo: ownerIsAuthor });
+    const res = await app.handle(
+      req("/api/w/ws_1/suggestions/sug_forge", {
+        method: "PATCH",
+        body: JSON.stringify({ decision: "accept", authorId: "u_someone_else", actorUserId: "u_someone_else" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(sr.calls.statuses).toHaveLength(0);
+  });
+
+  test("AS-005: a DELETED self-authored proposal still 404s FIRST (S-005 terminal precedes the self-check)", async () => {
+    const sr = fakeSuggestionRepo([{ ...SUG, id: "sug_self_del", deletedAt: new Date() }]);
+    const app = buildApp({ resolveDocRole: asOwner, suggestionRepo: sr, annotationLookupRepo: ownerIsAuthor });
+    const res = await app.handle(
+      req("/api/w/ws_1/suggestions/sug_self_del", { method: "PATCH", body: JSON.stringify({ decision: "accept" }) }),
+    );
+    expect(res.status).toBe(404); // deleted reads as gone (existence-hiding) — distinct from the self-approve 403
+    expect(sr.calls.statuses).toHaveLength(0);
+  });
+
+  test("AS-006: the owner closes their OWN proposal via Resolve (not Accept/Reject) → 200 { status: resolved }, no accepted/rejected decision (the legitimate author-owner close path)", async () => {
+    // The S-002 owner-resolve path: a PENDING proposal (a suggestion exists), resolved by the
+    // owner who authored it. The resolution route gates on suggestion PRESENCE + owner role; it
+    // does NOT consult author_id, so the decide-refusal of AS-005 does not block this path.
+    const rr = fakeResolutionRepo();
+    const sr = fakeSuggestionRepo([{ ...SUG, id: "sug_self_resolve" }]);
+    const lookup = fakeAnnotationLookupRepo({
+      doc: { docId: "doc_1", generalAccess: "anyone_with_link", authorId: "u_member" },
+    });
+    const app = buildApp({ resolveDocRole: asOwner, resolutionRepo: rr, suggestionRepo: sr, annotationLookupRepo: lookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/sug_self_resolve/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.status).toBe("resolved");
+    // closed like a remark — NO suggestion decision (no accepted/rejected, no reset)
+    expect(rr.calls.sets).toContainEqual({ id: "sug_self_resolve", status: "resolved" });
+    expect(rr.calls.resets).toHaveLength(0);
+    expect(sr.calls.statuses).toHaveLength(0);
   });
 });

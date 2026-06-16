@@ -158,11 +158,29 @@ export interface DecideSuggestionInput {
    * `from` span still matches at the anchor (C-011). Not consulted on reject.
    */
   currentVersionContentHtml: string;
+  /**
+   * annotation-actions S-003 / C-004: the acting user's id, resolved SERVER-side from the
+   * session (never a client-supplied claim). NULL is impossible on the decide route (it is
+   * owner-gated, so an actor always exists), but the null guard below keeps the pure function
+   * correct even if a null leaks in.
+   */
+  actorUserId?: string | null;
+  /**
+   * annotation-actions S-003 / C-004: the proposal's durable creator (`author_id`), resolved
+   * from the parent-doc lookup (null for a guest-authored proposal). When it equals the acting
+   * user-id the decide is refused — you cannot self-approve your own proposal; you close it by
+   * Resolve. A null creator (guest) can NEVER equal a (non-null) actor, so a guest-authored
+   * proposal is always owner-decidable.
+   */
+  authorId?: string | null;
 }
 
 export type DecideSuggestionResult =
   | { ok: true; status: SuggestionStatus }
-  | { ok: false; reason: "not_found" };
+  | { ok: false; reason: "not_found" }
+  // S-003 / C-004: the acting user authored this proposal — no self-approve. Distinct from
+  // not_found (deleted/no-access) so the route maps it to a Forbidden, not a 404.
+  | { ok: false; reason: "self_approve" };
 
 /**
  * Whether the suggestion's `from` span still matches AT THE ANCHOR in the given content
@@ -193,7 +211,7 @@ export async function decideSuggestion(
   input: DecideSuggestionInput,
   repo: SuggestionRepo,
 ): Promise<DecideSuggestionResult> {
-  const { suggestionId, decision, currentVersionContentHtml } = input;
+  const { suggestionId, decision, currentVersionContentHtml, actorUserId, authorId } = input;
 
   const row = await repo.getSuggestion(suggestionId);
   if (row === null) return { ok: false, reason: "not_found" };
@@ -201,8 +219,18 @@ export async function decideSuggestion(
   // S-005 / C-007 (AS-015): a soft-deleted suggestion is TERMINAL — refuse the decide so a
   // concurrent delete + accept can't leave it both deleted AND accepted (and an agent never
   // applies a deletion the author removed). Reads as gone (not_found), consistent with the
-  // route's existence-hiding. Checked BEFORE the status write, so the repo is never touched.
+  // route's existence-hiding. Checked BEFORE the self-check + status write — a deleted
+  // self-authored proposal 404s first (S-005 terminal precedes S-003).
   if (row.deletedAt != null) return { ok: false, reason: "not_found" };
+
+  // S-003 / C-004 (AS-005/AS-007): no self-approve — a proposal whose creator equals the
+  // acting user is the actor's OWN call (you close it by Resolve, not Accept/Reject), so the
+  // decide is refused server-side. Keyed on creator USER-ID === acting user-id, NOT on role,
+  // so it holds under multiple/transferred owners. The `!= null` guard mirrors delete.ts: a
+  // null creator (guest, AS-007) is NEVER self, because own ALSO requires actorUserId != null.
+  if (authorId != null && authorId === actorUserId) {
+    return { ok: false, reason: "self_approve" };
+  }
 
   if (decision === "reject") {
     // AS-015: reject only flips status; content never touched, no match check needed.

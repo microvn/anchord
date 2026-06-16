@@ -86,10 +86,12 @@ export interface AnnotationLookupRepo {
     annotationId: string,
   ): Promise<{ docId: string; generalAccess: GeneralAccessLevel; authorId: string | null; deletedAt?: Date | null } | null>;
   /** docId + generalAccess for a suggestion id, or null if it doesn't exist. The `deletedAt`
-   *  (S-005 / C-007) lets the resolution route refuse a terminal (deleted) annotation. */
+   *  (S-005 / C-007) lets the resolution route refuse a terminal (deleted) annotation. The
+   *  `authorId` (S-003 / C-004) is the proposal's durable creator (null for a guest) — the
+   *  decide route gates owner-no-self-approve on creator user-id === acting user-id. */
   findSuggestionDoc(
     suggestionId: string,
-  ): Promise<{ docId: string; generalAccess: GeneralAccessLevel; deletedAt?: Date | null } | null>;
+  ): Promise<{ docId: string; generalAccess: GeneralAccessLevel; authorId: string | null; deletedAt?: Date | null } | null>;
   /** Current (highest) version content HTML for a doc — for the C-011 stale check. */
   getCurrentVersionContent(docId: string): Promise<string | null>;
 }
@@ -124,13 +126,15 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
         .select({
           docId: annotationsTable.docId,
           generalAccess: docsTable.generalAccess,
+          // S-003/C-004: the durable creator, so the decide route can refuse owner self-approve.
+          authorId: annotationsTable.authorId,
           // S-005/C-007: surfaced (not filtered) so the resolution route can refuse a deleted one.
           deletedAt: annotationsTable.deletedAt,
         })
         .from(annotationsTable)
         .innerJoin(docsTable, eq(docsTable.id, annotationsTable.docId))
         .where(and(eq(annotationsTable.id, suggestionId), eq(annotationsTable.type, "suggestion")));
-      return row ? { ...row, deletedAt: row.deletedAt ?? null } : null;
+      return row ? { ...row, authorId: row.authorId ?? null, deletedAt: row.deletedAt ?? null } : null;
     },
     async getCurrentVersionContent(docId) {
       const [row] = await db
@@ -531,16 +535,28 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   async function decideSuggestionHandler({ params, actor, validBody }: any) {
     const { decision } = validBody as z.infer<typeof decideSuggestionSchema>;
     const viewer: Viewer = { kind: "user", userId: actor.userId };
-    const parent = await enforceParentAccess(await annotationLookupRepo.findSuggestionDoc(params.id), viewer);
+    const found = await annotationLookupRepo.findSuggestionDoc(params.id);
+    const parent = await enforceParentAccess(found, viewer);
     // Owner-only: deciding a suggestion is a manage-class action (AS-015).
     const sessionRole = await docRole(parent.docId, actor.userId);
     if (sessionRole !== "owner") throw new ForbiddenError();
     const currentHtml = (await annotationLookupRepo.getCurrentVersionContent(parent.docId)) ?? "";
     const result = await decideSuggestion(
-      { suggestionId: params.id, decision, currentVersionContentHtml: currentHtml },
+      {
+        suggestionId: params.id,
+        decision,
+        currentVersionContentHtml: currentHtml,
+        // S-003/C-004 (AS-005/AS-007): the self-approve gate keys on the SESSION actor's id
+        // (server-resolved, never the body) vs the proposal's persisted creator.
+        actorUserId: actor.userId,
+        authorId: found!.authorId, // bound to the resolved suggestion (found non-null past the 404 gate).
+      },
       suggestionRepo,
     );
-    if (!result.ok) throw new NotFoundError(); // suggestion vanished
+    // S-003/C-004 (AS-005): the owner authored this proposal → no self-approve. Distinct from the
+    // not_found (deleted/no-access) case, so it surfaces as a 403, not a 404.
+    if (!result.ok && result.reason === "self_approve") throw new ForbiddenError();
+    if (!result.ok) throw new NotFoundError(); // suggestion vanished / deleted (terminal)
     // AS-022: a drifted `from` came back `stale` on accept → 409 CONFLICT.
     if (result.status === "stale") {
       throw new ConflictError("Suggestion is stale: the target text has changed", {

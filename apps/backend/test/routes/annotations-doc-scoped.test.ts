@@ -159,7 +159,8 @@ function fakeAnnotationLookupRepo(
       return parent === null ? null : { ...parent, authorId: parent.authorId ?? null };
     },
     async findSuggestionDoc() {
-      return parent;
+      // S-003/C-004: include authorId (null unless seeded) for the decide self-approve gate.
+      return parent === null ? null : { ...parent, authorId: parent.authorId ?? null };
     },
     async getCurrentVersionContent() {
       return null;
@@ -551,7 +552,8 @@ function lookupWithAuthor(
       return { docId: "doc_1", generalAccess, authorId, deletedAt };
     },
     async findSuggestionDoc() {
-      return { docId: "doc_1", generalAccess, deletedAt };
+      // S-003/C-004: surface authorId so the decide self-approve gate has the durable creator.
+      return { docId: "doc_1", generalAccess, authorId, deletedAt };
     },
     async getCurrentVersionContent() {
       return null;
