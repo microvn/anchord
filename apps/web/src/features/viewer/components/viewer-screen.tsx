@@ -71,6 +71,10 @@ export function ViewerScreen() {
   // While the session resolves, `isPending` is true — we don't paint a misleading variant yet.
   const { data: session, isPending: sessionPending } = useSession();
   const signedIn = Boolean(session);
+  // annotation-actions-ui S-001 (C-001): the current session user id — the viewer's existing
+  // signed-in-user source. Threaded to each rail ThreadCard so it marks own-vs-others from the
+  // durable `authorId` (null for an anon/guest → owns nothing). The server is the source of truth.
+  const currentUserId = session?.user?.id ?? null;
 
   // C-004 (AS-014): tag the doc read `viewerRead` so the shared QueryCache onError can NEVER turn
   // a no-access reply into a global sign-out / sign-in redirect on the public viewer.
@@ -157,6 +161,8 @@ export function ViewerScreen() {
       // S-003 (AS-029): an anonymous visitor → the top bar shows a Sign in CTA + hides session-only
       // chrome (Share / account menu). signedIn comes from the resolved session, not the doc.
       anonymous={!signedIn}
+      // S-001 (C-001): the session user id for the rail's own-vs-others attribution.
+      currentUserId={currentUserId}
       onSignIn={goSignIn}
     />
   );
@@ -183,6 +189,7 @@ function ViewerShell({
   canCompose = false,
   guest = false,
   anonymous = false,
+  currentUserId = null,
   onSignIn,
 }: {
   title: string;
@@ -212,6 +219,9 @@ function ViewerShell({
   /** S-005: this is a logged-out guest session → the composer shows the GuestNameField + gates
    *  Send on a name (C-007). Consumed from the read side; the FE doesn't own the sharing toggle. */
   guest?: boolean;
+  /** annotation-actions-ui S-001 (C-001): the session user id, forwarded to the rail so each
+   *  ThreadCard marks own-vs-others from the durable `authorId`. Null for an anon/guest. */
+  currentUserId?: string | null;
 }) {
   const { drawerMode, tocDrawer } = useViewerLayoutMode();
   const navigate = useNavigate();
@@ -381,7 +391,12 @@ function ViewerShell({
   // newest comment tops the list (AS-001) and the count includes them (AS-001.T4 / C-011).
   const railAnnotations = [...compose.optimistic, ...anno.railProps.annotations];
   const railContent = hasDoc ? (
-    <AnnotationsRail {...anno.railProps} annotations={railAnnotations} />
+    <AnnotationsRail
+      {...anno.railProps}
+      annotations={railAnnotations}
+      // S-001 (C-001): each card marks own-vs-others from authorId vs the session user id.
+      currentUserId={currentUserId}
+    />
   ) : null;
 
   return (

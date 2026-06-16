@@ -126,6 +126,12 @@ export interface ViewerAnnotation {
   /** S-002 (C-002/AS-007): the suggestion's lifecycle status, served on read so the rail renders
    *  accepted/rejected/stale at read time. Absent on non-suggestion annotations. */
   suggestionStatus?: SuggestionStatus;
+  /** annotation-actions-ui S-001 (C-001): the DURABLE creator id, served on every annotation in the
+   *  list read (`annotation-actions`:S-001). The FE compares it to the current session user id to
+   *  decide own-vs-others — the basis for the no-self-approve gate (S-002) and delete-own (S-003).
+   *  `null` = guest-created (no durable creator), which matches NO signed-in user, so a guest
+   *  annotation is never marked own. This is NOT the root-comment author — it is a dedicated field. */
+  authorId?: string | null;
 }
 
 export interface ListAnnotationsResponse {

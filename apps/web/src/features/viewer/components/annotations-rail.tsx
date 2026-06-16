@@ -12,6 +12,7 @@ export function AnnotationsRail({
   annotations,
   focusedId,
   unplaceableIds,
+  currentUserId,
   onFocusThread,
   onReply,
   onResolve,
@@ -21,6 +22,10 @@ export function AnnotationsRail({
   focusedId: string | null;
   /** ids the FE couldn't anchor at runtime (GAP-005) — flagged, no scroll target. */
   unplaceableIds: Set<string>;
+  /** annotation-actions-ui S-001 (C-001): the current session user id, forwarded to each ThreadCard
+   *  so it can mark own-vs-others from the durable `authorId`. Null/undefined for a signed-out
+   *  viewer (owns nothing). */
+  currentUserId?: string | null;
   onFocusThread: (id: string) => void;
   /** S-002: OWNER-only accept/reject of a redline. The rail binds it per-thread to the ThreadCard's
    *  onDecide(decision); the consumer wires decideSuggestion. Absent → no Accept/Reject row (non-
@@ -76,6 +81,8 @@ export function AnnotationsRail({
               focused={focusedId === a.id}
               unplaceable={unplaceableIds.has(a.id)}
               onFocus={onFocusThread}
+              // S-001: forward the session user id so the card derives own-vs-others from authorId.
+              currentUserId={currentUserId}
               // S-003: bind the rail reply to THIS thread; the card hands us only the body.
               onReply={onReply ? (body) => onReply(a, body) : undefined}
               // S-004: bind resolve/reopen to THIS thread; the card hands us only the next state.

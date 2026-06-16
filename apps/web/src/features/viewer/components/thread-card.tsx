@@ -215,6 +215,7 @@ export function ThreadCard({
   focused,
   unplaceable,
   onFocus,
+  currentUserId,
   onReply,
   onResolve,
   onDecide,
@@ -223,6 +224,11 @@ export function ThreadCard({
   focused: boolean;
   unplaceable: boolean;
   onFocus: (id: string) => void;
+  /** annotation-actions-ui S-001 (C-001): the current session user id, for own-vs-others. An item is
+   *  marked OWN only when the annotation's durable `authorId` is non-null AND equals this — mirroring
+   *  the backend null-guard. A guest annotation (null `authorId`) matches no one; a signed-out viewer
+   *  (null/undefined here) owns nothing. The OWN flag NEVER derives from the root-comment author. */
+  currentUserId?: string | null;
   /** S-003: send a reply to THIS annotation. The consumer wires addComment({ body, parentId }) with
    *  parentId = the annotation's first comment. Absent → no reply affordance (read-only rail). */
   onReply?: (body: string) => unknown | Promise<unknown>;
@@ -254,6 +260,14 @@ export function ThreadCard({
   // (destructuring `undefined` throws "not iterable"). An empty thread renders quote-only.
   const [root, ...replies] = annotation.comments ?? [];
   const quote = annotation.anchor.textSnippet;
+
+  // annotation-actions-ui S-001 (C-001): own-vs-others from the DURABLE creator id. An item is the
+  // current user's own only when its `authorId` is non-null AND equals the session user id — the
+  // exact server null-guard (a null `authorId` is a guest, which matches no signed-in user, and a
+  // signed-out viewer has no id, so owns nothing). This is the keystone the later no-self-approve
+  // gate (S-002) + delete-own (S-003) build on, so it keys on `authorId` ONLY — never the root
+  // comment's author (which can differ, e.g. a reply moved to the front or a renamed display name).
+  const isOwn = annotation.authorId != null && annotation.authorId === currentUserId;
 
   // S-002 (C-002): a redline is a delete-kind suggestion. The DELETE badge + the owner Accept/Reject
   // row + the stale state derive from the served type + suggestion payload + suggestionStatus.
@@ -380,6 +394,7 @@ export function ThreadCard({
       tabIndex={0}
       data-testid="thread-card"
       data-anno-thread={annotation.id}
+      data-own={isOwn ? "true" : undefined}
       data-resolved={resolved ? "true" : undefined}
       aria-current={focused ? "true" : undefined}
       onClick={() => onFocus(annotation.id)}
@@ -426,6 +441,19 @@ export function ThreadCard({
             <Icon name={labelPreset.icon} size={12} />
           )}
           <span>{labelPreset.text}</span>
+        </div>
+      )}
+
+      {/* annotation-actions-ui S-001 (C-001): the OWN marker — shown only when this item's durable
+          `authorId` matches the current session user. It attributes the item to the current user
+          ("You") and is the visible basis for the later self-only affordances. A guest (null
+          `authorId`) or another member never reaches here, so it never mislabels them as own. */}
+      {isOwn && (
+        <div
+          data-testid="own-badge"
+          className="mb-[6px] inline-flex items-center rounded-[4px] bg-accent-soft px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-accent"
+        >
+          You
         </div>
       )}
 
