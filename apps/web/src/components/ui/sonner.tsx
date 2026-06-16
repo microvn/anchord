@@ -24,9 +24,13 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }}
       style={
         {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
+          // anchord uses its OWN design tokens (paper/ink/line — see styles.css), NOT shadcn's
+          // --popover/--border. Those shadcn vars are undefined here, which left the toast with no
+          // background/border/text colour (transparent). Point sonner at the real tokens so the
+          // toast matches the app's popover surface (bg-paper + border-line, like the overflow menu).
+          "--normal-bg": "var(--paper)",
+          "--normal-text": "var(--ink)",
+          "--normal-border": "var(--line)",
           "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }
