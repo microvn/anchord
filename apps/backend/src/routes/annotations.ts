@@ -424,6 +424,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         sessionRole,
         type: ("region" in body.anchor ? "block" : body.type ?? "range") as AnnotationType,
         label: body.label, // S-009: validated ∈ preset set in the service (AS-028).
+        // S-001/C-005 (AS-001): the durable creator — the session actor (this mount is
+        // session-required, so an actor always exists).
+        authorId: actor.userId,
       },
       annotationRepo,
     );
@@ -481,6 +484,8 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         to: body.to,
         againstVersion: body.againstVersion,
         sessionRole,
+        // S-001/C-005 (AS-001): the durable creator — the session actor (session-required mount).
+        authorId: actor.userId,
       },
       suggestionRepo,
     );
@@ -635,6 +640,10 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         sessionRole,
         type: ("region" in body.anchor ? "block" : body.type ?? "range") as AnnotationType,
         label: body.label, // S-009: validated ∈ preset set in the service (AS-028).
+        // S-001/C-005 (AS-001/AS-002): the durable creator — the session actor's id, or NULL
+        // for a guest (no account). That null is exactly the guest case (AS-002): no durable
+        // identity to own-gate against.
+        authorId: actor?.userId ?? null,
       },
       annotationRepo,
     );

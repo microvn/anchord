@@ -1,0 +1,2 @@
+ALTER TABLE "annotations" ADD COLUMN "author_id" text;--> statement-breakpoint
+ALTER TABLE "annotations" ADD CONSTRAINT "annotations_author_id_user_id_fk" FOREIGN KEY ("author_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;

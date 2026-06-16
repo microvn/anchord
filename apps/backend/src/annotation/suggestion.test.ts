@@ -99,6 +99,51 @@ test("AS-014 / C-003: create a replace suggestion — typed (replace, from->to),
   expect("setVersionContent" in repo).toBe(false);
 });
 
+test("AS-001: a member-created redline records the actor as the durable creator (author_id) at create", async () => {
+  // annotation-actions S-001: AS-001 spans "a comment OR a redline" — the suggestion (redline)
+  // create path must persist the creator just like the plain-annotation path. Mara creates it.
+  const repo = fakeRepo();
+
+  const res = await createSuggestion(
+    {
+      docId: "doc-mara",
+      anchor: ANCHOR,
+      from: "24h",
+      to: "48h",
+      againstVersion: 3,
+      sessionRole: "commenter",
+      authorId: "u-mara",
+    },
+    repo,
+  );
+
+  expect(res.created).toBe(true);
+  if (!res.created) throw new Error("expected created");
+  // C-005: the durable creator is written on the suggestion-type annotation at create.
+  expect(repo.store.get(res.id)!.authorId).toBe("u-mara");
+});
+
+test("AS-002: a guest-created redline has no account creator — author_id is null", async () => {
+  const repo = fakeRepo();
+
+  const res = await createSuggestion(
+    {
+      docId: "doc-guest",
+      anchor: ANCHOR,
+      from: "24h",
+      againstVersion: 3,
+      sessionRole: "commenter",
+      authorId: null,
+    },
+    repo,
+  );
+
+  expect(res.created).toBe(true);
+  if (!res.created) throw new Error("expected created");
+  // A guest has no durable identity → null, never a forged/borrowed one (AS-002).
+  expect(repo.store.get(res.id)!.authorId ?? null).toBeNull();
+});
+
 test("AS-014: a viewer cannot create a suggestion (server-side authz, nothing stored)", async () => {
   // Error path: viewer lacks "comment". Mirrors S-001 create — the repo is never touched.
   const repo = fakeRepo();

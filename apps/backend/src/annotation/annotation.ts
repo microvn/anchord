@@ -98,6 +98,14 @@ export interface AnnotationRow {
    */
   suggestion?: SuggestionPayload | null;
   suggestionStatus?: SuggestionStatus | null;
+  /**
+   * annotation-actions S-001 / C-005 (AS-001/AS-002): the durable creator identity,
+   * written AT CREATE from the session actor — the account user-id, or null for a guest.
+   * This is the SINGLE authoritative creator fact every own-vs-others gate keys on
+   * (delete-own, owner-no-self-approve); it is NOT derived from the root comment. Served
+   * on the read as `authorId`. Null/absent ⇒ a guest with no durable identity to own-gate.
+   */
+  authorId?: string | null;
 }
 
 /**
@@ -127,6 +135,11 @@ export interface NewAnnotation {
   anchor: Anchor;
   /** S-009 / C-015: the validated label-preset id, or null for an ordinary annotation. */
   label?: string | null;
+  /**
+   * annotation-actions S-001 / C-005: the creator's account user-id at create, or null
+   * for a guest. Persisted to annotations.author_id — the durable creator identity.
+   */
+  authorId?: string | null;
 }
 
 /**
@@ -162,6 +175,13 @@ export interface CreateAnnotationInput {
    * (AS-029) — structurally enforced by the separate suggestion-create endpoint.
    */
   label?: string | null;
+  /**
+   * annotation-actions S-001 / C-005 (AS-001/AS-002): the acting user's account id, resolved
+   * SERVER-side from the session — null for a guest (no account). Persisted verbatim as the
+   * annotation's durable creator (`author_id`). Like `sessionRole`, this comes from the actor,
+   * never a client/iframe-supplied claim; a null here is exactly the guest case (AS-002).
+   */
+  authorId?: string | null;
 }
 
 export type CreateAnnotationResult =
@@ -187,7 +207,7 @@ export async function createAnnotation(
   input: CreateAnnotationInput,
   repo: AnnotationRepo,
 ): Promise<CreateAnnotationResult> {
-  const { docId, anchor, sessionRole, type, label } = input;
+  const { docId, anchor, sessionRole, type, label, authorId } = input;
 
   // C-009/AS-020: server re-authorization. Only the session-resolved role gates the
   // write — a viewer/none session cannot create an annotation no matter what the
@@ -208,6 +228,8 @@ export async function createAnnotation(
     type: type ?? "range",
     anchor, // AS-003: the chosen block_id is stored verbatim.
     label: label ?? null, // AS-027: persisted; null for an ordinary annotation.
+    // S-001 / C-005 (AS-001/AS-002): the durable creator — the session actor, or null for a guest.
+    authorId: authorId ?? null,
   });
   return { created: true, id };
 }

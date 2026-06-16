@@ -42,6 +42,7 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
           type: input.type,
           anchor: input.anchor, // AS-003: stored verbatim with the chosen block_id.
           label: input.label ?? null, // S-009/AS-027: validated preset id, null if none.
+          authorId: input.authorId ?? null, // S-001/C-005: durable creator, null for a guest.
         })
         .returning({ id: annotations.id });
       return { id: row.id };
@@ -56,6 +57,7 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
           anchor: annotations.anchor,
           isOrphaned: annotations.isOrphaned,
           status: annotations.status,
+          authorId: annotations.authorId, // S-001/C-005: served on read as authorId (own-vs-others gate).
           label: annotations.label, // S-009/AS-027: served on read for the rail label line.
           // S-006/AS-030: served on read so the viewer renders the suggestion lifecycle.
           suggestion: annotations.suggestion,
@@ -74,6 +76,7 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
         anchor: r.anchor as Anchor,
         isOrphaned: r.isOrphaned,
         status: r.status,
+        authorId: r.authorId ?? null, // S-001/C-005: the durable creator; null for a guest.
         label: r.label, // null when unset (an ordinary annotation).
         // AS-030: null on a non-suggestion row; the payload + lifecycle on a suggestion.
         suggestion: (r.suggestion as SuggestionPayload | null) ?? null,
@@ -239,6 +242,7 @@ export function createSuggestionRepo(db: DB): SuggestionRepo {
           anchor: row.anchor,
           suggestion: row.suggestion,
           suggestionStatus: row.status, // default "pending" (AS-014).
+          authorId: row.authorId ?? null, // S-001/C-005: durable creator, null for a guest.
         })
         .returning({ id: annotations.id });
       return { id: inserted.id };

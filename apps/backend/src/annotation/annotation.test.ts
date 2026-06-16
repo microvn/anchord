@@ -272,6 +272,95 @@ test("AS-030: listAnnotations serves a suggestion's payload + status on the read
   expect(res.annotations[0].suggestionStatus).toBe("stale");
 });
 
+// ── annotation-actions S-001: persist + serve the creator identity (C-005) ──
+//
+// A round-trip fake: insertAnnotation persists the row (carrying authorId) into a store,
+// listByDoc serves it back — so a create-then-read asserts the DURABLE creator survives the
+// round trip and is served as authorId, exactly the AS-001/AS-002 contract.
+function roundTripRepo(): AnnotationRepo & { inserted: NewAnnotation[] } {
+  const store: AnnotationRow[] = [];
+  const inserted: NewAnnotation[] = [];
+  return {
+    inserted,
+    async insertAnnotation(input: NewAnnotation) {
+      inserted.push(input);
+      const id = `ann-${store.length + 1}`;
+      // The repo persists author_id and serves it on listByDoc as authorId (C-005).
+      store.push({
+        id,
+        docId: input.docId,
+        type: input.type,
+        anchor: input.anchor,
+        isOrphaned: false,
+        status: "unresolved",
+        label: input.label ?? null,
+        authorId: input.authorId ?? null,
+      });
+      return { id };
+    },
+    async listByDoc(docId: string) {
+      return store.filter((r) => r.docId === docId);
+    },
+    async listCommentsByDoc(_docId: string) {
+      return [];
+    },
+  };
+}
+
+test("AS-001: a member-created annotation records the actor as the durable creator and the read carries authorId = the member", async () => {
+  const repo = roundTripRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "redline me", offset: 0, length: 10 })!;
+
+  // Mara (a member) creates a comment/redline-style annotation; her id is the session actor.
+  const created = await createAnnotation(
+    { docId: "doc-mara", anchor, viewer: { kind: "user", userId: "u-mara" }, sessionRole: "commenter", authorId: "u-mara" },
+    repo,
+  );
+  expect(created.created).toBe(true);
+  // C-005: the creator is PERSISTED at create from the actor (not inferred from any comment).
+  expect(repo.inserted[0]!.authorId).toBe("u-mara");
+
+  // Then the doc's annotations are read → the read carries authorId = Mara.
+  const res = await listAnnotations({ docId: "doc-mara", canView: true }, repo);
+  expect(res.allowed).toBe(true);
+  expect(res.annotations[0]!.authorId).toBe("u-mara");
+});
+
+test("AS-002: a guest-created annotation has no account creator — author_id is null and authorId is absent on the read", async () => {
+  const repo = roundTripRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "guest note", offset: 0, length: 10 })!;
+
+  // A guest (anyone-with-link, no account) creates an annotation — the actor id is null.
+  const created = await createAnnotation(
+    { docId: "doc-guest", anchor, viewer: { kind: "anon" }, sessionRole: "commenter", authorId: null },
+    repo,
+  );
+  expect(created.created).toBe(true);
+  // The creator field is empty (a guest has no durable identity to own-gate against).
+  expect(repo.inserted[0]!.authorId).toBeNull();
+
+  const res = await listAnnotations({ docId: "doc-guest", canView: true }, repo);
+  expect(res.allowed).toBe(true);
+  // authorId is absent (served null) — never a forged/borrowed identity.
+  expect(res.annotations[0]!.authorId ?? null).toBeNull();
+});
+
+test("C-005: the creator is persisted at create — NOT derived from the root comment (no comment exists at create, yet authorId is set)", async () => {
+  const repo = roundTripRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  // createAnnotation inserts NO comment; the creator must still be recorded.
+  await createAnnotation(
+    { docId: "doc-c5", anchor, viewer: { kind: "user", userId: "u-creator" }, sessionRole: "commenter", authorId: "u-creator" },
+    repo,
+  );
+
+  const res = await listAnnotations({ docId: "doc-c5", canView: true }, repo);
+  // The annotation carries NO comments, yet authorId is the durable creator (column, not comment-derived).
+  expect(res.annotations[0]!.comments).toEqual([]);
+  expect(res.annotations[0]!.authorId).toBe("u-creator");
+});
+
 test("S-003: list attaches each annotation's comments[] thread (authorName | guestName)", async () => {
   const row: AnnotationRow = {
     id: "ann-1",

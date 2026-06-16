@@ -52,6 +52,12 @@ export interface SuggestionRow {
   anchor: Anchor;
   suggestion: SuggestionPayload;
   status: SuggestionStatus;
+  /**
+   * annotation-actions S-001 / C-005: the durable creator identity (the session actor's
+   * account id, or null for a guest), persisted at create on the suggestion-type annotation.
+   * Optional on the row shape so existing reads that don't select it stay valid.
+   */
+  authorId?: string | null;
 }
 
 /**
@@ -81,6 +87,12 @@ export interface CreateSuggestionInput {
    * ONLY this — authorizes the write; never a client/iframe-supplied claim.
    */
   sessionRole: Role;
+  /**
+   * annotation-actions S-001 / C-005 (AS-001/AS-002): the acting user's account id, resolved
+   * SERVER-side — null for a guest. Persisted as the suggestion's durable creator (`author_id`);
+   * never a client-supplied claim, mirroring `sessionRole`.
+   */
+  authorId?: string | null;
   /** Optional explicit id (the real repo generates one); tests pass a fixed id. */
   id?: string;
 }
@@ -104,7 +116,7 @@ export async function createSuggestion(
   input: CreateSuggestionInput,
   repo: SuggestionRepo,
 ): Promise<CreateSuggestionResult> {
-  const { docId, anchor, from, to, againstVersion, sessionRole, id } = input;
+  const { docId, anchor, from, to, againstVersion, sessionRole, authorId, id } = input;
 
   // C-003 authz path: a suggestion is a comment-class action; viewer is forbidden.
   if (!can(sessionRole, "comment")) {
@@ -123,6 +135,8 @@ export async function createSuggestion(
     anchor,
     suggestion: payload,
     status: "pending", // default status (AS-014)
+    // S-001 / C-005 (AS-001/AS-002): the durable creator — the session actor, or null for a guest.
+    authorId: authorId ?? null,
   };
 
   const { id: newId } = await repo.insertSuggestion(row);

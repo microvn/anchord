@@ -241,6 +241,14 @@ export const annotations = pgTable(
     type: annotationType("type").notNull(),
     // Anchor descriptor — see Anchor in src/annotation/annotation.ts.
     anchor: jsonb("anchor").notNull(),
+    // author_id (annotation-actions S-001 / C-005): the DURABLE creator identity, written
+    // AT CREATE from the session actor (createAnnotation / createSuggestion). NULL when the
+    // creator is a guest (no account). This is the SINGLE authoritative creator fact for
+    // own-vs-others gates (delete-own, owner-no-self-approve) — it is NOT derived from the
+    // root comment (which has no uniqueness/ordering guarantee and may not exist at create).
+    // Served on the read as `authorId`. FK → user.id (better-auth TEXT id); set null on user
+    // delete (mirrors comments.author_id) so a deleted account never orphans the annotation.
+    authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
     isOrphaned: boolean("is_orphaned").notNull().default(false),
     status: annotationStatus("status").notNull().default("unresolved"),
     // S-009 / C-015: a label-preset id on a SIGNAL annotation (comment/like/label) — a

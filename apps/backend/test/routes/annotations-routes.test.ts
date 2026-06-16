@@ -377,6 +377,65 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
   });
 });
 
+// ── annotation-actions S-001: persist the creator at create (C-005) ──────────
+describe("annotation-actions S-001: the creator identity is persisted at create", () => {
+  test("AS-001: a member create records the session actor as author_id (workspace mount, session-required)", async () => {
+    const ar = fakeAnnotationRepo();
+    // Mara is the session actor (u_member by default); her id is the durable creator.
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
+    );
+    expect(res.status).toBe(201);
+    // C-005: the creator is persisted from the session actor (NOT derived from any comment).
+    expect(ar.calls.inserts[0]?.authorId).toBe("u_member");
+  });
+
+  test("AS-002: a guest create (no session, doc mount) records a NULL author_id — no durable account creator", async () => {
+    const ar = fakeAnnotationRepo();
+    // Anon guest on an anyone_with_link doc, guest commenting on → the doc-scoped create
+    // handler runs with no session (actor id null = the guest case). The link grants a
+    // commenter role so the write is authorized (C-005); the creator is still null (AS-002).
+    const app = buildApp({
+      resolveSession: noSession,
+      annotationRepo: ar,
+      loadShareConfig: guestOn,
+      resolveAccess: async () => ({ role: "commenter", canView: true }),
+    });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
+    );
+    expect(res.status).toBe(201);
+    // AS-002: a guest has no account → author_id is null (absent durable identity).
+    expect(ar.calls.inserts[0]?.authorId ?? null).toBeNull();
+  });
+
+  test("AS-001: a member-created redline (suggestion) also records author_id = the session actor", async () => {
+    const sr = fakeSuggestionRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, suggestionRepo: sr });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/suggestions", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, from: "hello", to: "hi", againstVersion: 1 }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    // The redline create path threads the durable creator too (AS-001 spans comment OR redline).
+    expect(sr.calls.inserts[0]?.authorId).toBe("u_member");
+  });
+
+  test("AS-001: the GET read serves authorId on each annotation (own-vs-others gate reads it)", async () => {
+    const ar = fakeAnnotationRepo([
+      { id: "a1", docId: "doc_1", type: "range", anchor: TEXT_ANCHOR as any, isOrphaned: false, status: "unresolved", authorId: "u_mara" },
+    ]);
+    const app = buildApp({ resolveDocRole: asViewer, annotationRepo: ar });
+    const res = await app.handle(req("/api/w/ws_1/docs/doc-one/annotations"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.items[0].authorId).toBe("u_mara");
+  });
+});
+
 describe("GET /api/docs/:slug/annotations (S-001 read-authz)", () => {
   test("viewer+ lists → 200 { items, pagination }", async () => {
     const ar = fakeAnnotationRepo(
