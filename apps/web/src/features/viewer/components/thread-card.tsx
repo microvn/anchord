@@ -624,7 +624,7 @@ export function ThreadCard({
         </>
       )}
 
-      {(resolved || unplaceable || isRedline) && (
+      {(resolved || unplaceable || isRedline || (isProposal && sugStatus === "pending")) && (
         // .cmt-badges: 8px above, 6px gap. .sg-badge: mono 9px UPPERCASE pill, 4px radius.
         <div className="mt-2 flex flex-wrap gap-1.5">
           {/* S-002 (AS-004): a redline carries a DELETE type badge (red-tinted). */}
@@ -634,6 +634,22 @@ export function ThreadCard({
               className="rounded-[4px] bg-error/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-error"
             >
               Delete
+            </span>
+          )}
+          {/* annotation-actions-ui S-004 (AS-014/C-006): a PENDING proposal shows a Pending marker — it
+              awaits the owner's decision. Keyed on `isProposal && suggestionStatus === "pending"`, so it
+              is mutually exclusive with the decided (accepted/rejected) outcomes and the stale treatment
+              (each surfaces only on its own status). Pending is a NEUTRAL "awaiting" pill, NOT an outcome
+              colour — DESIGN.md pins detached/error/resolved status hues but not Pending, so this uses the
+              subtle-on-sunken neutral treatment ([→MANUAL]); it stays distinct from the success-tinted
+              Accepted, the error-tinted Rejected, and the muted-tinted Stale. A remark (no
+              suggestionStatus) never reaches here. */}
+          {isProposal && sugStatus === "pending" && (
+            <span
+              data-testid="redline-pending-badge"
+              className="rounded-[4px] bg-sunken px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-subtle"
+            >
+              Pending
             </span>
           )}
           {/* S-002 (AS-005/006): the decided outcome — accepted / rejected. */}
