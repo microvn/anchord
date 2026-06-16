@@ -168,27 +168,81 @@ test("AS-026 / C-016: a NON-OWNER (commenter) reopening a DECIDED suggestion is 
   expect(repo.suggestionResets).toHaveLength(0);
 });
 
-test("AS-026 / C-016: RESOLVING a decided suggestion (resolved=true) stays the ordinary commenter+ path (not owner-gated)", async () => {
-  // Only REOPEN of a decided suggestion is owner-only; resolving the thread is still C-005.
+test("AS-003 / C-003: a NON-OWNER resolving a decided proposal (resolved=true) is REFUSED — proposal close is owner-only (annotation-actions S-002 supersedes the old commenter+ path)", async () => {
+  // annotation-actions S-002 / C-003 REVERSES the old annotation-core behavior: closing a
+  // PROPOSAL (Accept/Reject IS its close) is owner-only in EVERY state — there is no commenter
+  // "Resolve" for a proposal. A commenter trying to resolve a decided proposal is now refused.
   const repo = fakeRepo("unresolved");
   const res = await setResolution(
-    { annotationId: "sug-1", resolved: true, sessionRole: "commenter", suggestionStatus: "accepted" },
+    { annotationId: "sug-1", resolved: true, sessionRole: "commenter", suggestionStatus: "accepted", isProposal: true },
+    repo,
+  );
+  expect(res).toEqual({ ok: false, reason: "forbidden" });
+  expect(repo.writes).toHaveLength(0); // untouched — proposal close is owner-only.
+});
+
+test("AS-003 / C-003: a NON-OWNER reopening a PENDING proposal is REFUSED (the F-3 hole closed) — was commenter-allowed, now owner-only", async () => {
+  // THE REGRESSION FIX (challenge F-3): a PENDING proposal used to fall through to the commenter
+  // `resolve` capability because the old code only owner-gated DECIDED suggestions. A pending
+  // proposal HAS a suggestion (status "pending") — `isProposal` is presence, not status — so it
+  // is now owner-only like any other proposal state.
+  const repo = fakeRepo("resolved");
+  const res = await setResolution(
+    { annotationId: "sug-1", resolved: false, sessionRole: "commenter", suggestionStatus: "pending", isProposal: true },
+    repo,
+  );
+  expect(res).toEqual({ ok: false, reason: "forbidden" });
+  expect(repo.writes).toHaveLength(0);
+  expect(repo.suggestionResets).toHaveLength(0);
+});
+
+test("AS-003 / C-003: a NON-OWNER resolving a PENDING proposal is REFUSED — owner-only to close in any state", async () => {
+  const repo = fakeRepo("unresolved");
+  const res = await setResolution(
+    { annotationId: "sug-1", resolved: true, sessionRole: "commenter", suggestionStatus: "pending", isProposal: true },
+    repo,
+  );
+  expect(res).toEqual({ ok: false, reason: "forbidden" });
+  expect(repo.writes).toHaveLength(0);
+});
+
+test("C-003: an EDITOR (not owner) cannot close a proposal either — owner-only is role-equality on owner, not capability", async () => {
+  // Edge: editor has the `resolve` capability for remarks, but a proposal is owner-ONLY, so an
+  // editor is refused in any proposal state (pending here).
+  const repo = fakeRepo("unresolved");
+  const res = await setResolution(
+    { annotationId: "sug-1", resolved: true, sessionRole: "editor", suggestionStatus: "pending", isProposal: true },
+    repo,
+  );
+  expect(res).toEqual({ ok: false, reason: "forbidden" });
+  expect(repo.writes).toHaveLength(0);
+});
+
+test("AS-006 / C-003: the OWNER closes a pending proposal by resolving it — ordinary toggle, no decision reset", async () => {
+  // S-002/S-003: the owner CAN resolve/close a proposal in any state. Resolving a still-pending
+  // proposal is the ordinary toggle (no accepted/rejected to clear), so suggestion_status is
+  // NOT reset — distinct from reopening a DECIDED proposal.
+  const repo = fakeRepo("unresolved");
+  const res = await setResolution(
+    { annotationId: "sug-1", resolved: true, sessionRole: "owner", suggestionStatus: "pending", isProposal: true },
     repo,
   );
   expect(res).toEqual({ ok: true, status: "resolved" });
-  expect(repo.suggestionResets).toHaveLength(0); // resolve never resets the decision
+  expect(repo.status).toBe("resolved");
+  expect(repo.suggestionResets).toHaveLength(0);
 });
 
-test("C-016: reopening a PENDING suggestion is the ordinary path — a commenter may toggle, no reset", async () => {
-  // A pending (un-decided) suggestion has no decision to clear, so its reopen is the ordinary
-  // commenter+ toggle (C-005), NOT the owner-gated reset.
-  const repo = fakeRepo("resolved");
+test("C-002: a REMARK (no suggestion) stays the commenter+ close path — isProposal false, can(resolve) applies", async () => {
+  // No-regression for remarks: with isProposal explicitly false (a comment/like/label has no
+  // suggestion), a commenter can still resolve — the annotation-core AS-009/AS-010 path holds,
+  // now scoped to remarks only.
+  const repo = fakeRepo("unresolved");
   const res = await setResolution(
-    { annotationId: "sug-1", resolved: false, sessionRole: "commenter", suggestionStatus: "pending" },
+    { annotationId: "ann-remark", resolved: true, sessionRole: "commenter", isProposal: false },
     repo,
   );
-  expect(res).toEqual({ ok: true, status: "unresolved" });
-  expect(repo.suggestionResets).toHaveLength(0);
+  expect(res).toEqual({ ok: true, status: "resolved" });
+  expect(repo.status).toBe("resolved");
 });
 
 test("AS-015: resolve / reopen on a SOFT-DELETED annotation is REFUSED (terminal) — reads as gone, status untouched", async () => {

@@ -494,12 +494,14 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const sug = await suggestionRepo.getSuggestion(params.id);
     const result = await setResolution(
       // S-005/C-007 (AS-015): a soft-deleted annotation is terminal — refuse resolve/reopen.
-      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status, deleted: found!.deletedAt != null },
+      // S-002/C-003 (AS-003): `isProposal` is suggestion PRESENCE — a proposal (in ANY state,
+      // incl. pending) is owner-only to close/resolve/reopen; a remark stays commenter+.
+      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status, isProposal: sug != null, deleted: found!.deletedAt != null },
       resolutionRepo,
     );
     // S-005/C-007: a deleted (terminal) annotation reads as gone → 404 (existence-hiding).
     if (!result.ok && result.reason === "not_found") throw new NotFoundError();
-    if (!result.ok) throw new ForbiddenError(); // viewer / non-owner decided-reopen → 403 (AS-010/AS-026)
+    if (!result.ok) throw new ForbiddenError(); // viewer / non-owner proposal close → 403 (AS-003/AS-010/AS-026)
     return { status: result.status };
   }
 
@@ -780,11 +782,13 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const sug = await suggestionRepo.getSuggestion(params.id);
     const result = await setResolution(
       // S-005/C-007 (AS-015): a soft-deleted annotation is terminal — refuse resolve/reopen.
-      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status, deleted: found!.deletedAt != null },
+      // S-002/C-003 (AS-003): `isProposal` is suggestion PRESENCE — a proposal (any state) is
+      // owner-only to close/resolve/reopen; a remark stays commenter+.
+      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status, isProposal: sug != null, deleted: found!.deletedAt != null },
       resolutionRepo,
     );
     if (!result.ok && result.reason === "not_found") throw new NotFoundError(); // deleted → 404
-    if (!result.ok) throw new ForbiddenError(); // viewer / non-owner decided-reopen → 403
+    if (!result.ok) throw new ForbiddenError(); // viewer / non-owner proposal close → 403
     return { status: result.status };
   }
 

@@ -46,12 +46,25 @@ export interface SetResolutionInput {
   sessionRole: Role;
   /**
    * S-006 / AS-026 / C-016: the suggestion lifecycle of this annotation WHEN it is a
-   * suggestion-type annotation; `undefined` for an ordinary annotation. Reopening
-   * (`resolved=false`) a DECIDED suggestion (accepted|rejected) is OWNER-only and ALSO
-   * resets `suggestion_status` → pending — distinct from an ordinary reopen, which any
-   * commenter may toggle (C-005). A still-pending suggestion reopens via the ordinary path.
+   * suggestion-type annotation; `undefined` for an ordinary annotation. A DECIDED suggestion
+   * (accepted|rejected) that is REOPENED ALSO resets `suggestion_status` → pending (the
+   * owner-only decision-reset path). The status no longer DECIDES proposal-vs-remark
+   * authority — that is `isProposal` (a pending proposal carries status `"pending"`, not
+   * `undefined`, so status would mis-classify it). Status only drives the reset-on-reopen.
    */
   suggestionStatus?: SuggestionStatus;
+  /**
+   * annotation-actions S-002 / C-001 / C-003: TRUE when this annotation is a PROPOSAL — it
+   * has a suggestion payload (Redline/Suggest), in ANY state (pending | accepted | rejected
+   * | stale). Derived from suggestion PRESENCE, never from the status value: a pending
+   * proposal has a suggestion (status `"pending"`), a remark has none. A proposal's
+   * close/resolve/reopen is OWNER-only in EVERY state (C-003) — a non-owner (even a
+   * commenter/editor) is refused; they may still reply (the reply route is separate). A
+   * Remark (`isProposal` false/omitted) keeps the ordinary `can(role,"resolve")` path
+   * (C-002, commenter+). When omitted, falls back to "a suggestionStatus was supplied" so
+   * existing decided-reopen callers stay correct.
+   */
+  isProposal?: boolean;
   /**
    * annotation-actions S-005 / C-007: true when this annotation has been soft-deleted
    * (`deleted_at` set). A soft-delete is TERMINAL — resolve/reopen on a deleted annotation
@@ -94,24 +107,41 @@ export async function setResolution(
     return { ok: false, reason: "not_found" };
   }
 
-  // AS-026 / C-016: reopening a DECIDED suggestion (accepted|rejected) is a DIFFERENT
-  // transition from the ordinary resolve toggle — OWNER-only, and it clears the decision
-  // (suggestion_status → pending). This guards against a non-owner resurfacing a decided
-  // proposal or leaving `status`/`suggestion_status` desynced. A non-owner — even a commenter
-  // who could toggle an ordinary thread — is refused here. Only REOPEN is gated this way;
-  // resolving the thread (resolved=true) stays the ordinary commenter+ path below.
-  const isDecidedSuggestion = suggestionStatus === "accepted" || suggestionStatus === "rejected";
-  if (isDecidedSuggestion && !resolved) {
+  // annotation-actions S-002 / C-001 / C-003: proposal-vs-remark is decided by suggestion
+  // PRESENCE, not by the status value — a PENDING proposal has a suggestion (status
+  // `"pending"`), so keying off the status would let it fall through to the commenter
+  // `resolve` capability (the F-3 hole). Explicit `isProposal` is authoritative; when a
+  // caller omits it we fall back to "a suggestionStatus was supplied", so the existing
+  // decided-reopen unit callers stay correct.
+  const isProposal = input.isProposal ?? suggestionStatus !== undefined;
+
+  // S-002 / C-003: a PROPOSAL's close/resolve/reopen is OWNER-only in EVERY state (pending,
+  // accepted, rejected, stale). A non-owner — even a commenter/editor with the `resolve`
+  // capability — cannot close someone's proposal; only the owner decides (Accept/Reject is the
+  // proposal's close). Reply stays orthogonal (a different route). This gate REPLACES the old
+  // decided-only special-case: the pending proposal no longer falls through to `can(...)`.
+  if (isProposal) {
     if (sessionRole !== "owner") {
       return { ok: false, reason: "forbidden" };
     }
-    await repo.setAnnotationStatus(annotationId, "unresolved");
-    await repo.resetSuggestionStatusToPending(annotationId);
-    return { ok: true, status: "unresolved", suggestionStatus: "pending" };
+    // AS-026 / C-016: an owner REOPENING a DECIDED proposal (accepted|rejected) ALSO clears the
+    // decision (suggestion_status → pending), so `status` and `suggestion_status` never desync.
+    const isDecided = suggestionStatus === "accepted" || suggestionStatus === "rejected";
+    if (isDecided && !resolved) {
+      await repo.setAnnotationStatus(annotationId, "unresolved");
+      await repo.resetSuggestionStatusToPending(annotationId);
+      return { ok: true, status: "unresolved", suggestionStatus: "pending" };
+    }
+    // Owner resolving/closing a proposal (or reopening a still-pending one): ordinary toggle,
+    // no decision to reset (S-003/AS-006 — the owner closes their own proposal by Resolve).
+    const status: AnnotationStatus = resolved ? "resolved" : "unresolved";
+    await repo.setAnnotationStatus(annotationId, status);
+    return { ok: true, status };
   }
 
-  // C-005: server-side re-authorization. A viewer (or any role lacking "resolve")
-  // cannot change the status, no matter what an untrusted client claimed.
+  // C-002 / C-005: server-side re-authorization for a REMARK. A viewer (or any role lacking
+  // "resolve") cannot change the status, no matter what an untrusted client claimed; a
+  // commenter+ may resolve/reopen a remark (NOT author-gated).
   if (!can(sessionRole, "resolve")) {
     return { ok: false, reason: "forbidden" };
   }

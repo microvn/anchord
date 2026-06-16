@@ -32,6 +32,7 @@ import type { AnnotationRepo, AnnotationRow, NewAnnotation, ViewerComment } from
 import type { CommentRepo, CommentRow, NewComment } from "../../src/annotation/reply";
 import type { GuestCommentRepo, NewGuestComment } from "../../src/annotation/guest";
 import type { ResolutionRepo, AnnotationStatus } from "../../src/annotation/resolve";
+import type { SuggestionRepo, SuggestionRow, SuggestionStatus } from "../../src/annotation/suggestion";
 import type { DeleteRepo, RestoreRepo } from "../../src/annotation/delete";
 import type { MailEnqueuer, NewNotification, NotifyRepo } from "../../src/notify/notify";
 
@@ -211,6 +212,9 @@ function buildApp(opts: {
   commentRepo?: ReturnType<typeof fakeCommentRepo>;
   guestCommentRepo?: ReturnType<typeof fakeGuestCommentRepo>;
   resolutionRepo?: ReturnType<typeof fakeResolutionRepo>;
+  // annotation-actions S-002: override the suggestion lookup so a PROPOSAL (suggestion present)
+  // can be seeded for the resolution route. Default (omitted) → getSuggestion returns null (remark).
+  suggestionRepo?: SuggestionRepo;
   deleteRepo?: ReturnType<typeof fakeDeleteRepo>;
   restoreRepo?: ReturnType<typeof fakeRestoreRepo>;
   annotationLookupRepo?: AnnotationLookupRepo;
@@ -233,7 +237,7 @@ function buildApp(opts: {
       resolutionRepo: (opts.resolutionRepo ?? fakeResolutionRepo()).repo,
       deleteRepo: (opts.deleteRepo ?? fakeDeleteRepo()).repo,
       restoreRepo: (opts.restoreRepo ?? fakeRestoreRepo()).repo,
-      suggestionRepo: {
+      suggestionRepo: opts.suggestionRepo ?? {
         async insertSuggestion() { return { id: "s" }; },
         async getSuggestion() { return null; },
         async setSuggestionStatus() {},
@@ -796,5 +800,179 @@ describe("AS-016 / C-007: restore a soft-deleted annotation — author or owner,
     const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1/restore", { method: "POST" }));
     expect(res.status).toBe(404);
     expect(rr.calls.restored).toHaveLength(0);
+  });
+});
+
+// ── annotation-actions S-002 / C-001 / C-003: a proposal is owner-closed, never ──────────
+//    commenter-resolved. The resolution route classifies family by suggestion PRESENCE
+//    (getSuggestion non-null = proposal). A proposal's resolve/close/reopen is OWNER-only
+//    in ANY state (pending OR decided); a remark stays commenter+. Reply is orthogonal.
+
+/** A suggestion lookup that makes the annotation a PROPOSAL in the given status (presence = proposal). */
+function suggestionRepoWithStatus(status: SuggestionStatus): SuggestionRepo {
+  const row: SuggestionRow = {
+    id: "ann_1",
+    docId: "doc_1",
+    type: "suggestion",
+    anchor: TEXT_ANCHOR as any,
+    suggestion: { kind: "delete", from: "hello", againstVersion: 1 },
+    status,
+  };
+  return {
+    async insertSuggestion() { return { id: "ann_1" }; },
+    async getSuggestion() { return row; },
+    async setSuggestionStatus() {},
+  };
+}
+
+const asOwnerRole = async (): Promise<Role | null> => "owner";
+
+describe("AS-003 / C-003: a non-owner cannot resolve/close a PROPOSAL in any state (pending AND decided); the owner can", () => {
+  test("AS-003: a commenter resolving a PENDING proposal → 403 (the F-3 hole closed), status untouched", async () => {
+    const rr = fakeResolutionRepo();
+    const app = buildApp({
+      resolveSession: member,
+      resolveDocRole: asCommenter,
+      suggestionRepo: suggestionRepoWithStatus("pending"),
+      resolutionRepo: rr,
+    });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(res.status).toBe(403);
+    expect(rr.calls.sets).toHaveLength(0); // pending proposal must NOT fall through to commenter resolve.
+  });
+
+  test("AS-003: a commenter resolving an ALREADY-DECIDED (accepted) proposal → 403, status untouched", async () => {
+    const rr = fakeResolutionRepo();
+    const app = buildApp({
+      resolveSession: member,
+      resolveDocRole: asCommenter,
+      suggestionRepo: suggestionRepoWithStatus("accepted"),
+      resolutionRepo: rr,
+    });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(res.status).toBe(403);
+    expect(rr.calls.sets).toHaveLength(0);
+  });
+
+  test("AS-003: the OWNER CAN close a pending proposal → 200, status resolved", async () => {
+    const rr = fakeResolutionRepo();
+    const app = buildApp({
+      resolveSession: member,
+      resolveDocRole: asOwnerRole,
+      suggestionRepo: suggestionRepoWithStatus("pending"),
+      resolutionRepo: rr,
+    });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.status).toBe("resolved");
+    expect(rr.calls.sets[0]).toEqual({ id: "ann_1", status: "resolved" });
+  });
+});
+
+describe("AS-004 / C-003: a non-owner can still REPLY to a proposal (reply route unaffected by the close-authority split)", () => {
+  test("AS-004: a commenter replies to a proposal → 201 (participation unchanged, only closing is owner-gated)", async () => {
+    const cr = fakeCommentRepo([
+      { id: "root", annotationId: "ann_1", parentId: null, authorId: "u_x", guestName: null, body: "root" },
+    ]);
+    const app = buildApp({
+      resolveSession: member,
+      resolveDocRole: asCommenter,
+      // the annotation IS a proposal — but the comment route never consults suggestion presence.
+      suggestionRepo: suggestionRepoWithStatus("pending"),
+      commentRepo: cr,
+    });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations/ann_1/comments", {
+        method: "POST",
+        body: JSON.stringify({ body: "agree, the title is redundant", parentId: "root" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(cr.calls.inserts[0]?.annotationId).toBe("ann_1");
+    expect(cr.calls.inserts[0]?.body).toBe("agree, the title is redundant");
+  });
+});
+
+describe("C-001 / C-002 / C-003: two families carry different close vocabularies — remark commenter-closable, proposal not", () => {
+  test("C-001: a remark (no suggestion) vs a proposal (suggestion) close differently for the SAME commenter", async () => {
+    // Remark: getSuggestion null → commenter CAN resolve (200).
+    const remarkRepo = fakeResolutionRepo();
+    const remarkApp = buildApp({
+      resolveSession: member,
+      resolveDocRole: asCommenter,
+      // default suggestionRepo (omitted) → getSuggestion null → REMARK.
+      resolutionRepo: remarkRepo,
+    });
+    const remarkRes = await remarkApp.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(remarkRes.status).toBe(200);
+    expect(remarkRepo.calls.sets[0]).toEqual({ id: "ann_1", status: "resolved" });
+
+    // Proposal: getSuggestion non-null → the SAME commenter is REFUSED (403).
+    const proposalRepo = fakeResolutionRepo();
+    const proposalApp = buildApp({
+      resolveSession: member,
+      resolveDocRole: asCommenter,
+      suggestionRepo: suggestionRepoWithStatus("pending"),
+      resolutionRepo: proposalRepo,
+    });
+    const proposalRes = await proposalApp.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(proposalRes.status).toBe(403);
+    expect(proposalRepo.calls.sets).toHaveLength(0);
+  });
+
+  test("C-002: a commenter CAN still resolve a REMARK (annotation-core AS-009/AS-010, no regression)", async () => {
+    const rr = fakeResolutionRepo();
+    const app = buildApp({
+      resolveSession: member,
+      resolveDocRole: asCommenter,
+      // no suggestionRepo override → remark.
+      resolutionRepo: rr,
+    });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(res.status).toBe(200);
+    expect(rr.calls.sets[0]).toEqual({ id: "ann_1", status: "resolved" });
+  });
+
+  test("C-003: proposal close owner-only; a non-owner can't resolve in any state; reopen of a decided proposal is owner-only", async () => {
+    // non-owner reopen of a decided proposal → 403 (was already owner-only; still holds).
+    const reopenRepo = fakeResolutionRepo();
+    const reopenApp = buildApp({
+      resolveSession: member,
+      resolveDocRole: asCommenter,
+      suggestionRepo: suggestionRepoWithStatus("rejected"),
+      resolutionRepo: reopenRepo,
+    });
+    const reopenRes = await reopenApp.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
+    );
+    expect(reopenRes.status).toBe(403);
+    expect(reopenRepo.calls.sets).toHaveLength(0);
+
+    // the OWNER reopening a decided proposal → 200 (resets to pending under the hood).
+    const ownerRepo = fakeResolutionRepo();
+    const ownerApp = buildApp({
+      resolveSession: member,
+      resolveDocRole: asOwnerRole,
+      suggestionRepo: suggestionRepoWithStatus("rejected"),
+      resolutionRepo: ownerRepo,
+    });
+    const ownerRes = await ownerApp.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: false }) }),
+    );
+    expect(ownerRes.status).toBe(200);
+    expect(ownerRepo.calls.sets[0]).toEqual({ id: "ann_1", status: "unresolved" });
   });
 });
