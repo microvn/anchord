@@ -32,7 +32,7 @@ export function DocPane({
   onSelectionRect?: (rect: { x: number; y: number; width: number; height: number }) => void;
   htmlFrameRef?: Ref<HtmlSandboxFrameHandle>;
   /** HTML-PLACE: the placeable annotation set to draw inside the iframe via the bridge (html only). */
-  htmlAnnotations?: { id: string; anchor: BridgeAnchor }[];
+  htmlAnnotations?: { id: string; anchor: BridgeAnchor; hue?: string }[];
   /** HTML-PLACE: an in-iframe placement failure → the rail badges only that id "couldn't place". */
   onHtmlPlaceFailed?: (id: string) => void;
 }) {

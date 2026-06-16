@@ -9,6 +9,7 @@ import {
   BLOCK_SELECTOR,
 } from "./sandbox-bridge";
 import { injectBlockIds } from "./block-id";
+import { CONTENT_SECURITY_POLICY } from "../render/sandbox";
 
 // annotation-core S-001 / GAP-004 — the in-iframe sandbox bridge (C-009/C-002/C-001).
 // The pure anchor walk/placement logic is unit-tested against a happy-dom Window (no real
@@ -280,6 +281,43 @@ test("bridge-serve: injectBridge neutralizes a hostile nonce in BOTH the attribu
   // Exactly one real (unescaped) </script> — the tag we appended ourselves.
   const closes = out.match(/<\/script>/gi) ?? [];
   expect(closes.length).toBe(1);
+});
+
+test("AS-001: injectBridge injects the .anno-mark highlight stylesheet so a drawn mark is not browser-yellow", () => {
+  const out = injectBridge(injectBlockIds("<p>Body text here</p>"), "nonce-css");
+  // A <style> carrying the .anno-mark rule set is injected (the iframe has none of the app's CSS,
+  // so without this the bare <mark> renders the browser-default yellow block, not the app treatment).
+  expect(out).toContain("<style>");
+  expect(out).toContain(".anno-mark");
+  // base accent treatment: the DESIGN.md accent teal value is inlined (no app tokens in the iframe).
+  expect(out).toContain("#37b3bd");
+  // the per-type/label hue rule reads the per-mark --mark-hue custom prop.
+  expect(out).toContain(".anno-mark[data-anno-hue]");
+  expect(out).toContain("var(--mark-hue)");
+  // the style comes BEFORE the bridge script so the rule set exists when marks are drawn.
+  expect(out.indexOf("<style>")).toBeLessThan(out.indexOf("<script"));
+});
+
+test("AS-002: the in-iframe draw applies class=anno-mark + the hue (data-anno-hue + --mark-hue) on a highlight", () => {
+  const script = bridgeScript("n-hue");
+  // The highlight handler sets the app class so the injected stylesheet applies (AS-001) and,
+  // when the message carries a hue, the hued-mark attributes mirroring the markdown mark (AS-002).
+  expect(script).toContain('setAttribute("class", "anno-mark")');
+  expect(script).toContain('setAttribute("data-anno-hue"');
+  expect(script).toContain('setProperty("--mark-hue"');
+});
+
+test("C-001: the injected style does NOT weaken the sandbox CSP — inline <style> allowed, no same-origin/style-src", () => {
+  // The served CSP stays `sandbox allow-scripts` (no allow-same-origin, no style-src directive) — an
+  // inline <style> is allowed under it, and the injection must not add any directive that would.
+  expect(CONTENT_SECURITY_POLICY).toBe("sandbox allow-scripts");
+  expect(CONTENT_SECURITY_POLICY).not.toContain("allow-same-origin");
+  expect(CONTENT_SECURITY_POLICY).not.toContain("style-src");
+  // Highlights are drawn ONLY by the in-iframe bridge over the port — the served content carries the
+  // bridge script + the style, never any parent-side DOM reach.
+  const out = injectBridge(injectBlockIds("<p>x</p>"), "n");
+  expect(out).toContain("<style>");
+  expect(out).toContain("anchord-bridge");
 });
 
 test("bridge-serve: generateNonce yields a non-empty unguessable-length token, unique per call", () => {

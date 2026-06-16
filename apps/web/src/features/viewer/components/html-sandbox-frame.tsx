@@ -36,7 +36,7 @@ export const HtmlSandboxFrame = forwardRef<
     /** HTML-PLACE: the current placeable annotation set. The parent can't draw <mark>s into the
      *  opaque iframe, so we post EACH anchor down the bridge once the handshake is ready and again
      *  whenever this set changes. Without this, existing HTML annotations are never highlighted. */
-    annotations?: { id: string; anchor: BridgeAnchor }[];
+    annotations?: { id: string; anchor: BridgeAnchor; hue?: string }[];
     /** HTML-PLACE: the in-iframe bridge couldn't place a posted highlight → surface it so the rail
      *  can badge only that annotation "couldn't place" (markdown reports this via the light-DOM placer). */
     onPlaceFailed?: (id: string) => void;
@@ -110,7 +110,7 @@ export const HtmlSandboxFrame = forwardRef<
     if (!ready || !annotations) return;
     const conn = connRef.current;
     if (!conn) return;
-    for (const a of annotations) conn.postHighlight(a.anchor, a.id);
+    for (const a of annotations) conn.postHighlight(a.anchor, a.id, a.hue);
   }, [ready, annotations]);
 
   useImperativeHandle(

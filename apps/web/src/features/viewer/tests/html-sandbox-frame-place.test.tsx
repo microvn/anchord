@@ -70,7 +70,35 @@ describe("HtmlSandboxFrame — post existing annotations to the bridge (HTML-PLA
     await waitFor(() => expect(highlightIds).toContain("a-3"));
   });
 
-  it("routes the bridge's place-failed (over the port) to the onPlaceFailed prop", async () => {
+  it("AS-002: the highlight message carries the hue for a hued annotation", async () => {
+    const iframe0 = "html-sandbox-frame";
+    const hued = [
+      { id: "h-amber", anchor: anchorOf("block-p-1"), hue: "#d68a3e" },
+      { id: "h-none", anchor: anchorOf("block-p-2") },
+    ];
+    render(<HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={hued} />);
+    const iframe = screen.getByTestId(iframe0) as HTMLIFrameElement;
+    const ch = new MessageChannel();
+    const byId: Record<string, string | undefined> = {};
+    ch.port1.onmessage = (e: MessageEvent) => {
+      const msg = e.data as { type?: string; annotationId?: string; hue?: string };
+      if (msg?.type === "highlight" && typeof msg.annotationId === "string") byId[msg.annotationId] = msg.hue;
+    };
+    act(() => {
+      window.dispatchEvent(
+        new window.MessageEvent("message", {
+          data: { source: "anchord-bridge", type: "ready", nonce: "n-1" },
+          source: iframe.contentWindow as Window,
+          ports: [ch.port2],
+        }),
+      );
+    });
+    await waitFor(() => expect(Object.keys(byId).length).toBe(2));
+    expect(byId["h-amber"]).toBe("#d68a3e");
+    expect(byId["h-none"]).toBeUndefined();
+  });
+
+  it("AS-003: routes the bridge's place-failed (over the port) to the onPlaceFailed prop (no mark, no crash)", async () => {
     const failed: string[] = [];
     render(
       <HtmlSandboxFrame

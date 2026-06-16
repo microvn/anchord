@@ -106,12 +106,14 @@ test("AS-022 / C-009: empty served content does not crash the route", async () =
   const app = appWithContent("", "html");
   const res = await get(app, "/v/v-1");
   expect(res.status).toBe(200);
-  // GAP-004: the /v serve path now always appends the in-iframe annotation bridge, so an
-  // empty doc serves the bridge script (not a literally-empty body) — the route still must
-  // not crash. The doc-content portion is empty; only our bridge <script> is present.
+  // GAP-004 + S-001: the /v serve path now always appends the in-iframe annotation bridge AND the
+  // highlight stylesheet, so an empty doc serves the style + bridge script (not a literally-empty
+  // body) — the route still must not crash. The doc-content portion is empty; only our injected
+  // <style> + bridge <script> are present.
   const body = await res.text();
   expect(body).toContain("anchord-bridge"); // bridge injected even for empty content
-  expect(body.startsWith("<script")).toBe(true); // nothing before the bridge → content was empty
+  expect(body).toContain(".anno-mark"); // S-001: highlight stylesheet injected too
+  expect(body.startsWith("<style>")).toBe(true); // nothing before the injected style → content was empty
 });
 
 // doc-access-routing S-006 — the share link opens the app; the bare server page is gone.

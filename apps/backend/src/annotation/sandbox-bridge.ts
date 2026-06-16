@@ -315,7 +315,7 @@ function levenshtein(a: string, b: string): number {
  *  - Over port1, bridge → parent: `{type:'selection', anchor, rect}` (anchor null when empty).
  *  - Over port1, bridge → parent on in-iframe scroll (rAF-throttled): `{type:'selection-rect', rect}`
  *    (rect null when the selection scrolled out of view → parent dismisses). MƯỢT TASK 3.
- *  - Over port1, parent → bridge: `{type:'highlight', anchor, annotationId}`.
+ *  - Over port1, parent → bridge: `{type:'highlight', anchor, annotationId, hue?}` (hue = the per-type/label mark colour).
  *  - Over port1, bridge → parent on placement failure: `{type:'place-failed', annotationId}`.
  *
  * The nonce is interpolated as a JSON string literal so it cannot break out of the script.
@@ -466,7 +466,19 @@ export function bridgeScript(nonce: string): string {
     if (msg.type === "highlight"){
       var marks = placeRange(msg.anchor);
       if (marks && marks.length){
-        for (var mi = 0; mi < marks.length; mi++) marks[mi].setAttribute("data-anno", String(msg.annotationId));
+        for (var mi = 0; mi < marks.length; mi++){
+          var mk = marks[mi];
+          mk.setAttribute("data-anno", String(msg.annotationId));
+          // S-001: give every mark the app's highlight class so the injected .anno-mark stylesheet
+          // applies — without it the bare <mark> renders the browser-default yellow block.
+          mk.setAttribute("class", "anno-mark");
+          // S-001/AS-002: carry the per-type/label hue (mirrors markdown's hued mark — data-anno-hue
+          // + the --mark-hue custom prop the .anno-mark[data-anno-hue] rule reads).
+          if (msg.hue){
+            mk.setAttribute("data-anno-hue", "true");
+            mk.style.setProperty("--mark-hue", String(msg.hue));
+          }
+        }
       } else { port.postMessage({ type: "place-failed", annotationId: msg.annotationId }); }
     }
   };
@@ -528,8 +540,35 @@ export function injectBridge(html: string, nonce: string): string {
   // prematurely close the tag in the HTML parser — escape the close-tag sequence so the
   // script stays one cohesive block regardless of its interpolated values (XSS defense).
   const body = bridgeScript(nonce).replace(/<\/(script)/gi, "<\\/$1");
-  return `${html}<script nonce="${escapeAttr(nonce)}">${body}</script>`;
+  // S-001: ALSO inject the highlight stylesheet. The opaque iframe has NONE of the app's tokens or
+  // styles, so a drawn <mark class="anno-mark"> would otherwise render the browser-default yellow.
+  // The CSP is `sandbox allow-scripts` with NO `style-src` (render/sandbox.ts) → an inline <style>
+  // is allowed (verified). Placed before the script so the rule set exists when marks are drawn.
+  return `${html}<style>${MARK_STYLESHEET}</style><script nonce="${escapeAttr(nonce)}">${body}</script>`;
 }
+
+/**
+ * MARK_STYLESHEET — the `.anno-mark` rule set injected into the served iframe so a drawn highlight
+ * reads in the app's visual language inside the opaque sandbox (S-001 / C-003).
+ *
+ * ⚠️ DUPLICATION (kept in sync BY VALUE, not by import). The canonical source is
+ * `apps/web/src/styles.css` `.anno-mark` — but the in-iframe bridge runs inside the sandbox and
+ * cannot import the app's CSS or its design tokens. So the rules + the DESIGN.md palette VALUES are
+ * inlined here: accent teal `#37b3bd`, the hue via `var(--mark-hue)` (set per-mark by the draw),
+ * resolved green / redline red carried for forward parity (S-002 fills their full state). If you
+ * touch `.anno-mark` in styles.css, mirror it here.
+ */
+export const MARK_STYLESHEET = [
+  // base: accent tint + bottom underline (mirrors styles.css .anno-mark; --accent inlined to teal).
+  ".anno-mark{background:color-mix(in oklab, #37b3bd 24%, transparent);border-bottom:1.5px solid #37b3bd;border-radius:2px;padding:0 1px;color:inherit;cursor:pointer;}",
+  ".anno-mark:hover{background:color-mix(in oklab, #37b3bd 38%, transparent);}",
+  // per-type/label hue: tint + underline from the per-mark --mark-hue custom prop.
+  ".anno-mark[data-anno-hue]{background:color-mix(in oklab, var(--mark-hue) 26%, transparent);border-bottom-color:var(--mark-hue);}",
+  ".anno-mark[data-anno-hue]:hover{background:color-mix(in oklab, var(--mark-hue) 40%, transparent);}",
+  // adjacent-mark padding collapse so a multi-node run reads as one continuous highlight.
+  ".anno-mark + .anno-mark{padding-left:0;}",
+  ".anno-mark:has(+ .anno-mark){padding-right:0;}",
+].join("");
 
 /** Escape a value for safe use inside a double-quoted HTML attribute. */
 function escapeAttr(value: string): string {

@@ -775,7 +775,7 @@ function useAnnotations(
   prependAnnotation: (real: ViewerAnnotation) => void;
   /** HTML-PLACE: the placeable anchors to post down the iframe bridge (html docs only draw this way).
    *  Non-orphaned, anchored annotations mapped to the bridge's `{id, anchor}` shape. */
-  htmlPlaceable: { id: string; anchor: BridgeAnchor }[];
+  htmlPlaceable: { id: string; anchor: BridgeAnchor; hue?: string }[];
   /** HTML-PLACE: route an in-iframe placement failure to the rail's couldn't-place badge (additive). */
   reportUnplaceableHtml: (id: string) => void;
   railProps: {
@@ -875,7 +875,9 @@ function useAnnotations(
     () =>
       placeable
         .filter((a) => !a.isOrphaned)
-        .map((a) => ({ id: a.id, anchor: a.anchor as BridgeAnchor })),
+        // S-001/AS-002: carry the SAME per-type/label hue derived above (Comment amber / Label gold /
+        // redline none / default teal) so the in-iframe mark matches the markdown hued mark.
+        .map((a) => ({ id: a.id, anchor: a.anchor as BridgeAnchor, hue: a.hue })),
     [placeable],
   );
 

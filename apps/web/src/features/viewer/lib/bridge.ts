@@ -102,8 +102,9 @@ export function isTrustedReady(event: ReadyLikeEvent, iframeWindow: unknown): bo
 
 /** The live bridge connection the parent talks over. */
 export interface BridgeConnection {
-  /** Send a highlight DOWN the port so the in-iframe bridge wraps the range in a <mark>. */
-  postHighlight: (anchor: BridgeAnchor, annotationId: string) => void;
+  /** Send a highlight DOWN the port so the in-iframe bridge wraps the range in a <mark>. `hue` (the
+   *  per-type/label mark colour) is applied as the mark's --mark-hue so it matches the markdown mark. */
+  postHighlight: (anchor: BridgeAnchor, annotationId: string, hue?: string) => void;
   /** True once the handshake has been accepted and the port captured. */
   isConnected: () => boolean;
   /** Remove the window listener + close the port. Idempotent. */
@@ -174,10 +175,11 @@ export function connectBridge(
   win.addEventListener("message", onWindowMessage);
 
   return {
-    postHighlight(anchor, annotationId) {
+    postHighlight(anchor, annotationId, hue) {
       // The parent cannot draw into the opaque iframe; it asks the in-iframe bridge to, over the
-      // port. No port yet (handshake not done) → nothing to do.
-      port?.postMessage({ type: "highlight", anchor, annotationId });
+      // port. No port yet (handshake not done) → nothing to do. `hue` carries the per-type/label
+      // mark colour (S-001/AS-002) so the in-iframe mark matches the markdown hued mark.
+      port?.postMessage({ type: "highlight", anchor, annotationId, hue });
     },
     isConnected() {
       return port !== null;
