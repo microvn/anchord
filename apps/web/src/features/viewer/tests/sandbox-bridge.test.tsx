@@ -257,6 +257,34 @@ describe("connectBridge (S-002 parent transport)", () => {
     conn.dispose();
   });
 
+  it("AS-009 (C-002): postHighlights sends a {type:'highlights', items} batch DOWN the port (full-set sync)", async () => {
+    const contentWindow = {} as Window;
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}) });
+    const { ch, ev } = handshake(contentWindow);
+    window.dispatchEvent(ev);
+    let received: { type?: string; items?: { annotationId: string }[] } | null = null;
+    ch.port1.onmessage = (e: MessageEvent) => {
+      received = e.data as typeof received;
+    };
+    conn.postHighlights([
+      { anchor: HTML_ANCHOR, annotationId: "a-1" },
+      { anchor: HTML_ANCHOR, annotationId: "a-2", hue: "#d68a3e" },
+    ]);
+    await waitFor(() => expect(received).not.toBeNull());
+    expect(received!.type).toBe("highlights");
+    expect(received!.items!.map((i) => i.annotationId)).toEqual(["a-1", "a-2"]);
+    conn.dispose();
+  });
+
+  it("AS-010 (C-002): postHighlights no-ops before the handshake (no port yet) — never throws", () => {
+    const contentWindow = {} as Window;
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}) });
+    // No handshake dispatched → no port. Posting the set must silently drop (like postHighlight).
+    expect(() => conn.postHighlights([{ anchor: HTML_ANCHOR, annotationId: "a-1" }])).not.toThrow();
+    expect(conn.isConnected()).toBe(false);
+    conn.dispose();
+  });
+
   it("C-002: only the FIRST trusted ready binds the transport — a later ready is ignored", async () => {
     const contentWindow = {} as Window;
     const onSelection = mock(() => {});

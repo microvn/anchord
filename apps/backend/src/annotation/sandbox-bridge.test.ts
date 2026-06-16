@@ -6,6 +6,7 @@ import {
   bridgeScript,
   injectBridge,
   generateNonce,
+  unwrapAnnoMarks,
   BLOCK_SELECTOR,
 } from "./sandbox-bridge";
 import { injectBlockIds } from "./block-id";
@@ -330,4 +331,53 @@ test("bridge-serve: generateNonce yields a non-empty unguessable-length token, u
 test("bridge-serve: BLOCK_SELECTOR matches both block-id attribute forms", () => {
   expect(BLOCK_SELECTOR).toContain("data-block-id");
   expect(BLOCK_SELECTOR).toContain('id^="block-"');
+});
+
+// ---------------------------------------------------------------------------
+// S-003 — clear-then-redraw: unwrapAnnoMarks restores text + the {type:'highlights'} handler.
+// ---------------------------------------------------------------------------
+
+test("C-002: unwrapAnnoMarks removes every mark[data-anno] and restores the original text", () => {
+  // A block with two anno marks wrapping parts of the text + a plain (non-anno) mark left alone.
+  const { doc } = dom(
+    '<p id="block-p-1">Payment <mark data-anno="a-1" class="anno-mark">expires</mark> after <mark data-anno="a-2" class="anno-mark">24h</mark> total</p>',
+  );
+  unwrapAnnoMarks(doc as any);
+  const p = (doc as any).querySelector("p");
+  // No anno marks remain; the surrounding text is intact (the childNodes were moved out + normalized).
+  expect(p.querySelectorAll("mark[data-anno]").length).toBe(0);
+  expect(p.textContent).toBe("Payment expires after 24h total");
+});
+
+test("C-002: unwrapAnnoMarks leaves a non-anno <mark> untouched", () => {
+  const { doc } = dom('<p id="block-p-1">a <mark>plain</mark> b <mark data-anno="x" class="anno-mark">anno</mark> c</p>');
+  unwrapAnnoMarks(doc as any);
+  const p = (doc as any).querySelector("p");
+  // The plain mark survives; only the data-anno one was unwrapped.
+  expect(p.querySelectorAll("mark").length).toBe(1);
+  expect(p.querySelector("mark")!.textContent).toBe("plain");
+  expect(p.textContent).toBe("a plain b anno c");
+});
+
+test("C-002: unwrapAnnoMarks on a doc with no anno marks is a no-op (idempotent, no throw)", () => {
+  const { doc } = dom('<p id="block-p-1">nothing to unwrap here</p>');
+  expect(() => unwrapAnnoMarks(doc as any)).not.toThrow();
+  expect((doc as any).querySelector("p").textContent).toBe("nothing to unwrap here");
+});
+
+test("AS-007 (C-002): the bridge handles a batch {type:'highlights'} message — unwrap-all THEN redraw the set", () => {
+  const script = bridgeScript("n-batch");
+  // The new batch message shape the parent sends the FULL current set with.
+  expect(script).toContain('"highlights"');
+  expect(script).toContain("items");
+  // It unwraps every existing anno mark first (clear), then draws each item (redraw) — idempotent.
+  expect(script).toContain("unwrapAllAnnoMarks");
+  expect(script).toContain('mark[data-anno]');
+});
+
+test("AS-009 (C-002): the single {type:'highlight'} handler still works (back-compat)", () => {
+  const script = bridgeScript("n-compat");
+  // The batch path is additive — the single-highlight handler is kept so existing callers work.
+  expect(script).toContain('msg.type === "highlight"');
+  expect(script).toContain('msg.type === "highlights"');
 });

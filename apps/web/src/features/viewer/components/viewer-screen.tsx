@@ -844,6 +844,16 @@ function useAnnotations(
   const reportUnplaceableHtml = useCallback((id: string) => {
     setUnplaceableIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   }, []);
+  // S-003 (C-002): the in-iframe sync is clear-then-redraw and re-posts place-failed for the
+  // genuinely-unplaceable items of EACH sync. So the HTML-unplaceable set must be RESET at the start
+  // of every sync — otherwise it is additive-only and an id that became placeable again (a restore,
+  // or a re-anchor that now matches) would stay falsely flagged. We clear it whenever the posted HTML
+  // set changes; the place-failed callbacks from that sync then repopulate only the real misses.
+  // For an HTML doc the markdown placer is fed EMPTY_PLACEABLE and never touches this set, so the
+  // reset is HTML-owned and never clobbers markdown's unplaceable (the two never coexist on one doc).
+  const resetUnplaceableHtml = useCallback(() => {
+    setUnplaceableIds((prev) => (prev.size === 0 ? prev : new Set()));
+  }, []);
 
   // S-002 (C-002/AS-007): derive the redline kind + stale flag onto each placeable annotation so the
   // mark renders the red strike (a delete-kind suggestion) or the muted-dashed stale style (a drifted
@@ -880,6 +890,18 @@ function useAnnotations(
         .map((a) => ({ id: a.id, anchor: a.anchor as BridgeAnchor, hue: a.hue })),
     [placeable],
   );
+
+  // S-003 (C-002): reset the HTML-unplaceable set at the START of each in-iframe sync (the posted set
+  // changed). The frame's clear-then-redraw re-posts place-failed for the real misses of this sync,
+  // which repopulate the set — so a now-placeable id (restored / re-anchored) clears instead of
+  // lingering. Keyed on the id list so it fires exactly when the synced set changes. Gated on
+  // !isMarkdown (the iframe-drawn path — html/image): a markdown doc places via the light-DOM placer
+  // + reportUnplaceable and never wires reportUnplaceableHtml, so resetting there would clobber it.
+  const htmlIdsKey = !isMarkdown ? htmlPlaceable.map((a) => a.id).join(",") : "";
+  useEffect(() => {
+    if (isMarkdown) return;
+    resetUnplaceableHtml();
+  }, [isMarkdown, htmlIdsKey, resetUnplaceableHtml]);
 
   // Place marks + wire click-on-highlight → focus thread (AS-008) AND open the rail drawer (AS-014).
   // HTML-PLACE: the light-DOM placer is MARKDOWN-only. For an HTML doc the content lives inside the

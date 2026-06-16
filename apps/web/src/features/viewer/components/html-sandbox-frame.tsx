@@ -102,15 +102,18 @@ export const HtmlSandboxFrame = forwardRef<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Boolean(onSelection), hasAnnotations]);
 
-  // HTML-PLACE: once the bridge is ready, post EVERY existing annotation's anchor down the port so
-  // the in-iframe bridge draws a <mark> for each (the parent can't draw into the opaque iframe). Re-runs
-  // when `annotations` changes (a create/delete) — re-posting an already-drawn id is a no-op in-iframe
-  // (the bridge re-locates + re-wraps), and a genuinely-unplaceable one posts place-failed → the rail.
+  // S-003 (C-002): once the bridge is ready, post the FULL current annotation set down the port as
+  // ONE clear-then-redraw batch (postHighlights) — the in-iframe bridge unwraps ALL existing anno
+  // marks then draws this set. Re-runs when `annotations` changes (create/delete/restore): an id
+  // absent from the set has its mark REMOVED (the delete-removes-highlight fix, AS-007), a restored
+  // id reappears (AS-008), a new id is added without disturbing the others (AS-009) — idempotent, no
+  // duplicate or dropped marks. The parent can't draw into the opaque iframe, so this batch is the
+  // only draw path; a genuinely-unplaceable item posts place-failed per sync → the rail.
   useEffect(() => {
     if (!ready || !annotations) return;
     const conn = connRef.current;
     if (!conn) return;
-    for (const a of annotations) conn.postHighlight(a.anchor, a.id, a.hue);
+    conn.postHighlights(annotations.map((a) => ({ anchor: a.anchor, annotationId: a.id, hue: a.hue })));
   }, [ready, annotations]);
 
   useImperativeHandle(

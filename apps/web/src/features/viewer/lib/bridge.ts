@@ -105,6 +105,11 @@ export interface BridgeConnection {
   /** Send a highlight DOWN the port so the in-iframe bridge wraps the range in a <mark>. `hue` (the
    *  per-type/label mark colour) is applied as the mark's --mark-hue so it matches the markdown mark. */
   postHighlight: (anchor: BridgeAnchor, annotationId: string, hue?: string) => void;
+  /** S-003: send the FULL current highlight set DOWN the port as one batch so the in-iframe bridge
+   *  runs a clear-then-redraw (unwrap ALL anno marks, then draw the set) — idempotent (C-002): a
+   *  deleted id (absent from `items`) has its mark removed, a restored/new id is (re)drawn, with no
+   *  duplicates. No-op before the handshake (no port yet), like `postHighlight`. */
+  postHighlights: (items: { anchor: BridgeAnchor; annotationId: string; hue?: string }[]) => void;
   /** True once the handshake has been accepted and the port captured. */
   isConnected: () => boolean;
   /** Remove the window listener + close the port. Idempotent. */
@@ -180,6 +185,12 @@ export function connectBridge(
       // port. No port yet (handshake not done) → nothing to do. `hue` carries the per-type/label
       // mark colour (S-001/AS-002) so the in-iframe mark matches the markdown hued mark.
       port?.postMessage({ type: "highlight", anchor, annotationId, hue });
+    },
+    postHighlights(items) {
+      // S-003: one batch carrying the WHOLE live set → the in-iframe bridge unwraps all anno marks
+      // then redraws this set (clear-then-redraw, C-002). No port yet (pre-handshake) → drop, like
+      // postHighlight, so a naive post-on-mount can't race the handshake.
+      port?.postMessage({ type: "highlights", items });
     },
     isConnected() {
       return port !== null;

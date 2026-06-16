@@ -25,14 +25,18 @@ const ANNOS = [
   { id: "a-2", anchor: anchorOf("block-p-2") },
 ];
 
-/** Drive the iframe handshake and return the in-iframe port + a live list of highlight ids posted. */
+/** Drive the iframe handshake and return the in-iframe port + a live list of highlight ids posted.
+ *  S-003: the frame now sends the FULL set in ONE {type:'highlights'} batch (clear-then-redraw), so
+ *  we accumulate the ids of EACH batch's items (the latest batch is the live set). */
 function handshakeAndCollect(): { port: MessagePort; highlightIds: string[] } {
   const iframe = screen.getByTestId("html-sandbox-frame") as HTMLIFrameElement;
   const ch = new MessageChannel();
   const highlightIds: string[] = [];
   ch.port1.onmessage = (e: MessageEvent) => {
-    const msg = e.data as { type?: string; annotationId?: string };
-    if (msg?.type === "highlight" && typeof msg.annotationId === "string") highlightIds.push(msg.annotationId);
+    const msg = e.data as { type?: string; items?: { annotationId: string }[] };
+    if (msg?.type === "highlights" && Array.isArray(msg.items)) {
+      for (const i of msg.items) highlightIds.push(i.annotationId);
+    }
   };
   act(() => {
     window.dispatchEvent(
@@ -81,8 +85,11 @@ describe("HtmlSandboxFrame — post existing annotations to the bridge (HTML-PLA
     const ch = new MessageChannel();
     const byId: Record<string, string | undefined> = {};
     ch.port1.onmessage = (e: MessageEvent) => {
-      const msg = e.data as { type?: string; annotationId?: string; hue?: string };
-      if (msg?.type === "highlight" && typeof msg.annotationId === "string") byId[msg.annotationId] = msg.hue;
+      // S-003: hue rides each item of the full-set {type:'highlights'} batch.
+      const msg = e.data as { type?: string; items?: { annotationId: string; hue?: string }[] };
+      if (msg?.type === "highlights" && Array.isArray(msg.items)) {
+        for (const i of msg.items) byId[i.annotationId] = i.hue;
+      }
     };
     act(() => {
       window.dispatchEvent(
@@ -113,5 +120,80 @@ describe("HtmlSandboxFrame — post existing annotations to the bridge (HTML-PLA
       port.postMessage({ type: "place-failed", annotationId: "a-2" });
     });
     await waitFor(() => expect(failed).toEqual(["a-2"]));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// S-003 — clear-then-redraw sync: the frame posts the FULL current set as ONE batch
+// {type:'highlights'} on ready + on change, so a deleted id is excluded (its mark removed in-iframe).
+// ---------------------------------------------------------------------------------------------
+
+/** Drive the handshake and collect each {type:'highlights'} batch's id list, in arrival order. */
+function handshakeAndCollectBatches(): { port: MessagePort; batches: string[][] } {
+  const iframe = screen.getByTestId("html-sandbox-frame") as HTMLIFrameElement;
+  const ch = new MessageChannel();
+  const batches: string[][] = [];
+  ch.port1.onmessage = (e: MessageEvent) => {
+    const msg = e.data as { type?: string; items?: { annotationId: string }[] };
+    if (msg?.type === "highlights" && Array.isArray(msg.items)) {
+      batches.push(msg.items.map((i) => i.annotationId));
+    }
+  };
+  act(() => {
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { source: "anchord-bridge", type: "ready", nonce: "n-1" },
+        source: iframe.contentWindow as Window,
+        ports: [ch.port2],
+      }),
+    );
+  });
+  return { port: ch.port1, batches };
+}
+
+describe("HtmlSandboxFrame — full-set clear-then-redraw sync (S-003)", () => {
+  it("AS-009 (C-002): posts the FULL current set as one {type:'highlights'} batch on ready", async () => {
+    render(<HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={ANNOS} />);
+    const { batches } = handshakeAndCollectBatches();
+    await waitFor(() => expect(batches.length).toBeGreaterThanOrEqual(1));
+    // The latest batch carries the WHOLE set (idempotent — no per-id dribble, no dups/drops).
+    expect([...batches.at(-1)!].sort()).toEqual(["a-1", "a-2"]);
+  });
+
+  it("AS-007: after an id is removed the new full-set batch EXCLUDES it (mark removed in-iframe)", async () => {
+    const { rerender } = render(
+      <HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={ANNOS} />,
+    );
+    const { batches } = handshakeAndCollectBatches();
+    await waitFor(() => expect(batches.at(-1)).toBeDefined());
+
+    // Delete a-2 → the set is now just a-1. The next batch must be exactly [a-1] (a-2 is gone, so
+    // the clear-then-redraw drops its mark; a-1 stays).
+    rerender(<HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={[ANNOS[0]!]} />);
+    await waitFor(() => expect(batches.at(-1)).toEqual(["a-1"]));
+    expect(batches.at(-1)).not.toContain("a-2");
+  });
+
+  it("AS-009: creating one amid existing leaves the others — the next batch is the full new set", async () => {
+    const { rerender } = render(
+      <HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={ANNOS} />,
+    );
+    const { batches } = handshakeAndCollectBatches();
+    await waitFor(() => expect(batches.at(-1)).toBeDefined());
+
+    const next = [...ANNOS, { id: "a-3", anchor: anchorOf("block-p-3") }];
+    rerender(<HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={next} />);
+    await waitFor(() => expect([...batches.at(-1)!].sort()).toEqual(["a-1", "a-2", "a-3"]));
+  });
+
+  it("AS-008: restoring a previously-removed id re-includes it in the next full-set batch", async () => {
+    const { rerender } = render(
+      <HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={[ANNOS[0]!]} />,
+    );
+    const { batches } = handshakeAndCollectBatches();
+    await waitFor(() => expect(batches.at(-1)).toEqual(["a-1"]));
+    // Restore a-2 → the next batch contains it again.
+    rerender(<HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={ANNOS} />);
+    await waitFor(() => expect([...batches.at(-1)!].sort()).toEqual(["a-1", "a-2"]));
   });
 });

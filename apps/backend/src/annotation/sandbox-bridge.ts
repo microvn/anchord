@@ -72,7 +72,43 @@ interface DocumentLike {
   querySelector(selector: string): ElementLike | null;
 }
 
+// --- DOM mutation types for the unwrap (S-003 / C-002). Kept minimal so this still type-checks
+// server-side without `lib.dom`; happy-dom / jsdom / a real browser all satisfy them.
+interface UnwrapNodeLike {
+  parentNode: UnwrapNodeLike | null;
+  firstChild: UnwrapNodeLike | null;
+  insertBefore(node: UnwrapNodeLike, ref: UnwrapNodeLike | null): UnwrapNodeLike;
+  removeChild(node: UnwrapNodeLike): UnwrapNodeLike;
+  normalize(): void;
+}
+interface UnwrapDocumentLike {
+  querySelectorAll(selector: string): ArrayLike<UnwrapNodeLike>;
+}
+
 const ELEMENT_NODE = 1;
+
+/**
+ * unwrapAnnoMarks — remove EVERY `mark[data-anno]` from the document, moving each mark's child
+ * nodes out before it, then `.normalize()` the parent so adjacent text nodes re-merge (C-002).
+ * This is the "clear" half of the idempotent clear-then-redraw sync: after it, the document holds
+ * the original text with no annotation marks, so the redraw can rebuild the live set with no stale
+ * or duplicate marks. A non-anno `<mark>` is left untouched (selector is `[data-anno]` only). No-op
+ * and never throws when there are no anno marks.
+ *
+ * Pure DOM transform (no globals) so it unit-tests under happy-dom and mirrors the IIFE copy
+ * (`unwrapAllAnnoMarks`) inlined into the bridge for the real browser.
+ */
+export function unwrapAnnoMarks(doc: UnwrapDocumentLike): void {
+  const marks = Array.from(doc.querySelectorAll("mark[data-anno]"));
+  for (const mark of marks) {
+    const parent = mark.parentNode;
+    if (!parent) continue;
+    // Move each child node out before the mark, in order, then drop the now-empty mark.
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+    parent.removeChild(mark);
+    parent.normalize();
+  }
+}
 
 /** The block id of an element, from either attribute form. Null if it carries neither. */
 function blockIdOf(el: ElementLike): string | null {
@@ -316,6 +352,8 @@ function levenshtein(a: string, b: string): number {
  *  - Over port1, bridge → parent on in-iframe scroll (rAF-throttled): `{type:'selection-rect', rect}`
  *    (rect null when the selection scrolled out of view → parent dismisses). MƯỢT TASK 3.
  *  - Over port1, parent → bridge: `{type:'highlight', anchor, annotationId, hue?}` (hue = the per-type/label mark colour).
+ *  - Over port1, parent → bridge (S-003): `{type:'highlights', items:[{anchor, annotationId, hue?}]}` —
+ *    a FULL-set clear-then-redraw sync (unwrap all anno marks, then draw the set; idempotent — C-002).
  *  - Over port1, bridge → parent on placement failure: `{type:'place-failed', annotationId}`.
  *
  * The nonce is interpolated as a JSON string literal so it cannot break out of the script.
@@ -461,25 +499,58 @@ export function bridgeScript(nonce: string): string {
     port.postMessage({ type: "selection", anchor: anchor, rect: rect });
   }
 
+  // S-003 (C-002): unwrap EVERY existing anno mark — the "clear" half of the idempotent
+  // clear-then-redraw sync. Move each mark's children out before it, drop the mark, normalize the
+  // parent so split text nodes re-merge. A non-anno <mark> is left alone. Mirrors unwrapAnnoMarks().
+  function unwrapAllAnnoMarks(){
+    var marks = Array.prototype.slice.call(document.querySelectorAll("mark[data-anno]"));
+    for (var i = 0; i < marks.length; i++){
+      var mk = marks[i];
+      var parent = mk.parentNode;
+      if (!parent) continue;
+      while (mk.firstChild) parent.insertBefore(mk.firstChild, mk);
+      parent.removeChild(mk);
+      if (parent.normalize) parent.normalize();
+    }
+  }
+
+  // S-001/S-003: draw ONE highlight from a {anchor, annotationId, hue?} item. Returns true if it
+  // placed (>=1 mark), false on a placement miss (the caller relays place-failed). Reused by both
+  // the single {highlight} handler (back-compat) and the batch {highlights} redraw.
+  function drawHighlight(item){
+    var marks = placeRange(item.anchor);
+    if (!marks || !marks.length) return false;
+    for (var mi = 0; mi < marks.length; mi++){
+      var mk = marks[mi];
+      mk.setAttribute("data-anno", String(item.annotationId));
+      // S-001: give every mark the app's highlight class so the injected .anno-mark stylesheet
+      // applies — without it the bare <mark> renders the browser-default yellow block.
+      mk.setAttribute("class", "anno-mark");
+      // S-001/AS-002: carry the per-type/label hue (mirrors markdown's hued mark — data-anno-hue
+      // + the --mark-hue custom prop the .anno-mark[data-anno-hue] rule reads).
+      if (item.hue){
+        mk.setAttribute("data-anno-hue", "true");
+        mk.style.setProperty("--mark-hue", String(item.hue));
+      }
+    }
+    return true;
+  }
+
   port.onmessage = function(ev){
     var msg = ev.data || {};
     if (msg.type === "highlight"){
-      var marks = placeRange(msg.anchor);
-      if (marks && marks.length){
-        for (var mi = 0; mi < marks.length; mi++){
-          var mk = marks[mi];
-          mk.setAttribute("data-anno", String(msg.annotationId));
-          // S-001: give every mark the app's highlight class so the injected .anno-mark stylesheet
-          // applies — without it the bare <mark> renders the browser-default yellow block.
-          mk.setAttribute("class", "anno-mark");
-          // S-001/AS-002: carry the per-type/label hue (mirrors markdown's hued mark — data-anno-hue
-          // + the --mark-hue custom prop the .anno-mark[data-anno-hue] rule reads).
-          if (msg.hue){
-            mk.setAttribute("data-anno-hue", "true");
-            mk.style.setProperty("--mark-hue", String(msg.hue));
-          }
-        }
-      } else { port.postMessage({ type: "place-failed", annotationId: msg.annotationId }); }
+      // Back-compat: a single highlight (S-001). Draw it; relay place-failed on a miss.
+      if (!drawHighlight(msg)) port.postMessage({ type: "place-failed", annotationId: msg.annotationId });
+    } else if (msg.type === "highlights"){
+      // S-003 (C-002): a FULL-set sync — clear THEN redraw so the mark set stays idempotent. Unwrap
+      // every existing anno mark first, then draw each item; a deleted id (absent from items) thus
+      // loses its mark, a restored/new id gains one, and no duplicate marks accrue. Relay
+      // place-failed per genuinely-unplaceable item so the parent can reset+rebuild the rail flags.
+      unwrapAllAnnoMarks();
+      var items = msg.items || [];
+      for (var i = 0; i < items.length; i++){
+        if (!drawHighlight(items[i])) port.postMessage({ type: "place-failed", annotationId: items[i].annotationId });
+      }
     }
   };
 
