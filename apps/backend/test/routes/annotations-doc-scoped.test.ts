@@ -32,6 +32,7 @@ import type { AnnotationRepo, AnnotationRow, NewAnnotation, ViewerComment } from
 import type { CommentRepo, CommentRow, NewComment } from "../../src/annotation/reply";
 import type { GuestCommentRepo, NewGuestComment } from "../../src/annotation/guest";
 import type { ResolutionRepo, AnnotationStatus } from "../../src/annotation/resolve";
+import type { DeleteRepo } from "../../src/annotation/delete";
 import type { MailEnqueuer, NewNotification, NotifyRepo } from "../../src/notify/notify";
 
 const member: SessionResolver = async () => ({ userId: "u_member" });
@@ -102,6 +103,16 @@ function fakeGuestCommentRepo() {
   return { repo, calls };
 }
 
+function fakeDeleteRepo() {
+  const calls = { deleted: [] as string[] };
+  const repo: DeleteRepo = {
+    async setDeletedAt(annotationId) {
+      calls.deleted.push(annotationId);
+    },
+  };
+  return { repo, calls };
+}
+
 function fakeResolutionRepo() {
   const calls = { sets: [] as { id: string; status: AnnotationStatus }[] };
   const repo: ResolutionRepo = {
@@ -124,11 +135,15 @@ function fakeLookupRepo(doc: DocLookup | null): DocLookupRepo {
   };
 }
 
-function fakeAnnotationLookupRepo(doc?: { docId: string; generalAccess: DocLookup["generalAccess"] } | null): AnnotationLookupRepo {
-  const parent = doc === undefined ? { docId: "doc_1", generalAccess: "anyone_with_link" as const } : doc;
+function fakeAnnotationLookupRepo(
+  doc?: { docId: string; generalAccess: DocLookup["generalAccess"]; authorId?: string | null } | null,
+): AnnotationLookupRepo {
+  const parent =
+    doc === undefined ? { docId: "doc_1", generalAccess: "anyone_with_link" as const, authorId: null } : doc;
   return {
     async findAnnotationDoc() {
-      return parent;
+      // S-004/C-006: include authorId (null unless the caller seeded one) for the delete-own gate.
+      return parent === null ? null : { ...parent, authorId: parent.authorId ?? null };
     },
     async findSuggestionDoc() {
       return parent;
@@ -184,6 +199,7 @@ function buildApp(opts: {
   commentRepo?: ReturnType<typeof fakeCommentRepo>;
   guestCommentRepo?: ReturnType<typeof fakeGuestCommentRepo>;
   resolutionRepo?: ReturnType<typeof fakeResolutionRepo>;
+  deleteRepo?: ReturnType<typeof fakeDeleteRepo>;
   annotationLookupRepo?: AnnotationLookupRepo;
   loadShareConfig?: LoadShareConfig;
   rateLimitComment?: CommentRateLimiter;
@@ -202,6 +218,7 @@ function buildApp(opts: {
       commentRepo: (opts.commentRepo ?? fakeCommentRepo()).repo,
       guestCommentRepo: (opts.guestCommentRepo ?? fakeGuestCommentRepo()).repo,
       resolutionRepo: (opts.resolutionRepo ?? fakeResolutionRepo()).repo,
+      deleteRepo: (opts.deleteRepo ?? fakeDeleteRepo()).repo,
       suggestionRepo: {
         async insertSuggestion() { return { id: "s" }; },
         async getSuggestion() { return null; },
@@ -494,5 +511,155 @@ describe("AS-023 / C-009 / C-014: a guest cannot impersonate a member or the doc
     expect(res.status).toBe(201);
     // the collision check is a GUEST-only guard (a member's identity is the session, not a typed name)
     expect(checked).toHaveLength(0);
+  });
+});
+
+// ── annotation-actions S-004 / C-006: DELETE an annotation (own / owner-moderate) ─────
+//
+// DELETE /api/docs/:slug/annotations/:id — session-REQUIRED (anon refused before authz),
+// existence-hiding 404 on a no-access/missing parent doc, then own (author_id===actor) /
+// owner-moderation gate. A parent lookup that serves the annotation's author_id binds the
+// own-check to THAT annotation.
+
+// A lookup repo that serves a parent doc + a seeded author_id for the delete-own gate.
+function lookupWithAuthor(authorId: string | null, generalAccess: DocLookup["generalAccess"] = "anyone_with_link"): AnnotationLookupRepo {
+  return {
+    async findAnnotationDoc() {
+      return { docId: "doc_1", generalAccess, authorId };
+    },
+    async findSuggestionDoc() {
+      return { docId: "doc_1", generalAccess };
+    },
+    async getCurrentVersionContent() {
+      return null;
+    },
+  };
+}
+
+const asViewer = async (): Promise<Role | null> => "viewer";
+const asOwner = async (): Promise<Role | null> => "owner";
+
+describe("AS-008 / AS-009 / C-006: delete an annotation — own, or owner moderation (soft)", () => {
+  test("AS-008: the author (author_id === acting user) deletes their own → 200, soft-deleted", async () => {
+    // Lan (commenter, author_id=Lan) signed in; she is NOT the owner — delete-own is authorized by authorship.
+    const lan: SessionResolver = async () => ({ userId: "u_lan" });
+    const dr = fakeDeleteRepo();
+    const app = buildApp({
+      resolveSession: lan,
+      resolveDocRole: asCommenter,
+      annotationLookupRepo: lookupWithAuthor("u_lan"),
+      deleteRepo: dr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1", { method: "DELETE" }));
+    expect(res.status).toBe(200);
+    // soft-deleted: the tombstone write fired for this annotation id.
+    expect(dr.calls.deleted).toEqual(["ann_1"]);
+  });
+
+  test("AS-009: the owner Sara (≠ author Lan) deletes another's → 200, soft-deleted (moderation)", async () => {
+    const sara: SessionResolver = async () => ({ userId: "u_sara" });
+    const dr = fakeDeleteRepo();
+    const app = buildApp({
+      resolveSession: sara,
+      resolveDocRole: asOwner,
+      annotationLookupRepo: lookupWithAuthor("u_lan"), // authored by Lan, Sara owns the doc
+      deleteRepo: dr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1", { method: "DELETE" }));
+    expect(res.status).toBe(200);
+    expect(dr.calls.deleted).toEqual(["ann_1"]);
+  });
+});
+
+describe("AS-010 / AS-011 / C-006: a non-owner non-author and a viewer cannot delete", () => {
+  test("AS-010: Bob (commenter, neither author nor owner) → 403, nothing deleted", async () => {
+    const bob: SessionResolver = async () => ({ userId: "u_bob" });
+    const dr = fakeDeleteRepo();
+    const app = buildApp({
+      resolveSession: bob,
+      resolveDocRole: asCommenter,
+      annotationLookupRepo: lookupWithAuthor("u_lan"), // authored by Lan, Bob is not the owner
+      deleteRepo: dr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1", { method: "DELETE" }));
+    expect(res.status).toBe(403);
+    expect(dr.calls.deleted).toHaveLength(0);
+  });
+
+  test("AS-011: a viewer → 403, nothing deleted", async () => {
+    const viewer: SessionResolver = async () => ({ userId: "u_viewer" });
+    const dr = fakeDeleteRepo();
+    const app = buildApp({
+      resolveSession: viewer,
+      resolveDocRole: asViewer,
+      annotationLookupRepo: lookupWithAuthor("u_other"),
+      deleteRepo: dr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1", { method: "DELETE" }));
+    expect(res.status).toBe(403);
+    expect(dr.calls.deleted).toHaveLength(0);
+  });
+});
+
+describe("AS-012 / C-006: delete is session-required — an unauthenticated/guest request is refused before any authz", () => {
+  test("AS-012: a no-session (guest) delete → 401, refused BEFORE any own/owner check (no delete)", async () => {
+    const dr = fakeDeleteRepo();
+    // Even if the parent doc is fully accessible (anyone_with_link) and a guest 'created' it,
+    // delete is session-required: refused 401, BEFORE resolving author_id / role.
+    const app = buildApp({
+      resolveSession: noSession,
+      loadShareConfig: guestOn,
+      annotationLookupRepo: lookupWithAuthor(null),
+      deleteRepo: dr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1", { method: "DELETE" }));
+    expect(res.status).toBe(401);
+    expect(dr.calls.deleted).toHaveLength(0);
+  });
+});
+
+describe("AS-013 / C-006: deleting on a doc the caller cannot view is indistinguishable from not-found", () => {
+  test("AS-013: a signed-in caller with NO access to the parent doc → 404 (existence-hiding), not 403, nothing deleted", async () => {
+    const someone: SessionResolver = async () => ({ userId: "u_someone" });
+    const dr = fakeDeleteRepo();
+    // The annotation exists and is authored by u_someone (so a delete-own WOULD pass on role),
+    // but the parent doc is no-access → the SAME 404 as a missing id. The own/owner check runs
+    // only AFTER the parent doc is resolved + access-gated, so it never even reaches authz.
+    const app = buildApp({
+      resolveSession: someone,
+      resolveAccess: denyAll,
+      doc: { ...VISIBLE_DOC, generalAccess: "restricted" },
+      annotationLookupRepo: lookupWithAuthor("u_someone", "restricted"),
+      deleteRepo: dr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1", { method: "DELETE" }));
+    expect(res.status).toBe(404);
+    expect(dr.calls.deleted).toHaveLength(0);
+  });
+
+  test("AS-013: a missing annotation id → the SAME 404 (indistinguishable), nothing deleted", async () => {
+    const someone: SessionResolver = async () => ({ userId: "u_someone" });
+    const dr = fakeDeleteRepo();
+    // findAnnotationDoc returns null (no such id) → existence-hiding 404, the same response a
+    // no-access doc gives, so a caller can't tell a missing id from a hidden one.
+    const missingLookup: AnnotationLookupRepo = {
+      async findAnnotationDoc() {
+        return null;
+      },
+      async findSuggestionDoc() {
+        return null;
+      },
+      async getCurrentVersionContent() {
+        return null;
+      },
+    };
+    const app = buildApp({
+      resolveSession: someone,
+      annotationLookupRepo: missingLookup,
+      deleteRepo: dr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_missing", { method: "DELETE" }));
+    expect(res.status).toBe(404);
+    expect(dr.calls.deleted).toHaveLength(0);
   });
 });

@@ -19,6 +19,7 @@ import type {
 } from "./annotation";
 import type { CommentRepo, CommentRow } from "./reply";
 import type { ResolutionRepo, AnnotationStatus } from "./resolve";
+import type { DeleteRepo } from "./delete";
 import type {
   SuggestionRepo,
   SuggestionRow,
@@ -219,6 +220,18 @@ export function createResolutionRepo(db: DB): ResolutionRepo {
         .update(annotations)
         .set({ suggestionStatus: "pending" })
         .where(eq(annotations.id, annotationId));
+    },
+  };
+}
+
+// ── annotation-actions S-004: delete (soft) (DeleteRepo) ───────────────────
+
+/** Construct a DeleteRepo backed by a Drizzle DB handle — stamps the soft-delete tombstone. */
+export function createDeleteRepo(db: DB): DeleteRepo {
+  return {
+    async setDeletedAt(annotationId: string): Promise<void> {
+      // S-004/C-006: soft-delete — set the tombstone; the row is kept (S-005 excludes/restores).
+      await db.update(annotations).set({ deletedAt: new Date() }).where(eq(annotations.id, annotationId));
     },
   };
 }

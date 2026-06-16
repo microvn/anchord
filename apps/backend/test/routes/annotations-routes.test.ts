@@ -159,13 +159,15 @@ function fakeLookupRepo(doc: DocLookup | null): DocLookupRepo {
 }
 
 function fakeAnnotationLookupRepo(opts: {
-  doc?: { docId: string; generalAccess: DocLookup["generalAccess"] } | null;
+  doc?: { docId: string; generalAccess: DocLookup["generalAccess"]; authorId?: string | null } | null;
   currentHtml?: string;
 }): AnnotationLookupRepo {
-  const parent = opts.doc === undefined ? { docId: "doc_1", generalAccess: "anyone_with_link" as const } : opts.doc;
+  const parent =
+    opts.doc === undefined ? { docId: "doc_1", generalAccess: "anyone_with_link" as const, authorId: null } : opts.doc;
   return {
     async findAnnotationDoc() {
-      return parent;
+      // S-004/C-006: include authorId for the delete-own gate (null unless the test seeds one).
+      return parent === null ? null : { ...parent, authorId: parent.authorId ?? null };
     },
     async findSuggestionDoc() {
       return parent;
@@ -211,6 +213,8 @@ function buildApp(opts: {
       commentRepo: (opts.commentRepo ?? fakeCommentRepo()).repo,
       guestCommentRepo: (opts.guestCommentRepo ?? fakeGuestCommentRepo()).repo,
       resolutionRepo: (opts.resolutionRepo ?? fakeResolutionRepo()).repo,
+      // annotation-actions S-004: a no-op delete repo so the routes build without `db`.
+      deleteRepo: { async setDeletedAt() {} },
       suggestionRepo: (opts.suggestionRepo ?? fakeSuggestionRepo()).repo,
       lookupRepo: fakeLookupRepo(opts.doc === undefined ? VISIBLE_DOC : opts.doc),
       annotationLookupRepo: opts.annotationLookupRepo ?? fakeAnnotationLookupRepo({}),

@@ -59,7 +59,8 @@ function fakeLookupRepo(doc: DocLookup | null): DocLookupRepo {
 function fakeAnnotationLookupRepo(): AnnotationLookupRepo {
   return {
     async findAnnotationDoc() {
-      return { docId: VISIBLE_DOC.id, generalAccess: VISIBLE_DOC.generalAccess };
+      // S-004/C-006: include authorId (null) for the delete-own gate.
+      return { docId: VISIBLE_DOC.id, generalAccess: VISIBLE_DOC.generalAccess, authorId: null };
     },
     async findSuggestionDoc() {
       return null;
@@ -119,6 +120,8 @@ function buildApp(opts: {
       annotationRepo: { async insertAnnotation() { return { id: "x" }; }, async listByDoc() { return []; }, async listCommentsByDoc() { return []; } },
       guestCommentRepo: { async listByAnnotation() { return []; }, async insertComment() { return { id: "g" }; } },
       resolutionRepo: { async setAnnotationStatus() {}, async resetSuggestionStatusToPending() {} },
+      // annotation-actions S-004: a no-op delete repo so the routes build without `db`.
+      deleteRepo: { async setDeletedAt() {} },
       suggestionRepo: {
         async insertSuggestion() { return { id: "s" }; },
         async getSuggestion() { return null; },

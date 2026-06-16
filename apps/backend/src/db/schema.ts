@@ -262,6 +262,11 @@ export const annotations = pgTable(
     // (C-003: a suggestion only ever writes its own row, never doc content).
     suggestion: jsonb("suggestion"),
     suggestionStatus: suggestionStatus("suggestion_status"),
+    // deleted_at (annotation-actions S-004 / C-006): a SOFT-DELETE tombstone, mirroring the
+    // dismissed_at precedent (annotation-core S-008). NULL = active; a timestamp = soft-deleted
+    // (delete-own by the author, or owner-moderation). The READ-side total-exclusion + terminal
+    // guards + restore are S-005; this column + its delete authz are S-004.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [index("annotations_doc_idx").on(t.docId)],

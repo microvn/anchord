@@ -52,12 +52,14 @@ import { pointRegion, boxRegion, imageRegionAnchor, type ImageRegion } from "../
 import { addReply, addComment, type CommentRepo } from "../annotation/reply";
 import { createGuestComment, type GuestCommentRepo } from "../annotation/guest";
 import { setResolution, type ResolutionRepo } from "../annotation/resolve";
+import { deleteAnnotation, type DeleteRepo } from "../annotation/delete";
 import { createSuggestion, decideSuggestion, type SuggestionRepo } from "../annotation/suggestion";
 import {
   createAnnotationRepo,
   createCommentRepo,
   createGuestCommentRepo,
   createResolutionRepo,
+  createDeleteRepo,
   createSuggestionRepo,
 } from "../annotation/repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
@@ -74,10 +76,15 @@ import type { DB } from "../db/client";
  * when the id does not exist (collapses to 404, indistinguishable from no-access).
  */
 export interface AnnotationLookupRepo {
-  /** docId + generalAccess for an annotation id, or null if it doesn't exist. */
+  /**
+   * docId + generalAccess + the annotation's durable creator (`authorId`, null for a guest)
+   * for an annotation id, or null if it doesn't exist. The `authorId` (annotation-actions
+   * S-004 / C-006) lets the delete route gate delete-OWN without a second read, alongside the
+   * existing parent-doc fields that drive existence-hiding.
+   */
   findAnnotationDoc(
     annotationId: string,
-  ): Promise<{ docId: string; generalAccess: GeneralAccessLevel } | null>;
+  ): Promise<{ docId: string; generalAccess: GeneralAccessLevel; authorId: string | null } | null>;
   /** docId + generalAccess for a suggestion id, or null if it doesn't exist. */
   findSuggestionDoc(
     suggestionId: string,
@@ -92,11 +99,16 @@ export interface AnnotationLookupRepo {
 export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
   async function docFor(annotationId: string) {
     const [row] = await db
-      .select({ docId: annotationsTable.docId, generalAccess: docsTable.generalAccess })
+      .select({
+        docId: annotationsTable.docId,
+        generalAccess: docsTable.generalAccess,
+        // S-004/C-006: the durable creator, so the delete route can gate delete-own.
+        authorId: annotationsTable.authorId,
+      })
       .from(annotationsTable)
       .innerJoin(docsTable, eq(docsTable.id, annotationsTable.docId))
       .where(eq(annotationsTable.id, annotationId));
-    return row ?? null;
+    return row ? { ...row, authorId: row.authorId ?? null } : null;
   }
 
   return {
@@ -193,6 +205,8 @@ export interface AnnotationsRoutesDeps {
   commentRepo?: CommentRepo;
   guestCommentRepo?: GuestCommentRepo;
   resolutionRepo?: ResolutionRepo;
+  /** annotation-actions S-004 / C-006: the soft-delete write port (built from `db` if omitted). */
+  deleteRepo?: DeleteRepo;
   suggestionRepo?: SuggestionRepo;
   lookupRepo?: DocLookupRepo;
   annotationLookupRepo?: AnnotationLookupRepo;
@@ -336,6 +350,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   const commentRepo = deps.commentRepo ?? (deps.db ? createCommentRepo(deps.db) : need("commentRepo"));
   const guestCommentRepo = deps.guestCommentRepo ?? (deps.db ? createGuestCommentRepo(deps.db) : need("guestCommentRepo"));
   const resolutionRepo = deps.resolutionRepo ?? (deps.db ? createResolutionRepo(deps.db) : need("resolutionRepo"));
+  const deleteRepo = deps.deleteRepo ?? (deps.db ? createDeleteRepo(deps.db) : need("deleteRepo"));
   const suggestionRepo = deps.suggestionRepo ?? (deps.db ? createSuggestionRepo(deps.db) : need("suggestionRepo"));
   const lookupRepo = deps.lookupRepo ?? (deps.db ? createDocLookupRepo(deps.db) : need("lookupRepo"));
   const annotationLookupRepo =
@@ -514,6 +529,42 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       });
     }
     return { status: result.status };
+  }
+
+  /**
+   * annotation-actions S-004 / C-006: DELETE an annotation (soft) — own (the author) or
+   * owner-moderation. Mounted on a DOC-ADDRESSED, session-OPTIONAL route so the slug-only
+   * viewer can call it, but delete is SESSION-REQUIRED: an anon/guest is refused (401) BEFORE
+   * any own/owner check (AS-012). Then the SAME existence-hiding gate every annotation route
+   * uses runs on the resolved parent doc (404 on missing/no-access, AS-013), the annotation
+   * is bound to THAT parent doc, the caller's doc-scoped role + the annotation's author_id are
+   * resolved, and delete.ts decides own/owner. Reads still showing the deleted row is fine for
+   * now — the read-exclusion + terminal guards + restore are S-005.
+   */
+  async function deleteAnnotationHandler({ params, request }: any) {
+    // AS-012 / C-006: session-required — refuse an unauthenticated/guest request BEFORE any
+    // own/owner check. A guest has no durable identity and is not the owner.
+    const actor: Actor | null = await deps.resolveSession(request.headers);
+    if (!actor) throw new UnauthenticatedError("Sign in to delete an annotation");
+    const viewer: Viewer = { kind: "user", userId: actor.userId };
+    // AS-013: existence-hiding on the resolved PARENT doc — a missing id OR a no-access doc
+    // both collapse to the same 404 (never a 403 leak). The lookup binds the annotation to
+    // THAT doc (docId + the durable author_id), so the role/own check below runs against the
+    // resolved parent, never a cross-doc id.
+    const found = await annotationLookupRepo.findAnnotationDoc(params.id);
+    const parent = await enforceParentAccess(found, viewer);
+    const sessionRole = await docRole(parent.docId, actor.userId);
+    const result = await deleteAnnotation(
+      {
+        annotationId: params.id,
+        actorUserId: actor.userId,
+        sessionRole,
+        authorId: found!.authorId, // bound to the resolved annotation (found is non-null past the 404 gate).
+      },
+      deleteRepo,
+    );
+    if (!result.ok) throw new ForbiddenError(); // viewer / non-owner-non-author → 403 (AS-010/AS-011)
+    return { deleted: true };
   }
 
   // S-003 reply (session) OR S-007 guest (no session). The guest path requires a
@@ -712,5 +763,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     .group("", (a) => a.use(withValidation(createAnnotationSchema)).post("/api/docs/:slug/annotations", docCreateAnnotationHandler))
     .get("/api/docs/:slug/annotations", docListAnnotationsHandler)
     .group("", (a) => a.use(withValidation(replySchema)).post("/api/docs/:slug/annotations/:id/comments", commentHandler))
-    .group("", (a) => a.use(withValidation(resolutionSchema)).patch("/api/docs/:slug/annotations/:id/resolution", docResolutionHandler));
+    .group("", (a) => a.use(withValidation(resolutionSchema)).patch("/api/docs/:slug/annotations/:id/resolution", docResolutionHandler))
+    // annotation-actions S-004 / C-006: delete an annotation (soft). Mounted session-OPTIONAL
+    // (doc-addressed) but the handler enforces session-REQUIRED before any authz (AS-012),
+    // then existence-hiding 404 + parent-doc binding + own/owner gate (AS-013).
+    .delete("/api/docs/:slug/annotations/:id", deleteAnnotationHandler);
 }
