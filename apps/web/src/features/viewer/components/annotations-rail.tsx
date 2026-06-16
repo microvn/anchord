@@ -18,6 +18,7 @@ export function AnnotationsRail({
   onReply,
   onResolve,
   onDecide,
+  onDelete,
 }: {
   annotations: ViewerAnnotation[];
   focusedId: string | null;
@@ -46,6 +47,12 @@ export function AnnotationsRail({
    *  on a refused/failed write so the card rolls back its optimistic toggle. Absent → no Resolve
    *  control (viewer role, C-004/C-006 — resolve is comment-gated, not author-gated). */
   onResolve?: (annotation: ViewerAnnotation, resolved: boolean) => Promise<boolean>;
+  /** annotation-actions-ui S-003 (C-004/C-005): delete a specific anchored thread. The rail binds
+   *  this per-thread to the ThreadCard's onDelete(); the consumer (viewer-screen) owns the optimistic
+   *  remove + undo toast + restore. The ThreadCard only shows the Delete affordance for the author or
+   *  the doc owner (canDelete) AND when this is wired. Absent → no Delete affordance (read-only / a
+   *  rail with no delete capability). */
+  onDelete?: (annotation: ViewerAnnotation) => unknown | Promise<unknown>;
 }) {
   const anchored = annotations.filter((a) => !a.isOrphaned);
   const detached = annotations.filter((a) => a.isOrphaned);
@@ -96,6 +103,8 @@ export function AnnotationsRail({
               onResolve={onResolve ? (resolved) => onResolve(a, resolved) : undefined}
               // S-002: bind owner accept/reject to THIS thread; the card hands us only the decision.
               onDecide={onDecide ? (decision) => onDecide(a, decision) : undefined}
+              // S-003: bind delete to THIS thread; the card surfaces the overflow Delete (canDelete).
+              onDelete={onDelete ? () => onDelete(a) : undefined}
             />
           ))}
 

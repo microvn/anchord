@@ -266,6 +266,7 @@ export function ThreadCard({
   onReply,
   onResolve,
   onDecide,
+  onDelete,
 }: {
   annotation: ViewerAnnotation;
   focused: boolean;
@@ -295,6 +296,14 @@ export function ThreadCard({
    *  consumer reconciles it). Absent → no Accept/Reject row (non-owner, or not a redline). A drifted
    *  (stale) redline cannot be accepted (AS-007), so the row is not offered when stale. */
   onDecide?: (decision: "accept" | "reject") => Promise<boolean>;
+  /** annotation-actions-ui S-003 (C-004): delete THIS annotation. The consumer wires the optimistic
+   *  remove + undo-toast + restore orchestration (viewer-screen's useAnnotations); the card only
+   *  surfaces the overflow Delete affordance + calls this. It is shown ONLY when `canDelete = isOwn
+   *  || isOwner` AND this callback is supplied — the author (delete-own) or the doc owner (moderate);
+   *  a viewer/guest/non-owner-non-author gets no Delete (the consumer also omits the callback for a
+   *  read-only role). A CLIENT HINT — the backend re-authorizes the delete (annotation-actions S-004).
+   *  Resolves to the call result (truthy on accepted) the same way onResolve/onDecide do. */
+  onDelete?: () => unknown | Promise<unknown>;
 }) {
   // The resolved state the CARD shows. It starts from the server status, but a local optimistic
   // override (AS-007) drives it the moment the user toggles, before the refetch reconciles. When the
@@ -321,6 +330,13 @@ export function ThreadCard({
   // gate (S-002) + delete-own (S-003) build on, so it keys on `authorId` ONLY — never the root
   // comment's author (which can differ, e.g. a reply moved to the front or a renamed display name).
   const isOwn = annotation.authorId != null && annotation.authorId === currentUserId;
+
+  // annotation-actions-ui S-003 (C-004): the Delete affordance gate. Delete is offered ONLY to the
+  // annotation's AUTHOR (isOwn — delete-own) OR the doc OWNER (isOwner — moderate-delete); a viewer,
+  // a guest, and a non-owner non-author see none. It also requires the consumer to have wired
+  // onDelete (a read-only viewer role supplies no callback). A CLIENT HINT — the backend
+  // re-authorizes by session role + the durable creator identity (annotation-actions S-004).
+  const canDelete = Boolean(onDelete) && (isOwn || isOwner);
 
   // S-002 (C-002): a redline is a delete-kind suggestion. The DELETE badge + the owner Accept/Reject
   // row + the stale state derive from the served type + suggestion payload + suggestionStatus.
@@ -400,6 +416,29 @@ export function ThreadCard({
   // row can drop the Resolve button while composing — the composer then takes the full width instead
   // of sharing the row with Resolve (which used to pin awkwardly to the textarea's top-right corner).
   const [replyOpen, setReplyOpen] = useState(false);
+  // S-003 (C-004): the overflow menu's open state + a delete-in-flight guard (so a double-click
+  // can't fire two deletes). The menu only ever mounts when canDelete is true.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deletingMenu, setDeletingMenu] = useState(false);
+  const handleDelete =
+    onDelete && canDelete
+      ? (e: { stopPropagation: () => void }) => {
+          e.stopPropagation(); // never trigger the card's focus onClick
+          if (deletingMenu) return;
+          setMenuOpen(false);
+          setDeletingMenu(true);
+          // The consumer (viewer-screen) owns the optimistic remove + undo toast + restore. The card
+          // just invokes it; this card will typically unmount on the optimistic remove, so resetting
+          // the in-flight flag in a finally is best-effort (a refused delete re-adds + re-renders it).
+          void (async () => {
+            try {
+              await onDelete();
+            } finally {
+              setDeletingMenu(false);
+            }
+          })();
+        }
+      : undefined;
   // S-002 (AS-005/006/C-002): owner accepts/rejects a redline. Optimistically resolve the thread
   // (deciding auto-resolves it, dimmed) the moment the owner clicks, then call the consumer's
   // onDecide. On a refused/failed/stale decide (resolves false) roll the optimistic resolve back —
@@ -465,11 +504,72 @@ export function ThreadCard({
       }}
       className={[
         // .thread: paper, 1px line, r-md, 11px padding. focus → accent border + 3px accent-soft ring.
-        "block w-full cursor-pointer rounded-md border bg-paper p-[11px] text-left transition-[border-color,box-shadow]",
+        // `relative` so the S-003 overflow menu (C-004) can anchor to the card's top-right corner.
+        "relative block w-full cursor-pointer rounded-md border bg-paper p-[11px] text-left transition-[border-color,box-shadow]",
         focused ? "border-accent ring-[3px] ring-accent-soft" : "border-line hover:border-subtle",
         resolved ? "opacity-[0.72]" : "",
       ].join(" ")}
     >
+      {/* S-003 (C-004): the OVERFLOW MENU — a "⋯" trigger at the card's top-right that houses Delete.
+          Mounted ONLY when canDelete (author delete-own OR doc-owner moderate) AND onDelete is wired.
+          A viewer / guest / non-owner-non-author never reaches here (no trigger at all). All controls
+          stopPropagation so they don't bubble to the card's focus onClick. The affordance is a hint —
+          the backend re-authorizes the delete (annotation-actions S-004). Other menu items are out of
+          scope (S-003 owns Delete only). */}
+      {canDelete && handleDelete && (
+        <div className="absolute right-[8px] top-[8px]">
+          <button
+            type="button"
+            data-testid="overflow-trigger"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen((o) => !o);
+            }}
+            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[6px] text-subtle hover:bg-elev hover:text-ink"
+          >
+            <Icon name="more" size={15} />
+          </button>
+          {menuOpen && (
+            <>
+              {/* An invisible click-catcher so an outside click closes the menu (stopPropagation
+                  keeps it from focusing the card). */}
+              <button
+                type="button"
+                aria-hidden
+                tabIndex={-1}
+                data-testid="overflow-scrim"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                }}
+                className="fixed inset-0 z-40 cursor-default"
+              />
+              <div
+                role="menu"
+                data-testid="overflow-menu"
+                onClick={(e) => e.stopPropagation()}
+                className="absolute right-0 top-[28px] z-50 min-w-[120px] rounded-[8px] border border-line bg-paper py-1 shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="overflow-delete"
+                  disabled={deletingMenu}
+                  onClick={handleDelete}
+                  className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12.5px] font-medium text-error hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Icon name="trash" size={13} />
+                  Delete
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* .quote-ref: 2px accent left rule (green when resolved), italic muted 12px/1.45. */}
       <div
         className={[

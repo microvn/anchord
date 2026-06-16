@@ -33,6 +33,8 @@ import {
   addComment,
   setResolution,
   decideSuggestion,
+  deleteAnnotation,
+  restoreAnnotation,
   canComment,
   type ViewerDocResponse,
   type ListAnnotationsResponse,
@@ -762,6 +764,8 @@ function useAnnotations(
     onReply?: (annotation: ViewerAnnotation, body: string) => Promise<boolean>;
     onResolve?: (annotation: ViewerAnnotation, resolved: boolean) => Promise<boolean>;
     onDecide?: (annotation: ViewerAnnotation, decision: "accept" | "reject") => Promise<boolean>;
+    /** S-003 (C-004/C-005): delete an anchored thread — optimistic remove + undo toast + restore. */
+    onDelete?: (annotation: ViewerAnnotation) => Promise<boolean>;
   };
 } {
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -990,10 +994,70 @@ function useAnnotations(
         }
       : undefined;
 
+  // annotation-actions-ui S-003 (C-004/C-005): DELETE an annotation with an optimistic remove + an
+  // undo toast that restores it. Session-required server-side (an anon/guest is refused, the
+  // affordance is already author/owner-gated in the card). Wired ONLY when the session can act on the
+  // doc — same `canComment` gate as reply/resolve (a viewer-only role gets no onDelete, so the card
+  // shows no Delete). The card's affordance is a HINT; the backend re-authorizes (S-004).
+  //   • delete: snapshot the annotation, optimistically REMOVE it from the cached list (it vanishes
+  //     from the rail immediately), call deleteAnnotation. On success raise an UNDO toast whose action
+  //     calls restoreAnnotation + re-inserts the snapshot (newest-first, deduped) — a refetch would
+  //     also bring it back via S-005's restore, but the in-cache re-insert keeps it instant. On a
+  //     refused/failed delete (role revoked / network) RE-ADD the snapshot + toast an error — no
+  //     silent loss (C-005). A soft-deleted annotation is excluded from the list read (S-005), so the
+  //     optimistic remove stays consistent on any later refetch.
+  const removeFromCache = (id: string) =>
+    queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) =>
+      old ? { ...old, items: old.items.filter((a) => a.id !== id) } : old,
+    );
+  const reinsertIntoCache = (anno: ViewerAnnotation) =>
+    queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) => {
+      const items = old?.items ?? [];
+      if (items.some((a) => a.id === anno.id)) return old ?? { items };
+      return { ...old, items: [anno, ...items] };
+    });
+  const onDelete =
+    canCompose && slug
+      ? async (annotation: ViewerAnnotation): Promise<boolean> => {
+          const snapshot = annotation; // restore target if the user undoes / the write is refused
+          removeFromCache(annotation.id); // optimistic remove — vanishes from the rail immediately
+          try {
+            const res = await deleteAnnotation(slug, annotation.id);
+            if (res.error) {
+              reinsertIntoCache(snapshot); // refused → roll back (no silent loss)
+              toast.error("Couldn't delete this annotation");
+              return false;
+            }
+            // Success: an undo toast restores it if the user acts in time (C-005). Undoing calls the
+            // restore route + re-inserts the snapshot; a failed restore re-removes it + errors.
+            toast("Annotation deleted", {
+              action: {
+                label: "Undo",
+                onClick: () => {
+                  reinsertIntoCache(snapshot); // bring it back instantly
+                  void (async () => {
+                    const r = await restoreAnnotation(slug, snapshot.id);
+                    if (r.error) {
+                      removeFromCache(snapshot.id); // restore refused → it stays gone, surface it
+                      toast.error("Couldn't restore this annotation");
+                    }
+                  })();
+                },
+              },
+            });
+            return true;
+          } catch {
+            reinsertIntoCache(snapshot);
+            toast.error("Couldn't delete this annotation");
+            return false;
+          }
+        }
+      : undefined;
+
   return {
     count: annotations.length,
     refetch: () => annoQuery.refetch(),
     prependAnnotation,
-    railProps: { annotations, focusedId, unplaceableIds, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide },
+    railProps: { annotations, focusedId, unplaceableIds, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete },
   };
 }

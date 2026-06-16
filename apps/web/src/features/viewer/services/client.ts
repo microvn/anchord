@@ -220,6 +220,50 @@ export function addComment(
     .comments.post(body) as Promise<EdenResult<AddCommentResult>>;
 }
 
+// --- Delete + restore (annotation-actions-ui S-003) ----------------------------------------
+// DELETE /api/docs/:slug/annotations/:id            → soft-delete (session-required, own/owner)
+// POST   /api/docs/:slug/annotations/:id/restore    → clear the tombstone (session-required, own/owner)
+// Both are DOC-ADDRESSED (slug only, no workspace segment — coherent with the slug-only viewer) and
+// SESSION-REQUIRED: an anon/guest is refused (401) before any own/owner check, a viewer/non-owner-
+// non-author is refused (403). A missing/no-access doc → 404 (existence-hiding). The FE affordance
+// (the overflow Delete) is a CLIENT HINT — the backend re-authorizes every delete/restore by session
+// role + the durable creator identity (annotation-actions S-004/S-005). A soft-deleted annotation is
+// EXCLUDED from the annotations list read (S-005), so an optimistic remove stays consistent on a
+// refetch; restore brings it back. Mirrors the annotation thunks' shape (Eden treaty, same envelope).
+
+export interface DeleteAnnotationResult {
+  deleted: true;
+}
+
+export interface RestoreAnnotationResult {
+  restored: true;
+}
+
+/** DELETE /api/docs/:slug/annotations/:id — soft-delete an annotation (S-004 backend).
+ *  The caller branches on the EdenResult: `error` present → refused/failed (roll the optimistic
+ *  remove back + surface an error, C-005); `data` present → deleted (show the undo toast). */
+export function deleteAnnotation(
+  slug: string,
+  annotationId: string,
+): Promise<EdenResult<DeleteAnnotationResult>> {
+  return treaty.api
+    .docs({ slug })
+    .annotations({ id: annotationId })
+    .delete() as Promise<EdenResult<DeleteAnnotationResult>>;
+}
+
+/** POST /api/docs/:slug/annotations/:id/restore — clear a soft-delete tombstone (S-005 backend).
+ *  Backs the undo toast: on undo within the window the caller calls this + re-adds the item. */
+export function restoreAnnotation(
+  slug: string,
+  annotationId: string,
+): Promise<EdenResult<RestoreAnnotationResult>> {
+  return treaty.api
+    .docs({ slug })
+    .annotations({ id: annotationId })
+    .restore.post() as Promise<EdenResult<RestoreAnnotationResult>>;
+}
+
 // --- Resolution toggle (S-004) -------------------------------------------------------------
 // PATCH /api/w/:workspaceId/annotations/:id/resolution — resolve or reopen a thread. NOTE the
 // path is workspace-scoped on the ANNOTATION id (NOT doc-scoped like create/comment) — it mirrors
