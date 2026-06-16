@@ -545,6 +545,26 @@ export function bridgeScript(nonce: string): string {
     return true;
   }
 
+  // S-004 (C-005): emphasise the marks for one annotation id (toggle .anno-mark--focus on the
+  // matching marks, clear it from the rest) and scroll the FIRST matching mark into view. Mirrors the
+  // markdown engine's focus-class sync + scrollToAnno. A null id just clears all emphasis. The parent
+  // can't reach the opaque iframe DOM, so this runs in-iframe on a {type:"focus"} port message (C-001).
+  function focusAnno(annotationId){
+    var marks = document.querySelectorAll("mark[data-anno]");
+    var first = null;
+    for (var i = 0; i < marks.length; i++){
+      var mk = marks[i];
+      var match = annotationId != null && mk.getAttribute("data-anno") === String(annotationId);
+      if (mk.classList){
+        if (match) mk.classList.add("anno-mark--focus"); else mk.classList.remove("anno-mark--focus");
+      }
+      if (match && !first) first = mk;
+    }
+    if (first && first.scrollIntoView){
+      try { first.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+    }
+  }
+
   port.onmessage = function(ev){
     var msg = ev.data || {};
     if (msg.type === "highlight"){
@@ -560,8 +580,23 @@ export function bridgeScript(nonce: string): string {
       for (var i = 0; i < items.length; i++){
         if (!drawHighlight(items[i])) port.postMessage({ type: "place-failed", annotationId: items[i].annotationId });
       }
+    } else if (msg.type === "focus"){
+      // S-004/AS-012 (C-005): the parent focused a rail thread → emphasise + scroll to its mark.
+      focusAnno(msg.annotationId);
     }
   };
+
+  // S-004/AS-011 (C-005): a click on a [data-anno] mark relays its id UP the trusted port so the
+  // parent focuses the rail thread (the parent can't read this opaque iframe's DOM — C-001). Capture
+  // phase + closest() so a click on inner content of a mark still resolves the mark.
+  document.addEventListener("click", function(e){
+    var t = e.target;
+    var mk = t && t.closest ? t.closest("mark[data-anno]") : null;
+    if (mk){
+      var id = mk.getAttribute("data-anno");
+      if (id) port.postMessage({ type: "mark-click", annotationId: id });
+    }
+  }, true);
 
   document.addEventListener("mouseup", postSelection, true);
   document.addEventListener("selectionchange", function(){
@@ -646,17 +681,20 @@ export function injectBridge(html: string, nonce: string): string {
 export const MARK_STYLESHEET = [
   // base: accent tint + bottom underline (mirrors styles.css .anno-mark; --accent inlined to teal).
   ".anno-mark{background:color-mix(in oklab, #37b3bd 24%, transparent);border-bottom:1.5px solid #37b3bd;border-radius:2px;padding:0 1px;color:inherit;cursor:pointer;}",
-  ".anno-mark:hover{background:color-mix(in oklab, #37b3bd 38%, transparent);}",
+  // S-004/C-005: hover AND the focused mark share the stronger accent tint (mirrors styles.css's
+  // `.anno-mark:hover, .anno-mark--focus`). Emphasis from the parent's thread-focus (postFocus → the
+  // in-iframe focusAnno toggling .anno-mark--focus) thus reads the same as the markdown focus.
+  ".anno-mark:hover,.anno-mark--focus{background:color-mix(in oklab, #37b3bd 38%, transparent);}",
   // per-type/label hue: tint + underline from the per-mark --mark-hue custom prop.
   ".anno-mark[data-anno-hue]{background:color-mix(in oklab, var(--mark-hue) 26%, transparent);border-bottom-color:var(--mark-hue);}",
-  ".anno-mark[data-anno-hue]:hover{background:color-mix(in oklab, var(--mark-hue) 40%, transparent);}",
+  ".anno-mark[data-anno-hue]:hover,.anno-mark[data-anno-hue].anno-mark--focus{background:color-mix(in oklab, var(--mark-hue) 40%, transparent);}",
   // S-002/AS-004: resolved → dim green tint (mirrors styles.css; --green inlined). Placed AFTER the
   // hue rule so a resolved hued mark still dims (later wins at equal specificity).
   '.anno-mark[data-resolved="true"]{background:color-mix(in oklab, #43b873 12%, transparent);border-bottom-color:#43b873;}',
   // S-002/AS-005: redline (delete proposal) → red strikethrough + red tint, NO line below, never an
   // edit of the doc content (--red inlined).
   '.anno-mark[data-anno-kind="redline"]{background:color-mix(in oklab, #f1655d 24%, transparent);border-bottom:none;text-decoration:line-through;text-decoration-color:#f1655d;text-decoration-thickness:1.5px;color:inherit;}',
-  '.anno-mark[data-anno-kind="redline"]:hover{background:color-mix(in oklab, #f1655d 38%, transparent);}',
+  '.anno-mark[data-anno-kind="redline"]:hover,.anno-mark[data-anno-kind="redline"].anno-mark--focus{background:color-mix(in oklab, #f1655d 38%, transparent);}',
   // S-002/AS-006: a STALE redline → DISTINCT muted/dashed (no strike, no red tint, dimmed) so it
   // never reads as a confident strike on possibly-wrong text (--subtle inlined). Emitted LAST so it
   // overrides the redline rule above at equal specificity (stale wins) — matching styles.css order.

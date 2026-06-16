@@ -21,6 +21,9 @@ import { connectBridge, type BridgeAnchor, type BridgeConnection } from "@/featu
 export interface HtmlSandboxFrameHandle {
   /** S-002: ask the in-iframe bridge to draw a highlight for a created annotation (over the port). */
   postHighlight: (anchor: BridgeAnchor, annotationId: string) => void;
+  /** S-004/AS-012 (C-005): ask the in-iframe bridge to emphasise + scroll to a thread's mark (over
+   *  the port — the parent can't reach the opaque iframe DOM). Null clears emphasis. */
+  postFocus: (annotationId: string | null) => void;
 }
 
 export const HtmlSandboxFrame = forwardRef<
@@ -49,9 +52,12 @@ export const HtmlSandboxFrame = forwardRef<
     /** HTML-PLACE: the in-iframe bridge couldn't place a posted highlight → surface it so the rail
      *  can badge only that annotation "couldn't place" (markdown reports this via the light-DOM placer). */
     onPlaceFailed?: (id: string) => void;
+    /** S-004/AS-011 (C-005): a highlight click inside the iframe was relayed up the port → focus that
+     *  rail thread (mirrors the markdown click→focus; the parent can't read the opaque iframe DOM). */
+    onMarkClick?: (id: string) => void;
   }
 >(function HtmlSandboxFrame(
-  { contentUrl, onSelection, onClearSelection, onSelectionRect, annotations, onPlaceFailed },
+  { contentUrl, onSelection, onClearSelection, onSelectionRect, annotations, onPlaceFailed, onMarkClick },
   ref,
 ) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -59,8 +65,8 @@ export const HtmlSandboxFrame = forwardRef<
   // Hold the latest handlers in a ref so the bridge connection (wired once on mount) always calls
   // the current callbacks without re-running the connect effect (which would re-add a window
   // listener and could accept a stale/duplicate handshake).
-  const handlersRef = useRef({ onSelection, onClearSelection, onSelectionRect, onPlaceFailed });
-  handlersRef.current = { onSelection, onClearSelection, onSelectionRect, onPlaceFailed };
+  const handlersRef = useRef({ onSelection, onClearSelection, onSelectionRect, onPlaceFailed, onMarkClick });
+  handlersRef.current = { onSelection, onClearSelection, onSelectionRect, onPlaceFailed, onMarkClick };
   // HTML-PLACE: true once the bridge handshake is accepted (onReady). The post-existing effect below
   // depends on it so the initial flush waits for the port (postHighlight no-ops before the handshake).
   const [ready, setReady] = useState(false);
@@ -95,6 +101,8 @@ export const HtmlSandboxFrame = forwardRef<
       },
       // HTML-PLACE: relay the in-iframe placement failure up so the rail badges only that id.
       onPlaceFailed: (id) => handlersRef.current.onPlaceFailed?.(id),
+      // S-004/AS-011 (C-005): a highlight click inside the iframe → focus that rail thread.
+      onMarkClick: (id) => handlersRef.current.onMarkClick?.(id),
       // HTML-PLACE: the port is live → flip `ready` so the post-existing effect flushes the set.
       onReady: () => setReady(true),
     });
@@ -140,6 +148,7 @@ export const HtmlSandboxFrame = forwardRef<
     ref,
     () => ({
       postHighlight: (anchor, annotationId) => connRef.current?.postHighlight(anchor, annotationId),
+      postFocus: (annotationId) => connRef.current?.postFocus(annotationId),
     }),
     [],
   );

@@ -23,6 +23,7 @@ export function DocPane({
   htmlFrameRef,
   htmlAnnotations,
   onHtmlPlaceFailed,
+  onHtmlMarkClick,
 }: {
   doc: ViewerDocResponse;
   /** S-002: a real selection relayed from the HTML sandbox iframe (gated by role upstream). */
@@ -35,6 +36,8 @@ export function DocPane({
   htmlAnnotations?: { id: string; anchor: BridgeAnchor; hue?: string }[];
   /** HTML-PLACE: an in-iframe placement failure → the rail badges only that id "couldn't place". */
   onHtmlPlaceFailed?: (id: string) => void;
+  /** S-004/AS-011 (C-005): a highlight click inside the iframe → focus that rail thread (html only). */
+  onHtmlMarkClick?: (id: string) => void;
 }) {
   const { kind } = doc.doc;
 
@@ -59,6 +62,7 @@ export function DocPane({
       onSelectionRect={onSelectionRect}
       annotations={htmlAnnotations}
       onPlaceFailed={onHtmlPlaceFailed}
+      onMarkClick={onHtmlMarkClick}
     />
   );
 }

@@ -303,6 +303,17 @@ function ViewerShell({
   // both render 2-pane (content + rail) with no outline pane and no outline-toggle.
   const isMarkdown = doc?.kind === "markdown";
 
+  // S-004/AS-012 (C-005): focusing a thread must emphasise + scroll the iframe to its highlight. For
+  // a markdown doc focusThread does this via scrollToAnno on the light DOM; for an HTML doc the marks
+  // live inside the opaque iframe (scrollToAnno can't reach them — docPaneEl holds only the <iframe>),
+  // so we post focus DOWN the port and the in-iframe bridge toggles .anno-mark--focus + scrollIntoView.
+  // Keyed on the focused id so a rail-card focus OR a relayed mark-click (both set focusedId) drives it.
+  const htmlFocusedId = anno.railProps.focusedId;
+  useEffect(() => {
+    if (!isHtml) return;
+    htmlFrameRef.current?.postFocus(htmlFocusedId);
+  }, [isHtml, htmlFocusedId]);
+
   // S-001 (commenting write path): capture a text selection on the doc → popover → composer → send.
   // Gated by `canCompose` (C-004): a viewer-only role never sees a popover/composer (read-only rail).
   // S-002: on a successful create for an HTML doc, relay the highlight to the iframe bridge.
@@ -522,6 +533,19 @@ function ViewerShell({
               // too (commenting stays gated by onSelection above). A placement miss → reportUnplaceableHtml.
               htmlAnnotations={isHtml ? anno.htmlPlaceable : undefined}
               onHtmlPlaceFailed={isHtml ? anno.reportUnplaceableHtml : undefined}
+              // S-004/AS-011 (C-005): a highlight click inside the iframe → focus that rail thread
+              // (and open the rail drawer on narrow), mirroring the markdown click→focus path above.
+              onHtmlMarkClick={
+                isHtml
+                  ? (id) => {
+                      // Mirror the markdown click→focus (setFocusedId + open the rail drawer on
+                      // narrow). onFocusThread sets focusedId; the focus-sync effect below then posts
+                      // focus back DOWN the port so the clicked mark is emphasised too.
+                      anno.railProps.onFocusThread(id);
+                      if (drawerMode) setRailOpen(true);
+                    }
+                  : undefined
+              }
             />
           ) : (
             children

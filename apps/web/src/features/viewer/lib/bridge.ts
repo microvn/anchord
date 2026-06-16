@@ -78,6 +78,10 @@ export interface BridgeHandlers {
   onClearSelection?: () => void;
   /** The in-iframe bridge could not place a highlight for this annotation (optional). */
   onPlaceFailed?: (annotationId: string) => void;
+  /** S-004/AS-011 (C-005): a click on a [data-anno] highlight inside the iframe was relayed up the
+   *  port → focus that rail thread (the parent can't read the opaque iframe DOM, so this relay is the
+   *  only path). Mirrors the markdown click→focus. */
+  onMarkClick?: (annotationId: string) => void;
   /** HTML-PLACE: the handshake was accepted and the port captured. Fires ONCE (the first trusted
    *  ready binds the transport). The parent uses this to flush the existing annotation set down the
    *  port — `postHighlight` no-ops before this, so a naive post-on-mount would race the handshake. */
@@ -128,6 +132,10 @@ export interface BridgeConnection {
    *  deleted id (absent from `items`) has its mark removed, a restored/new id is (re)drawn, with no
    *  duplicates. No-op before the handshake (no port yet), like `postHighlight`. */
   postHighlights: (items: BridgeHighlightItem[]) => void;
+  /** S-004/AS-012 (C-005): ask the in-iframe bridge to emphasise + scroll to the mark for this
+   *  annotation id (the parent can't reach the opaque iframe — it posts focus over the port). A null
+   *  id clears all emphasis. No-op before the handshake (no port yet), like `postHighlight`. */
+  postFocus: (annotationId: string | null) => void;
   /** True once the handshake has been accepted and the port captured. */
   isConnected: () => boolean;
   /** Remove the window listener + close the port. Idempotent. */
@@ -185,6 +193,9 @@ export function connectBridge(
         else handlers.onClearSelection?.();
       } else if (msg.type === "place-failed" && typeof msg.annotationId === "string") {
         handlers.onPlaceFailed?.(msg.annotationId);
+      } else if (msg.type === "mark-click" && typeof msg.annotationId === "string") {
+        // S-004/AS-011 (C-005): a highlight click inside the iframe → focus its rail thread.
+        handlers.onMarkClick?.(msg.annotationId);
       }
       // Any other port message shape is ignored (defensive; the protocol is fixed).
     };
@@ -210,6 +221,11 @@ export function connectBridge(
       // then redraws this set (clear-then-redraw, C-002). No port yet (pre-handshake) → drop, like
       // postHighlight, so a naive post-on-mount can't race the handshake.
       port?.postMessage({ type: "highlights", items });
+    },
+    postFocus(annotationId) {
+      // S-004/AS-012 (C-005): the parent focused a rail thread → ask the in-iframe bridge to
+      // emphasise + scroll to the matching mark. No port yet (pre-handshake) → drop, like the others.
+      port?.postMessage({ type: "focus", annotationId });
     },
     isConnected() {
       return port !== null;

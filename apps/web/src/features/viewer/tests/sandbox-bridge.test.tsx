@@ -331,6 +331,61 @@ describe("connectBridge (S-002 parent transport)", () => {
     expect(onPlaceFailed.mock.calls[0]![0]).toBe("anno-miss-1");
     conn.dispose();
   });
+
+  it("AS-011: a mark-click message over the port reaches onMarkClick with the annotation id", async () => {
+    const contentWindow = {} as Window;
+    const onMarkClick = mock(() => {});
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}), onMarkClick });
+    const { ch, ev } = handshake(contentWindow);
+    window.dispatchEvent(ev);
+    // The in-iframe bridge relays a click on a [data-anno] mark UP the trusted port → focus the rail
+    // thread (the parent can't read the opaque iframe DOM, so the relay is the only path — C-005).
+    ch.port1.postMessage({ type: "mark-click", annotationId: "anno-clicked-1" });
+    await waitFor(() => expect(onMarkClick).toHaveBeenCalledTimes(1));
+    expect(onMarkClick.mock.calls[0]![0]).toBe("anno-clicked-1");
+    conn.dispose();
+  });
+
+  it("AS-012 (C-005): postFocus sends a {type:'focus', annotationId} message DOWN the port", async () => {
+    const contentWindow = {} as Window;
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}) });
+    const { ch, ev } = handshake(contentWindow);
+    window.dispatchEvent(ev);
+    let received: unknown = null;
+    ch.port1.onmessage = (e: MessageEvent) => {
+      received = e.data;
+    };
+    // Focusing a thread asks the in-iframe bridge to emphasise + scroll to the matching mark (the
+    // parent can't reach the opaque iframe — it posts focus over the port).
+    conn.postFocus("anno-focus-1");
+    await waitFor(() => expect(received).not.toBeNull());
+    expect(received).toMatchObject({ type: "focus", annotationId: "anno-focus-1" });
+    conn.dispose();
+  });
+
+  it("AS-012 (C-005): postFocus(null) clears the emphasis (focus message with a null id)", async () => {
+    const contentWindow = {} as Window;
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}) });
+    const { ch, ev } = handshake(contentWindow);
+    window.dispatchEvent(ev);
+    let received: { type?: string; annotationId?: string | null } | null = null;
+    ch.port1.onmessage = (e: MessageEvent) => {
+      received = e.data as typeof received;
+    };
+    conn.postFocus(null);
+    await waitFor(() => expect(received).not.toBeNull());
+    expect(received!.type).toBe("focus");
+    expect(received!.annotationId).toBeNull();
+    conn.dispose();
+  });
+
+  it("AS-012 (C-005): postFocus no-ops before the handshake (no port yet) — never throws", () => {
+    const contentWindow = {} as Window;
+    const conn = connectBridge({ contentWindow }, { onSelection: mock(() => {}) });
+    expect(() => conn.postFocus("anno-1")).not.toThrow();
+    expect(conn.isConnected()).toBe(false);
+    conn.dispose();
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

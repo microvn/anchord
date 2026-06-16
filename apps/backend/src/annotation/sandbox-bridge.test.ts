@@ -432,3 +432,40 @@ test("C-003: the in-iframe draw sets data-resolved / data-anno-kind / data-anno-
   expect(script).toContain('item.kind === "redline"');
   expect(script).toContain("item.stale");
 });
+
+// ---------------------------------------------------------------------------
+// S-004 — click an HTML highlight → focus its thread; focus a thread → scroll
+// the iframe to it + emphasise (C-005 interaction parity, all via the bridge).
+// The live click/scroll runs only in a real browser ([→MANUAL]); these assert
+// the in-iframe WIRING in the serialized bridge string + the injected focus CSS.
+// ---------------------------------------------------------------------------
+
+test("AS-011: the in-iframe bridge wires a [data-anno] mark click → a mark-click port message", () => {
+  const script = bridgeScript("n-click");
+  // A click listener on the document finds the nearest [data-anno] mark and relays its id UP the
+  // trusted port as {type:"mark-click", annotationId} — the parent routes it to focus the rail thread
+  // (the parent can't read the opaque iframe DOM, so the relay is the only path — C-001/C-005).
+  expect(script).toContain('"mark-click"');
+  expect(script).toContain("data-anno");
+  // It posts over the port (the trusted transport), not window.postMessage.
+  expect(script).toMatch(/port\.postMessage\(\{\s*type:\s*"mark-click"/);
+});
+
+test("AS-012: the in-iframe bridge handles a {type:'focus'} message — toggles anno-mark--focus + scrolls", () => {
+  const script = bridgeScript("n-focus");
+  // On a parent → bridge {type:"focus", annotationId} the bridge emphasises the matching marks
+  // (anno-mark--focus toggled on, cleared from others) and scrolls the first matching mark into view.
+  expect(script).toContain('"focus"');
+  expect(script).toContain("anno-mark--focus");
+  expect(script).toContain("scrollIntoView");
+});
+
+test("C-005: the injected stylesheet carries the .anno-mark--focus emphasis rule (mirrors styles.css)", () => {
+  // The opaque iframe has none of the app tokens, so the focus emphasis must be in the injected
+  // sheet — mirrors styles.css `.anno-mark--focus` by value (accent teal #37b3bd, inlined).
+  expect(MARK_STYLESHEET).toContain(".anno-mark--focus");
+  expect(MARK_STYLESHEET).toContain("#37b3bd"); // --accent inlined
+  // injectBridge serves it inside the <style> block.
+  const out = injectBridge(injectBlockIds("<p>x</p>"), "n-focus2");
+  expect(out).toContain(".anno-mark--focus");
+});
