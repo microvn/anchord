@@ -22,6 +22,10 @@ export interface MarkAnchor {
   textSnippet: string;
   offset: number;
   length: number;
+  /** Present for a multi_range (cross-block) selection — one entry per intersected block. When set
+   *  (length > 1) placeAnnotations highlights EACH segment's block, not just the primary. A single
+   *  range omits it (or carries one segment identical to the top-level fields). */
+  segments?: { blockId: string; textSnippet: string; offset: number; length: number }[];
 }
 
 export interface PlaceableAnnotation {
@@ -262,22 +266,39 @@ export function placeAnnotations(
 
   for (const ann of annotations) {
     if (ann.isOrphaned) continue; // detached: no highlight (C-004) — handled by the rail.
-    const block = findBlock(docRoot, ann.anchor.blockId);
-    if (!block) {
-      unplaceable.push(ann.id); // block missing (GAP-005)
-      continue;
+
+    // A multi_range anchor carries segments[] (one per intersected block); place EACH. A single
+    // range has no segments (or one identical to the top-level fields) → place the primary anchor.
+    const segs =
+      ann.anchor.segments && ann.anchor.segments.length > 1
+        ? ann.anchor.segments
+        : [
+            {
+              blockId: ann.anchor.blockId,
+              textSnippet: ann.anchor.textSnippet,
+              offset: ann.anchor.offset,
+              length: ann.anchor.length,
+            },
+          ];
+
+    // Place every segment that resolves; collect the marks across all of them under the one id. A
+    // segment whose block is missing or whose snippet doesn't match is skipped (GAP-005) — the rest
+    // still highlight (the backend detaches the whole annotation if ALL are lost; at runtime we show
+    // what we can). Cross-inline ranges still yield N marks per segment.
+    const marks: HTMLElement[] = [];
+    for (const seg of segs) {
+      const block = findBlock(docRoot, seg.blockId);
+      if (!block) continue;
+      const range = locateRange(block.textContent ?? "", seg.textSnippet, seg.offset);
+      if (!range) continue;
+      marks.push(...wrapRange(block, range, ann.id));
     }
-    const range = locateRange(block.textContent ?? "", ann.anchor.textSnippet, ann.anchor.offset);
-    if (!range) {
-      unplaceable.push(ann.id); // zero / multiple matches (GAP-005)
-      continue;
-    }
-    const marks = wrapRange(block, range, ann.id);
     if (marks.length === 0) {
-      unplaceable.push(ann.id);
+      unplaceable.push(ann.id); // no segment resolved (block missing / zero|multiple matches, GAP-005)
       continue;
     }
-    // One id → N marks (cross-inline range). Tag resolved on each; report the first as the anchor el.
+
+    // Tag EVERY mark (across all segments) uniformly so a multi-block highlight reads consistently.
     if (ann.status === "resolved") marks.forEach((m) => (m.dataset.resolved = "true"));
     // S-002: tag the redline kind + stale state so the CSS renders the red strike / muted-dashed
     // stale style (C-002/AS-007). A stale redline is the muted-dashed, NOT a confident red strike.
@@ -295,7 +316,7 @@ export function placeAnnotations(
         m.style.setProperty("--mark-hue", ann.hue!);
       });
     }
-    placed.push({ id: ann.id, el: marks[0]! });
+    placed.push({ id: ann.id, el: marks[0]! }); // report the first mark as the anchor el (focus/scroll)
   }
 
   return { placed, unplaceable };

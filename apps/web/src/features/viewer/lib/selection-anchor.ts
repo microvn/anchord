@@ -83,9 +83,35 @@ function offsetOfNode(block: HTMLElement, target: Node): number {
   return pos;
 }
 
+function clampOffset(value: number, max: number): number {
+  return Math.max(0, Math.min(value, max));
+}
+
+/** The block elements intersected by a cross-block range, in document order, INCLUSIVE of the start
+ *  and end block. Found by listing every addressable block under the smallest element that contains
+ *  both endpoints (querySelectorAll is document order) and slicing start→end by index — deterministic
+ *  + SSR/happy-dom safe (no reliance on range.intersectsNode, which happy-dom may not implement). */
+function blocksBetween(startBlock: HTMLElement, endBlock: HTMLElement): HTMLElement[] {
+  if (startBlock === endBlock) return [startBlock];
+  // Smallest ancestor element that contains BOTH endpoints (the common block container).
+  let container: HTMLElement | null = startBlock.parentElement;
+  while (container && !container.contains(endBlock)) container = container.parentElement;
+  const root: ParentNode = container ?? startBlock.ownerDocument;
+  const all = Array.from(
+    root.querySelectorAll<HTMLElement>("[data-block-id], [id^='block-']"),
+  ).filter((e) => blockIdOf(e));
+  const si = all.indexOf(startBlock);
+  const ei = all.indexOf(endBlock);
+  if (si === -1 || ei === -1) return [startBlock, endBlock]; // defensive: endpoints only
+  return all.slice(Math.min(si, ei), Math.max(si, ei) + 1);
+}
+
 /**
  * Build a block anchor from a live Selection. Returns null for an empty / collapsed /
- * whitespace-only selection, or when the selection isn't inside a data-block-id element (C-003).
+ * whitespace-only selection, or when the selection's START isn't inside a data-block-id element
+ * (C-003). A selection spanning MULTIPLE blocks fans out into one segment per intersected block
+ * (start partial · full middles · end partial); the top-level fields mirror the START segment so the
+ * primary stays self-placeable as a fallback.
  */
 export function selectionToAnchor(selection: Selection | null): SelectionAnchor | null {
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
@@ -95,17 +121,38 @@ export function selectionToAnchor(selection: Selection | null): SelectionAnchor 
   if (raw.trim().length === 0) return null;
 
   const range = selection.getRangeAt(0);
-  const block = closestBlock(range.commonAncestorContainer);
-  if (!block) return null;
+  const startBlock = closestBlock(range.startContainer);
+  if (!startBlock) return null; // the selection's start isn't inside any block → no anchor (C-003)
+  const endBlock = closestBlock(range.endContainer) ?? startBlock;
 
-  const blockText = block.textContent ?? "";
-  let offset = charOffsetWithin(block, range.startContainer, range.startOffset);
-  if (offset < 0 || offset > blockText.length) offset = Math.max(0, Math.min(offset, blockText.length));
+  // Single block (start === end, or the end fell outside any block): one segment, as before.
+  if (endBlock === startBlock) {
+    const blockText = startBlock.textContent ?? "";
+    const offset = clampOffset(charOffsetWithin(startBlock, range.startContainer, range.startOffset), blockText.length);
+    const length = raw.length;
+    const textSnippet = raw.slice(0, SNIPPET_CAP);
+    const blockId = blockIdOf(startBlock)!;
+    return { blockId, textSnippet, offset, length, segments: [{ blockId, offset, length, textSnippet }] };
+  }
 
-  const length = raw.length;
-  const textSnippet = raw.slice(0, SNIPPET_CAP);
-  const blockId = blockIdOf(block)!;
+  // Cross-block: one segment per intersected block — start partial, full middles, end partial.
+  const blocks = blocksBetween(startBlock, endBlock);
+  const segments = blocks.map((block) => {
+    const blockId = blockIdOf(block)!;
+    const blockText = block.textContent ?? "";
+    let offset = 0;
+    let slice = blockText;
+    if (block === startBlock) {
+      offset = clampOffset(charOffsetWithin(block, range.startContainer, range.startOffset), blockText.length);
+      slice = blockText.slice(offset);
+    } else if (block === endBlock) {
+      const end = clampOffset(charOffsetWithin(block, range.endContainer, range.endOffset), blockText.length);
+      slice = blockText.slice(0, end);
+    }
+    const textSnippet = slice.slice(0, SNIPPET_CAP);
+    return { blockId, offset, length: textSnippet.length, textSnippet };
+  });
 
-  const segment = { blockId, offset, length, textSnippet };
-  return { blockId, textSnippet, offset, length, segments: [segment] };
+  const first = segments[0]!;
+  return { blockId: first.blockId, textSnippet: first.textSnippet, offset: first.offset, length: first.length, segments };
 }

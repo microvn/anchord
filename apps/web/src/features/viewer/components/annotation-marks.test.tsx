@@ -246,3 +246,74 @@ describe("placeAnnotations (S-003)", () => {
     expect(mark.dataset.resolved).toBe("true");
   });
 });
+
+// Cross-block (multi_range): a selection spanning blocks anchors as segments[]; placeAnnotations must
+// place a highlight in EVERY segment's block (not just the primary), tagging them all uniformly.
+describe("placeAnnotations — multi-segment (cross-block)", () => {
+  const TWO = `<p data-block-id="b1">First block text here.</p><p data-block-id="b2">Second block text here.</p>`;
+
+  it("places a highlight in EVERY block of a multi-segment anchor", () => {
+    const root = mountDoc(TWO);
+    placeAnnotations(root, [
+      {
+        id: "m1",
+        anchor: {
+          blockId: "b1",
+          textSnippet: "block text here.",
+          offset: 6,
+          length: 16,
+          segments: [
+            { blockId: "b1", textSnippet: "block text here.", offset: 6, length: 16 },
+            { blockId: "b2", textSnippet: "Second", offset: 0, length: 6 },
+          ],
+        },
+      },
+    ]);
+    expect(root.querySelector('[data-block-id="b1"] [data-anno="m1"]')).not.toBeNull();
+    expect(root.querySelector('[data-block-id="b2"] [data-anno="m1"]')).not.toBeNull();
+  });
+
+  it("tags the type hue on the marks of ALL segments", () => {
+    const root = mountDoc(TWO);
+    placeAnnotations(root, [
+      {
+        id: "m2",
+        hue: "#cbb24a",
+        anchor: {
+          blockId: "b1",
+          textSnippet: "block text here.",
+          offset: 6,
+          length: 16,
+          segments: [
+            { blockId: "b1", textSnippet: "block text here.", offset: 6, length: 16 },
+            { blockId: "b2", textSnippet: "Second", offset: 0, length: 6 },
+          ],
+        },
+      },
+    ]);
+    const marks = Array.from(root.querySelectorAll('[data-anno="m2"]')) as HTMLElement[];
+    expect(marks.length).toBeGreaterThanOrEqual(2);
+    for (const m of marks) expect(m.dataset.annoHue).toBe("true");
+  });
+
+  it("still places the resolvable segments when one segment's block is missing", () => {
+    const root = mountDoc(`<p data-block-id="b1">First block text here.</p>`); // b2 absent
+    const { unplaceable } = placeAnnotations(root, [
+      {
+        id: "m3",
+        anchor: {
+          blockId: "b1",
+          textSnippet: "block text here.",
+          offset: 6,
+          length: 16,
+          segments: [
+            { blockId: "b1", textSnippet: "block text here.", offset: 6, length: 16 },
+            { blockId: "b2", textSnippet: "Second", offset: 0, length: 6 },
+          ],
+        },
+      },
+    ]);
+    expect(root.querySelector('[data-block-id="b1"] [data-anno="m3"]')).not.toBeNull();
+    expect(unplaceable).not.toContain("m3"); // at least one segment placed → not unplaceable
+  });
+});
