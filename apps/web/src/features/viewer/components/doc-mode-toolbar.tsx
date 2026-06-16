@@ -110,13 +110,14 @@ function ToolChip({
     ? `opacity ${expanded ? DURATION : DURATION * 0.6}ms ease ${expanded ? "60ms" : "0ms"}`
     : "none";
 
-  // Active = full hue (coloured icon/text + soft hue bg). Inactive+hovered = a lighter hue HINT (so
-  // hover reads warmer than rest). Resting inactive = muted, icon-only (no inline colour).
+  // Active = full hue (coloured icon/text + hue bg). Inactive+hovered = a lighter hue HINT (so hover
+  // reads warmer than rest). Resting inactive = muted, icon-only (no inline colour). The ACTIVE bg is
+  // a clearly-visible tint (`33` ≈ 20%), not the old faint `1f` ≈ 12% — a selected tool now reads.
   let chipStyle: React.CSSProperties = { width, transition: widthTransition };
   if (active) {
-    chipStyle = { ...chipStyle, color: hue, background: `${hue}1f` };
+    chipStyle = { ...chipStyle, color: hue, background: `${hue}33` };
   } else if (hovered) {
-    chipStyle = { ...chipStyle, color: `${hue}cc`, background: `${hue}14` };
+    chipStyle = { ...chipStyle, color: `${hue}cc`, background: `${hue}1f` };
   }
 
   return (
