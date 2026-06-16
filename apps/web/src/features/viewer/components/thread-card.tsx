@@ -393,7 +393,14 @@ export function ThreadCard({
   // Defensive: a thread with no/absent comments must never white-screen the whole viewer
   // (destructuring `undefined` throws "not iterable"). An empty thread renders quote-only.
   const [root, ...replies] = annotation.comments ?? [];
-  const quote = annotation.anchor.textSnippet;
+  // The rail quote. For a multi_range (cross-block) anchor the top-level textSnippet is only the FIRST
+  // segment's text (e.g. a table's "Rule" header cell) — the full selection spans every segment. Join
+  // the per-segment snippets so the quote reflects what was actually selected, not just block one.
+  const segs = annotation.anchor.segments;
+  const quote =
+    segs && segs.length > 1
+      ? segs.map((s) => s.textSnippet).join(" ")
+      : annotation.anchor.textSnippet;
 
   // annotation-actions-ui S-001 (C-001): own-vs-others from the DURABLE creator id. An item is the
   // current user's own only when its `authorId` is non-null AND equals the session user id — the
