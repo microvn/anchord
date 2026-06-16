@@ -74,6 +74,78 @@ export function actionBarSlots(input: {
   return { showResolve: false, showReopen: false, showDecide: false };
 }
 
+// annotation-actions-ui S-005 (C-007): a rail item keeps a FIXED shape regardless of content length.
+// The quoted span is the main offender — a 10-line quote would stretch the card unbounded. So the
+// quote is CAPPED to ≈3 lines when collapsed, with an Expand control that opens the FULL quote in a
+// scrollable, read-only area (a bounded max-height + overflow-auto — the surrounding layout never
+// stretches). A short quote (≤ the cap) needs no control and no clamp.
+//
+// Overflow detection (AS-017): a CONTENT-LENGTH heuristic, NOT a measured/layout overflow check.
+// bun/jsdom has no real layout (scrollHeight/clientHeight are 0), so a measured check is both
+// untestable here and a render-time effect; a deterministic char/newline threshold is the testable,
+// SSR-safe choice. A quote is "long" when it has ≥ QUOTE_CAP_LINES explicit newlines OR exceeds
+// QUOTE_CAP_CHARS characters (≈ what 3 rail-width lines hold). Whitespace-only / empty → never long
+// (no control, no crash).
+export const QUOTE_CAP_LINES = 3;
+export const QUOTE_CAP_CHARS = 160;
+
+export function quoteOverflows(quote: string): boolean {
+  const text = quote ?? "";
+  if (text.trim().length === 0) return false; // empty / whitespace → nothing to expand
+  const newlines = (text.match(/\n/g) ?? []).length;
+  return newlines >= QUOTE_CAP_LINES || text.length > QUOTE_CAP_CHARS;
+}
+
+// QuotePreview: the quoted snippet (untrusted plaintext, C-008 — rendered via React children, NEVER
+// dangerouslySetInnerHTML). A long quote (quoteOverflows) collapses to ≈3 lines (line-clamp) + an
+// Expand control; expanding swaps to a bounded scroll area (max-height + overflow-auto), READ-ONLY
+// (it's a quoted snippet, not editable). A short quote renders plain with no control. The expand /
+// collapse control stopPropagation so it never triggers the card's focus onClick.
+function QuotePreview({ quote, resolved }: { quote: string; resolved: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const overflows = quoteOverflows(quote);
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+  const ruleColor = resolved ? "border-success" : "border-accent";
+
+  return (
+    <div data-testid="quote-preview" className="mb-[9px]">
+      {/* .quote-ref: 2px accent left rule (green when resolved), italic muted 12px/1.45. Collapsed =
+          clamp to QUOTE_CAP_LINES; expanded = a bounded, scrollable, read-only region (the layout
+          never stretches unbounded — C-007). */}
+      <div
+        data-testid="quote-text"
+        data-expanded={overflows && expanded ? "true" : undefined}
+        data-clamped={overflows && !expanded ? "true" : undefined}
+        className={[
+          "border-l-2 py-px pl-[9px] text-[12px] italic leading-[1.45] text-muted",
+          ruleColor,
+          overflows && expanded
+            ? "max-h-[9.5rem] overflow-auto whitespace-pre-wrap"
+            : overflows
+              ? "line-clamp-3"
+              : "whitespace-pre-wrap",
+        ].join(" ")}
+      >
+        &ldquo;{quote}&rdquo;
+      </div>
+      {overflows && (
+        <button
+          type="button"
+          data-testid="quote-toggle"
+          aria-expanded={expanded}
+          onClick={(e) => {
+            stop(e);
+            setExpanded((o) => !o);
+          }}
+          className="mt-1 cursor-pointer rounded-[4px] px-[5px] py-[2px] text-[11px] font-semibold text-muted hover:bg-elev hover:text-ink"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
@@ -570,33 +642,35 @@ export function ThreadCard({
         </div>
       )}
 
-      {/* .quote-ref: 2px accent left rule (green when resolved), italic muted 12px/1.45. */}
-      <div
-        className={[
-          "mb-[9px] border-l-2 py-px pl-[9px] text-[12px] italic leading-[1.45] text-muted",
-          resolved ? "border-success" : "border-accent",
-        ].join(" ")}
-      >
-        &ldquo;{quote}&rdquo;
-      </div>
+      {/* annotation-actions-ui S-005 (C-007): the quoted span — capped to ≈3 lines with an expand
+          control to a bounded scrollable read-only area, so the card keeps a fixed shape regardless
+          of quote length. The .quote-ref styling lives inside QuotePreview. */}
+      <QuotePreview quote={quote} resolved={resolved} />
 
       {/* S-004 (AS-012): the label line — a preset-coloured row (icon + text, e.g. "Out of scope")
           for a SIGNAL annotation. Sits above the root comment so the type reads first. The text
           renders inert via React children (C-006). Tinted with the preset's own identity colour (UI
           Notes: a label is a preset-coloured highlight; the deep-teal accent stays the chrome accent). */}
+      {/* annotation-actions-ui S-005 (AS-019/C-007): the type/label chip sits on its OWN line — its
+          own full-width row, NOT shared with the author/name row — so a long or user-extensible label
+          wraps within its own line and never crowds the author row or breaks the layout. The row is a
+          block-level flex container (the chip itself stays an inline-flex pill); a long label wraps
+          (`whitespace-normal break-words`, `max-w-full`) instead of pushing the layout. */}
       {labelPreset && (
-        <div
-          data-testid="label-line"
-          data-label={annotation.label}
-          className="mb-[6px] inline-flex items-center gap-1.5 rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-semibold"
-          style={{ color: labelPreset.color, background: `${labelPreset.color}1f` }}
-        >
-          {labelPreset.emoji ? (
-            <span aria-hidden>{labelPreset.emoji}</span>
-          ) : (
-            <Icon name={labelPreset.icon} size={12} />
-          )}
-          <span>{labelPreset.text}</span>
+        <div data-testid="type-chip-row" className="mb-[6px] flex">
+          <div
+            data-testid="label-line"
+            data-label={annotation.label}
+            className="inline-flex max-w-full items-center gap-1.5 whitespace-normal break-words rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-semibold"
+            style={{ color: labelPreset.color, background: `${labelPreset.color}1f` }}
+          >
+            {labelPreset.emoji ? (
+              <span aria-hidden>{labelPreset.emoji}</span>
+            ) : (
+              <Icon name={labelPreset.icon} size={12} />
+            )}
+            <span>{labelPreset.text}</span>
+          </div>
         </div>
       )}
 
