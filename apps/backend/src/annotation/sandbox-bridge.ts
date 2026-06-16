@@ -407,26 +407,38 @@ export function bridgeScript(nonce: string): string {
     if (start < 0) return null;
     return wrapTextRange(el, start, start + snippet.length);
   }
-  // Wrap [start,end) chars of an element's text in a <mark>. Walks text nodes to find the
-  // boundary nodes, splits them, and surrounds the range. Returns the <mark> or null.
+  // Wrap [start,end) chars of an element's text in <mark>s — ONE per intersected text node. A range
+  // that spans multiple text nodes (a container block, or text broken by <br>/inline tags like the
+  // article / Given-When-Then div) CANNOT use Range.surroundContents on the whole range: it THROWS
+  // ("InvalidStateError") whenever the range partially selects a non-Text node. So we slice PER text
+  // node and surround each slice on its own (both boundaries in the SAME text node → never throws),
+  // mirroring the markdown engine's per-text-node wrap. Returns the created <mark>s (>=1) or null.
   function wrapTextRange(el, start, end){
-    var range = document.createRange();
-    var pos = 0, startNode = null, startOff = 0, endNode = null, endOff = 0;
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
-    var n;
+    var pos = 0, n, segs = [];
+    // Collect (node, sliceStart, sliceEnd) FIRST — surroundContents splits a node, which would
+    // corrupt the walker mid-iteration.
     while ((n = walker.nextNode())){
       var len = n.textContent.length;
-      if (startNode === null && pos + len >= start){ startNode = n; startOff = start - pos; }
-      if (pos + len >= end){ endNode = n; endOff = end - pos; break; }
-      pos += len;
+      var ns = pos, ne = pos + len;
+      if (ne > start && ns < end){
+        var s = start > ns ? start - ns : 0;
+        var e = end < ne ? end - ns : len;
+        if (e > s) segs.push({ node: n, s: s, e: e });
+      }
+      pos = ne;
+      if (ne >= end) break;
     }
-    if (!startNode || !endNode) return null;
-    range.setStart(startNode, startOff);
-    range.setEnd(endNode, endOff);
-    var mark = document.createElement("mark");
-    mark.setAttribute("data-anno", "");
-    try { range.surroundContents(mark); } catch (e) { return null; }
-    return mark;
+    var marks = [];
+    for (var i = 0; i < segs.length; i++){
+      var r = document.createRange();
+      r.setStart(segs[i].node, segs[i].s);
+      r.setEnd(segs[i].node, segs[i].e);
+      var mark = document.createElement("mark");
+      // Both boundaries are in the SAME text node, so surroundContents never throws here.
+      try { r.surroundContents(mark); marks.push(mark); } catch (e) {}
+    }
+    return marks.length ? marks : null;
   }
 
   // --- transport: dedicated MessageChannel; NEVER trust window messages from the body ---
@@ -452,9 +464,10 @@ export function bridgeScript(nonce: string): string {
   port.onmessage = function(ev){
     var msg = ev.data || {};
     if (msg.type === "highlight"){
-      var mark = placeRange(msg.anchor);
-      if (mark){ mark.setAttribute("data-anno", String(msg.annotationId)); }
-      else { port.postMessage({ type: "place-failed", annotationId: msg.annotationId }); }
+      var marks = placeRange(msg.anchor);
+      if (marks && marks.length){
+        for (var mi = 0; mi < marks.length; mi++) marks[mi].setAttribute("data-anno", String(msg.annotationId));
+      } else { port.postMessage({ type: "place-failed", annotationId: msg.annotationId }); }
     }
   };
 
