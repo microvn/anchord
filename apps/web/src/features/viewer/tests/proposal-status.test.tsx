@@ -71,9 +71,10 @@ describe("Proposal status surface (S-004, C-006)", () => {
     const card = screen.getByTestId("thread-card");
     // The accepted outcome surfaces.
     expect(within(card).getByTestId("redline-accepted-badge")).toHaveTextContent(/accepted/i);
-    // It reads as resolved (dimmed) — the resolved treatment, not Pending.
+    // One-pill locked design: a decided proposal shows its OUTCOME pill (Accepted) + dims
+    // (data-resolved), but NOT a separate Resolved pill — the outcome IS the single status.
     expect(card.getAttribute("data-resolved")).toBe("true");
-    expect(within(card).getByTestId("resolved-badge")).toBeInTheDocument();
+    expect(within(card).queryByTestId("resolved-badge")).toBeNull();
     // Mutual exclusivity (C-006): a decided proposal never shows Pending.
     expect(within(card).queryByTestId("redline-pending-badge")).toBeNull();
   });

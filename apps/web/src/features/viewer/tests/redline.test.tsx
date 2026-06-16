@@ -76,10 +76,12 @@ describe("Redline ThreadCard (S-002)", () => {
     // onDecide("accept") was called.
     await waitFor(() => expect(onDecide).toHaveBeenLastCalledWith("accept"));
     // Deciding auto-resolves: the card dims (data-resolved) — the spec's "thread becomes resolved".
+    // One-pill locked design: the close shows as the DIM (data-resolved), NOT a separate Resolved
+    // pill — a decided proposal carries only its outcome status, never an extra Resolved chip.
     await waitFor(() => {
       expect(screen.getByTestId("thread-card").getAttribute("data-resolved")).toBe("true");
     });
-    expect(within(screen.getByTestId("thread-card")).getByTestId("resolved-badge")).toBeInTheDocument();
+    expect(within(screen.getByTestId("thread-card")).queryByTestId("resolved-badge")).toBeNull();
   });
 
   it("AS-006: the OWNER rejecting a pending redline auto-resolves the thread (dimmed)", async () => {
@@ -92,7 +94,9 @@ describe("Redline ThreadCard (S-002)", () => {
     await waitFor(() => {
       expect(screen.getByTestId("thread-card").getAttribute("data-resolved")).toBe("true");
     });
-    expect(within(screen.getByTestId("thread-card")).getByTestId("resolved-badge")).toBeInTheDocument();
+    // One-pill locked design: the close shows as the DIM (data-resolved), NOT a separate Resolved
+    // pill — a decided proposal carries only its outcome status, never an extra Resolved chip.
+    expect(within(screen.getByTestId("thread-card")).queryByTestId("resolved-badge")).toBeNull();
   });
 
   it("AS-004 / C-002: a non-owner (no onDecide) gets NO Accept/Reject row", () => {

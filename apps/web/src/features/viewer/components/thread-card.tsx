@@ -555,6 +555,17 @@ export function ThreadCard({
       }
     : undefined;
 
+  // Locked-design layout: ONE status pill on the header right, never stacked. Precedence (render at
+  // most one): pending → accepted → rejected → stale → resolved (a RESOLVED REMARK only — a decided
+  // proposal shows its OUTCOME pill, NOT also Resolved). `couldnt-place` is an orthogonal placement
+  // warning that may render alongside the status pill (it isn't a lifecycle outcome).
+  // A RESOLVED REMARK shows the Resolved pill; a PROPOSAL never does — a proposal's single status is
+  // its lifecycle pill (Pending/Accepted/Rejected/Stale), and a decided proposal conveys "closed" via
+  // the dim, not a stacked Resolved chip. So this is gated on `!isProposal`.
+  const showResolvedRemarkBadge = resolved && !isProposal;
+  const showResolveToggle = Boolean(handleResolveToggle) && (slots.showResolve || slots.showReopen);
+  const rootName = root ? (isOwn ? "You" : commentAuthor(root)) : null;
+
   return (
     <div
       role="button"
@@ -576,148 +587,41 @@ export function ThreadCard({
       }}
       className={[
         // .thread: paper, 1px line, r-md, 11px padding. focus → accent border + 3px accent-soft ring.
-        // `relative` so the S-003 overflow menu (C-004) can anchor to the card's top-right corner.
+        // `relative` so the overflow menu (C-004) can anchor within the header-right cluster.
         "relative block w-full cursor-pointer rounded-md border bg-paper p-[11px] text-left transition-[border-color,box-shadow]",
         focused ? "border-accent ring-[3px] ring-accent-soft" : "border-line hover:border-subtle",
         resolved ? "opacity-[0.72]" : "",
       ].join(" ")}
     >
-      {/* S-003 (C-004): the OVERFLOW MENU — a "⋯" trigger at the card's top-right that houses Delete.
-          Mounted ONLY when canDelete (author delete-own OR doc-owner moderate) AND onDelete is wired.
-          A viewer / guest / non-owner-non-author never reaches here (no trigger at all). All controls
-          stopPropagation so they don't bubble to the card's focus onClick. The affordance is a hint —
-          the backend re-authorizes the delete (annotation-actions S-004). Other menu items are out of
-          scope (S-003 owns Delete only). */}
-      {canDelete && handleDelete && (
-        <div className="absolute right-[8px] top-[8px]">
-          <button
-            type="button"
-            data-testid="overflow-trigger"
-            aria-label="More actions"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuOpen((o) => !o);
-            }}
-            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[6px] text-subtle hover:bg-elev hover:text-ink"
-          >
-            <Icon name="more" size={15} />
-          </button>
-          {menuOpen && (
-            <>
-              {/* An invisible click-catcher so an outside click closes the menu (stopPropagation
-                  keeps it from focusing the card). */}
-              <button
-                type="button"
-                aria-hidden
-                tabIndex={-1}
-                data-testid="overflow-scrim"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen(false);
-                }}
-                className="fixed inset-0 z-40 cursor-default"
-              />
-              <div
-                role="menu"
-                data-testid="overflow-menu"
-                onClick={(e) => e.stopPropagation()}
-                className="absolute right-0 top-[28px] z-50 min-w-[120px] rounded-[8px] border border-line bg-paper py-1 shadow-lg"
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-testid="overflow-delete"
-                  disabled={deletingMenu}
-                  onClick={handleDelete}
-                  className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12.5px] font-medium text-error hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Icon name="trash" size={13} />
-                  Delete
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* annotation-actions-ui S-005 (C-007): the quoted span — capped to ≈3 lines with an expand
-          control to a bounded scrollable read-only area, so the card keeps a fixed shape regardless
-          of quote length. The .quote-ref styling lives inside QuotePreview. */}
-      <QuotePreview quote={quote} resolved={resolved} />
-
-      {/* S-004 (AS-012): the label line — a preset-coloured row (icon + text, e.g. "Out of scope")
-          for a SIGNAL annotation. Sits above the root comment so the type reads first. The text
-          renders inert via React children (C-006). Tinted with the preset's own identity colour (UI
-          Notes: a label is a preset-coloured highlight; the deep-teal accent stays the chrome accent). */}
-      {/* annotation-actions-ui S-005 (AS-019/C-007): the type/label chip sits on its OWN line — its
-          own full-width row, NOT shared with the author/name row — so a long or user-extensible label
-          wraps within its own line and never crowds the author row or breaks the layout. The row is a
-          block-level flex container (the chip itself stays an inline-flex pill); a long label wraps
-          (`whitespace-normal break-words`, `max-w-full`) instead of pushing the layout. */}
-      {labelPreset && (
-        <div data-testid="type-chip-row" className="mb-[6px] flex">
-          <div
-            data-testid="label-line"
-            data-label={annotation.label}
-            className="inline-flex max-w-full items-center gap-1.5 whitespace-normal break-words rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-semibold"
-            style={{ color: labelPreset.color, background: `${labelPreset.color}1f` }}
-          >
-            {labelPreset.emoji ? (
-              <span aria-hidden>{labelPreset.emoji}</span>
+      {/* 1. HEADER ROW — avatar · author · time on the LEFT; the single status pill + the overflow ⋯
+          on the RIGHT. The author name is the root comment's author; for an OWN annotation it reads
+          "You" (the own-badge marker, C-001). With no root comment the header omits author/time. */}
+      <div data-testid="thread-header" className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {root && <Avatar name={isOwn ? "You" : commentAuthor(root)} />}
+          {rootName != null &&
+            (isOwn ? (
+              <span data-testid="own-badge" className="truncate text-[12.5px] font-semibold text-accent">
+                You
+              </span>
             ) : (
-              <Icon name={labelPreset.icon} size={12} />
-            )}
-            <span>{labelPreset.text}</span>
-          </div>
-        </div>
-      )}
-
-      {/* annotation-actions-ui S-001 (C-001): the OWN marker — shown only when this item's durable
-          `authorId` matches the current session user. It attributes the item to the current user
-          ("You") and is the visible basis for the later self-only affordances. A guest (null
-          `authorId`) or another member never reaches here, so it never mislabels them as own. */}
-      {isOwn && (
-        <div
-          data-testid="own-badge"
-          className="mb-[6px] inline-flex items-center rounded-[4px] bg-accent-soft px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-accent"
-        >
-          You
-        </div>
-      )}
-
-      {root && (
-        <>
-          <CommentHead c={root} />
-          {/* .cmt-body: t-small 12.5px / 1.5, 6px above. Suppressed when it's the auto-prefilled
-              boilerplate (the label line / DELETE badge already says it) — shown only for a real note. */}
-          {!bodyIsBoilerplate && (
-            <div className="mt-[6px] text-[12.5px] leading-[1.5] text-ink">{root.body}</div>
-          )}
-        </>
-      )}
-
-      {(resolved || unplaceable || isRedline || (isProposal && sugStatus === "pending")) && (
-        // .cmt-badges: 8px above, 6px gap. .sg-badge: mono 9px UPPERCASE pill, 4px radius.
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {/* S-002 (AS-004): a redline carries a DELETE type badge (red-tinted). */}
-          {isRedline && (
+              <span className="truncate text-[12.5px] font-semibold text-ink">{rootName}</span>
+            ))}
+          {/* C-010: a guest comment is visibly attributed as a guest (a display label, not identity). */}
+          {root && isGuestComment(root) && (
             <span
-              data-testid="type-badge-delete"
-              className="rounded-[4px] bg-error/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-error"
+              data-testid="guest-badge"
+              className="rounded-[4px] bg-sunken px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-subtle"
             >
-              Delete
+              Guest
             </span>
           )}
-          {/* annotation-actions-ui S-004 (AS-014/C-006): a PENDING proposal shows a Pending marker — it
-              awaits the owner's decision. Keyed on `isProposal && suggestionStatus === "pending"`, so it
-              is mutually exclusive with the decided (accepted/rejected) outcomes and the stale treatment
-              (each surfaces only on its own status). Pending is a NEUTRAL "awaiting" pill, NOT an outcome
-              colour — DESIGN.md pins detached/error/resolved status hues but not Pending, so this uses the
-              subtle-on-sunken neutral treatment ([→MANUAL]); it stays distinct from the success-tinted
-              Accepted, the error-tinted Rejected, and the muted-tinted Stale. A remark (no
-              suggestionStatus) never reaches here. */}
+          {root && <span className="font-mono text-[10px] text-subtle">{timeLabel(root.createdAt)}</span>}
+        </div>
+
+        <div className="flex flex-none items-center gap-1.5">
+          {/* The SINGLE status pill (render at most ONE — the precedence above). DESIGN.md hues:
+              Pending/Stale neutral, Accepted/Resolved success, Rejected error. */}
           {isProposal && sugStatus === "pending" && (
             <span
               data-testid="redline-pending-badge"
@@ -726,7 +630,6 @@ export function ThreadCard({
               Pending
             </span>
           )}
-          {/* S-002 (AS-005/006): the decided outcome — accepted / rejected. */}
           {sugStatus === "accepted" && (
             <span
               data-testid="redline-accepted-badge"
@@ -743,7 +646,6 @@ export function ThreadCard({
               Rejected
             </span>
           )}
-          {/* S-002 (AS-007): a drifted redline shows STALE — muted, NOT a confident outcome. */}
           {isStale && (
             <span
               data-testid="redline-stale-badge"
@@ -752,7 +654,9 @@ export function ThreadCard({
               Stale
             </span>
           )}
-          {resolved && (
+          {/* A RESOLVED REMARK keeps its Resolved pill; a decided PROPOSAL does NOT (its outcome pill
+              above is the single status — the dim conveys it's closed). */}
+          {showResolvedRemarkBadge && (
             <span
               data-testid="resolved-badge"
               className="rounded-[4px] bg-success/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-success"
@@ -760,6 +664,7 @@ export function ThreadCard({
               Resolved
             </span>
           )}
+          {/* Orthogonal placement warning — may render alongside the status pill. */}
           {unplaceable && (
             <span
               data-testid="couldnt-place-badge"
@@ -768,13 +673,109 @@ export function ThreadCard({
               Couldn&rsquo;t place
             </span>
           )}
+
+          {/* S-003 (C-004): the OVERFLOW MENU — a "⋯" that houses Delete. Mounted ONLY when canDelete
+              (author delete-own OR doc-owner moderate) AND onDelete is wired; a viewer / guest /
+              non-owner-non-author never reaches here. The backend re-authorizes the delete. */}
+          {canDelete && handleDelete && (
+            <div className="relative">
+              <button
+                type="button"
+                data-testid="overflow-trigger"
+                aria-label="More actions"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen((o) => !o);
+                }}
+                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[6px] text-subtle hover:bg-elev hover:text-ink"
+              >
+                <Icon name="more" size={15} />
+              </button>
+              {menuOpen && (
+                <>
+                  {/* An invisible click-catcher so an outside click closes the menu. */}
+                  <button
+                    type="button"
+                    aria-hidden
+                    tabIndex={-1}
+                    data-testid="overflow-scrim"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                    }}
+                    className="fixed inset-0 z-40 cursor-default"
+                  />
+                  <div
+                    role="menu"
+                    data-testid="overflow-menu"
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute right-0 top-[28px] z-50 min-w-[120px] rounded-[8px] border border-line bg-paper py-1 shadow-lg"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      data-testid="overflow-delete"
+                      disabled={deletingMenu}
+                      onClick={handleDelete}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12.5px] font-medium text-error hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Icon name="trash" size={13} />
+                      Delete
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 2. TYPE-CHIP ROW (own line): a LABEL preset chip, OR the redline "⌫ Delete" red chip. A plain
+          comment renders no chip row. A long/extensible label wraps within its own line. */}
+      {(labelPreset || isRedline) && (
+        <div data-testid="type-chip-row" className="mt-[6px] flex">
+          {labelPreset ? (
+            <div
+              data-testid="label-line"
+              data-label={annotation.label}
+              className="inline-flex max-w-full items-center gap-1.5 whitespace-normal break-words rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-semibold"
+              style={{ color: labelPreset.color, background: `${labelPreset.color}1f` }}
+            >
+              {labelPreset.emoji ? (
+                <span aria-hidden>{labelPreset.emoji}</span>
+              ) : (
+                <Icon name={labelPreset.icon} size={12} />
+              )}
+              <span>{labelPreset.text}</span>
+            </div>
+          ) : (
+            // S-002 (AS-004): a redline's DELETE type chip — red-tinted, on its own line.
+            <div
+              data-testid="type-badge-delete"
+              className="inline-flex max-w-full items-center gap-1.5 rounded-[4px] bg-error/15 px-1.5 py-0.5 text-[11.5px] font-semibold text-error"
+            >
+              <Icon name="trash" size={12} />
+              <span>Delete</span>
+            </div>
+          )}
         </div>
       )}
 
+      {/* 3. QUOTE — capped to ≈3 lines with an expand control (C-007); read-only. */}
+      <div className="mt-[6px]">
+        <QuotePreview quote={quote} resolved={resolved} />
+      </div>
+
+      {/* 4. NOTE — the root body, only when it's a real note (not the auto-prefilled boilerplate the
+          label chip / DELETE chip already conveys). */}
+      {root && !bodyIsBoilerplate && (
+        <div className="text-[12.5px] leading-[1.5] text-ink">{root.body}</div>
+      )}
+
+      {/* 5. REPLY LIST — flat, one level (C-005), under a 1px left rule. */}
       {allReplies.length > 0 && (
-        // .reply-list: indented under a 1px left rule (NOT a top divider), 9px above, 9px gap.
-        // C-005: every reply (server OR optimistic, reply-to-comment OR reply-to-reply) is a direct
-        // child here — one flat level, never a nested reply-list.
         <div
           data-testid="reply-list"
           className="mt-[9px] flex flex-col gap-[9px] border-l border-line pl-[11px]"
@@ -788,82 +789,72 @@ export function ThreadCard({
         </div>
       )}
 
-      {/* S-002 (AS-005/008/C-002/C-003): the OWNER-only Accept / Reject row — shown ONLY for a PENDING
-          proposal I did NOT author (slots.showDecide). Deciding auto-resolves the thread (handled in
-          handleDecide). A non-owner, a decided/stale proposal, OR a proposal I authored (no self-
-          approve) all yield slots.showDecide=false → no row. handleDecide also requires onDecide. */}
-      {slots.showDecide && handleDecide && (
-        <div data-testid="redline-decide" className="mt-[9px] flex items-center gap-1.5">
-          <button
-            type="button"
-            data-testid="redline-accept"
-            disabled={deciding}
-            onClick={handleDecide("accept")}
-            className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Accept
-          </button>
-          <button
-            type="button"
-            data-testid="redline-reject"
-            disabled={deciding}
-            onClick={handleDecide("reject")}
-            className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-error hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Reject
-          </button>
+      {/* 6. DIVIDER + 2-SLOT ACTION BAR — Reply on the LEFT, the close action on the RIGHT. While the
+          reply composer is open it OWNS the bar full-width (F3). The RIGHT slot is the owner Accept/
+          Reject (a pending proposal) XOR the Resolve/Reopen toggle (a remark / decided proposal); a
+          non-owner / stale proposal shows neither → Reply only. Handlers unchanged — only placement. */}
+      {(handleReply || slots.showDecide || showResolveToggle) && (
+        <div className="mt-[9px] border-t border-line pt-[9px]">
+          {replyOpen && handleReply ? (
+            <ReplyComposer onReply={handleReply} onClose={() => setReplyOpen(false)} />
+          ) : (
+            <div className="flex items-center justify-between gap-1.5">
+              <div className="flex items-center gap-1.5">
+                {handleReply && (
+                  <button
+                    type="button"
+                    data-testid="reply-open"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setReplyOpen(true);
+                    }}
+                    className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-muted hover:bg-elev hover:text-ink"
+                  >
+                    Reply
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                {slots.showDecide && handleDecide ? (
+                  <div data-testid="redline-decide" className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      data-testid="redline-reject"
+                      disabled={deciding}
+                      onClick={handleDecide("reject")}
+                      className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-error hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="redline-accept"
+                      disabled={deciding}
+                      onClick={handleDecide("accept")}
+                      className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Accept
+                    </button>
+                  </div>
+                ) : (
+                  showResolveToggle &&
+                  handleResolveToggle && (
+                    <button
+                      type="button"
+                      data-testid="resolve-toggle"
+                      disabled={toggling}
+                      onClick={handleResolveToggle}
+                      className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {resolved ? "Reopen" : "Resolve"}
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
-
-      {/* Comment-capable actions row (C-004/C-006): Reply + Resolve/Reopen. Both appear only when
-          their consumer callback is supplied (comment permission or higher) — a viewer-only role
-          gets neither (read-only rail). The Resolve toggle is NOT author-gated (AS-008).
-          F3 (matches the prototype's `replying ? composer : thread-actions`): while the reply composer
-          is open it OWNS the row full-width (Resolve hidden); at rest the two actions sit inline.
-          Styling is the prototype's `.tlink` — a borderless 11.5px text link (Reply muted, Resolve
-          green), NOT a sized button. F2: the React port dropped `.tlink`'s cursor:pointer; restore it
-          (the one genuine divergence from canon). */}
-      {/* Comment-capable actions row (C-002/C-004): Reply + the family's close action. Reply is
-          available to commenter+ on EVERY family — a non-owner on a proposal gets reply only (C-002).
-          The Resolve/Reopen toggle shows ONLY when the 2-family slots offer it (a remark, or a
-          proposal I authored / a decided proposal for the owner) AND the consumer supplied onResolve
-          (comment permission). A pending proposal for the owner offers Accept/Reject above instead, so
-          showResolveToggle is false here — never both close families at once. */}
-      {(() => {
-        const showResolveToggle = Boolean(handleResolveToggle) && (slots.showResolve || slots.showReopen);
-        return replyOpen && handleReply ? (
-          <ReplyComposer onReply={handleReply} onClose={() => setReplyOpen(false)} />
-        ) : (
-          (handleReply || showResolveToggle) && (
-            <div className="mt-[9px] flex items-center gap-1.5">
-              {handleReply && (
-                <button
-                  type="button"
-                  data-testid="reply-open"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setReplyOpen(true);
-                  }}
-                  className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-muted hover:bg-elev hover:text-ink"
-                >
-                  Reply
-                </button>
-              )}
-              {showResolveToggle && handleResolveToggle && (
-                <button
-                  type="button"
-                  data-testid="resolve-toggle"
-                  disabled={toggling}
-                  onClick={handleResolveToggle}
-                  className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {resolved ? "Reopen" : "Resolve"}
-                </button>
-              )}
-            </div>
-          )
-        );
-      })()}
     </div>
   );
 }
