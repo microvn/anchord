@@ -133,6 +133,10 @@ export function createSearchRepo(db: DB): SearchRepo {
                from annotations an
                join comments cm on cm.annotation_id = an.id
                where an.doc_id = a.id
+                 -- annotation-actions S-005 / C-007 (AS-014): a soft-deleted annotation is
+                 -- excluded from EVERY read surface, including the search comment-match. A
+                 -- comment on a deleted annotation must NOT surface its doc as a hit.
+                 and an.deleted_at is null
                  and to_tsvector('english', cm.body) @@ ${tsq}
              )
         )

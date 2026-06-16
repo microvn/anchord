@@ -24,6 +24,7 @@ import {
   createResolutionRepo,
   createSuggestionRepo,
   createReanchorLedgerRepo,
+  createDeleteRepo,
 } from "../../src/annotation/repo";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
@@ -144,6 +145,33 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
     expect(listed.allowed).toBe(true);
     // Newest (third, ids[2]) first → oldest (first, ids[0]) last.
     expect(listed.annotations.map((a) => a.id)).toEqual([ids[2], ids[1], ids[0]]);
+  });
+
+  test("AS-014: a soft-deleted annotation is EXCLUDED from listByDoc (real Postgres) and restore brings it back", async () => {
+    // annotation-actions S-005 / C-007: the SQL `deleted_at is null` filter on listByDoc — the
+    // active list (and, via the shared listByDoc, the re-anchor enumeration) must drop a
+    // tombstoned row, and clearing the tombstone (restore) must return it.
+    const docId = await newDoc(h, '<p id="b1">secret body text</p>');
+    const annRepo = createAnnotationRepo(h.db);
+    const delRepo = createDeleteRepo(h.db);
+
+    const anchor = buildAnchor({ blockId: "b1", text: "secret", offset: 0, length: 6 })!;
+    const created = await createAnnotation(
+      { docId, anchor, viewer: { kind: "user", userId: "u1" }, sessionRole: "commenter" },
+      annRepo,
+    );
+    const annId = created.created ? created.id : "";
+
+    // Present before delete.
+    expect((await annRepo.listByDoc(docId)).map((a) => a.id)).toContain(annId);
+
+    // Soft-delete → absent from the active list (its highlight gone).
+    await delRepo.setDeletedAt(annId);
+    expect((await annRepo.listByDoc(docId)).map((a) => a.id)).not.toContain(annId);
+
+    // Restore (clear the tombstone) → back in the active list.
+    await delRepo.clearDeletedAt(annId);
+    expect((await annRepo.listByDoc(docId)).map((a) => a.id)).toContain(annId);
   });
 
   test("S-003: addReply persists a FLAT comment under the annotation", async () => {

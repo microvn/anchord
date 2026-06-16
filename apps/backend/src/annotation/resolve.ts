@@ -52,11 +52,21 @@ export interface SetResolutionInput {
    * commenter may toggle (C-005). A still-pending suggestion reopens via the ordinary path.
    */
   suggestionStatus?: SuggestionStatus;
+  /**
+   * annotation-actions S-005 / C-007: true when this annotation has been soft-deleted
+   * (`deleted_at` set). A soft-delete is TERMINAL — resolve/reopen on a deleted annotation
+   * is refused so a concurrent delete + resolve can never leave it both deleted AND mutated.
+   * Refused as `not_found` (existence-hiding: a deleted annotation reads as gone), checked
+   * BEFORE any authz/toggle so the repo is never written.
+   */
+  deleted?: boolean;
 }
 
 export type SetResolutionResult =
   | { ok: true; status: AnnotationStatus; suggestionStatus?: SuggestionStatus }
-  | { ok: false; reason: "forbidden" };
+  | { ok: false; reason: "forbidden" }
+  // S-005 / C-007: the annotation is soft-deleted — terminal, reads as gone (route → 404).
+  | { ok: false; reason: "not_found" };
 
 /**
  * Resolve or reopen an annotation (S-004).
@@ -75,7 +85,14 @@ export async function setResolution(
   input: SetResolutionInput,
   repo: ResolutionRepo,
 ): Promise<SetResolutionResult> {
-  const { annotationId, resolved, sessionRole, suggestionStatus } = input;
+  const { annotationId, resolved, sessionRole, suggestionStatus, deleted } = input;
+
+  // S-005 / C-007 (AS-015): a soft-deleted annotation is TERMINAL — refuse resolve/reopen
+  // BEFORE any authz or toggle so a concurrent delete + resolve can't desync. Reads as gone
+  // (not_found), consistent with existence-hiding; the repo is never written.
+  if (deleted) {
+    return { ok: false, reason: "not_found" };
+  }
 
   // AS-026 / C-016: reopening a DECIDED suggestion (accepted|rejected) is a DIFFERENT
   // transition from the ordinary resolve toggle — OWNER-only, and it clears the decision

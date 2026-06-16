@@ -190,3 +190,35 @@ test("C-016: reopening a PENDING suggestion is the ordinary path — a commenter
   expect(res).toEqual({ ok: true, status: "unresolved" });
   expect(repo.suggestionResets).toHaveLength(0);
 });
+
+test("AS-015: resolve / reopen on a SOFT-DELETED annotation is REFUSED (terminal) — reads as gone, status untouched", async () => {
+  // annotation-actions S-005 / C-007: a soft-deleted annotation is TERMINAL — neither resolve
+  // (resolved=true) nor reopen (resolved=false) may change its status, so a concurrent
+  // delete + resolve can never desync. Refused as not_found (existence-hiding), checked BEFORE
+  // any authz/toggle so the repo is never written. Even an OWNER (highest role) is refused.
+  const resolveRepo = fakeRepo("unresolved");
+  const onResolve = await setResolution(
+    { annotationId: "ann-del", resolved: true, sessionRole: "owner", deleted: true },
+    resolveRepo,
+  );
+  expect(onResolve).toEqual({ ok: false, reason: "not_found" });
+  expect(resolveRepo.writes).toHaveLength(0); // never written — terminal.
+
+  const reopenRepo = fakeRepo("resolved");
+  const onReopen = await setResolution(
+    { annotationId: "ann-del", resolved: false, sessionRole: "commenter", deleted: true },
+    reopenRepo,
+  );
+  expect(onReopen).toEqual({ ok: false, reason: "not_found" });
+  expect(reopenRepo.writes).toHaveLength(0);
+
+  // The terminal refusal takes precedence over the owner-only decided-suggestion reopen path:
+  // a deleted decided suggestion still reads as gone (no reset of suggestion_status either).
+  const decidedRepo = fakeRepo("resolved");
+  const onDeletedDecided = await setResolution(
+    { annotationId: "sug-del", resolved: false, sessionRole: "owner", suggestionStatus: "accepted", deleted: true },
+    decidedRepo,
+  );
+  expect(onDeletedDecided).toEqual({ ok: false, reason: "not_found" });
+  expect(decidedRepo.suggestionResets).toHaveLength(0);
+});

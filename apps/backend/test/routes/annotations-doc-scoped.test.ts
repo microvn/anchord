@@ -32,7 +32,7 @@ import type { AnnotationRepo, AnnotationRow, NewAnnotation, ViewerComment } from
 import type { CommentRepo, CommentRow, NewComment } from "../../src/annotation/reply";
 import type { GuestCommentRepo, NewGuestComment } from "../../src/annotation/guest";
 import type { ResolutionRepo, AnnotationStatus } from "../../src/annotation/resolve";
-import type { DeleteRepo } from "../../src/annotation/delete";
+import type { DeleteRepo, RestoreRepo } from "../../src/annotation/delete";
 import type { MailEnqueuer, NewNotification, NotifyRepo } from "../../src/notify/notify";
 
 const member: SessionResolver = async () => ({ userId: "u_member" });
@@ -108,6 +108,18 @@ function fakeDeleteRepo() {
   const repo: DeleteRepo = {
     async setDeletedAt(annotationId) {
       calls.deleted.push(annotationId);
+    },
+  };
+  return { repo, calls };
+}
+
+// annotation-actions S-005 / C-007: a fake restore repo recording every clearDeletedAt so a
+// no-op (refused) restore is observable.
+function fakeRestoreRepo() {
+  const calls = { restored: [] as string[] };
+  const repo: RestoreRepo = {
+    async clearDeletedAt(annotationId) {
+      calls.restored.push(annotationId);
     },
   };
   return { repo, calls };
@@ -200,6 +212,7 @@ function buildApp(opts: {
   guestCommentRepo?: ReturnType<typeof fakeGuestCommentRepo>;
   resolutionRepo?: ReturnType<typeof fakeResolutionRepo>;
   deleteRepo?: ReturnType<typeof fakeDeleteRepo>;
+  restoreRepo?: ReturnType<typeof fakeRestoreRepo>;
   annotationLookupRepo?: AnnotationLookupRepo;
   loadShareConfig?: LoadShareConfig;
   rateLimitComment?: CommentRateLimiter;
@@ -219,6 +232,7 @@ function buildApp(opts: {
       guestCommentRepo: (opts.guestCommentRepo ?? fakeGuestCommentRepo()).repo,
       resolutionRepo: (opts.resolutionRepo ?? fakeResolutionRepo()).repo,
       deleteRepo: (opts.deleteRepo ?? fakeDeleteRepo()).repo,
+      restoreRepo: (opts.restoreRepo ?? fakeRestoreRepo()).repo,
       suggestionRepo: {
         async insertSuggestion() { return { id: "s" }; },
         async getSuggestion() { return null; },
@@ -522,13 +536,18 @@ describe("AS-023 / C-009 / C-014: a guest cannot impersonate a member or the doc
 // own-check to THAT annotation.
 
 // A lookup repo that serves a parent doc + a seeded author_id for the delete-own gate.
-function lookupWithAuthor(authorId: string | null, generalAccess: DocLookup["generalAccess"] = "anyone_with_link"): AnnotationLookupRepo {
+function lookupWithAuthor(
+  authorId: string | null,
+  generalAccess: DocLookup["generalAccess"] = "anyone_with_link",
+  deletedAt: Date | null = null,
+): AnnotationLookupRepo {
   return {
     async findAnnotationDoc() {
-      return { docId: "doc_1", generalAccess, authorId };
+      // S-005/C-007: deletedAt surfaced (not filtered) so the terminal guard + restore see it.
+      return { docId: "doc_1", generalAccess, authorId, deletedAt };
     },
     async findSuggestionDoc() {
-      return { docId: "doc_1", generalAccess };
+      return { docId: "doc_1", generalAccess, deletedAt };
     },
     async getCurrentVersionContent() {
       return null;
@@ -661,5 +680,121 @@ describe("AS-013 / C-006: deleting on a doc the caller cannot view is indistingu
     const res = await app.handle(req("/api/docs/doc-one/annotations/ann_missing", { method: "DELETE" }));
     expect(res.status).toBe(404);
     expect(dr.calls.deleted).toHaveLength(0);
+  });
+});
+
+// ── annotation-actions S-005 / C-007: soft-delete is terminal at the route boundary ──
+describe("AS-015 / C-007: resolve/reopen on a soft-deleted annotation is refused (terminal) via the doc route", () => {
+  test("AS-015: PATCH resolution on a SOFT-DELETED annotation → 404 (existence-hiding), status untouched", async () => {
+    // A deleted annotation reads as gone — even a commenter who could ordinarily resolve gets a
+    // not-found, NOT a 200. The resolution write must never fire for a tombstoned row.
+    const rr = fakeResolutionRepo();
+    const app = buildApp({
+      resolveSession: member,
+      resolveDocRole: asCommenter,
+      // the annotation exists + is accessible, but is soft-deleted (deletedAt set) → terminal.
+      annotationLookupRepo: lookupWithAuthor("u_member", "anyone_with_link", new Date("2026-06-16T00:00:00.000Z")),
+      resolutionRepo: rr,
+    });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations/ann_1/resolution", { method: "PATCH", body: JSON.stringify({ resolved: true }) }),
+    );
+    expect(res.status).toBe(404);
+    expect(rr.calls.sets).toHaveLength(0); // never written — terminal.
+  });
+});
+
+// ── annotation-actions S-005 / C-007: restore (clear the tombstone) via the doc route ──
+describe("AS-016 / C-007: restore a soft-deleted annotation — author or owner, via the doc route", () => {
+  const asOwner = async (): Promise<Role | null> => "owner";
+  const asViewer = async (): Promise<Role | null> => "viewer";
+
+  test("AS-016: the author restores their own → 200 { restored: true }, tombstone cleared", async () => {
+    const lan: SessionResolver = async () => ({ userId: "u_lan" });
+    const rr = fakeRestoreRepo();
+    const app = buildApp({
+      resolveSession: lan,
+      resolveDocRole: asCommenter,
+      // soft-deleted (deletedAt set), authored by Lan → restore-own authorized; the lookup still
+      // FINDS the deleted row (restore must see tombstoned rows; only active reads filter them).
+      annotationLookupRepo: lookupWithAuthor("u_lan", "anyone_with_link", new Date("2026-06-16T00:00:00.000Z")),
+      restoreRepo: rr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1/restore", { method: "POST" }));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.restored).toBe(true);
+    expect(rr.calls.restored).toEqual(["ann_1"]); // back in the active list on the next read.
+  });
+
+  test("AS-016: the owner (≠ author) restores another's → 200, tombstone cleared (moderation)", async () => {
+    const sara: SessionResolver = async () => ({ userId: "u_sara" });
+    const rr = fakeRestoreRepo();
+    const app = buildApp({
+      resolveSession: sara,
+      resolveDocRole: asOwner,
+      annotationLookupRepo: lookupWithAuthor("u_lan", "anyone_with_link", new Date("2026-06-16T00:00:00.000Z")),
+      restoreRepo: rr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1/restore", { method: "POST" }));
+    expect(res.status).toBe(200);
+    expect(rr.calls.restored).toEqual(["ann_1"]);
+  });
+
+  test("AS-016: a non-owner non-author (Bob, commenter) cannot restore another's → 403, tombstone kept", async () => {
+    const bob: SessionResolver = async () => ({ userId: "u_bob" });
+    const rr = fakeRestoreRepo();
+    const app = buildApp({
+      resolveSession: bob,
+      resolveDocRole: asCommenter,
+      annotationLookupRepo: lookupWithAuthor("u_lan", "anyone_with_link", new Date("2026-06-16T00:00:00.000Z")),
+      restoreRepo: rr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1/restore", { method: "POST" }));
+    expect(res.status).toBe(403);
+    expect(rr.calls.restored).toHaveLength(0);
+  });
+
+  test("AS-016: a viewer cannot restore → 403, tombstone kept", async () => {
+    const viewer: SessionResolver = async () => ({ userId: "u_viewer" });
+    const rr = fakeRestoreRepo();
+    const app = buildApp({
+      resolveSession: viewer,
+      resolveDocRole: asViewer,
+      annotationLookupRepo: lookupWithAuthor("u_other", "anyone_with_link", new Date("2026-06-16T00:00:00.000Z")),
+      restoreRepo: rr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1/restore", { method: "POST" }));
+    expect(res.status).toBe(403);
+    expect(rr.calls.restored).toHaveLength(0);
+  });
+
+  test("C-007: restore is session-required — a no-session (guest) restore → 401 BEFORE any authz, nothing restored", async () => {
+    const rr = fakeRestoreRepo();
+    const app = buildApp({
+      resolveSession: noSession,
+      loadShareConfig: guestOn,
+      annotationLookupRepo: lookupWithAuthor(null, "anyone_with_link", new Date("2026-06-16T00:00:00.000Z")),
+      restoreRepo: rr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1/restore", { method: "POST" }));
+    expect(res.status).toBe(401);
+    expect(rr.calls.restored).toHaveLength(0);
+  });
+
+  test("C-007: restore on a doc the caller cannot view → 404 (existence-hiding, access-based not deleted-based), nothing restored", async () => {
+    const someone: SessionResolver = async () => ({ userId: "u_someone" });
+    const rr = fakeRestoreRepo();
+    const app = buildApp({
+      resolveSession: someone,
+      resolveAccess: denyAll,
+      doc: { ...VISIBLE_DOC, generalAccess: "restricted" },
+      // authored by the caller (own would pass on authz) but the parent doc is no-access → 404.
+      annotationLookupRepo: lookupWithAuthor("u_someone", "restricted", new Date("2026-06-16T00:00:00.000Z")),
+      restoreRepo: rr,
+    });
+    const res = await app.handle(req("/api/docs/doc-one/annotations/ann_1/restore", { method: "POST" }));
+    expect(res.status).toBe(404);
+    expect(rr.calls.restored).toHaveLength(0);
   });
 });

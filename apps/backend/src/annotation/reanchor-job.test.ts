@@ -27,9 +27,10 @@ const SEVEN = [
   "Payment expires after 24h",
 ];
 
-/** A fake annotation reader. `type` defaults to "range"; pass "suggestion" to exercise the filter. */
-function reader(rows: { id: string; anchor: Anchor; type?: string }[]): ReanchorAnnotationReader {
-  return { async listByDoc() { return rows.map((r) => ({ id: r.id, anchor: r.anchor, type: r.type ?? "range" })); } };
+/** A fake annotation reader. `type` defaults to "range"; pass "suggestion" to exercise the filter.
+ *  `deletedAt` defaults to null; pass a Date to exercise the S-005/C-007 soft-delete exclusion. */
+function reader(rows: { id: string; anchor: Anchor; type?: string; deletedAt?: Date | null }[]): ReanchorAnnotationReader {
+  return { async listByDoc() { return rows.map((r) => ({ id: r.id, anchor: r.anchor, type: r.type ?? "range", deletedAt: r.deletedAt ?? null })); } };
 }
 
 /** A fake apply repo that records what was carried / detached. */
@@ -167,6 +168,37 @@ test("C-012: suggestion-type annotations are excluded from re-anchor (separate C
   expect(summary.total).toBe(1);
   expect(apply.carried.map((c) => c.id)).toEqual(["a1"]);
   expect(apply.detached).toEqual([]);
+});
+
+test("AS-014: a SOFT-DELETED annotation is excluded from re-anchor AND from the detached-rate denominator", async () => {
+  // annotation-actions S-005 / C-007: a deleted annotation is terminal — it must NOT be
+  // re-anchored onto the new version (never carried, never detached) and must NOT count in the
+  // detached-rate metric (total). Here a1 carries; a2 would DETACH but is soft-deleted, so it is
+  // skipped entirely → total=1, detached=0, rate=0 (NOT 1/2=50% which would wrongly alert).
+  const carriedAnchor: Anchor = { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 };
+  const lostAnchor: Anchor = { blockId: "block-p-99", textSnippet: "gone", offset: 0, length: 4 };
+  const apply = applyRepo();
+  const led = ledger();
+  const summary = await runReanchorForNewVersion(
+    {
+      annotations: reader([
+        { id: "a1", anchor: carriedAnchor },
+        { id: "a2-deleted", anchor: lostAnchor, deletedAt: new Date("2026-06-16T00:00:00.000Z") },
+      ]),
+      apply: apply.repo,
+      ledger: led.repo,
+    },
+    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+  );
+  // Only the live annotation is considered; the deleted one is never carried/detached/ledgered.
+  expect(summary.total).toBe(1);
+  expect(summary.carried).toBe(1);
+  expect(summary.detached).toBe(0);
+  expect(summary.detachedRate).toBe(0); // computed over ACTIVE rows only — the deleted one is gone.
+  expect(summary.alert).toBe(false);
+  expect(apply.carried.map((c) => c.id)).toEqual(["a1"]);
+  expect(apply.detached).toEqual([]);
+  expect(led.persisted.map((e) => e.annotationId)).toEqual(["a1"]); // no ledger row for the deleted one.
 });
 
 test("C-012: edge — a doc with zero annotations does no work and never alerts", async () => {

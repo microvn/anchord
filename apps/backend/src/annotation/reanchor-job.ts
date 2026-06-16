@@ -31,7 +31,7 @@ export const DETACHED_ALERT_THRESHOLD = 0.25;
  * union-overlap type error.
  */
 export interface ReanchorAnnotationReader {
-  listByDoc(docId: string): Promise<{ id: string; anchor: Anchor; type: string }[]>;
+  listByDoc(docId: string): Promise<{ id: string; anchor: Anchor; type: string; deletedAt?: Date | null }[]>;
 }
 
 /** Write port: apply a re-anchor outcome to the annotations row. Both writes are idempotent. */
@@ -97,8 +97,13 @@ export async function runReanchorForNewVersion(
 ): Promise<ReanchorSummary> {
   const rows = await deps.annotations.listByDoc(input.docId);
   // Suggestions have their own stale lifecycle (C-011) — never re-anchored here.
+  // annotation-actions S-005 / C-007 (AS-014): a SOFT-DELETED annotation is terminal — it is
+  // NOT re-anchored onto the new version AND NOT counted in the detached-rate denominator
+  // (`toReanchor.length`). The production listByDoc (repo.ts) already excludes deleted rows at
+  // the SQL layer; this filter is the explicit, unit-checkable guard so the rule holds for any
+  // reader and can never silently resurrect a deleted annotation on a later publish.
   const toReanchor: AnnotationToReanchor[] = rows
-    .filter((r) => r.type !== "suggestion")
+    .filter((r) => r.type !== "suggestion" && r.deletedAt == null)
     .map((r) => ({ id: r.id, anchor: r.anchor }));
 
   // C-012: preload persisted outcomes so a re-run for the same version is a no-op.

@@ -73,3 +73,67 @@ export async function deleteAnnotation(
   await repo.setDeletedAt(annotationId);
   return { ok: true };
 }
+
+// ── annotation-actions S-005: restore (clear the tombstone) (RestoreRepo) ──────
+//
+// C-007: restore is the durable undo backing the FE's optimistic-undo toast. It is the SAME
+// authz family as delete (C-006): restore-OWN by the author (an account-holder whose
+// `author_id` matches the actor) OR restore-ANY by the doc OWNER (moderation). A
+// viewer / guest / non-owner-non-author cannot restore another's.
+//
+// NOTE on existence-hiding: the route resolves the parent doc via a lookup that does NOT
+// filter out soft-deleted rows (only the ACTIVE-read surfaces filter — list/search/re-anchor).
+// So the restore path can FIND a tombstoned row and clear it. The 404 the route emits is
+// ACCESS-based (can you see the parent doc), never deleted-based — a row you can't see is
+// indistinguishable from a missing id, but a deleted row you CAN see is restorable.
+
+/**
+ * Persistence port — thin Drizzle glue (clear `deleted_at`). Mirrors DeleteRepo so the
+ * authz stays unit-testable without a DB.
+ */
+export interface RestoreRepo {
+  /** S-005 / C-007: clear the soft-delete tombstone (set `deleted_at` back to null). */
+  clearDeletedAt(annotationId: string): Promise<void>;
+}
+
+export interface RestoreAnnotationInput {
+  annotationId: string;
+  /** The acting user's id, resolved SERVER-side from the session (null is impossible past the
+   *  route's session gate, but the null guard below keeps the pure function correct). */
+  actorUserId: string | null;
+  /** The role resolved SERVER-side — owner unlocks moderation restore. */
+  sessionRole: Role;
+  /** The annotation's durable creator (`author_id`); null for a guest-created annotation. */
+  authorId: string | null;
+}
+
+export type RestoreAnnotationResult = { ok: true } | { ok: false; reason: "forbidden" };
+
+/**
+ * Decide whether the acting user may restore the annotation, and clear the tombstone on allow
+ * (S-005 / C-007). SAME authz as delete (C-006):
+ *   - restore-OWN: `actorUserId != null && actorUserId === authorId` (the `!= null` guard makes
+ *     a guest (null actor) on a guest annotation (null author) NOT match).
+ *   - restore-ANY (moderation): `sessionRole === "owner"`, on anyone's annotation.
+ * A non-owner non-author is refused; the repo is never written.
+ *
+ * Idempotent: clearing the tombstone of an ALREADY-active (non-deleted) annotation is a
+ * harmless no-op write — restore is the durable undo, so a double-restore (or a restore of a
+ * never-deleted row by an authorized actor) succeeds without error rather than failing.
+ */
+export async function restoreAnnotation(
+  input: RestoreAnnotationInput,
+  repo: RestoreRepo,
+): Promise<RestoreAnnotationResult> {
+  const { annotationId, actorUserId, sessionRole, authorId } = input;
+
+  const isOwnerModeration = sessionRole === "owner";
+  const isOwnAuthor = actorUserId != null && actorUserId === authorId;
+
+  if (!isOwnerModeration && !isOwnAuthor) {
+    return { ok: false, reason: "forbidden" };
+  }
+
+  await repo.clearDeletedAt(annotationId);
+  return { ok: true };
+}

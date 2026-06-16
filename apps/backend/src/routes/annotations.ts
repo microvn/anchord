@@ -52,7 +52,7 @@ import { pointRegion, boxRegion, imageRegionAnchor, type ImageRegion } from "../
 import { addReply, addComment, type CommentRepo } from "../annotation/reply";
 import { createGuestComment, type GuestCommentRepo } from "../annotation/guest";
 import { setResolution, type ResolutionRepo } from "../annotation/resolve";
-import { deleteAnnotation, type DeleteRepo } from "../annotation/delete";
+import { deleteAnnotation, restoreAnnotation, type DeleteRepo, type RestoreRepo } from "../annotation/delete";
 import { createSuggestion, decideSuggestion, type SuggestionRepo } from "../annotation/suggestion";
 import {
   createAnnotationRepo,
@@ -84,11 +84,12 @@ export interface AnnotationLookupRepo {
    */
   findAnnotationDoc(
     annotationId: string,
-  ): Promise<{ docId: string; generalAccess: GeneralAccessLevel; authorId: string | null } | null>;
-  /** docId + generalAccess for a suggestion id, or null if it doesn't exist. */
+  ): Promise<{ docId: string; generalAccess: GeneralAccessLevel; authorId: string | null; deletedAt?: Date | null } | null>;
+  /** docId + generalAccess for a suggestion id, or null if it doesn't exist. The `deletedAt`
+   *  (S-005 / C-007) lets the resolution route refuse a terminal (deleted) annotation. */
   findSuggestionDoc(
     suggestionId: string,
-  ): Promise<{ docId: string; generalAccess: GeneralAccessLevel } | null>;
+  ): Promise<{ docId: string; generalAccess: GeneralAccessLevel; deletedAt?: Date | null } | null>;
   /** Current (highest) version content HTML for a doc — for the C-011 stale check. */
   getCurrentVersionContent(docId: string): Promise<string | null>;
 }
@@ -104,11 +105,14 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
         generalAccess: docsTable.generalAccess,
         // S-004/C-006: the durable creator, so the delete route can gate delete-own.
         authorId: annotationsTable.authorId,
+        // S-005/C-007: the tombstone, so resolution refuses a deleted (terminal) annotation
+        // and restore can find + clear it. NOT filtered out here — the lookup sees deleted rows.
+        deletedAt: annotationsTable.deletedAt,
       })
       .from(annotationsTable)
       .innerJoin(docsTable, eq(docsTable.id, annotationsTable.docId))
       .where(eq(annotationsTable.id, annotationId));
-    return row ? { ...row, authorId: row.authorId ?? null } : null;
+    return row ? { ...row, authorId: row.authorId ?? null, deletedAt: row.deletedAt ?? null } : null;
   }
 
   return {
@@ -117,11 +121,16 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
     },
     async findSuggestionDoc(suggestionId) {
       const [row] = await db
-        .select({ docId: annotationsTable.docId, generalAccess: docsTable.generalAccess })
+        .select({
+          docId: annotationsTable.docId,
+          generalAccess: docsTable.generalAccess,
+          // S-005/C-007: surfaced (not filtered) so the resolution route can refuse a deleted one.
+          deletedAt: annotationsTable.deletedAt,
+        })
         .from(annotationsTable)
         .innerJoin(docsTable, eq(docsTable.id, annotationsTable.docId))
         .where(and(eq(annotationsTable.id, suggestionId), eq(annotationsTable.type, "suggestion")));
-      return row ?? null;
+      return row ? { ...row, deletedAt: row.deletedAt ?? null } : null;
     },
     async getCurrentVersionContent(docId) {
       const [row] = await db
@@ -207,6 +216,8 @@ export interface AnnotationsRoutesDeps {
   resolutionRepo?: ResolutionRepo;
   /** annotation-actions S-004 / C-006: the soft-delete write port (built from `db` if omitted). */
   deleteRepo?: DeleteRepo;
+  /** annotation-actions S-005 / C-007: the restore (clear-tombstone) write port (built from `db` if omitted). */
+  restoreRepo?: RestoreRepo;
   suggestionRepo?: SuggestionRepo;
   lookupRepo?: DocLookupRepo;
   annotationLookupRepo?: AnnotationLookupRepo;
@@ -351,6 +362,8 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   const guestCommentRepo = deps.guestCommentRepo ?? (deps.db ? createGuestCommentRepo(deps.db) : need("guestCommentRepo"));
   const resolutionRepo = deps.resolutionRepo ?? (deps.db ? createResolutionRepo(deps.db) : need("resolutionRepo"));
   const deleteRepo = deps.deleteRepo ?? (deps.db ? createDeleteRepo(deps.db) : need("deleteRepo"));
+  // S-005/C-007: restore shares the createDeleteRepo factory (it exposes both set + clear).
+  const restoreRepo = deps.restoreRepo ?? (deps.db ? createDeleteRepo(deps.db) : need("restoreRepo"));
   const suggestionRepo = deps.suggestionRepo ?? (deps.db ? createSuggestionRepo(deps.db) : need("suggestionRepo"));
   const lookupRepo = deps.lookupRepo ?? (deps.db ? createDocLookupRepo(deps.db) : need("lookupRepo"));
   const annotationLookupRepo =
@@ -472,16 +485,20 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   async function resolutionHandler({ params, actor, validBody }: any) {
     const { resolved } = validBody as z.infer<typeof resolutionSchema>;
     const viewer: Viewer = { kind: "user", userId: actor.userId };
-    const parent = await enforceParentAccess(await annotationLookupRepo.findAnnotationDoc(params.id), viewer);
+    const found = await annotationLookupRepo.findAnnotationDoc(params.id);
+    const parent = await enforceParentAccess(found, viewer);
     const sessionRole = await docRole(parent.docId, actor.userId);
     // S-006/AS-026/C-016: if this annotation is a suggestion, its lifecycle decides whether a
     // reopen is the owner-only decision-reset path or the ordinary commenter+ toggle. null for
     // an ordinary annotation (getSuggestion filters on type="suggestion").
     const sug = await suggestionRepo.getSuggestion(params.id);
     const result = await setResolution(
-      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status },
+      // S-005/C-007 (AS-015): a soft-deleted annotation is terminal — refuse resolve/reopen.
+      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status, deleted: found!.deletedAt != null },
       resolutionRepo,
     );
+    // S-005/C-007: a deleted (terminal) annotation reads as gone → 404 (existence-hiding).
+    if (!result.ok && result.reason === "not_found") throw new NotFoundError();
     if (!result.ok) throw new ForbiddenError(); // viewer / non-owner decided-reopen → 403 (AS-010/AS-026)
     return { status: result.status };
   }
@@ -565,6 +582,35 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     );
     if (!result.ok) throw new ForbiddenError(); // viewer / non-owner-non-author → 403 (AS-010/AS-011)
     return { deleted: true };
+  }
+
+  /**
+   * annotation-actions S-005 / C-007: RESTORE a soft-deleted annotation (clear the tombstone) —
+   * the durable undo backing the FE optimistic-undo toast. SAME shape as delete: session-REQUIRED
+   * (anon/guest → 401 before any authz, AS-012-family), existence-hiding 404 on a missing/no-access
+   * parent doc, then author-OR-owner authz (AS-016, C-006 family). The lookup (findAnnotationDoc)
+   * does NOT filter deleted rows, so a tombstoned annotation is found + clearable; the 404 is
+   * ACCESS-based (can you see the doc), never deleted-based. Idempotent: restoring an already-active
+   * annotation is a harmless no-op.
+   */
+  async function restoreAnnotationHandler({ params, request }: any) {
+    const actor: Actor | null = await deps.resolveSession(request.headers);
+    if (!actor) throw new UnauthenticatedError("Sign in to restore an annotation");
+    const viewer: Viewer = { kind: "user", userId: actor.userId };
+    const found = await annotationLookupRepo.findAnnotationDoc(params.id);
+    const parent = await enforceParentAccess(found, viewer);
+    const sessionRole = await docRole(parent.docId, actor.userId);
+    const result = await restoreAnnotation(
+      {
+        annotationId: params.id,
+        actorUserId: actor.userId,
+        sessionRole,
+        authorId: found!.authorId, // bound to the resolved annotation (found non-null past the 404 gate).
+      },
+      restoreRepo,
+    );
+    if (!result.ok) throw new ForbiddenError(); // viewer / non-owner-non-author → 403 (AS-016)
+    return { restored: true };
   }
 
   // S-003 reply (session) OR S-007 guest (no session). The guest path requires a
@@ -733,9 +779,11 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // S-006/AS-026/C-016: suggestion lifecycle gates the owner-only decided-reopen reset.
     const sug = await suggestionRepo.getSuggestion(params.id);
     const result = await setResolution(
-      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status },
+      // S-005/C-007 (AS-015): a soft-deleted annotation is terminal — refuse resolve/reopen.
+      { annotationId: params.id, resolved, sessionRole, suggestionStatus: sug?.status, deleted: found!.deletedAt != null },
       resolutionRepo,
     );
+    if (!result.ok && result.reason === "not_found") throw new NotFoundError(); // deleted → 404
     if (!result.ok) throw new ForbiddenError(); // viewer / non-owner decided-reopen → 403
     return { status: result.status };
   }
@@ -767,5 +815,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // annotation-actions S-004 / C-006: delete an annotation (soft). Mounted session-OPTIONAL
     // (doc-addressed) but the handler enforces session-REQUIRED before any authz (AS-012),
     // then existence-hiding 404 + parent-doc binding + own/owner gate (AS-013).
-    .delete("/api/docs/:slug/annotations/:id", deleteAnnotationHandler);
+    .delete("/api/docs/:slug/annotations/:id", deleteAnnotationHandler)
+    // annotation-actions S-005 / C-007 (AS-016): restore a soft-deleted annotation. Mounted
+    // session-OPTIONAL (doc-addressed) but the handler enforces session-REQUIRED before authz,
+    // then existence-hiding 404 + author/owner gate — the durable undo behind the FE toast.
+    .post("/api/docs/:slug/annotations/:id/restore", restoreAnnotationHandler);
 }

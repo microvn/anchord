@@ -58,6 +58,13 @@ export interface SuggestionRow {
    * Optional on the row shape so existing reads that don't select it stay valid.
    */
   authorId?: string | null;
+  /**
+   * annotation-actions S-005 / C-007: the soft-delete tombstone. When set, the suggestion is
+   * TERMINAL — decide (accept/reject) on it is refused (it reads as gone). `getSuggestion` does
+   * NOT filter deleted rows out (the decide path must still FIND it to refuse it); this field
+   * is what `decideSuggestion` checks. Optional so existing reads that don't select it stay valid.
+   */
+  deletedAt?: Date | null;
 }
 
 /**
@@ -190,6 +197,12 @@ export async function decideSuggestion(
 
   const row = await repo.getSuggestion(suggestionId);
   if (row === null) return { ok: false, reason: "not_found" };
+
+  // S-005 / C-007 (AS-015): a soft-deleted suggestion is TERMINAL — refuse the decide so a
+  // concurrent delete + accept can't leave it both deleted AND accepted (and an agent never
+  // applies a deletion the author removed). Reads as gone (not_found), consistent with the
+  // route's existence-hiding. Checked BEFORE the status write, so the repo is never touched.
+  if (row.deletedAt != null) return { ok: false, reason: "not_found" };
 
   if (decision === "reject") {
     // AS-015: reject only flips status; content never touched, no match check needed.

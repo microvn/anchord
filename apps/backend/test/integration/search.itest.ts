@@ -253,6 +253,31 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
     expect(titles).toContain("Secret Memo");
   });
 
+  test("AS-014: a soft-deleted annotation's comment no longer surfaces its doc in search (comment-match exclusion)", async () => {
+    // annotation-actions S-005 / C-007: the search comment-match join excludes `deleted_at`
+    // rows. A owns this doc, so before delete the unique comment token surfaces it; after
+    // soft-delete the comment-match must NOT — the deleted annotation is gone from the search.
+    const docId = await publish(A.cookie, {
+      content: "# Delete Search\n\nnothing matchable in content here",
+      title: "Delete Search Doc",
+    });
+    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, docId));
+    const [an] = await h.db
+      .insert(annotations)
+      .values({ docId, type: "doc", anchor: {} })
+      .returning({ id: annotations.id });
+    await h.db.insert(comments).values({ annotationId: an!.id, body: "the deltazeta clause needs review" });
+
+    // Present before delete (comment match).
+    let r = await searchAs(A.cookie, "deltazeta");
+    expect(r.data.results.map((x: any) => x.title)).toContain("Delete Search Doc");
+
+    // Soft-delete the annotation → its comment match is excluded from search.
+    await h.db.update(annotations).set({ deletedAt: new Date() }).where(eq(annotations.id, an!.id));
+    r = await searchAs(A.cookie, "deltazeta");
+    expect(r.data.results.map((x: any) => x.title)).not.toContain("Delete Search Doc");
+  });
+
   // C-006 REGRESSION (the hole): before this fix, extractText ran ONLY on publish's v1.
   // Appending/restoring a version inserted a doc_versions row with NULL extracted_text,
   // so the NEW (current) content was not searchable. The search index covers the CURRENT

@@ -6,7 +6,7 @@
 // modules; these factories only read and write rows. Integration-verified against a real
 // Postgres in test/integration/annotation-repo.itest.ts.
 
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { annotations, comments, reanchorLedger, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { Anchor } from "./annotation";
@@ -19,7 +19,7 @@ import type {
 } from "./annotation";
 import type { CommentRepo, CommentRow } from "./reply";
 import type { ResolutionRepo, AnnotationStatus } from "./resolve";
-import type { DeleteRepo } from "./delete";
+import type { DeleteRepo, RestoreRepo } from "./delete";
 import type {
   SuggestionRepo,
   SuggestionRow,
@@ -65,7 +65,10 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
           suggestionStatus: annotations.suggestionStatus,
         })
         .from(annotations)
-        .where(eq(annotations.docId, docId))
+        // S-005 / C-007 (AS-014): exclude soft-deleted annotations from the active list. This
+        // SAME read backs the re-anchor enumeration (reanchor-job reads via listByDoc), so a
+        // deleted annotation is also never re-anchored nor counted in the detached-rate metric.
+        .where(and(eq(annotations.docId, docId), isNull(annotations.deletedAt)))
         // #4 (2026-06-12): newest annotation/thread first — a freshly created thread "appears at the
         // top of the rail" (spec). Only the ANNOTATION ordering is DESC; comments WITHIN a thread
         // stay ASC (root then replies, top-down) — see listCommentsByDoc below.
@@ -103,7 +106,9 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
         .from(comments)
         .innerJoin(annotations, eq(comments.annotationId, annotations.id))
         .leftJoin(user, eq(comments.authorId, user.id))
-        .where(eq(annotations.docId, docId))
+        // S-005 / C-007 (AS-014): a soft-deleted annotation's thread (its highlight + comments)
+        // must not surface on the active read either — exclude comments whose annotation is deleted.
+        .where(and(eq(annotations.docId, docId), isNull(annotations.deletedAt)))
         .orderBy(asc(comments.createdAt)); // root(s) then replies in creation order.
       return rows.map((r) => ({
         id: r.id,
@@ -226,12 +231,20 @@ export function createResolutionRepo(db: DB): ResolutionRepo {
 
 // ── annotation-actions S-004: delete (soft) (DeleteRepo) ───────────────────
 
-/** Construct a DeleteRepo backed by a Drizzle DB handle — stamps the soft-delete tombstone. */
-export function createDeleteRepo(db: DB): DeleteRepo {
+/**
+ * Construct a DeleteRepo + RestoreRepo backed by a Drizzle DB handle — stamps (S-004) and
+ * clears (S-005) the soft-delete tombstone. Both ride the same factory: delete sets
+ * `deleted_at`, restore clears it back to null (the durable undo, C-007).
+ */
+export function createDeleteRepo(db: DB): DeleteRepo & RestoreRepo {
   return {
     async setDeletedAt(annotationId: string): Promise<void> {
       // S-004/C-006: soft-delete — set the tombstone; the row is kept (S-005 excludes/restores).
       await db.update(annotations).set({ deletedAt: new Date() }).where(eq(annotations.id, annotationId));
+    },
+    async clearDeletedAt(annotationId: string): Promise<void> {
+      // S-005/C-007: restore — clear the tombstone so the annotation returns to the active list.
+      await db.update(annotations).set({ deletedAt: null }).where(eq(annotations.id, annotationId));
     },
   };
 }
@@ -269,6 +282,10 @@ export function createSuggestionRepo(db: DB): SuggestionRepo {
           anchor: annotations.anchor,
           suggestion: annotations.suggestion,
           suggestionStatus: annotations.suggestionStatus,
+          // S-005 / C-007: surface the tombstone so decideSuggestion can refuse a deleted row.
+          // getSuggestion deliberately does NOT filter on deleted — the decide path must FIND
+          // the row to refuse it (terminal), and the restore path must find it to clear it.
+          deletedAt: annotations.deletedAt,
         })
         .from(annotations)
         .where(and(eq(annotations.id, id), eq(annotations.type, "suggestion")));
@@ -280,6 +297,7 @@ export function createSuggestionRepo(db: DB): SuggestionRepo {
         anchor: r.anchor as Anchor,
         suggestion: r.suggestion as SuggestionPayload,
         status: (r.suggestionStatus ?? "pending") as SuggestionStatus,
+        deletedAt: r.deletedAt ?? null, // S-005 / C-007: terminal guard reads this.
       };
     },
 

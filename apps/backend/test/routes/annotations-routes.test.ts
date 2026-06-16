@@ -215,6 +215,8 @@ function buildApp(opts: {
       resolutionRepo: (opts.resolutionRepo ?? fakeResolutionRepo()).repo,
       // annotation-actions S-004: a no-op delete repo so the routes build without `db`.
       deleteRepo: { async setDeletedAt() {} },
+      // annotation-actions S-005: a no-op restore repo so the routes build without `db`.
+      restoreRepo: { async clearDeletedAt() {} },
       suggestionRepo: (opts.suggestionRepo ?? fakeSuggestionRepo()).repo,
       lookupRepo: fakeLookupRepo(opts.doc === undefined ? VISIBLE_DOC : opts.doc),
       annotationLookupRepo: opts.annotationLookupRepo ?? fakeAnnotationLookupRepo({}),

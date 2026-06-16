@@ -122,6 +122,8 @@ function buildApp(opts: {
       resolutionRepo: { async setAnnotationStatus() {}, async resetSuggestionStatusToPending() {} },
       // annotation-actions S-004: a no-op delete repo so the routes build without `db`.
       deleteRepo: { async setDeletedAt() {} },
+      // annotation-actions S-005: a no-op restore repo so the routes build without `db`.
+      restoreRepo: { async clearDeletedAt() {} },
       suggestionRepo: {
         async insertSuggestion() { return { id: "s" }; },
         async getSuggestion() { return null; },

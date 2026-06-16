@@ -258,3 +258,37 @@ test("C-011: a missing suggestion is a clean error path — nothing written", as
   expect(res).toEqual({ ok: false, reason: "not_found" });
   expect(repo.statusWrites).toHaveLength(0);
 });
+
+test("AS-015: deciding (accept/reject) a SOFT-DELETED suggestion is REFUSED (terminal) — reads as gone, nothing written", async () => {
+  // annotation-actions S-005 / C-007: a soft-deleted suggestion is TERMINAL. The decide path
+  // must still FIND the row (getSuggestion does not filter deleted) but REFUSE it as not_found
+  // (existence-hiding: a deleted annotation reads as gone), so a concurrent delete + accept can
+  // never leave it both deleted AND accepted, and an agent never applies a deletion the author
+  // removed. Cover BOTH accept and reject — neither may mutate a deleted row.
+  const seed: SuggestionRow = {
+    id: "sug-del",
+    docId: "doc-1",
+    type: "suggestion",
+    anchor: ANCHOR,
+    suggestion: { kind: "replace", from: "24h", to: "48h", againstVersion: 3 },
+    status: "pending",
+    deletedAt: new Date("2026-06-16T00:00:00.000Z"), // the tombstone — terminal.
+  };
+
+  const acceptRepo = fakeRepo(seed);
+  const accept = await decideSuggestion(
+    { suggestionId: "sug-del", decision: "accept", currentVersionContentHtml: V3_HTML },
+    acceptRepo,
+  );
+  expect(accept).toEqual({ ok: false, reason: "not_found" });
+  expect(acceptRepo.statusWrites).toHaveLength(0); // never written — the row is untouched.
+  expect(acceptRepo.store.get("sug-del")!.status).toBe("pending");
+
+  const rejectRepo = fakeRepo({ ...seed });
+  const reject = await decideSuggestion(
+    { suggestionId: "sug-del", decision: "reject", currentVersionContentHtml: V3_HTML },
+    rejectRepo,
+  );
+  expect(reject).toEqual({ ok: false, reason: "not_found" });
+  expect(rejectRepo.statusWrites).toHaveLength(0);
+});
