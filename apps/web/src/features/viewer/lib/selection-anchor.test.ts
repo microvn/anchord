@@ -74,6 +74,33 @@ describe("selectionToAnchor — single block (regression)", () => {
   });
 });
 
+describe("selectionToAnchor — single block (snippet from textContent, not toString)", () => {
+  // Regression: a table/multi-element selection's `selection.toString()` inserts \t/\n separators
+  // that the block's textContent (what placement's locateRange reads) does NOT have — storing the
+  // toString value made the anchor un-locatable → "couldn't place". The snippet MUST be a verbatim
+  // slice of textContent. selection-anchor.ts:133 (single-block path) broke this.
+  it("REGRESSION: the snippet is a verbatim substring of textContent, never selection.toString()", () => {
+    const root = mountDoc(`<p id="block-p-1">Payment expires after 24h unless renewed.</p>`);
+    const t = firstText(root.querySelector("#block-p-1")!);
+    const range = document.createRange();
+    range.setStart(t, 8);
+    range.setEnd(t, 25); // "expires after 24h"
+    // A selection whose toString() inserted tab separators (as a real browser does for tables) —
+    // a string that is NOT a substring of the block's textContent.
+    const fakeSel = {
+      rangeCount: 1,
+      isCollapsed: false,
+      toString: () => "expires\tafter\t24h",
+      getRangeAt: () => range,
+    } as unknown as Selection;
+    const anchor = selectionToAnchor(fakeSel)!;
+    expect(anchor.textSnippet).toBe("expires after 24h"); // from textContent, NOT the \t version
+    const blockText = root.querySelector("#block-p-1")!.textContent ?? "";
+    expect(blockText.includes(anchor.textSnippet)).toBe(true); // re-locatable by placement
+    expect(blockText.slice(anchor.offset, anchor.offset + anchor.length)).toBe(anchor.textSnippet);
+  });
+});
+
 describe("selectionToAnchor — cross block", () => {
   it("a 2-block selection (start partial + end partial) → 2 segments", () => {
     const root = mountDoc(

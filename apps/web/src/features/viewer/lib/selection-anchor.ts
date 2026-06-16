@@ -129,14 +129,24 @@ export function selectionToAnchor(selection: Selection | null): SelectionAnchor 
   if (!startBlock) return null; // the selection's start isn't inside any block → no anchor (C-003)
   const endBlock = closestBlock(range.endContainer) ?? startBlock;
 
-  // Single block (start === end, or the end fell outside any block): one segment, as before.
+  // Single block (start === end, or the end fell outside any block): one segment.
   if (endBlock === startBlock) {
     const blockText = startBlock.textContent ?? "";
-    const offset = clampOffset(charOffsetWithin(startBlock, range.startContainer, range.startOffset), blockText.length);
-    const length = raw.length;
-    const textSnippet = raw.slice(0, SNIPPET_CAP);
+    const startOff = clampOffset(charOffsetWithin(startBlock, range.startContainer, range.startOffset), blockText.length);
+    // The end offset WITHIN this block. If the end container sits outside the block (the end fell
+    // outside any block → endBlock collapsed to startBlock), charOffsetWithin returns the block's
+    // end, so the snippet is clamped to this block's own text rather than overrunning.
+    const endOff = clampOffset(charOffsetWithin(startBlock, range.endContainer, range.endOffset), blockText.length);
+    const lo = Math.min(startOff, endOff);
+    const hi = Math.max(startOff, endOff);
+    // Snippet from the block's OWN textContent — NOT selection.toString(). selection.toString()
+    // inserts \t/\n separators across cells/elements (a table row, multi-element selection) that
+    // textContent — what the placement side reads (locateRange) — does NOT have, so such a snippet
+    // could never re-locate → "couldn't place". A verbatim slice of textContent always re-locates.
+    const textSnippet = blockText.slice(lo, hi).slice(0, SNIPPET_CAP);
+    if (textSnippet.trim().length === 0) return null;
     const blockId = blockIdOf(startBlock)!;
-    return { blockId, textSnippet, offset, length, segments: [{ blockId, offset, length, textSnippet }] };
+    return { blockId, textSnippet, offset: lo, length: textSnippet.length, segments: [{ blockId, offset: lo, length: textSnippet.length, textSnippet }] };
   }
 
   // Cross-block: one segment per intersected block — start partial, full middles, end partial.
