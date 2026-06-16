@@ -63,8 +63,10 @@ describe("Redline ThreadCard (S-002)", () => {
   });
 
   it("AS-005: the OWNER accepting a pending redline auto-resolves the thread (dimmed)", async () => {
+    // S-002 (C-002): Accept/Reject is the OWNER's proposal close family — gated on isOwner now, not
+    // on onDecide presence alone (the 2-family reversal: a proposal is owner-decided, not resolved).
     const onDecide = mock(async () => true);
-    renderCard(redline(), { onDecide });
+    renderCard(redline(), { onDecide, isOwner: true });
 
     const card = screen.getByTestId("thread-card");
     expect(card.getAttribute("data-resolved")).toBeNull();
@@ -82,7 +84,7 @@ describe("Redline ThreadCard (S-002)", () => {
 
   it("AS-006: the OWNER rejecting a pending redline auto-resolves the thread (dimmed)", async () => {
     const onDecide = mock(async () => true);
-    renderCard(redline(), { onDecide });
+    renderCard(redline(), { onDecide, isOwner: true });
 
     await userEvent.click(within(screen.getByTestId("thread-card")).getByTestId("redline-reject"));
 
@@ -104,7 +106,7 @@ describe("Redline ThreadCard (S-002)", () => {
 
   it("AS-007: a STALE redline shows the stale badge and offers NO Accept (cannot be accepted)", () => {
     // Even with an owner onDecide supplied, a drifted (stale) redline is not pending → no Accept/Reject.
-    renderCard(redline({ suggestionStatus: "stale" }), { onDecide: mock(async () => true) });
+    renderCard(redline({ suggestionStatus: "stale" }), { onDecide: mock(async () => true), isOwner: true });
     const card = screen.getByTestId("thread-card");
     expect(within(card).getByTestId("redline-stale-badge")).toHaveTextContent(/stale/i);
     expect(within(card).queryByTestId("redline-accept")).toBeNull();
@@ -115,10 +117,11 @@ describe("Redline ThreadCard (S-002)", () => {
     // A decided (accepted) redline is resolved. The owner gets a Reopen control (onResolve supplied,
     // gated commenter+; the backend makes the decided-reopen owner-only + resets to pending). A
     // non-owner viewing the SAME decided redline with no onResolve gets no Reopen control.
+    // S-002 (C-002): a decided proposal's Reopen is the OWNER's close family — gated on isOwner now.
     const onResolve = mock(async () => true);
     const { rerender } = renderCard(
       redline({ status: "resolved", suggestionStatus: "accepted" }),
-      { onResolve },
+      { onResolve, isOwner: true },
     );
     const card = screen.getByTestId("thread-card");
     const reopen = within(card).getByTestId("resolve-toggle");
@@ -141,7 +144,7 @@ describe("Redline ThreadCard (S-002)", () => {
   it("AS-005: a refused/stale decide rolls the optimistic resolve back (card stays unresolved)", async () => {
     // onDecide resolves false (refused or 409 stale). The card optimistically dimmed, then must revert.
     const onDecide = mock(async () => false);
-    renderCard(redline(), { onDecide });
+    renderCard(redline(), { onDecide, isOwner: true });
     await userEvent.click(within(screen.getByTestId("thread-card")).getByTestId("redline-accept"));
     await waitFor(() => expect(onDecide).toHaveBeenCalled());
     // The optimistic resolve rolls back — the card is NOT left dimmed on a refused decide.
@@ -172,6 +175,7 @@ describe("Redline rail wiring (S-002)", () => {
         annotations={served}
         focusedId={null}
         unplaceableIds={new Set()}
+        isOwner
         onFocusThread={() => {}}
         onDecide={onDecide}
       />,

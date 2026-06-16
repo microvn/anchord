@@ -28,6 +28,52 @@ import { REDLINE_ROOT_BODY } from "@/features/viewer/hooks/use-compose";
 // unknown/foreign id (defence-in-depth — the server already validates ∈ preset set, AS-014) renders
 // no label line rather than leaking a raw id. The label text renders inert via React children (C-006).
 
+// annotation-actions-ui S-002 (C-002/C-003): the 2-family action-bar decision, isolated as a PURE
+// helper so it can be unit-tested directly AND reused by the render. It collapses accept/reject/
+// resolve/reopen down to AT MOST two primary actions, chosen by family + permission + own:
+//
+//   • Remark (no suggestion)            → Resolve (unresolved) / Reopen (resolved) — commenter+.
+//   • Proposal I authored (isOwn)       → treated as a remark for ME → Resolve/Reopen, NEVER
+//                                          Accept/Reject (no self-approve, C-003) — even as owner.
+//   • Proposal, owner, pending          → Accept + Reject (no Resolve).
+//   • Proposal, owner, decided          → Reopen (the universal undo; no Accept/Reject).
+//   • Proposal, owner, stale            → nothing (a drifted redline can't be accepted; no decide
+//                                          row; the existing stale badge still surfaces).
+//   • Proposal, non-owner               → nothing (reply only).
+//
+// Every flag is a CLIENT HINT — the backend re-authorizes every close by session role + creator
+// identity (C-002). The render ANDs these with the matching callback presence (onResolve / onDecide),
+// so a viewer (no onResolve) still gets no Resolve even when the family would offer one.
+export function actionBarSlots(input: {
+  /** the annotation carries a `suggestion` payload (redline/replace) → a Proposal; else a Remark. */
+  isProposal: boolean;
+  /** the suggestion lifecycle (pending | accepted | rejected | stale); ignored for a remark. */
+  sugStatus?: "pending" | "accepted" | "rejected" | "stale";
+  /** the current user is the doc owner (effectiveRole === "owner"). */
+  isOwner: boolean;
+  /** the annotation's durable authorId equals the current user (own — the no-self-approve key). */
+  isOwn: boolean;
+  /** the thread currently reads as resolved (server status or an optimistic toggle). */
+  resolved: boolean;
+}): { showResolve: boolean; showReopen: boolean; showDecide: boolean } {
+  const { isProposal, sugStatus, isOwner, isOwn, resolved } = input;
+  const remarkSlots = {
+    showResolve: !resolved,
+    showReopen: resolved,
+    showDecide: false,
+  };
+  // A Remark — or a Proposal I authored (treated as a remark for me, C-003: no self-approve).
+  if (!isProposal || isOwn) return remarkSlots;
+  // A Proposal I did NOT author. Only the owner gets a close action; a non-owner gets none (reply only).
+  if (!isOwner) return { showResolve: false, showReopen: false, showDecide: false };
+  // Owner on someone else's proposal: pending → Accept/Reject; decided → Reopen; stale → nothing.
+  if (sugStatus === "pending") return { showResolve: false, showReopen: false, showDecide: true };
+  if (sugStatus === "accepted" || sugStatus === "rejected")
+    return { showResolve: false, showReopen: true, showDecide: false };
+  // stale (or an absent status) → no close action — a drifted redline cannot be accepted (AS-007).
+  return { showResolve: false, showReopen: false, showDecide: false };
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
@@ -216,6 +262,7 @@ export function ThreadCard({
   unplaceable,
   onFocus,
   currentUserId,
+  isOwner = false,
   onReply,
   onResolve,
   onDecide,
@@ -229,6 +276,12 @@ export function ThreadCard({
    *  the backend null-guard. A guest annotation (null `authorId`) matches no one; a signed-out viewer
    *  (null/undefined here) owns nothing. The OWN flag NEVER derives from the root-comment author. */
   currentUserId?: string | null;
+  /** annotation-actions-ui S-002 (C-002): the current user is the doc OWNER (effectiveRole==="owner").
+   *  Gates the proposal close family — only the owner gets Accept/Reject (pending) or Reopen (decided)
+   *  on a proposal they did NOT author. A client HINT; the backend re-authorizes the close. A remark,
+   *  or a proposal I authored (isOwn), ignores this and stays Resolve/Reopen (no self-approve, C-003).
+   *  Defaults false (a non-owner / read-only rail). */
+  isOwner?: boolean;
   /** S-003: send a reply to THIS annotation. The consumer wires addComment({ body, parentId }) with
    *  parentId = the annotation's first comment. Absent → no reply affordance (read-only rail). */
   onReply?: (body: string) => unknown | Promise<unknown>;
@@ -288,10 +341,13 @@ export function ThreadCard({
       (annotation.type === "suggestion" && root!.body.trim() === REDLINE_ROOT_BODY));
   const sugStatus = annotation.suggestionStatus;
   const isStale = isRedline && sugStatus === "stale";
-  const isDecided = sugStatus === "accepted" || sugStatus === "rejected";
-  // The owner Accept/Reject row shows ONLY for a PENDING redline (a decided one is resolved; a stale
-  // one cannot be accepted, AS-007) AND only when the owner-gated onDecide is supplied (C-002).
-  const showDecide = Boolean(onDecide) && isRedline && sugStatus === "pending";
+  // S-002 (C-002): a Proposal is ANY annotation carrying a suggestion payload (redline = delete-kind);
+  // everything else (comment / like / label) is a Remark. The family + permission + own decide the bar.
+  const isProposal = Boolean(annotation.suggestion);
+  // S-002 (C-002/C-003): the centralized 2-family decision — at most two primary actions. The render
+  // ANDs each slot with its callback presence (onResolve / onDecide), so a viewer (no onResolve) still
+  // gets no Resolve even when the family would offer one (the affordance is a hint, not the authority).
+  const slots = actionBarSlots({ isProposal, sugStatus, isOwner, isOwn, resolved });
 
   // Optimistic replies the user sent this session, shown flat alongside server replies until a
   // refetch reconciles them (consistency with S-001's optimistic create, C-011). They live at the
@@ -542,10 +598,11 @@ export function ThreadCard({
         </div>
       )}
 
-      {/* S-002 (AS-005/006/C-002): the OWNER-only Accept / Reject row for a PENDING redline. Deciding
-          auto-resolves the thread (handled in handleDecide). A non-owner gets no onDecide → no row; a
-          decided or stale redline is not pending → no row (a stale redline cannot be accepted, AS-007). */}
-      {showDecide && handleDecide && (
+      {/* S-002 (AS-005/008/C-002/C-003): the OWNER-only Accept / Reject row — shown ONLY for a PENDING
+          proposal I did NOT author (slots.showDecide). Deciding auto-resolves the thread (handled in
+          handleDecide). A non-owner, a decided/stale proposal, OR a proposal I authored (no self-
+          approve) all yield slots.showDecide=false → no row. handleDecide also requires onDecide. */}
+      {slots.showDecide && handleDecide && (
         <div data-testid="redline-decide" className="mt-[9px] flex items-center gap-1.5">
           <button
             type="button"
@@ -576,38 +633,47 @@ export function ThreadCard({
           Styling is the prototype's `.tlink` — a borderless 11.5px text link (Reply muted, Resolve
           green), NOT a sized button. F2: the React port dropped `.tlink`'s cursor:pointer; restore it
           (the one genuine divergence from canon). */}
-      {replyOpen && handleReply ? (
-        <ReplyComposer onReply={handleReply} onClose={() => setReplyOpen(false)} />
-      ) : (
-        (handleReply || handleResolveToggle) && (
-          <div className="mt-[9px] flex items-center gap-1.5">
-            {handleReply && (
-              <button
-                type="button"
-                data-testid="reply-open"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setReplyOpen(true);
-                }}
-                className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-muted hover:bg-elev hover:text-ink"
-              >
-                Reply
-              </button>
-            )}
-            {handleResolveToggle && (
-              <button
-                type="button"
-                data-testid="resolve-toggle"
-                disabled={toggling}
-                onClick={handleResolveToggle}
-                className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {resolved ? "Reopen" : "Resolve"}
-              </button>
-            )}
-          </div>
-        )
-      )}
+      {/* Comment-capable actions row (C-002/C-004): Reply + the family's close action. Reply is
+          available to commenter+ on EVERY family — a non-owner on a proposal gets reply only (C-002).
+          The Resolve/Reopen toggle shows ONLY when the 2-family slots offer it (a remark, or a
+          proposal I authored / a decided proposal for the owner) AND the consumer supplied onResolve
+          (comment permission). A pending proposal for the owner offers Accept/Reject above instead, so
+          showResolveToggle is false here — never both close families at once. */}
+      {(() => {
+        const showResolveToggle = Boolean(handleResolveToggle) && (slots.showResolve || slots.showReopen);
+        return replyOpen && handleReply ? (
+          <ReplyComposer onReply={handleReply} onClose={() => setReplyOpen(false)} />
+        ) : (
+          (handleReply || showResolveToggle) && (
+            <div className="mt-[9px] flex items-center gap-1.5">
+              {handleReply && (
+                <button
+                  type="button"
+                  data-testid="reply-open"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setReplyOpen(true);
+                  }}
+                  className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-muted hover:bg-elev hover:text-ink"
+                >
+                  Reply
+                </button>
+              )}
+              {showResolveToggle && handleResolveToggle && (
+                <button
+                  type="button"
+                  data-testid="resolve-toggle"
+                  disabled={toggling}
+                  onClick={handleResolveToggle}
+                  className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-success hover:bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {resolved ? "Reopen" : "Resolve"}
+                </button>
+              )}
+            </div>
+          )
+        );
+      })()}
     </div>
   );
 }

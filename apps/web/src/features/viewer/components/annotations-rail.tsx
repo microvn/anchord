@@ -13,6 +13,7 @@ export function AnnotationsRail({
   focusedId,
   unplaceableIds,
   currentUserId,
+  isOwner,
   onFocusThread,
   onReply,
   onResolve,
@@ -26,6 +27,10 @@ export function AnnotationsRail({
    *  so it can mark own-vs-others from the durable `authorId`. Null/undefined for a signed-out
    *  viewer (owns nothing). */
   currentUserId?: string | null;
+  /** annotation-actions-ui S-002 (C-002): the session is the doc OWNER. Forwarded to each ThreadCard
+   *  so the proposal close family (Accept/Reject pending, Reopen decided) shows only to the owner. A
+   *  client hint; the backend re-authorizes. Default false (non-owner / read-only rail). */
+  isOwner?: boolean;
   onFocusThread: (id: string) => void;
   /** S-002: OWNER-only accept/reject of a redline. The rail binds it per-thread to the ThreadCard's
    *  onDecide(decision); the consumer wires decideSuggestion. Absent → no Accept/Reject row (non-
@@ -83,6 +88,8 @@ export function AnnotationsRail({
               onFocus={onFocusThread}
               // S-001: forward the session user id so the card derives own-vs-others from authorId.
               currentUserId={currentUserId}
+              // S-002: forward owner-ness so the proposal close family (Accept/Reject / Reopen) gates.
+              isOwner={isOwner}
               // S-003: bind the rail reply to THIS thread; the card hands us only the body.
               onReply={onReply ? (body) => onReply(a, body) : undefined}
               // S-004: bind resolve/reopen to THIS thread; the card hands us only the next state.

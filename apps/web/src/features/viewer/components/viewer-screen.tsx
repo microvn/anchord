@@ -756,6 +756,8 @@ function useAnnotations(
     annotations: ViewerAnnotation[];
     focusedId: string | null;
     unplaceableIds: Set<string>;
+    /** S-002 (C-002): the session is the doc owner — forwarded to each card's proposal close family. */
+    isOwner: boolean;
     onFocusThread: (id: string) => void;
     onReply?: (annotation: ViewerAnnotation, body: string) => Promise<boolean>;
     onResolve?: (annotation: ViewerAnnotation, resolved: boolean) => Promise<boolean>;
@@ -992,6 +994,6 @@ function useAnnotations(
     count: annotations.length,
     refetch: () => annoQuery.refetch(),
     prependAnnotation,
-    railProps: { annotations, focusedId, unplaceableIds, onFocusThread: focusThread, onReply, onResolve, onDecide },
+    railProps: { annotations, focusedId, unplaceableIds, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide },
   };
 }

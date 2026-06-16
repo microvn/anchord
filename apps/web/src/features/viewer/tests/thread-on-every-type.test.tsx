@@ -150,19 +150,25 @@ describe("ThreadCard — threads on every type (S-005)", () => {
     expect(onResolve).toHaveBeenCalledTimes(2); // toggled twice
   });
 
-  it("C-005: both a redline and a label card carry a flat-reply + resolve/reopen thread", () => {
-    // The reuse claim, asserted structurally: GIVEN onReply + onResolve, BOTH new types expose the
-    // SAME thread controls (Reply trigger + Resolve toggle) — no per-type thread mechanism.
+  it("C-005: both a redline and a label card carry a flat-reply thread; the close family is gated (S-002 2-family)", () => {
+    // REVERSED by annotation-actions-ui S-002 (C-002): the original claim was "BOTH types expose the
+    // SAME Reply + Resolve controls". S-002 collapses to the 2-family bar — Reply stays on every
+    // family (a non-owner on a proposal gets reply only), but the CLOSE control is now family+
+    // permission gated: a Remark (label) still offers Resolve to commenter+, while a Proposal
+    // (redline) viewed by a non-owner offers NO Resolve (the owner gets Accept/Reject instead). So
+    // the structural reuse claim holds for Reply, NOT for the close action.
     const onReply = mock(async () => true);
     const onResolve = mock(async () => true);
 
+    // A redline (Proposal) for a NON-owner: Reply present, but NO resolve-toggle (reply only, C-002).
     const { rerender } = render(
       <ThreadCard annotation={redline()} focused={false} unplaceable={false} onFocus={() => {}} onReply={onReply} onResolve={onResolve} />,
     );
     let card = screen.getByTestId("thread-card");
     expect(within(card).getByTestId("reply-open")).toBeInTheDocument();
-    expect(within(card).getByTestId("resolve-toggle")).toBeInTheDocument();
+    expect(within(card).queryByTestId("resolve-toggle")).toBeNull();
 
+    // A label (Remark): Reply present AND the Resolve toggle (Remark → Resolve/Reopen, commenter+).
     rerender(
       <ThreadCard annotation={labelAnno()} focused={false} unplaceable={false} onFocus={() => {}} onReply={onReply} onResolve={onResolve} />,
     );
