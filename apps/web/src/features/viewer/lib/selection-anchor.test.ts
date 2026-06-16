@@ -152,6 +152,45 @@ describe("selectionToAnchor — cross block", () => {
     }
   });
 
+  it("NESTED blocks (ol > li > p): emits ONE segment per LEAF block, not the ol/li ancestors", () => {
+    // Markdown lists render as ol > li > p, and EACH level carries a block id over the SAME text.
+    // A cross-list-item selection must NOT fan out into ancestor+descendant duplicates (which would
+    // double-wrap the same text); only the leaf (innermost) block per item.
+    const root = mountDoc(
+      `<ol id="block-ol-1">` +
+        `<li id="block-li-1"><p id="block-p-1">First item text.</p></li>` +
+        `<li id="block-li-2"><p id="block-p-2">Second item text.</p></li>` +
+        `<li id="block-li-3"><p id="block-p-3">Third item text.</p></li>` +
+        `</ol>`,
+    );
+    const t1 = firstText(root.querySelector("#block-p-1")!);
+    const t3 = firstText(root.querySelector("#block-p-3")!);
+    const sel = selectRange(t1, 6, t3, 5); // "item text." … "Third"
+    const anchor = selectionToAnchor(sel)!;
+    // exactly the three leaf paragraphs — never block-ol-1 / block-li-* (their text overlaps the p's)
+    expect(anchor.segments.map((s) => s.blockId)).toEqual(["block-p-1", "block-p-2", "block-p-3"]);
+  });
+
+  it("TABLE (table > tr > td/th): cross-cell selection → one segment per LEAF cell, not tr/table", () => {
+    const root = mountDoc(
+      `<table id="block-table-1">` +
+        `<tr id="block-tr-1"><th id="block-th-1">Rule heading</th><td id="block-td-1">Tag heading</td></tr>` +
+        `<tr id="block-tr-2"><th id="block-th-2">Sub rule row</th><td id="block-td-2">Note value</td></tr>` +
+        `</table>`,
+    );
+    const t1 = firstText(root.querySelector("#block-th-1")!);
+    const t2 = firstText(root.querySelector("#block-td-2")!);
+    const sel = selectRange(t1, 0, t2, 4); // "Rule heading" … "Note"
+    const anchor = selectionToAnchor(sel)!;
+    // only the leaf cells, in document order — never block-table-1 / block-tr-* (overlap their cells)
+    expect(anchor.segments.map((s) => s.blockId)).toEqual([
+      "block-th-1",
+      "block-td-1",
+      "block-th-2",
+      "block-td-2",
+    ]);
+  });
+
   it("falls back to null when the start point isn't inside any block", () => {
     const root = mountDoc(`<div>no block id here<p id="block-p-2">but here</p></div>`);
     const looseText = firstText(root); // the bare "no block id here" text

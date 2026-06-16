@@ -103,7 +103,11 @@ function blocksBetween(startBlock: HTMLElement, endBlock: HTMLElement): HTMLElem
   const si = all.indexOf(startBlock);
   const ei = all.indexOf(endBlock);
   if (si === -1 || ei === -1) return [startBlock, endBlock]; // defensive: endpoints only
-  return all.slice(Math.min(si, ei), Math.max(si, ei) + 1);
+  const slice = all.slice(Math.min(si, ei), Math.max(si, ei) + 1);
+  // Keep only LEAF blocks. Markdown lists render as ol > li > p where EACH level carries a block id
+  // over the SAME text; an ancestor block in the slice would wrap the same text its descendant does
+  // → double-highlight. Drop any block that contains another block in the slice (keep the innermost).
+  return slice.filter((b) => !slice.some((other) => other !== b && b.contains(other)));
 }
 
 /**
