@@ -351,8 +351,9 @@ function levenshtein(a: string, b: string): number {
  *  - Over port1, bridge → parent: `{type:'selection', anchor, rect}` (anchor null when empty).
  *  - Over port1, bridge → parent on in-iframe scroll (rAF-throttled): `{type:'selection-rect', rect}`
  *    (rect null when the selection scrolled out of view → parent dismisses). MƯỢT TASK 3.
- *  - Over port1, parent → bridge: `{type:'highlight', anchor, annotationId, hue?}` (hue = the per-type/label mark colour).
- *  - Over port1, parent → bridge (S-003): `{type:'highlights', items:[{anchor, annotationId, hue?}]}` —
+ *  - Over port1, parent → bridge: `{type:'highlight', anchor, annotationId, hue?, resolved?, kind?, stale?}`
+ *    (hue = the per-type/label mark colour; resolved/kind/stale = the lifecycle state — S-002/C-003).
+ *  - Over port1, parent → bridge (S-003): `{type:'highlights', items:[{anchor, annotationId, hue?, resolved?, kind?, stale?}]}` —
  *    a FULL-set clear-then-redraw sync (unwrap all anno marks, then draw the set; idempotent — C-002).
  *  - Over port1, bridge → parent on placement failure: `{type:'place-failed', annotationId}`.
  *
@@ -532,6 +533,14 @@ export function bridgeScript(nonce: string): string {
         mk.setAttribute("data-anno-hue", "true");
         mk.style.setProperty("--mark-hue", String(item.hue));
       }
+      // S-002 (C-003): carry the lifecycle STATE so the mark reads like the markdown one — the SAME
+      // dataset hooks the markdown engine sets, driven by the served state on the item. The injected
+      // stylesheet (MARK_STYLESHEET) styles each: resolved → dim, redline → red strike, stale →
+      // muted/dashed (stale wins over redline by CSS source order). A stale redline still carries the
+      // redline kind for the rail, but the stale rule (later in the sheet) overrides its appearance.
+      if (item.resolved) mk.setAttribute("data-resolved", "true");
+      if (item.kind === "redline") mk.setAttribute("data-anno-kind", "redline");
+      if (item.stale) mk.setAttribute("data-anno-stale", "true");
     }
     return true;
   }
@@ -626,8 +635,13 @@ export function injectBridge(html: string, nonce: string): string {
  * `apps/web/src/styles.css` `.anno-mark` — but the in-iframe bridge runs inside the sandbox and
  * cannot import the app's CSS or its design tokens. So the rules + the DESIGN.md palette VALUES are
  * inlined here: accent teal `#37b3bd`, the hue via `var(--mark-hue)` (set per-mark by the draw),
- * resolved green / redline red carried for forward parity (S-002 fills their full state). If you
- * touch `.anno-mark` in styles.css, mirror it here.
+ * resolved green / redline red / stale muted-dashed (S-002 / C-003 — the full state set, mirroring
+ * styles.css BY VALUE: --green #43b873, --red #f1655d, --subtle #677074). If you touch `.anno-mark`
+ * in styles.css, mirror it here.
+ *
+ * ⚠️ ORDER MATTERS. The state rules are emitted in the SAME source order as styles.css —
+ * hue → resolved → redline → STALE last — so at equal specificity the later rule wins. That makes a
+ * STALE REDLINE read muted/dashed (the confident red strike is overridden), exactly as markdown (S-002/AS-006).
  */
 export const MARK_STYLESHEET = [
   // base: accent tint + bottom underline (mirrors styles.css .anno-mark; --accent inlined to teal).
@@ -636,6 +650,17 @@ export const MARK_STYLESHEET = [
   // per-type/label hue: tint + underline from the per-mark --mark-hue custom prop.
   ".anno-mark[data-anno-hue]{background:color-mix(in oklab, var(--mark-hue) 26%, transparent);border-bottom-color:var(--mark-hue);}",
   ".anno-mark[data-anno-hue]:hover{background:color-mix(in oklab, var(--mark-hue) 40%, transparent);}",
+  // S-002/AS-004: resolved → dim green tint (mirrors styles.css; --green inlined). Placed AFTER the
+  // hue rule so a resolved hued mark still dims (later wins at equal specificity).
+  '.anno-mark[data-resolved="true"]{background:color-mix(in oklab, #43b873 12%, transparent);border-bottom-color:#43b873;}',
+  // S-002/AS-005: redline (delete proposal) → red strikethrough + red tint, NO line below, never an
+  // edit of the doc content (--red inlined).
+  '.anno-mark[data-anno-kind="redline"]{background:color-mix(in oklab, #f1655d 24%, transparent);border-bottom:none;text-decoration:line-through;text-decoration-color:#f1655d;text-decoration-thickness:1.5px;color:inherit;}',
+  '.anno-mark[data-anno-kind="redline"]:hover{background:color-mix(in oklab, #f1655d 38%, transparent);}',
+  // S-002/AS-006: a STALE redline → DISTINCT muted/dashed (no strike, no red tint, dimmed) so it
+  // never reads as a confident strike on possibly-wrong text (--subtle inlined). Emitted LAST so it
+  // overrides the redline rule above at equal specificity (stale wins) — matching styles.css order.
+  '.anno-mark[data-anno-stale="true"]{background:transparent;border-bottom:1.5px dashed #677074;text-decoration:none;opacity:0.7;}',
   // adjacent-mark padding collapse so a multi-node run reads as one continuous highlight.
   ".anno-mark + .anno-mark{padding-left:0;}",
   ".anno-mark:has(+ .anno-mark){padding-right:0;}",

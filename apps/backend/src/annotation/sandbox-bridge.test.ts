@@ -8,6 +8,7 @@ import {
   generateNonce,
   unwrapAnnoMarks,
   BLOCK_SELECTOR,
+  MARK_STYLESHEET,
 } from "./sandbox-bridge";
 import { injectBlockIds } from "./block-id";
 import { CONTENT_SECURITY_POLICY } from "../render/sandbox";
@@ -380,4 +381,54 @@ test("AS-009 (C-002): the single {type:'highlight'} handler still works (back-co
   // The batch path is additive — the single-highlight handler is kept so existing callers work.
   expect(script).toContain('msg.type === "highlight"');
   expect(script).toContain('msg.type === "highlights"');
+});
+
+// ---------------------------------------------------------------------------
+// S-002 — HTML highlight reflects lifecycle state (resolved / redline / stale).
+// The injected stylesheet must carry the SAME state rules as styles.css .anno-mark, and the
+// in-iframe draw must set the SAME dataset hooks (data-resolved / data-anno-kind / data-anno-stale)
+// from the highlight item's flags so an HTML mark reads identically to a markdown mark (C-003).
+// ---------------------------------------------------------------------------
+
+test("AS-004: the injected stylesheet carries the resolved (dim) rule — a resolved HTML mark dims", () => {
+  // Mirrors styles.css `.anno-mark[data-resolved="true"]` — the green/resolved tint, distinct from
+  // the active teal highlight. The DESIGN green value is inlined (the iframe has no app tokens).
+  expect(MARK_STYLESHEET).toContain('.anno-mark[data-resolved="true"]');
+  expect(MARK_STYLESHEET).toContain("#43b873"); // --green inlined
+  // injectBridge serves it inside the <style> block.
+  const out = injectBridge(injectBlockIds("<p>x</p>"), "n-resolved");
+  expect(out).toContain('.anno-mark[data-resolved="true"]');
+});
+
+test("AS-005: the injected stylesheet carries the redline (red strikethrough) rule", () => {
+  // Mirrors styles.css `.anno-mark[data-anno-kind="redline"]` — red tint + line-through, NO edit of
+  // the doc content. The DESIGN red value is inlined.
+  expect(MARK_STYLESHEET).toContain('.anno-mark[data-anno-kind="redline"]');
+  expect(MARK_STYLESHEET).toContain("#f1655d"); // --red inlined
+  expect(MARK_STYLESHEET).toContain("line-through");
+});
+
+test("AS-006: the injected stylesheet carries the stale rule — muted/dashed, NOT a confident strike", () => {
+  // Mirrors styles.css `.anno-mark[data-anno-stale="true"]` — dashed underline, no line-through, no
+  // red tint, dimmed. A stale redline must read muted/dashed, not the confident red strike (stale
+  // wins over redline per the markdown CSS source order).
+  expect(MARK_STYLESHEET).toContain('.anno-mark[data-anno-stale="true"]');
+  expect(MARK_STYLESHEET).toContain("dashed");
+  // The stale rule appears AFTER the redline rule so it overrides at equal specificity (stale wins).
+  expect(MARK_STYLESHEET.indexOf('.anno-mark[data-anno-stale="true"]')).toBeGreaterThan(
+    MARK_STYLESHEET.indexOf('.anno-mark[data-anno-kind="redline"]'),
+  );
+});
+
+test("C-003: the in-iframe draw sets data-resolved / data-anno-kind / data-anno-stale from the item flags", () => {
+  const script = bridgeScript("n-state");
+  // drawHighlight applies the SAME dataset hooks the markdown engine uses, driven by the served
+  // state carried on the highlight item — so an HTML mark reproduces the markdown mark's appearance.
+  expect(script).toContain('setAttribute("data-resolved", "true")');
+  expect(script).toContain('setAttribute("data-anno-kind", "redline")');
+  expect(script).toContain('setAttribute("data-anno-stale", "true")');
+  // Each is gated on the matching item flag (resolved / kind === "redline" / stale).
+  expect(script).toContain("item.resolved");
+  expect(script).toContain('item.kind === "redline"');
+  expect(script).toContain("item.stale");
 });

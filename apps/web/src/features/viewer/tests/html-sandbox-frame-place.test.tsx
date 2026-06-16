@@ -105,6 +105,43 @@ describe("HtmlSandboxFrame — post existing annotations to the bridge (HTML-PLA
     expect(byId["h-none"]).toBeUndefined();
   });
 
+  it("C-003: the highlight item carries the lifecycle state (resolved / kind / stale)", async () => {
+    // S-002: the frame forwards the served lifecycle flags on each batch item so the in-iframe draw
+    // can reproduce the markdown mark's resolved-dim / redline-strike / stale-dashed appearance.
+    const stateful = [
+      { id: "s-resolved", anchor: anchorOf("block-p-1"), resolved: true },
+      { id: "s-redline", anchor: anchorOf("block-p-2"), kind: "redline" as const },
+      { id: "s-stale", anchor: anchorOf("block-p-3"), kind: "redline" as const, stale: true },
+    ];
+    render(<HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={stateful} />);
+    const iframe = screen.getByTestId("html-sandbox-frame") as HTMLIFrameElement;
+    const ch = new MessageChannel();
+    const byId: Record<string, { resolved?: boolean; kind?: string; stale?: boolean }> = {};
+    ch.port1.onmessage = (e: MessageEvent) => {
+      const msg = e.data as {
+        type?: string;
+        items?: { annotationId: string; resolved?: boolean; kind?: string; stale?: boolean }[];
+      };
+      if (msg?.type === "highlights" && Array.isArray(msg.items)) {
+        for (const i of msg.items)
+          byId[i.annotationId] = { resolved: i.resolved, kind: i.kind, stale: i.stale };
+      }
+    };
+    act(() => {
+      window.dispatchEvent(
+        new window.MessageEvent("message", {
+          data: { source: "anchord-bridge", type: "ready", nonce: "n-1" },
+          source: iframe.contentWindow as Window,
+          ports: [ch.port2],
+        }),
+      );
+    });
+    await waitFor(() => expect(Object.keys(byId).length).toBe(3));
+    expect(byId["s-resolved"]).toMatchObject({ resolved: true });
+    expect(byId["s-redline"]).toMatchObject({ kind: "redline" });
+    expect(byId["s-stale"]).toMatchObject({ kind: "redline", stale: true });
+  });
+
   it("AS-003: routes the bridge's place-failed (over the port) to the onPlaceFailed prop (no mark, no crash)", async () => {
     const failed: string[] = [];
     render(

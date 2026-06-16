@@ -35,8 +35,17 @@ export const HtmlSandboxFrame = forwardRef<
     onSelectionRect?: (rect: { x: number; y: number; width: number; height: number }) => void;
     /** HTML-PLACE: the current placeable annotation set. The parent can't draw <mark>s into the
      *  opaque iframe, so we post EACH anchor down the bridge once the handshake is ready and again
-     *  whenever this set changes. Without this, existing HTML annotations are never highlighted. */
-    annotations?: { id: string; anchor: BridgeAnchor; hue?: string }[];
+     *  whenever this set changes. Without this, existing HTML annotations are never highlighted.
+     *  S-002/C-003: each item also carries the lifecycle state (resolved / kind / stale) so the
+     *  in-iframe mark reproduces the markdown mark's resolved-dim / redline-strike / stale-dashed look. */
+    annotations?: {
+      id: string;
+      anchor: BridgeAnchor;
+      hue?: string;
+      resolved?: boolean;
+      kind?: "redline";
+      stale?: boolean;
+    }[];
     /** HTML-PLACE: the in-iframe bridge couldn't place a posted highlight → surface it so the rail
      *  can badge only that annotation "couldn't place" (markdown reports this via the light-DOM placer). */
     onPlaceFailed?: (id: string) => void;
@@ -113,7 +122,18 @@ export const HtmlSandboxFrame = forwardRef<
     if (!ready || !annotations) return;
     const conn = connRef.current;
     if (!conn) return;
-    conn.postHighlights(annotations.map((a) => ({ anchor: a.anchor, annotationId: a.id, hue: a.hue })));
+    // S-002/C-003: forward the lifecycle state alongside the anchor/hue so the in-iframe draw sets
+    // data-resolved / data-anno-kind / data-anno-stale → the mark reads like the markdown one.
+    conn.postHighlights(
+      annotations.map((a) => ({
+        anchor: a.anchor,
+        annotationId: a.id,
+        hue: a.hue,
+        resolved: a.resolved,
+        kind: a.kind,
+        stale: a.stale,
+      })),
+    );
   }, [ready, annotations]);
 
   useImperativeHandle(

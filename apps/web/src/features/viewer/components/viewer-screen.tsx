@@ -887,7 +887,17 @@ function useAnnotations(
         .filter((a) => !a.isOrphaned)
         // S-001/AS-002: carry the SAME per-type/label hue derived above (Comment amber / Label gold /
         // redline none / default teal) so the in-iframe mark matches the markdown hued mark.
-        .map((a) => ({ id: a.id, anchor: a.anchor as BridgeAnchor, hue: a.hue })),
+        // S-002/C-003: ALSO carry the lifecycle state — resolved (status==="resolved") → dim,
+        // kind==="redline" → red strike, stale → muted/dashed — so the in-iframe mark reproduces the
+        // markdown mark's resolved/redline/stale appearance (the SAME flags `placeable` derives).
+        .map((a) => ({
+          id: a.id,
+          anchor: a.anchor as BridgeAnchor,
+          hue: a.hue,
+          resolved: a.status === "resolved",
+          kind: a.kind,
+          stale: a.stale,
+        })),
     [placeable],
   );
 

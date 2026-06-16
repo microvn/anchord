@@ -35,6 +35,22 @@ export interface BridgeAnchor {
   segments?: { blockId: string; textSnippet: string; offset: number; length: number }[];
 }
 
+/** S-002/C-003: the lifecycle STATE flags carried on a highlight so the in-iframe mark reproduces
+ *  the markdown mark's appearance. `resolved` → dim; `kind:"redline"` → red strikethrough;
+ *  `stale` → muted/dashed (a stale redline reads muted/dashed, not a confident strike). */
+export interface BridgeHighlightState {
+  resolved?: boolean;
+  kind?: "redline";
+  stale?: boolean;
+}
+
+/** One item in a full-set highlight batch (S-003) — the anchor + id + hue + lifecycle state. */
+export interface BridgeHighlightItem extends BridgeHighlightState {
+  anchor: BridgeAnchor;
+  annotationId: string;
+  hue?: string;
+}
+
 /** A selection hint relayed from the iframe over the trusted port. `anchor === null` → clear. */
 export interface BridgeSelection {
   type: "selection";
@@ -103,13 +119,15 @@ export function isTrustedReady(event: ReadyLikeEvent, iframeWindow: unknown): bo
 /** The live bridge connection the parent talks over. */
 export interface BridgeConnection {
   /** Send a highlight DOWN the port so the in-iframe bridge wraps the range in a <mark>. `hue` (the
-   *  per-type/label mark colour) is applied as the mark's --mark-hue so it matches the markdown mark. */
-  postHighlight: (anchor: BridgeAnchor, annotationId: string, hue?: string) => void;
+   *  per-type/label mark colour) is applied as the mark's --mark-hue so it matches the markdown mark.
+   *  S-002/C-003: `resolved`/`kind`/`stale` carry the lifecycle STATE so the in-iframe mark reads like
+   *  the markdown one (resolved → dim, redline → red strike, stale → muted/dashed). */
+  postHighlight: (anchor: BridgeAnchor, annotationId: string, opts?: BridgeHighlightState) => void;
   /** S-003: send the FULL current highlight set DOWN the port as one batch so the in-iframe bridge
    *  runs a clear-then-redraw (unwrap ALL anno marks, then draw the set) — idempotent (C-002): a
    *  deleted id (absent from `items`) has its mark removed, a restored/new id is (re)drawn, with no
    *  duplicates. No-op before the handshake (no port yet), like `postHighlight`. */
-  postHighlights: (items: { anchor: BridgeAnchor; annotationId: string; hue?: string }[]) => void;
+  postHighlights: (items: BridgeHighlightItem[]) => void;
   /** True once the handshake has been accepted and the port captured. */
   isConnected: () => boolean;
   /** Remove the window listener + close the port. Idempotent. */
@@ -180,11 +198,12 @@ export function connectBridge(
   win.addEventListener("message", onWindowMessage);
 
   return {
-    postHighlight(anchor, annotationId, hue) {
+    postHighlight(anchor, annotationId, opts) {
       // The parent cannot draw into the opaque iframe; it asks the in-iframe bridge to, over the
       // port. No port yet (handshake not done) → nothing to do. `hue` carries the per-type/label
-      // mark colour (S-001/AS-002) so the in-iframe mark matches the markdown hued mark.
-      port?.postMessage({ type: "highlight", anchor, annotationId, hue });
+      // mark colour (S-001/AS-002); resolved/kind/stale carry the lifecycle state (S-002/C-003) so
+      // the in-iframe mark matches the markdown mark's resolved/redline/stale appearance.
+      port?.postMessage({ type: "highlight", anchor, annotationId, ...opts });
     },
     postHighlights(items) {
       // S-003: one batch carrying the WHOLE live set → the in-iframe bridge unwraps all anno marks
