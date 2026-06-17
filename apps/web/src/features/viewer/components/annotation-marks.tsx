@@ -209,7 +209,13 @@ function wrapRange(block: HTMLElement, range: { start: number; end: number }, id
     // Overlap of [range.start,range.end) with this node's [nodeStart,nodeEnd).
     const sliceStart = Math.max(range.start, nodeStart) - nodeStart;
     const sliceEnd = Math.min(range.end, nodeEnd) - nodeStart;
-    if (sliceEnd > sliceStart) slices.push({ node, start: sliceStart, end: sliceEnd });
+    // Skip a slice that is ENTIRELY whitespace: wrapping a whitespace-only text node (e.g. the
+    // newline text between block elements that a boundary-spanning/corrupt range can reach) yields
+    // an empty <mark> that renders as a stray 2px "dot" on its own line. Only text-bearing slices
+    // become marks; the whitespace stays unwrapped (invisible either way).
+    if (sliceEnd > sliceStart && node.data.slice(sliceStart, sliceEnd).trim().length > 0) {
+      slices.push({ node, start: sliceStart, end: sliceEnd });
+    }
     if (nodeEnd >= range.end) break;
     pos = nodeEnd;
   }

@@ -136,6 +136,25 @@ describe("placeAnnotations (S-003)", () => {
     expect(root.querySelector("[data-anno]")).toBeNull();
   });
 
+  it("REGRESSION: a range spanning a whitespace-only text node creates NO empty mark (no stray dot)", () => {
+    // A corrupt/boundary-spanning anchor whose range covers a whitespace-only text node (e.g. the
+    // newline text between block elements) must NOT wrap that node in its own <mark> — an empty
+    // whitespace mark renders as a 2px-wide "dot" dropped onto its own line. Only text-bearing
+    // slices become marks; the whitespace stays unwrapped.
+    const root = mountDoc(`<p id="b">alpha<span>\n  \n</span>beta</p>`);
+    const blockText = root.querySelector("#b")!.textContent!; // "alpha\n  \nbeta"
+    const { placed, unplaceable } = placeAnnotations(root, [
+      { id: "x", anchor: { blockId: "b", textSnippet: blockText, offset: 0, length: blockText.length } },
+    ]);
+    expect(unplaceable).toEqual([]);
+    expect(placed.map((p) => p.id)).toEqual(["x"]);
+    const marks = Array.from(root.querySelectorAll('[data-anno="x"]'));
+    // No mark is whitespace-only (the stray-dot artifact).
+    expect(marks.every((m) => (m.textContent ?? "").trim().length > 0)).toBe(true);
+    // The visible words are still highlighted.
+    expect(marks.map((m) => m.textContent)).toEqual(["alpha", "beta"]);
+  });
+
   it("REGRESSION: cross-inline highlight wraps without surroundContents (per-text-node)", () => {
     // FIX 1: a selection spanning a <strong> boundary. surroundContents would THROW
     // InvalidStateError (range partially selects a non-Text node) → silently unplaceable.
