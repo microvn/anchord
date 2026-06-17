@@ -71,15 +71,19 @@ export const HtmlSandboxFrame = forwardRef<
   // depends on it so the initial flush waits for the port (postHighlight no-ops before the handshake).
   const [ready, setReady] = useState(false);
 
-  // S-002 / HTML-PLACE: wire the parent side of the bridge ONCE on mount. Connect when there's
-  // EITHER a selection consumer (comment-capable role — C-004 — the create round-trip) OR existing
-  // annotations to DRAW (every role, incl. read-only viewers, must see highlights). A viewer-only
+  // S-002 / HTML-PLACE: wire the parent side of the bridge ONCE per iframe (keyed on contentUrl, the
+  // only thing that re-mounts the iframe). It MUST connect on mount — NOT gated on `onSelection` or
+  // on annotations being present — because the in-iframe bridge fires its `ready` handshake EXACTLY
+  // ONCE and never re-sends it. Re-keying this effect on a late-arriving condition (annotations
+  // loading after the iframe already handshook) would tear down the already-handshook connection and
+  // reconnect with `ready` reset to false — and since the iframe won't re-handshake, the highlight
+  // batch would never post (annotations loaded, but no marks — the race this fixes). A viewer-only
   // role still passes no `onSelection`, so a relayed selection can't open a composer (AS-005/C-004) —
-  // the bridge then only ever draws, never creates.
-  const hasAnnotations = Boolean(annotations && annotations.length > 0);
+  // the bridge then only ever draws, never creates. Connecting with nothing to draw is harmless (it
+  // just listens); the post-existing effect below flushes the set once `ready` AND annotations exist.
   useEffect(() => {
     const iframe = iframeRef.current;
-    if (!iframe || (!onSelection && !hasAnnotations)) return;
+    if (!iframe) return;
     // The bridge relays a selection rect in the IFRAME's own viewport coordinates (its
     // getBoundingClientRect, relative to the iframe's top-left, after the iframe's internal scroll).
     // The parent positions the popover in PAGE/window coordinates, so add the iframe's current
@@ -112,12 +116,12 @@ export const HtmlSandboxFrame = forwardRef<
       connRef.current = null;
       setReady(false);
     };
-    // Connect once; the GATE (a selection consumer OR annotations to draw), not handler identity,
-    // keys it. Identity changes are absorbed by handlersRef so we never tear down + re-add the window
-    // listener on every render. `hasAnnotations` is a boolean so a viewer whose annotations arrive
-    // after mount (async read) connects then — and a 0→N transition rewires once, not per item.
+    // Connect once per iframe — keyed ONLY on contentUrl (a new doc re-mounts the iframe → reconnect).
+    // Handler identity changes are absorbed by handlersRef so we never tear down + re-add the window
+    // listener on a re-render, and crucially we never reconnect on annotations loading (which would
+    // drop the one-shot handshake — see the comment above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Boolean(onSelection), hasAnnotations]);
+  }, [contentUrl]);
 
   // S-003 (C-002): once the bridge is ready, post the FULL current annotation set down the port as
   // ONE clear-then-redraw batch (postHighlights) — the in-iframe bridge unwraps ALL existing anno

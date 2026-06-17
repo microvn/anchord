@@ -223,6 +223,29 @@ describe("HtmlSandboxFrame — full-set clear-then-redraw sync (S-003)", () => {
     await waitFor(() => expect([...batches.at(-1)!].sort()).toEqual(["a-1", "a-2", "a-3"]));
   });
 
+  it("REGRESSION: posts highlights when annotations arrive AFTER the bridge is already ready", async () => {
+    // The racy order the user hit: the iframe finished its `ready` handshake BEFORE the annotations
+    // query resolved. The connect effect was re-keyed on `hasAnnotations`, so the 0→N transition tore
+    // down the already-handshook connection and reconnected with setReady(false); the iframe never
+    // re-sends `ready`, so the batch was never posted → annotations loaded, no marks. html-sandbox-frame.tsx.
+    const { rerender } = render(
+      <HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={[]} />,
+    );
+    const { batches } = handshakeAndCollectBatches(); // handshake fires while annotations are still empty
+    rerender(<HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={ANNOS} />);
+    await waitFor(() => expect([...batches.at(-1)!].sort()).toEqual(["a-1", "a-2"]));
+  });
+
+  it("REGRESSION (viewer-only): draws highlights with no onSelection when annotations arrive after ready", async () => {
+    // A read-only viewer passes no onSelection. The bridge must still connect on mount so it catches
+    // the iframe's one-shot `ready`; otherwise late-arriving annotations connect too late and the
+    // handshake is already lost → no marks for viewers.
+    const { rerender } = render(<HtmlSandboxFrame contentUrl="/v/ver-html-1" annotations={[]} />);
+    const { batches } = handshakeAndCollectBatches();
+    rerender(<HtmlSandboxFrame contentUrl="/v/ver-html-1" annotations={ANNOS} />);
+    await waitFor(() => expect([...batches.at(-1)!].sort()).toEqual(["a-1", "a-2"]));
+  });
+
   it("AS-008: restoring a previously-removed id re-includes it in the next full-set batch", async () => {
     const { rerender } = render(
       <HtmlSandboxFrame contentUrl="/v/ver-html-1" onSelection={() => {}} annotations={[ANNOS[0]!]} />,
