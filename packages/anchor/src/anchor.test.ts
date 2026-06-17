@@ -5,6 +5,8 @@ import {
   placeAnchor,
   placeAnchorAll,
   unwrapAnnoMarks,
+  resolveAnchorRange,
+  extractText,
   locateRange,
   BLOCK_SELECTOR,
 } from "./index";
@@ -260,4 +262,140 @@ test("C-008: parity — the SAME (snippet, offset, blockText) resolves identical
     expect(mdPlaced.start).toBe(direct.start);
     expect(mdPlaced.end).toBe(direct.end);
   }
+});
+
+// ── S-006 — range-driven cross-block resolution (C-007) + canonical extractor (C-011) ───────────
+
+/**
+ * Wrap EVERY text node a resolved range intersects in its own <mark data-anno> — reverse document
+ * order, skip whitespace-only slices. This mirrors the in-iframe bridge's range-driven draw, run
+ * here over happy-dom so we can assert the SHARED resolution covers all selected text. It uses the
+ * DOM-position descriptor resolveAnchorRange returns (start node+offset → end node+offset).
+ */
+function drawResolvedRange(doc: any, anchor: any, id: string): any[] {
+  const r = resolveAnchorRange(anchor, doc);
+  if (!r) return [];
+  // Walk every text node in document order; keep those between startNode and endNode inclusive.
+  const all: any[] = [];
+  const walk = (n: any) => {
+    for (let c = n.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 3) all.push(c);
+      else if (c.nodeType === 1) walk(c);
+    }
+  };
+  walk(doc.body);
+  const si = all.indexOf(r.startNode);
+  const ei = all.indexOf(r.endNode);
+  if (si === -1 || ei === -1) return [];
+  const inRange = all.slice(si, ei + 1);
+  const marks: any[] = [];
+  // Reverse document order so wrapping an earlier node never invalidates later node refs.
+  for (let i = inRange.length - 1; i >= 0; i--) {
+    const node = inRange[i];
+    const s = node === r.startNode ? r.startOffset : 0;
+    const e = node === r.endNode ? r.endOffset : node.textContent.length;
+    if (e <= s || node.textContent.slice(s, e).trim().length === 0) continue;
+    const rr = doc.createRange();
+    rr.setStart(node, s);
+    rr.setEnd(node, e);
+    const m = doc.createElement("mark");
+    m.setAttribute("data-anno", id);
+    try {
+      rr.surroundContents(m);
+      marks.push(m);
+    } catch {
+      /* boundary node — skip */
+    }
+  }
+  return marks;
+}
+
+test("AS-017: a cross-block range covers a CONTAINER block's own text even when other cards have a sub-block", () => {
+  // Mimic two mf-spec-render AS cards. AS-001 has BOTH grid text (dl.gwt) AND a Data sub-block
+  // (div.as-data); AS-002 has only grid text. The old per-leaf-segment draw dropped AS-001's grid
+  // text (it lived in a container that was not itself a leaf). Range-driven must cover BOTH.
+  const { doc, win } = dom(
+    '<div id="block-div-1"><dl class="gwt"><dt>Given</dt><dd>alpha given</dd></dl>' +
+      '<div id="block-div-1d" class="as-data">Data: alpha data</div></div>' +
+      '<div id="block-div-2"><dl class="gwt"><dt>Given</dt><dd>bravo given</dd></dl></div>',
+  );
+  // Selection from the start of card 1's grid text to the end of card 2's grid text.
+  const startDD = doc.querySelectorAll("dl.gwt dd")[0].firstChild;
+  const endDD = doc.querySelectorAll("dl.gwt dd")[1].firstChild;
+  const range = doc.createRange();
+  range.setStart(startDD, 0);
+  range.setEnd(endDD, endDD.textContent.length);
+  const sel = win.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const anchor = selectionToAnchor(sel as any, doc)!;
+
+  const marks = drawResolvedRange(doc, anchor, "a-1");
+  const covered = marks.map((m) => m.textContent).join("|");
+  // BOTH cards' grid text must be highlighted (AS-001's grid text is the regression).
+  expect(covered).toContain("alpha given");
+  expect(covered).toContain("bravo given");
+});
+
+test("AS-018: a cross-block range draws NO <mark> as a direct child of a CSS-grid dl (no stray grid item)", () => {
+  // The whitespace text node between a dl.gwt's children must NOT be wrapped — a mark there becomes a
+  // stray grid item that shatters the layout. The dl's direct children stay exactly dt/dd.
+  const { doc, win } = dom(
+    '<div id="block-div-1"><dl class="gwt">\n      <dt>Given</dt><dd>alpha</dd>\n      <dt>When</dt><dd>beta</dd>\n    </dl></div>' +
+      '<div id="block-div-2"><p id="block-p-2">tail block</p></div>',
+  );
+  const startDD = doc.querySelectorAll("dl.gwt dd")[0].firstChild;
+  const endP = doc.querySelector("#block-p-2").firstChild;
+  const range = doc.createRange();
+  range.setStart(startDD, 0);
+  range.setEnd(endP, endP.textContent.length);
+  const sel = win.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const anchor = selectionToAnchor(sel as any, doc)!;
+
+  drawResolvedRange(doc, anchor, "a-2");
+  const dl = doc.querySelector("dl.gwt");
+  const strayMarks = Array.from(dl.children).filter((c: any) => c.tagName === "MARK");
+  expect(strayMarks.length).toBe(0);
+  expect(Array.from(dl.children).map((c: any) => c.tagName)).toEqual(["DT", "DD", "DT", "DD"]);
+});
+
+test("AS-013: range-driven resolution still covers every spanned LEAF block end-to-end", () => {
+  // The existing cross-block guarantee must hold under range-driven: a selection from block 1 to a
+  // partial of block 3 covers block 1, block 2, and the partial of block 3 (and not block 4).
+  const { doc, win } = dom(
+    '<p id="block-p-1">first</p><p id="block-p-2">middle</p><p id="block-p-3">last block</p><p id="block-p-4">after</p>',
+  );
+  const start = doc.querySelector("#block-p-1").firstChild;
+  const end = doc.querySelector("#block-p-3").firstChild;
+  const range = doc.createRange();
+  range.setStart(start, 0);
+  range.setEnd(end, "last".length);
+  const sel = win.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const anchor = selectionToAnchor(sel as any, doc)!;
+
+  const covered = drawResolvedRange(doc, anchor, "a-3")
+    .map((m) => m.textContent)
+    .join("|");
+  expect(covered).toContain("first");
+  expect(covered).toContain("middle");
+  expect(covered).toContain("last");
+  expect(covered).not.toContain("after");
+});
+
+test("C-011: extractText walks DOM text excluding script/style/comments + collapses to the block text", () => {
+  // The ONE canonical extractor: walks text nodes, skips script/style/noscript/template + comments,
+  // decodes entities (via the DOM), and yields the same text selectionToAnchor's block walk sees.
+  const { doc } = dom(
+    '<div id="block-div-1">Hello&amp;World<script>var x=1;</script><style>.a{}</style> tail</div>',
+  );
+  const el = doc.querySelector("#block-div-1");
+  const text = extractText(el);
+  expect(text).toContain("Hello&World"); // entity decoded by the DOM
+  expect(text).not.toContain("var x=1"); // script content excluded
+  expect(text).not.toContain(".a{}"); // style content excluded
+  expect(text).toContain("tail");
 });

@@ -27,6 +27,8 @@
 // async (non-publish-gating) job, the run summary, and the alert-on->25%-detached are
 // integration / ops [→MANUAL] — see the integration note; not built here.
 
+import { Window } from "happy-dom";
+import { extractText } from "@anchord/anchor";
 import { injectBlockIds } from "./block-id";
 import type { Anchor, AnchorSegment } from "./annotation";
 
@@ -56,72 +58,47 @@ export interface ReanchorOptions {
   fuzzyThreshold?: number;
 }
 
-// --- block-text extraction (dependency-free, mirrors block-id.ts's tokenizer style) ---
+// --- block-text extraction (C-011: ONE canonical extractor) ---
+
+const CSS_ESCAPE_RE = /["\\\]\[#.:>+~*^$=()| ]/g;
+function cssEscape(id: string): string {
+  return id.replace(CSS_ESCAPE_RE, "\\$&");
+}
 
 /**
- * Pull the plain-text content of the block carrying `blockId` from block-id-injected
- * HTML. We match the opening tag that declares `id="<blockId>"` OR
- * `data-block-id="<blockId>"` (block-id.ts uses data-block-id when the author already
- * had an id), then take everything up to that tag's matching close tag, stripping inner
- * tags to text. Returns null when no block carries the id (→ AS-013 orphan).
+ * Pull the plain-text content of the block carrying `blockId` from block-id-injected HTML.
  *
- * Minimal on purpose: the new HTML has already passed through markdown-it/DOMPurify +
- * injectBlockIds, so the tag set is normalized and a full HTML parser is overkill (same
- * rationale as block-id.ts).
+ * C-011 — ONE canonical text extractor. This parses the HTML with happy-dom and walks the matched
+ * block's text nodes through the SHARED `extractText` (@anchord/anchor) — the SAME walk the in-iframe
+ * placement and the FE markdown path use. The prior implementation was a divergent string-regex strip
+ * (`inner.replace(/<[^>]*>/g, "")`) that did NOT decode entities, did NOT strip comments, and did not
+ * collapse whitespace — so an offset computed at create (via the DOM walk) could resolve to DIFFERENT
+ * text at re-anchor. Routing through the one extractor closes that drift: there is no second extractor.
+ *
+ * Block lookup accepts BOTH attribute forms injectBlockIds emits: `data-block-id="<blockId>"` (the
+ * don't-clobber form) and a plain `id="<blockId>"`. Returns null when no block carries the id
+ * (→ AS-013 orphan). Never throws — a parse failure / missing block degrades to null.
  */
 export function extractBlockText(html: string, blockId: string): string | null {
-  // Find the opening tag that carries this block id (either attribute form).
-  const idAttr = `id="${blockId}"`;
-  const dataAttr = `data-block-id="${blockId}"`;
-  const at = (() => {
-    const a = html.indexOf(idAttr);
-    const b = html.indexOf(dataAttr);
-    if (a === -1) return b;
-    if (b === -1) return a;
-    return Math.min(a, b);
-  })();
-  if (at === -1) return null;
-
-  // Walk left to the '<' that opens this tag, read the tag name.
-  const open = html.lastIndexOf("<", at);
-  if (open === -1) return null;
-  const nameMatch = /^<([a-zA-Z][a-zA-Z0-9]*)/.exec(html.slice(open));
-  if (!nameMatch) return null;
-  const tag = nameMatch[1].toLowerCase();
-
-  // End of the opening tag.
-  const gt = html.indexOf(">", at);
-  if (gt === -1) return null;
-
-  // Find the matching close tag, accounting for nested same-tag elements.
-  const openRe = new RegExp(`<${tag}(\\s|>|/)`, "gi");
-  const closeRe = new RegExp(`</${tag}\\s*>`, "gi");
-  let depth = 1;
-  let cursor = gt + 1;
-  let contentEnd = -1;
-  while (cursor < html.length) {
-    openRe.lastIndex = cursor;
-    closeRe.lastIndex = cursor;
-    const nextOpen = openRe.exec(html);
-    const nextClose = closeRe.exec(html);
-    if (!nextClose) break; // malformed; bail
-    if (nextOpen && nextOpen.index < nextClose.index) {
-      depth += 1;
-      cursor = nextOpen.index + 1;
-    } else {
-      depth -= 1;
-      if (depth === 0) {
-        contentEnd = nextClose.index;
-        break;
-      }
-      cursor = nextClose.index + 1;
+  let win: Window | null = null;
+  try {
+    win = new Window();
+    win.document.body.innerHTML = html;
+    const esc = cssEscape(blockId);
+    const el =
+      win.document.querySelector(`[data-block-id="${esc}"]`) ??
+      win.document.querySelector(`#${esc}`);
+    if (!el) return null;
+    return extractText(el as unknown as Parameters<typeof extractText>[0]);
+  } catch {
+    return null;
+  } finally {
+    try {
+      win?.happyDOM?.close?.();
+    } catch {
+      /* best-effort teardown */
     }
   }
-  if (contentEnd === -1) return null;
-
-  const inner = html.slice(gt + 1, contentEnd);
-  // Strip inner tags → plain text (the snippet is text, not markup).
-  return inner.replace(/<[^>]*>/g, "");
 }
 
 // --- fuzzy similarity (small, dependency-free Levenshtein) ---

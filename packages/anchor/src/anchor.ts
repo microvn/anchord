@@ -26,16 +26,56 @@ interface WalkNode extends NodeLike {
   firstChild: WalkNode | null;
   nextSibling: WalkNode | null;
   childNodes: ArrayLike<WalkNode>;
+  /** Upper-cased tag name for an element node (`P`, `SCRIPT`, …); present on every DOM node. */
+  nodeName: string;
 }
 interface WalkElement extends ElementLike, WalkNode {
   ownerDocument: WalkDocument;
   contains(other: ElementLike | null): boolean;
 }
-interface WalkDocument extends DocumentLike {
-  createTreeWalker(root: WalkNode, whatToShow: number): { nextNode(): WalkNode | null };
+interface WalkDocument extends DocumentLike {}
+
+/** Element node names whose text content is NOT part of the doc's readable text (C-011). */
+const NON_TEXT_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
+
+/**
+ * extractText — THE ONE canonical text extractor (C-011). Walks `el`'s descendant text nodes in
+ * document order, concatenating their content, but SKIPS the subtrees of script/style/noscript/
+ * template (their text is not readable doc text). Comments are NOT text nodes so they never appear.
+ * Entities are already decoded (this reads the DOM's `textContent`, not raw markup).
+ *
+ * This is the same text `selectionToAnchor` / `charOffsetWithin` see (they sum text-node lengths in
+ * the same order), so an offset computed at create resolves to the same text at placement — whether
+ * the caller is the FE markdown walk, the in-iframe bridge, or the backend re-anchor (which runs it
+ * over a happy-dom parse of the new HTML instead of a divergent string-regex strip).
+ *
+ * NOTE: it does NOT collapse whitespace — that normalization lives in the locate ladder
+ * (`normalizeWithMap`), applied to BOTH sides at match time, so the stored offset stays a raw index
+ * into this verbatim text.
+ */
+export function extractText(el: ElementLike): string {
+  let out = "";
+  for (const t of textNodesOf(el as unknown as WalkNode)) out += t.textContent ?? "";
+  return out;
 }
 
-const SHOW_TEXT = 0x4;
+/**
+ * textNodesOf — every Text descendant of `root` in document order, via MANUAL recursive descent
+ * (NOT createTreeWalker, which happy-dom 15 won't descend into nested elements with). Skips the
+ * subtrees of script/style/noscript/template (C-011). The single text-node order used by extractText,
+ * charToTextPosition, and the bridge's wrap — so an offset is consistent across all of them.
+ */
+function textNodesOf(root: WalkNode): WalkNode[] {
+  const out: WalkNode[] = [];
+  const visit = (n: WalkNode): void => {
+    for (let c = n.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === TEXT_NODE) out.push(c);
+      else if (c.nodeType === ELEMENT_NODE && !NON_TEXT_TAGS.has(c.nodeName)) visit(c);
+    }
+  };
+  visit(root);
+  return out;
+}
 
 /** The block id of an element, or null. injectBlockIds stamps a plain block as `id="block-{tag}-{n}"`
  *  and only falls back to `data-block-id` when the element ALREADY has an author id — so a block is
@@ -78,15 +118,14 @@ function charOffsetWithin(block: WalkElement, container: NodeLike, containerOffs
 
 /** The char offset at which `target`'s text begins within `block`'s concatenated text. */
 function offsetOfNode(block: WalkElement, target: NodeLike): number {
-  const walker = block.ownerDocument.createTreeWalker(block, SHOW_TEXT);
+  // Manual descent (textNodesOf), NOT createTreeWalker — happy-dom 15's walker won't descend into
+  // nested elements, which would mis-sum the offset for a structured block (dl > dt/dd, an AS card).
   let pos = 0;
-  let node = walker.nextNode();
-  while (node) {
-    if (node === target) return pos;
+  for (const node of textNodesOf(block)) {
+    if ((node as unknown as NodeLike) === target) return pos;
     // If target is an element ancestor of this text node, the element's start is this text's start.
     if (target.nodeType === ELEMENT_NODE && (target as ElementLike).contains(node as unknown as ElementLike)) return pos;
     pos += (node.textContent ?? "").length;
-    node = walker.nextNode();
   }
   return pos;
 }
@@ -96,18 +135,27 @@ function clampOffset(value: number, max: number): number {
 }
 
 /** The block elements intersected by a cross-block range, in document order, INCLUSIVE of start +
- *  end block — found by listing every addressable block (document order) and slicing start→end by
- *  index, then keeping only LEAF blocks (a block containing no OTHER in-range block). Nested block
- *  ids (ol > li > p; table > tr > td) carry the same text at each level; keeping only leaves avoids
- *  double-wrapping. */
+ *  end block. S-006/C-007: the actual START and END blocks are ALWAYS kept (even when they are
+ *  containers holding another in-range block) — they carry the real selection endpoints that
+ *  resolveAnchorRange resolves the range from, and the dogfood bug was exactly that a container start
+ *  block (an AS card whose body also held a Data sub-block) was dropped as a non-leaf, so its own
+ *  text went unanchored. Only the STRICTLY-INTERIOR blocks are leaf-filtered (a nested ol > li > p /
+ *  table > tr > td carries the same text at each level; keeping only interior leaves avoids
+ *  double-counting middle text). */
 function blocksBetween(startBlock: WalkElement, endBlock: WalkElement, doc: WalkDocument): WalkElement[] {
   if (startBlock === endBlock) return [startBlock];
   const all = toArray(doc.querySelectorAll(BLOCK_SELECTOR)).filter((e) => blockIdOf(e)) as WalkElement[];
   const si = all.indexOf(startBlock);
   const ei = all.indexOf(endBlock);
   if (si === -1 || ei === -1) return [startBlock, endBlock]; // defensive: endpoints only
-  const slice = all.slice(Math.min(si, ei), Math.max(si, ei) + 1);
-  return slice.filter((b) => !slice.some((other) => other !== b && b.contains(other)));
+  const lo = Math.min(si, ei);
+  const hi = Math.max(si, ei);
+  const slice = all.slice(lo, hi + 1);
+  // Keep both endpoints unconditionally; leaf-filter only the interior blocks.
+  return slice.filter((b, idx) => {
+    if (idx === 0 || idx === slice.length - 1) return true; // endpoints always kept
+    return !slice.some((other) => other !== b && b.contains(other));
+  });
 }
 
 function toArray<T>(list: ArrayLike<T>): T[] {
@@ -212,6 +260,79 @@ export function placeAnchorAll(anchor: Anchor, doc: DocumentLike): PlaceResult[]
       ? anchor.segments
       : [{ blockId: anchor.blockId, textSnippet: anchor.textSnippet, offset: anchor.offset, length: anchor.length }];
   return segs.map((seg) => placeAnchor(seg as Anchor, doc));
+}
+
+/** A resolved DOM start/end position pair — the input a Range needs (`setStart`/`setEnd`). */
+export interface ResolvedRange {
+  startNode: NodeLike;
+  startOffset: number;
+  endNode: NodeLike;
+  endOffset: number;
+}
+
+/**
+ * Map a char offset within `block`'s text to a (text node, offset-in-node) position. Walks the
+ * block's text nodes in document order (the SAME order extractText / charOffsetWithin use), summing
+ * lengths until the target char falls inside a node. Clamps to the last text node's end when the
+ * offset is past the text (defensive). Returns null only when the block has no text node at all.
+ */
+function charToTextPosition(block: WalkElement, charOffset: number): { node: NodeLike; offset: number } | null {
+  // Manual recursive descent, NOT createTreeWalker(SHOW_TEXT): happy-dom 15's TreeWalker does not
+  // descend into nested elements, so a structured block (dl > dt/dd, an AS card) would yield NO text
+  // nodes and orphan the range. The manual walk mirrors the markdown engine's textNodesOf — it also
+  // excludes script/style/noscript/template subtrees (C-011, same as extractText).
+  const nodes = textNodesOf(block);
+  let pos = 0;
+  let last: WalkNode | null = null;
+  for (const node of nodes) {
+    const len = (node.textContent ?? "").length;
+    // `<=` so an offset landing exactly at a node boundary binds to the END of this node (not the
+    // start of the next) — important for an end position so the range includes this node's slice.
+    if (charOffset <= pos + len) {
+      return { node: node as unknown as NodeLike, offset: Math.max(0, charOffset - pos) };
+    }
+    pos += len;
+    last = node;
+  }
+  if (last) return { node: last as unknown as NodeLike, offset: (last.textContent ?? "").length };
+  return null;
+}
+
+/**
+ * resolveAnchorRange — S-006/C-007: resolve a (single- or cross-block) anchor to ONE DOM range
+ * descriptor. The START comes from the FIRST segment (its snippet located in its block via the
+ * unified locate ladder → start char → text node + offset); the END from the LAST segment (snippet
+ * located → end char → text node + offset). The in-iframe bridge then builds a real Range from this
+ * and wraps EVERY text node the range intersects (range-driven fan-out), so container text living
+ * BETWEEN leaf blocks — which the old per-segment placement dropped — is covered too.
+ *
+ * For a single-block anchor (no segments / one segment), start and end land in the same block — the
+ * range is the located snippet, identical to the prior single-block behaviour. Returns null when
+ * either endpoint's block is missing or its snippet can't be located (→ couldn't-place; the bridge
+ * relays place-failed and the iframe does not crash). NEVER throws.
+ */
+export function resolveAnchorRange(anchor: Anchor, doc: DocumentLike): ResolvedRange | null {
+  const segs =
+    anchor.segments && anchor.segments.length > 0
+      ? anchor.segments
+      : [{ blockId: anchor.blockId, textSnippet: anchor.textSnippet, offset: anchor.offset, length: anchor.length }];
+  const first = segs[0]!;
+  const last = segs[segs.length - 1]!;
+
+  const firstPlaced = placeAnchor(first as Anchor, doc);
+  if (!firstPlaced.ok) return null;
+  const lastPlaced = placeAnchor(last as Anchor, doc);
+  if (!lastPlaced.ok) return null;
+
+  const startBlock = findBlock(firstPlaced.blockId, doc) as WalkElement | null;
+  const endBlock = findBlock(lastPlaced.blockId, doc) as WalkElement | null;
+  if (!startBlock || !endBlock) return null;
+
+  const start = charToTextPosition(startBlock, firstPlaced.start);
+  const end = charToTextPosition(endBlock, lastPlaced.end);
+  if (!start || !end) return null;
+
+  return { startNode: start.node, startOffset: start.offset, endNode: end.node, endOffset: end.offset };
 }
 
 /**

@@ -252,6 +252,40 @@ test("C-002: edge — empty new content orphans (no block to match), annotation 
   expect(res.carried).toHaveLength(0);
 });
 
+// --- C-011: ONE canonical text extractor (no divergent string-regex path) ---
+
+test("C-011: extractBlockText decodes entities + strips comments (canonical DOM extractor, not regex)", () => {
+  // The old string-regex extractor (`inner.replace(/<[^>]*>/g, "")`) did NOT decode entities or strip
+  // comments, so an offset computed at create (via the shared DOM walk) could resolve to DIFFERENT
+  // text at re-anchor. The unified extractor walks the DOM's text nodes (the SAME walk the shared
+  // module / in-iframe placement use), so `&amp;` becomes `&` and a comment contributes no text.
+  const html = injectBlockIds("<p>Tom &amp; Jerry<!-- a note --> rule</p>");
+  const text = extractBlockText(html, "block-p-1");
+  expect(text).not.toBeNull();
+  expect(text).toContain("Tom & Jerry"); // entity decoded
+  expect(text).not.toContain("&amp;"); // not the raw entity
+  expect(text).not.toContain("a note"); // comment excluded
+  expect(text).toContain("rule");
+});
+
+test("C-011: extractBlockText excludes script/style content from a block's text", () => {
+  const html = injectBlockIds("<div>Body<script>var x=1;</script><style>.a{color:red}</style> tail</div>");
+  const text = extractBlockText(html, "block-div-1")!;
+  expect(text).toContain("Body");
+  expect(text).toContain("tail");
+  expect(text).not.toContain("var x=1");
+  expect(text).not.toContain("color:red");
+});
+
+test("C-011: an exact snippet still re-anchors through the unified extractor (behaviour preserved)", () => {
+  // The unification must not regress the existing exact-match carry: block text the DOM walk yields
+  // matches the stored snippet → carried at the recomputed offset.
+  const anchor: Anchor = { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 };
+  const r = reanchorAnnotation(anchor, doc(SEVEN));
+  expect(r.status).toBe("carried");
+  if (r.status === "carried") expect(r.anchor.textSnippet).toBe("expires after 24h");
+});
+
 test("similarity is bounded [0,1]: identical=1, fully-different<1, empty/empty=1", () => {
   expect(similarity("abc", "abc")).toBe(1);
   expect(similarity("", "")).toBe(1);

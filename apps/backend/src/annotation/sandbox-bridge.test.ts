@@ -13,6 +13,7 @@ import {
 } from "./sandbox-bridge";
 import { injectBlockIds } from "./block-id";
 import { CONTENT_SECURITY_POLICY } from "../render/sandbox";
+import { selectionToAnchor, resolveAnchorRange } from "@anchord/anchor";
 
 // annotation-core S-001 / GAP-004 / S-005 — the in-iframe sandbox bridge (C-009/C-002/C-001/C-008).
 //
@@ -66,9 +67,11 @@ test("C-008: bridgeScript inlines the shared anchor IIFE (__anchordAnchor) and t
   const script = bridgeScript("n-iife");
   // The compiled @anchord/anchor module defines the namespace the glue reads from.
   expect(script).toContain("__anchordAnchor");
-  // The glue sources the anchor + placement from the namespace — NOT a hand-mirrored copy.
+  // The glue sources the anchor + placement from the namespace — NOT a hand-mirrored copy. S-006/
+  // C-007: the cross-block draw is now range-driven, so the glue calls A.resolveAnchorRange (the
+  // per-leaf A.placeAnchorAll call is superseded — placeAnchorAll stays exported for re-use/tests).
   expect(script).toContain("A.selectionToAnchor");
-  expect(script).toContain("A.placeAnchorAll");
+  expect(script).toContain("A.resolveAnchorRange");
   expect(script).toContain("A.unwrapAnnoMarks");
   // The hand-mirrored anchor functions are GONE (one source now): no inline placeSegment/offsetInBlock.
   expect(script).not.toContain("function placeSegment");
@@ -146,6 +149,62 @@ test("AS-002: the in-iframe draw applies class=anno-mark + the hue (data-anno-hu
   expect(script).toContain('setProperty("--mark-hue"');
 });
 
+test("C-007: bridgeScript draws range-driven — resolves the anchor to ONE range then wraps every intersected text node", () => {
+  const script = bridgeScript("n-range");
+  // The draw sources ONE range from the shared resolver (range-driven fan-out), NOT per-leaf segments.
+  expect(script).toContain("A.resolveAnchorRange");
+  // The per-leaf-segment placement (placeAnchorAll iterating segments + per-block wrap) is GONE.
+  expect(script).not.toContain("A.placeAnchorAll");
+  // It walks text nodes in document order and wraps in REVERSE (so an earlier wrap doesn't invalidate
+  // later node refs), skipping whitespace-only slices (so a <mark> never becomes a stray grid item).
+  expect(script).toContain("data-anno");
+});
+
+test("AS-017/AS-018: the range-driven draw covers a container's own text + leaves a grid's children intact", () => {
+  // Pull the drawRange function out of the bridge script and run it over happy-dom mimicking two
+  // mf-spec-render AS cards: card 1 has BOTH grid text AND a Data sub-block; card 2 has only grid
+  // text. The OLD per-leaf draw dropped card 1's grid text (it lived in a non-leaf container).
+  const src = bridgeScript("n-draw");
+  const m = src.match(/function drawRange\(anchor, id\)\{[\s\S]*?\n  \}/);
+  const tn = src.match(/function textNodesOf\(root\)\{[\s\S]*?\n  \}/);
+  expect(m).toBeTruthy();
+  expect(tn).toBeTruthy();
+  const win = new Window();
+  win.document.body.innerHTML =
+    '<div id="block-div-1"><dl class="gwt">\n      <dt>Given</dt><dd>alpha given</dd>\n    </dl>' +
+    '<div id="block-div-1d" class="as-data">Data: alpha data</div></div>' +
+    '<div id="block-div-2"><dl class="gwt">\n      <dt>Given</dt><dd>bravo given</dd>\n    </dl></div>';
+  const doc: any = win.document;
+  // Build the anchor from a real selection spanning both cards' grid text.
+  const startDD = doc.querySelectorAll("dl.gwt dd")[0].firstChild;
+  const endDD = doc.querySelectorAll("dl.gwt dd")[1].firstChild;
+  const range = doc.createRange();
+  range.setStart(startDD, 0);
+  range.setEnd(endDD, endDD.textContent.length);
+  const sel = win.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const anchor = selectionToAnchor(sel as any, doc)!;
+
+  // Reconstruct the bridge's window.__anchordAnchor surface for the extracted function (drawRange
+  // calls the sibling textNodesOf helper, so inject it into the same scope).
+  const A = { resolveAnchorRange };
+  const drawRange = new Function("A", "document", `${tn![0]}\n${m![0]} return drawRange;`)(A, doc);
+  drawRange(anchor, "a-1");
+
+  const covered = Array.from(doc.querySelectorAll("mark[data-anno]"))
+    .map((mk: any) => mk.textContent)
+    .join("|");
+  // AS-017: BOTH cards' grid text highlighted — including card 1 which also has a Data sub-block.
+  expect(covered).toContain("alpha given");
+  expect(covered).toContain("bravo given");
+  // AS-018: no <mark> is a direct child of either grid (no stray grid item); dt/dd stay the children.
+  for (const dl of Array.from(doc.querySelectorAll("dl.gwt"))) {
+    const stray = Array.from((dl as any).children).filter((c: any) => c.tagName === "MARK");
+    expect(stray.length).toBe(0);
+  }
+});
+
 test("C-006/layout: wrapTextRange skips whitespace-only nodes so a grid container's mark is never a stray grid item", () => {
   // BUG: a cross-block highlight that spans a structured block (an AS card whose body is a CSS-grid
   // <dl class="gwt">) used to wrap the whitespace text node sitting DIRECTLY inside the <dl> (the
@@ -154,15 +213,15 @@ test("C-006/layout: wrapTextRange skips whitespace-only nodes so a grid containe
   // The fix mirrors the markdown engine's wrapRange: never wrap a whitespace-only slice.
   const src = bridgeScript("n-wrap");
   const m = src.match(/function wrapTextRange\(el, start, end\)\{[\s\S]*?return marks\.length \? marks : null;\s*\}/);
+  const tn = src.match(/function textNodesOf\(root\)\{[\s\S]*?\n  \}/);
   expect(m).toBeTruthy();
+  expect(tn).toBeTruthy();
   const win = new Window();
   win.document.body.innerHTML =
     '<div id="b"><dl class="gwt">\n      <dt>Given</dt><dd>hello</dd>\n      <dt>When</dt><dd>world</dd>\n    </dl></div>';
   const doc: any = win.document;
-  const wrapTextRange = new Function("document", "NodeFilter", `${m![0]} return wrapTextRange;`)(
-    doc,
-    (win as any).NodeFilter,
-  );
+  // wrapTextRange now descends via the sibling textNodesOf helper (not createTreeWalker) — inject it.
+  const wrapTextRange = new Function("document", `${tn![0]}\n${m![0]} return wrapTextRange;`)(doc);
   const block = doc.querySelector("#b");
   wrapTextRange(block, 0, (block.textContent || "").length); // the cross-block segment wraps the WHOLE card
   const dl = doc.querySelector("dl.gwt");

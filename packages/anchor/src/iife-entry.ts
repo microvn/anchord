@@ -4,10 +4,10 @@
 // (one source, no hand-mirrored drift; the iframe inherits the FE's normalize + fuzzy tiers).
 //
 // It exposes the PURE anchor fns on a single global namespace the bridge glue calls. The bridge glue
-// (MessageChannel handshake, wrapTextRange DOM mutation, drawHighlight, focusAnno, mark-click relay)
-// stays in the backend bridge script and reads `selectionToAnchor` / `placeAnchorAll` from here.
+// (MessageChannel handshake, the range-driven DOM wrap, drawHighlight, focusAnno, mark-click relay)
+// stays in the backend bridge script and reads `selectionToAnchor` / `resolveAnchorRange` from here.
 
-import { selectionToAnchor, placeAnchorAll, unwrapAnnoMarks } from "./anchor";
+import { selectionToAnchor, placeAnchorAll, resolveAnchorRange, unwrapAnnoMarks } from "./anchor";
 import { BLOCK_SELECTOR, SNIPPET_CAP } from "./types";
 
 // Attach to the frame global the bridge glue reads (`window.__anchordAnchor`). In the sandboxed
@@ -19,6 +19,7 @@ const target: Record<string, unknown> = (g.window as Record<string, unknown> | u
 target.__anchordAnchor = {
   selectionToAnchor,
   placeAnchorAll,
+  resolveAnchorRange,
   unwrapAnnoMarks,
   BLOCK_SELECTOR,
   SNIPPET_CAP,

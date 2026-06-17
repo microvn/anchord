@@ -14,4 +14,12 @@ export type {
 } from "./types";
 export { SNIPPET_CAP, BLOCK_SELECTOR, ELEMENT_NODE, TEXT_NODE } from "./types";
 export { locateRange, nearestOccurrence, normalizeWithMap, fuzzyLocate, similarity, levenshtein } from "./locate";
-export { selectionToAnchor, placeAnchor, placeAnchorAll, unwrapAnnoMarks } from "./anchor";
+export {
+  selectionToAnchor,
+  placeAnchor,
+  placeAnchorAll,
+  resolveAnchorRange,
+  extractText,
+  unwrapAnnoMarks,
+} from "./anchor";
+export type { ResolvedRange } from "./anchor";

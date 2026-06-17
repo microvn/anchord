@@ -97,46 +97,73 @@ export function bridgeScript(nonce: string): string {
   var BLOCK_SELECTOR = A.BLOCK_SELECTOR;
   var NONCE = ${nonceLiteral};
 
-  // --- placement (highlight) ---
-  function findBlock(blockId){
-    var esc = (window.CSS && CSS.escape) ? CSS.escape(blockId) : blockId.replace(/["\\\\\\]\\[#.:>+~*^$=()| ]/g, "\\\\$&");
-    return document.querySelector('[data-block-id="' + esc + '"]') || document.querySelector('#' + esc);
+  // --- placement (highlight): RANGE-DRIVEN (S-006 / C-007) ---
+  // Every Text descendant of root in document order, via MANUAL recursive descent (NOT
+  // createTreeWalker, which happy-dom 15 won't descend into nested elements with — the shared module
+  // walks the same way, so offsets stay consistent). Skips script/style/noscript/template subtrees.
+  function textNodesOf(root){
+    var out = [];
+    function visit(n){
+      for (var c = n.firstChild; c; c = c.nextSibling){
+        if (c.nodeType === 3) out.push(c);
+        else if (c.nodeType === 1 && !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(c.nodeName)) visit(c);
+      }
+    }
+    visit(root);
+    return out;
   }
-  // Place EVERY block an anchor spans → its <mark>s, or null if NO segment placed. The WHERE comes
-  // from the shared placeAnchorAll (one PlaceResult per segment, the unified C-008 ladder); the wrap
-  // (DOM mutation) is local because it needs real-browser Range/surroundContents.
-  function placeRange(anchor){
-    var results = A.placeAnchorAll(anchor, document);
+  // S-006/C-007: draw ONE highlight range-driven. The shared resolveAnchorRange resolves the anchor to
+  // a single DOM range (start node+offset → end node+offset) using the unified C-008 ladder; we then
+  // wrap EVERY text node that range intersects in its OWN <mark> — including container text that lives
+  // BETWEEN leaf blocks (the AS-001/AS-002 grid-text miss the old per-leaf-segment draw dropped).
+  // Wrapping is REVERSE document order so splitting an earlier node never invalidates later refs, and
+  // a whitespace-only slice is SKIPPED so a <mark> never becomes a stray grid/flex item (AS-018).
+  // Returns the created <mark>s (>=1) or null when the range can't be resolved (→ couldn't-place).
+  function drawRange(anchor, id){
+    var r = A.resolveAnchorRange(anchor, document);
+    if (!r) return null;
+    // Collect every text node in document order; keep those between startNode and endNode inclusive.
+    var all = textNodesOf(document.body || document.documentElement || document);
+    var si = all.indexOf(r.startNode), ei = all.indexOf(r.endNode);
+    if (si === -1 || ei === -1) return null;
+    if (si > ei){ var t = si; si = ei; ei = t; }
+    var inRange = all.slice(si, ei + 1);
     var marks = [];
-    for (var i = 0; i < results.length; i++){
-      var r = results[i];
-      if (!r || !r.ok) continue;
-      var el = findBlock(r.blockId);
-      if (!el) continue;
-      var m = wrapTextRange(el, r.start, r.end);
-      if (m && m.length) marks.push.apply(marks, m);
+    // REVERSE order: replacing an earlier text node would invalidate later node refs otherwise.
+    for (var i = inRange.length - 1; i >= 0; i--){
+      var node = inRange[i];
+      var s = node === r.startNode ? r.startOffset : 0;
+      var e = node === r.endNode ? r.endOffset : node.textContent.length;
+      if (e <= s) continue;
+      // Skip a whitespace-only slice (the newline+indent node BETWEEN a grid/list's children) so its
+      // <mark> never becomes a stray grid item that shatters the layout (AS-018).
+      if (node.textContent.slice(s, e).trim().length === 0) continue;
+      var rr = document.createRange();
+      rr.setStart(node, s);
+      rr.setEnd(node, e);
+      var mark = document.createElement("mark");
+      // Stamp the id up front so the extracted draw is self-contained (drawHighlight then layers on
+      // class/hue/state). data-anno is what unwrapAllAnnoMarks + focusAnno + the mark-click relay key on.
+      mark.setAttribute("data-anno", String(id));
+      try { rr.surroundContents(mark); marks.unshift(mark); } catch (e2) {}
     }
     return marks.length ? marks : null;
   }
-  // Wrap [start,end) chars of an element's text in <mark>s — ONE per intersected text node. A range
-  // that spans multiple text nodes (a container block, or text broken by <br>/inline tags) CANNOT use
-  // Range.surroundContents on the whole range: it THROWS ("InvalidStateError") whenever the range
-  // partially selects a non-Text node. So we slice PER text node and surround each slice on its own
-  // (both boundaries in the SAME text node → never throws). Returns the created <mark>s (>=1) or null.
+  // Wrap [start,end) chars of a SINGLE element's text in <mark>s — ONE per intersected text node.
+  // Retained for the within-one-block path / regression coverage; the cross-block draw is drawRange.
+  // A range that spans multiple text nodes (text broken by <br>/inline tags) CANNOT use
+  // Range.surroundContents on the whole range (it THROWS when partially selecting a non-Text node), so
+  // we slice PER text node and surround each slice on its own. Skips a whitespace-only slice (AS-018).
   function wrapTextRange(el, start, end){
-    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
-    var pos = 0, n, segs = [];
-    while ((n = walker.nextNode())){
+    var nodes = textNodesOf(el);
+    var pos = 0, segs = [];
+    for (var k = 0; k < nodes.length; k++){
+      var n = nodes[k];
       var len = n.textContent.length;
       var ns = pos, ne = pos + len;
       if (ne > start && ns < end){
         var s = start > ns ? start - ns : 0;
         var e = end < ne ? end - ns : len;
-        // Skip a whitespace-only slice. The newline+indent text node that sits BETWEEN block
-        // children (directly inside a dl / ul / grid container) would otherwise be wrapped in a mark
-        // that becomes a DIRECT child of that container — a stray grid/flex item that shifts every
-        // real child and shatters the layout (the AS-card grid bug), plus it renders an empty
-        // highlight bar. The markdown engine wrapRange (annotation-marks.tsx) skips these too.
         if (e > s && n.textContent.slice(s, e).trim().length > 0) segs.push({ node: n, s: s, e: e });
       }
       pos = ne;
@@ -183,10 +210,11 @@ export function bridgeScript(nonce: string): string {
   // placed (>=1 mark), false on a placement miss (the caller relays place-failed). Reused by both
   // the single {highlight} handler (back-compat) and the batch {highlights} redraw.
   function drawHighlight(item){
-    var marks = placeRange(item.anchor);
+    var marks = drawRange(item.anchor, item.annotationId);
     if (!marks || !marks.length) return false;
     for (var mi = 0; mi < marks.length; mi++){
       var mk = marks[mi];
+      // data-anno is already set by drawRange; (re)assert defensively + layer on class/hue/state.
       mk.setAttribute("data-anno", String(item.annotationId));
       // S-001: give every mark the app's highlight class so the injected .anno-mark stylesheet
       // applies — without it the bare <mark> renders the browser-default yellow block.

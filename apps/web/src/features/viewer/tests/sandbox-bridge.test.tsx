@@ -519,6 +519,33 @@ describe("Sandbox bridge in ViewerScreen S-002", () => {
     expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
   });
 
+  it("C-010: for a kind=html doc the app-origin light-DOM placer never runs — no in-app <mark data-anno>", async () => {
+    // C-010: an HTML doc's blocks live inside the opaque iframe, unreachable from the app origin, so
+    // the markdown light-DOM placer (useAnnotationMarks/placeAnnotations) is gated OFF for html — it
+    // is fed an empty set. The ONLY draw path is the in-iframe bridge. Were the placer to run on html,
+    // it would findBlock null for every anchor and false-flag them, or wrap marks in the wrong DOM.
+    // So even with a listed annotation, the app-origin doc pane must carry NO mark[data-anno].
+    annoResponse = okRead({
+      items: [
+        {
+          id: "anno-html-1",
+          type: "range",
+          status: "unresolved" as const,
+          isOrphaned: false,
+          anchor: { ...HTML_ANCHOR },
+          comments: [
+            { id: "c1", parentId: null, authorName: "You", body: "hi", createdAt: new Date().toISOString() },
+          ],
+        },
+      ],
+    });
+    await renderHtmlViewer();
+    // The rail shows the thread (read path works) but the doc pane has no light-DOM highlight.
+    await waitFor(() => expect(screen.getAllByTestId("thread-card").length).toBeGreaterThanOrEqual(1));
+    const docPane = screen.getByTestId("viewer-doc-pane");
+    expect(docPane.querySelectorAll("mark[data-anno]").length).toBe(0);
+  });
+
   it("AS-005 / C-004: a viewer-only role never wires the bridge — a relayed selection opens nothing", async () => {
     docResponse = okEnv({
       doc: {
