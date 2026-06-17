@@ -1,3 +1,10 @@
+# Snapshot: annotation-html-marks
+**Date:** 2026-06-17
+**Ref:** Phase 0
+**Reason:** M1 (new story S-006 — range-driven cross-block coverage), M4 (C-007 leaf-segment → range-driven), M6 (new C-010/C-011)
+
+---
+
 # Spec: annotation-html-marks
 
 **Created:** 2026-06-17
@@ -238,45 +245,6 @@ AS-016: A snippet below the match threshold is still reported couldn't-place, no
   a bogus highlight onto unrelated text, and the iframe does not crash
 - **Data:** stored snippet "completely unrelated phrase" absent from the doc
 
-### S-006: An HTML cross-block highlight covers ALL selected text, regardless of block structure (P0)
-
-**Description:** As a reviewer, when my selection spans several blocks — including blocks whose content
-sits in a container that is NOT itself the innermost addressable block (e.g. an mf-spec-render AS card
-whose body holds a grid of label/value rows AND a separate Data/Setup line) — the highlight covers the
-WHOLE selection end-to-end, including that in-between container text. Today the cross-block draw places
-one mark per "leaf" block and silently drops text that lives in a non-leaf container, so a selection
-over four cards highlighted only the cards without a Data/Setup sibling. The fix draws by wrapping every
-text node the selection's resolved range intersects (range-driven), not by per-leaf-block segments.
-**Source:** docs/investigate/html-annotation-couldnt-place-2026-06-16.md; the dogfood finding (a
-selection over AS-001→AS-004 highlighted only AS-003/AS-004 — the cards without a Data/Setup sub-block —
-and missed the grid text of AS-001/AS-002); risk-audit Phase-0 (range-driven fan-out on the existing
-anchor module, no rewrite).
-
-**Execution:**
-- `depends_on:` none
-- `parallel_safe:` false
-- `files:` `apps/backend/src/annotation/sandbox-bridge.ts` (in-iframe draw: resolve the anchor to one range and wrap every intersected text node, reverse order, skip whitespace-only — replacing per-leaf-segment), `packages/anchor/src/anchor.ts` + `packages/anchor/src/locate.ts` (range/segment resolution + the single canonical text extractor), `apps/web/src/features/viewer/components/viewer-screen.tsx` (gate the app-origin light-DOM placer to markdown so HTML draws via the bridge), `apps/backend/src/annotation/reanchor.ts` (use the one extractor, drop the divergent string-regex path)
-- `autonomous:` checkpoint
-- `verify:` open the Shield mf-spec-render doc, make a selection spanning AS-001 through AS-004, create an annotation → every card's quoted text is highlighted (AS-001/AS-002 grid text included), the dt/dd grid layout is unchanged; the existing html-marks + markdown tests stay green.
-
-**Acceptance Scenarios:**
-
-AS-017: A selection through a container block that has a sub-block still highlights the container's own text
-- **Given:** an HTML doc whose selection spans four cards, where some card bodies contain BOTH grid text
-  and a separate Data/Setup sub-block, and others contain only grid text
-- **When:** the doc opens with that annotation
-- **Then:** EVERY card's selected text is highlighted — including the grid text of the cards that also have
-  a Data/Setup sub-block — no card is silently left unhighlighted
-- **Data:** the Shield doc, an annotation spanning AS-001 (has Data) → AS-004; AS-001/AS-002 grid text must be highlighted
-
-AS-018: A cross-block highlight does not insert an element that breaks the doc's own grid/list layout
-- **Given:** an HTML doc whose selected range covers a CSS-grid `<dl>`'s content (text plus the whitespace
-  between its child elements)
-- **When:** the highlight is drawn
-- **Then:** the grid container's direct children are unchanged (no `<mark>` becomes a stray grid item) and
-  the rows stay in place — whitespace-only slices between block children are not wrapped
-- **Data:** a selection over an mf-spec-render AS card's `<dl class="gwt">`
-
 ## Constraints & Invariants
 
 - C-001: For an HTML doc, highlights are drawn ONLY by the in-iframe bridge over the trusted
@@ -296,15 +264,11 @@ AS-018: A cross-block highlight does not insert an element that breaks the doc's
 - C-006: A highlight range that spans multiple text nodes / child elements (a container block, or text
   broken by inline tags / line breaks) is wrapped per text node (one mark per intersected node), never
   via a single whole-range wrap that fails across element boundaries. (AS-001, AS-005)
-- C-007: A cross-block highlight is drawn **range-driven**: the anchor is resolved to ONE range
-  (start block+offset → end block+offset) and EVERY text node that range intersects is wrapped in its own
-  `<mark>` (reverse document order so wrapping doesn't invalidate later offsets; whitespace-only slices are
-  skipped so a `<mark>` never becomes a stray grid/flex item). This SUPERSEDES the prior per-leaf-block
-  segment placement, which silently dropped text living in a container block that was not itself a leaf
-  (the AS-001/AS-002 miss). Coverage follows the actual selection, not block-id "leaves", so EVERY spanned
-  block (and the container text between leaves) is covered; couldn't-place is reported only when the range
-  resolves to nothing. (Distinct from C-006: C-006 is the per-text-node wrap WITHIN the range; C-007 is
-  that the range spans blocks at all.) (AS-013, AS-017, AS-018)
+- C-007: A multi_range anchor (one carrying `segments[]`, one segment per spanned block) is drawn on
+  EVERY spanned block — each segment is located and wrapped in its own block — not only the top-level
+  `blockId`; a couldn't-place is reported only when NO segment of the anchor places. This mirrors the
+  markdown engine's per-segment placement. (Distinct from C-006: C-006 wraps across text nodes within a
+  single block; C-007 fans out across blocks.) (AS-013)
 - C-008: The in-iframe matcher and the markdown matcher are ONE shared locate ladder — exact →
   nearest-occurrence → whitespace-normalized → fuzzy (Levenshtein) — so a given (snippet, offset,
   block-text) resolves identically whether the doc is HTML or markdown. The iframe is no longer the
@@ -313,14 +277,6 @@ AS-018: A cross-block highlight does not insert an element that breaks the doc's
   state, clear-then-redraw sync, and click/scroll/focus interaction (S-001..S-004), and the opaque-origin
   sandbox isolation (no `allow-same-origin`), are unchanged by sourcing the locate logic from the shared
   module. (AS-001, AS-007, AS-011)
-- C-010: HTML highlights are produced EXCLUSIVELY by the in-iframe bridge; the app-origin (markdown)
-  light-DOM placement path does NOT run for an HTML doc (its blocks live inside the opaque iframe and are
-  unreachable from the app origin). An HTML doc's stored annotations are drawn on open and couldn't-place
-  is reported via the bridge, not the app-origin placer. (AS-001, AS-003)
-- C-011: ONE canonical text-extraction function is used wherever offsets/snippets are computed —
-  anchor-create, in-iframe placement, and re-anchor — walking the DOM's text nodes (excluding
-  script/style/noscript/template/comment) with the shared whitespace normalization; there is NO divergent
-  string-regex extractor, so an offset computed at create resolves to the same text at placement. (AS-014, AS-017)
 
 ## Linked Fields
 
@@ -374,17 +330,6 @@ annotation-html-marks (the FE parent + the in-iframe bridge) consumes annotation
 - **Hover-sync** (rail hover ↔ mark hover) — markdown doesn't have it either; out of parity scope.
 - **Re-anchoring across versions inside the iframe** — handled by the backend re-anchor + the sync
   redrawing whatever the read serves; no iframe-specific re-anchor logic here.
-- **(Phase 1) Overlay-rect draw for non-text regions** (image/svg/chart pinpoint) — `<mark>` can't wrap a
-  non-text element; image-region anchors draw via a `pointer-events:none` overlay layer. Deferred to Phase 1.
-- **(Phase 2, spike-gated) MutationObserver redraw loop** — re-draw highlights when the doc's OWN JS
-  mutates the DOM. High-risk (self-feedback loop, DoS lever); needs a throttled/circuit-broken design
-  proven by a throwaway spike before speccing. Today's draw is one-shot on the highlight-sync message.
-- **(Phase 2, spike-gated) freeze-mode** — neutralize the doc's scripts and annotate a static snapshot.
-  Lowest value, highest false-safety risk (scripts already ran; only a no-`allow-scripts` reload truly
-  kills them); deferred behind a spike.
-- **(Phase 2, spike-gated) content-hash pinpoint identity + diff-based cross-version remap** — durable
-  element identity + diff remap need a storage decision (full per-version canonical text) and proven
-  feasibility; the existing quote+offset+fuzzy ladder stays the cross-version mechanism until then.
 
 ## Change Log
 
@@ -393,4 +338,3 @@ annotation-html-marks (the FE parent + the in-iframe bridge) consumes annotation
 | 2026-06-17 | Initial creation — HTML iframe highlight parity with the markdown engine: app styling + type/state appearance, clear-then-redraw sync (delete/restore), click/scroll/focus pairing, via the in-iframe bridge. Derived from the HTML-mark gap matrix (conversation 2026-06-16/17). Mode A. | -- |
 | 2026-06-17 | Mode C (Major, M6) — added AS-013 + C-007: a cross-block (multi_range `segments[]`) highlight is drawn on EVERY spanned block, not just the top-level `blockId`. Documents the gap mf-fix closed (the bridge's draw side iterated no segments while markdown's `placeAnnotations` did → cross-block highlights stopped at the first block). Snapshot `2026-06-17-html-marks-crossblock.md`. | -- |
 | 2026-06-17 | Mode C (Major, M1+M6) — + S-005 (HTML placement reaches markdown-parity drift tolerance via ONE shared anchor module, AS-014/015/016) + C-008 (shared 4-tier locate ladder, HTML==markdown) + C-009 (behaviour-preserving). Resolves GAP-005 (in-iframe matcher lacked whitespace-normalize). Rewrote the System Impact note: anchor logic no longer hand-mirrored (sourced from `packages/anchor`, compiled to IIFE); CSS `.anno-mark` dedup deferred (Not in Scope). Snapshot `2026-06-17-html-marks-anchor-module.md`. | -- |
-| 2026-06-17 | Mode C (Major, M1+M4+M6) — **Phase 0** of the anchor/highlight redesign (after a 3-mechanism spike + 2 risk-audit rounds + multi-voice review). + S-006 (cross-block highlight covers ALL selected text regardless of block structure — range-driven fan-out, AS-017/018) fixing the dogfood miss where AS-001/AS-002 grid text went unhighlighted. **C-007 changed** leaf-segment → range-driven (supersede). + C-010 (HTML drawn exclusively by the in-iframe bridge — kind-gate) + C-011 (ONE canonical text extractor, no divergent regex path). Deferred to Phase 1/2 (Not in Scope): overlay-rect non-text draw, MutationObserver redraw, freeze-mode, content-hash, diff-remap — all spike-gated. Snapshot `2026-06-17-html-marks-phase0.md`. | -- |
