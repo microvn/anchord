@@ -9,7 +9,9 @@ import type { ViewerDocKind } from "@/features/viewer/services/client";
 //
 // The identity fields (title / live / format / version) come from the doc meta the viewer already
 // fetches (S-001 GET …/docs/:slug → { title, kind→format, version, status }).
-//   - LiveBadge: shown when status is `live` or `published`.
+//   - LiveBadge: shown when the doc is SHARED (generalAccess beyond `restricted`) — same rule as the
+//     dashboard list (projects.ts). "Live" = shared, NOT "has a published version" — a restricted doc
+//     is Draft even though it is served as published.
 //   - FormatBadge: derived from `kind` (markdown→MD, html→HTML, image→IMG).
 //   - VersionButton: shows `v<n>`; onClick opens version history — that panel lives in
 //     `versioning-diff-ui` (NOT built here), so the caller wires it to a no-op / toast placeholder.
@@ -23,6 +25,9 @@ interface TopBarDoc {
   kind: ViewerDocKind;
   version: number;
   status: string;
+  /** Doc general access (restricted | anyone_with_link | anyone_in_workspace). Drives the Live badge:
+   *  "Live" = shared beyond restricted, matching the dashboard list (projects.ts). NOT the publish state. */
+  generalAccess?: string;
 }
 
 // kind → the short format-badge label (prototype FORMAT_META: md→MD, html→HTML, img→IMG).
@@ -76,7 +81,11 @@ export function ViewerTopBar({
   onSignIn?: () => void;
 }) {
   const { theme, toggleTheme } = useTheme();
-  const isLive = doc.status === "live" || doc.status === "published";
+  // "Live" = the doc is shared beyond restricted — the SAME rule the dashboard list uses
+  // (projects.ts: generalAccess === "restricted" ? "draft" : "live"). It is NOT the publish state:
+  // the backend serves every versioned doc as status:"published", so keying off status lit the badge
+  // for unshared docs (the dashboard showed Draft, the detail showed Live).
+  const isLive = doc.generalAccess != null && doc.generalAccess !== "restricted";
   // AS-029: an anon never sees session-only chrome. The Share button is gated by the caller's
   // showShare, but we also hard-gate it (and the overflow/account menu) here so a stray showShare
   // can't leak member chrome to an anon.

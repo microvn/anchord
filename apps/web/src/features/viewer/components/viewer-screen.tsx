@@ -210,7 +210,13 @@ function ViewerShell({
 }: {
   title: string;
   /** present only on the success path — drives the S-005 ViewerTopBar identity. */
-  doc?: { title: string; kind: ViewerDocResponse["doc"]["kind"]; version: number; status: string };
+  doc?: {
+    title: string;
+    kind: ViewerDocResponse["doc"]["kind"];
+    version: number;
+    status: string;
+    generalAccess: ViewerDocResponse["doc"]["generalAccess"];
+  };
   /** the session's effective role on this doc — gates the Share affordance (S-001 / C-002). */
   effectiveRole?: ViewerDocResponse["doc"]["effectiveRole"];
   /** S-003/AS-030: the doc's OWN workspace from the read response (null when project-less, C-011).

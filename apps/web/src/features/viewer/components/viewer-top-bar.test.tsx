@@ -18,8 +18,10 @@ const liveDoc = {
   title: "Web-core behavior contract",
   kind: "markdown" as const,
   version: 4,
-  status: "live",
-  generalAccess: "restricted",
+  // "Live" = shared beyond restricted (matches the dashboard list, projects.ts). The backend serves
+  // status:"published" for any doc with a version, so the badge must derive from generalAccess, not status.
+  status: "published",
+  generalAccess: "anyone_with_link",
 };
 
 describe("ViewerTopBar S-005 (AS-012)", () => {
@@ -47,7 +49,23 @@ describe("ViewerTopBar S-005 (AS-012)", () => {
   it("AS-012: a non-live doc (draft) shows no Live badge", () => {
     render(
       <ViewerTopBar
-        doc={{ ...liveDoc, status: "draft" }}
+        doc={{ ...liveDoc, generalAccess: "restricted" }}
+        railVisible
+        onToggleRail={() => {}}
+        onVersion={() => {}}
+        onShare={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("vt-live-badge")).toBeNull();
+  });
+
+  it("AS-012: a restricted doc shows NO Live badge even when served as published (matches the dashboard 'Draft')", () => {
+    // Regression: the detail viewer showed Live for an unshared doc — viewer-top-bar.tsx isLive used
+    // status (the backend always sends "published"), so the badge ignored share state. The dashboard
+    // list derives Live from generalAccess (restricted → Draft); the badge must agree.
+    render(
+      <ViewerTopBar
+        doc={{ ...liveDoc, status: "published", generalAccess: "restricted" }}
         railVisible
         onToggleRail={() => {}}
         onVersion={() => {}}

@@ -164,7 +164,9 @@ describe("ViewerScreen S-001", () => {
 
   it("AS-012: the top bar shows doc identity and the comments toggle shows/hides the rail", async () => {
     response = ok({
-      doc: { title: "My MD doc", kind: "markdown", version: 4, status: "live", generalAccess: "restricted" },
+      // "Live" badge = SHARED (generalAccess beyond restricted), matching the dashboard list — not the
+      // publish state. A shared doc here so the badge shows; a restricted doc would read Draft.
+      doc: { title: "My MD doc", kind: "markdown", version: 4, status: "published", generalAccess: "anyone_with_link" },
       content: "<h2>Intro</h2><p>body</p>",
     });
 
