@@ -1,7 +1,14 @@
+# Snapshot: annotation-core-ui
+**Date:** 2026-06-17
+**Ref:** Live-badge fix
+**Reason:** M5 (AS-012 Live-badge condition: published → shared), M6 (new C-007), M1-adjacent (AS-020 negative case)
+
+---
+
 # Spec: annotation-core-ui
 
 **Created:** 2026-06-11
-**Last updated:** 2026-06-17
+**Last updated:** 2026-06-14 (3)
 **Status:** Draft
 
 ## Overview
@@ -225,19 +232,10 @@ version, story/AS counts, draft, url).
 **Acceptance Scenarios:**
 
 AS-012: The top bar shows doc identity + a working comments toggle
-- **Given:** the viewer is open on a SHARED doc (general access beyond restricted)
+- **Given:** the viewer is open on a live doc
 - **When:** I view the top bar and click the comments toggle
-- **Then:** the bar shows title · Live badge · format · version; the toggle shows/hides the comments rail.
-  The Live badge appears because the doc is shared (the same condition the dashboard list uses) — not
-  because it has a published version
-- **Data:** a markdown doc at v4 with general access "anyone with link"
-
-AS-020: A restricted doc shows NO Live badge in the top bar (reads Draft, matching the dashboard)
-- **Given:** the viewer is open on a RESTRICTED doc (not shared) that is served as published
-- **When:** I view the top bar
-- **Then:** no Live badge is shown — the doc reads as Draft, consistent with the dashboard list; the
-  rest of the identity (title · format · version) still shows
-- **Data:** a markdown doc at v4 with general access "restricted"
+- **Then:** the bar shows title · Live badge · format · version; the toggle shows/hides the comments rail
+- **Data:** a live markdown doc, v4
 
 AS-013: A spec-type doc shows the meta strip
 - **Given:** a spec doc (has story/AS counts) open on desktop
@@ -286,11 +284,6 @@ AS-014: On a narrow screen the side panes become drawers
   in the top bar. An HTML doc is additionally full-bleed: the sandbox iframe sits edge-to-edge (no side
   padding/margin) and fills the available height. The outline is derived from headings, which only the app-origin Markdown render exposes
   (the HTML sandbox is cross-origin, images have no headings — GAP-004). (AS-001, AS-002, AS-003, AS-018, AS-019)
-- C-007: The top bar's Live badge reflects the doc's GENERAL ACCESS, not its publish state — shown when
-  the doc is shared beyond restricted (anyone-with-link / anyone-in-workspace = Live), hidden when
-  restricted (= Draft). This is the SAME rule the dashboard doc list uses, so a doc reads the same
-  Live/Draft in the list and in the viewer. A restricted doc is still served as published (it has a
-  version) yet must read Draft. (AS-012, AS-020)
 
 ## Linked Fields
 
@@ -306,10 +299,6 @@ annotation-core-ui is the **consumer**; `annotation-core` (backend) + `render-pu
 - `data-block-id` markers on the served content — consumed by S-003 to resolve each annotation's
   anchor → an in-text highlight. Produced by render-publish/annotation-core block-id injection at
   serve time. ✘ block-id injection is NOT wired at serve time (audit/runtime-confirmed) → GAP-002.
-- `generalAccess` — consumed by S-005/AS-012+AS-020 on viewer load (the top-bar Live badge derives
-  from it: shared = Live, restricted = Draft — C-007). Produced by `render-publish` viewer-doc read
-  (`GET …/docs/:slug` → `doc.generalAccess`, render-publish API shape). ✔ surface + lifecycle match
-  (persisted, served on the doc read the viewer already makes).
 
 ## UI Notes
 
@@ -421,4 +410,3 @@ annotation-core-ui (forced by the "everything, no phasing" scope decision 2026-0
 | 2026-06-14 | Kind-conditional layout (Major, M4+M6, snapshot 2026-06-14): + C-006 (markdown=3-pane collapsible outline·prose content·rail; html/image=2-pane full-width content·rail, no outline/outline-toggle); S-001 AS-001/002/003 pin per-kind layout + html/image full-width; S-002 scoped to Markdown (AS-005/006) + AS-018 (collapse outline); S-005 outline-toggle markdown-only; AS-014 responsive per-kind | -- |
 | 2026-06-14 | HTML full-bleed (Major, M5, snapshot 2026-06-14-3): AS-002 Then — HTML iframe is full-bleed (edge-to-edge, no side padding/margin) and fills the available height, not just full-width; C-006 note added. Verified E2E (leftGutter/rightGutter=0, iframe fills pane height). | -- |
 | 2026-06-14 | In-pane outline collapse (Major, M4 + new AS, snapshot 2026-06-14-2): AS-018 When disambiguated to the top-bar toggle; + AS-019 (collapse via a chevron beside the outline search inside the pane, top-bar toggle re-expands); UI Notes TocSidebar gains `TocCollapse`; C-006 coverage += AS-019 | -- |
-| 2026-06-17 | Live badge = share state (Major, M5+M6, snapshot 2026-06-17-core-ui-live-badge): AS-012 Given/Then — the Live badge is shown when the doc is SHARED (general access beyond restricted), matching the dashboard list, NOT when merely published; + AS-020 (restricted doc → no Live badge, reads Draft); + C-007. Pins the fix for the list/detail status mismatch (commit 3f75006: viewer-top-bar isLive ← generalAccess, not status). | -- |

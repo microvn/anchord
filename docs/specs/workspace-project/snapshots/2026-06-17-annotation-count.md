@@ -1,7 +1,14 @@
+# Snapshot: workspace-project-ui
+**Date:** 2026-06-17
+**Ref:** annotation-count metric
+**Reason:** M1 (new story S-007 — dashboard counts annotations not comments), M6 (new C-006)
+
+---
+
 # Spec: workspace-project-ui
 
 **Created:** 2026-06-10
-**Last updated:** 2026-06-17
+**Last updated:** 2026-06-10
 **Status:** Draft
 
 ## Overview
@@ -228,40 +235,6 @@ AS-018: The card's access indicator reflects the doc's general access
 - **Then:** the first shows a "Workspace" indicator and the second shows "Restricted" (matching `general_access`)
 - **Data:** one anyone_in_workspace doc + one restricted doc
 
-### S-007: Dashboard counts annotations, not comments (P1)
-
-**Description:** As a user scanning the workspace, the per-doc count and the workspace overview tile
-show how many ANNOTATIONS a doc/workspace has — the unit that matters for a review tool — not the raw
-comment total. Today both show a comment count (every comment across the doc's annotation threads) with
-an envelope icon, which over-counts (one annotation can hold many comments) and mislabels the activity.
-**Source:** dogfood feedback (2026-06-17) — "số icon phong bì nên đổi icon dạng annotations, và count
-total [annotations] mới đúng" + "tổng số comments là k đúng, tổng số annotations mới đúng" (workspace
-overview tile). The count metric was built (repo `commentCount`, doc-bits, workspace-home tile) without
-a behaviour AS — this story specs it.
-
-**Execution:**
-- `depends_on:` none
-- `parallel_safe:` false
-- `files:` `apps/backend/src/workspace/repo.ts` (count active annotations, not comments) + `apps/backend/src/routes/projects.ts` (row field rename), `apps/web/src/features/docs/types/index.ts` + `apps/web/src/features/docs/components/doc-bits.tsx` (AnnotationCount + annotation icon), `apps/web/src/features/workspaces/components/workspace-home.tsx` (the overview tile: label "Annotations" + sum the per-doc annotation count)
-- `autonomous:` true
-- `verify:` open the workspace home → a doc with 3 annotations (one carrying several replies) shows "3" beside an annotation icon (not the higher comment total); the overview tile reads "Annotations" and equals the sum across docs.
-
-**Acceptance Scenarios:**
-
-AS-019: A doc row shows its active-annotation count with an annotation icon
-- **Given:** a doc with 3 active annotations, one of which has 4 reply comments (7 comments total)
-- **When:** I view the doc in the workspace browse grid
-- **Then:** the row shows "3" (the active-annotation count) beside an annotation icon — NOT "7" and not an
-  envelope/comment icon; a soft-deleted annotation on the doc is not counted
-- **Data:** 3 active annotations (+1 soft-deleted), 7 comments total → row reads 3
-
-AS-020: The workspace overview tile counts annotations across the workspace
-- **Given:** a workspace whose docs hold 12 active annotations in total
-- **When:** I open the workspace home
-- **Then:** the overview tile is labelled "Annotations" and shows 12 — the sum of the docs' active-annotation
-  counts — not a "Comments" total
-- **Data:** docs summing to 12 active annotations
-
 ## Constraints & Invariants
 
 - C-001: Destructive actions in this cluster (delete a project) show a confirmation dialog and
@@ -274,10 +247,6 @@ AS-020: The workspace overview tile counts annotations across the workspace
   "Mark all read" reduces it; no count is faked when the read endpoint is unavailable. (AS-012, AS-014, AS-015, AS-017)
 - C-005: Every screen uses the DESIGN.md dark-operator system (teal-only accent) and is
   responsive (dialogs/menus reflow on tablet/mobile; tap targets ≥40px). (AS-001, AS-013; responsive/pixel visual is [→MANUAL], inheriting web-core's shell + tokens)
-- C-006: The dashboard's count metric is the doc's ACTIVE annotation count (annotations whose delete
-  tombstone is unset — soft-deleted ones excluded), NOT a comment count. The per-doc browse row and the
-  workspace overview tile use this one number; both show annotation iconography/label ("Annotations"),
-  never a comment/envelope. (AS-019, AS-020)
 
 ## Linked Fields
 
@@ -318,7 +287,7 @@ Build targets `[N]`:
 |---|---|---|
 | `ProjectsScreen` (browse + create) | `apps/web/src/features/docs/projects-screen.tsx` | reuse; add `ProjectCardMoreMenu` + archived toggle (S-002) |
 | `DocsScreen` / `DocGrid` / `DocList` | `apps/web/src/features/docs/{docs-screen,doc-list}.tsx` | reuse; add `⋯` more-menu to cards/rows (S-001) |
-| `DocCard` + `doc-bits` (FormatBadge/VersionTag/AnnotationCount/StatusTag) | `apps/web/src/features/docs/{doc-card,doc-bits}.tsx` | reuse; add `AccessIndicator` (S-006); rename `CommentCount`→`AnnotationCount` + annotation icon (S-007) |
+| `DocCard` + `doc-bits` (FormatBadge/VersionTag/CommentCount/StatusTag) | `apps/web/src/features/docs/{doc-card,doc-bits}.tsx` | reuse; add `AccessIndicator` (S-006) |
 | `NewDocDialog` | `apps/web/src/features/docs/new-doc-dialog.tsx` | reuse; add `NewDocProjectPicker` (S-003) |
 | `SearchScreen` (whole-workspace search) | `apps/web/src/features/docs/search-screen.tsx` | reuse; add `SearchScopeControl` (S-004) |
 | `app-header` notifications bell (placeholder) | `apps/web/src/app/app-header.tsx` | replace placeholder with `NotificationsMenu` (S-005) |
@@ -382,4 +351,3 @@ Build targets `[N]`:
 |------|--------|-----|
 | 2026-06-10 | Initial creation — FE for workspace-project missing surfaces (move/copy, project mgmt, project picker, search scope, notifications, access indicator) | -- |
 | 2026-06-10 | Clarifications resolved: GAP-003 accepted (designed controls); GAP-001 + GAP-002 deferred (S-005/S-006 wait on backend producers); build pass = S-001..S-004 | -- |
-| 2026-06-17 | Mode C (Major, M1+M6, snapshot 2026-06-17-annotation-count): + S-007 (dashboard counts ACTIVE annotations, not comments — AS-019 per-doc row count+annotation icon, AS-020 workspace overview "Annotations" tile) + C-006. Renamed UI Inventory `CommentCount`→`AnnotationCount`. From dogfood feedback; the count metric (repo commentCount, doc-bits, workspace-home tile) was previously unspecced. | -- |

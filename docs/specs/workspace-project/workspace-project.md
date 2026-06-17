@@ -246,7 +246,7 @@ names only. Dark-operator (`DESIGN.md`). Precedence: AS > Tree.
 - `ProjectBrowser` `[N]`
   - `BrowserTopBar`: workspaceName · `SearchField` *(title+content+comment)* · `NewDocButton` · `UserAvatar`
   - `ProjectSidebar`: `ProjectList` → `ProjectItem` *(default project pinned, C-009)* · `+ New project` · `FilterList` (All / Shared / Has detached)
-  - `DocGrid` *(3→2→1 columns by width)* → `DocCard`: title · `FormatBadge` · versionLabel · `AccessIndicator` · commentCount · `DetachedBadge`
+  - `DocGrid` *(3→2→1 columns by width)* → `DocCard`: title · `FormatBadge` · versionLabel · `AccessIndicator` · annotationCount *(active annotations + annotation icon — workspace-project-ui S-007)* · `DetachedBadge`
   - `GridListToggle`
   - *Mobile: `ProjectSidebar` → drawer.*
 - `NotificationCenter` `[N]` → `NotificationItem` *(reply / comment / detached; in-app)*
