@@ -259,6 +259,27 @@ export function placeAnchor(anchor: Anchor, doc: DocumentLike): PlaceResult {
   return { ok: false, reason: "not-found" };
 }
 
+/**
+ * placeAnchorAll — place EVERY block an anchor spans, returning one PlaceResult per segment.
+ *
+ * A multi_range (cross-block) anchor carries `segments[]` (one per intersected block); a
+ * cross-block highlight must wrap EACH segment's block, not just the top-level `blockId` —
+ * otherwise the highlight stops at the end of the first block (the markdown engine's
+ * placeAnnotations already iterates segments; this is its in-iframe counterpart). A single
+ * range has no segments (or one identical to the top-level fields) → place the primary anchor.
+ *
+ * Pure (no DOM mutation, no globals) so it unit-tests under happy-dom and the IIFE's
+ * `drawHighlight` mirrors it verbatim. Never throws — each segment degrades to its own
+ * `{ok:false}` sentinel.
+ */
+export function placeAnchorAll(anchor: Anchor, doc: DocumentLike): PlaceResult[] {
+  const segs =
+    anchor.segments && anchor.segments.length > 1
+      ? anchor.segments
+      : [{ blockId: anchor.blockId, textSnippet: anchor.textSnippet, offset: anchor.offset, length: anchor.length }];
+  return segs.map((seg) => placeAnchor(seg as Anchor, doc));
+}
+
 function findBlock(blockId: string, doc: DocumentLike): ElementLike | null {
   // Try data-block-id first (the don't-clobber form), then the plain id form.
   return (
@@ -434,17 +455,32 @@ export function bridgeScript(nonce: string): string {
     var esc = (window.CSS && CSS.escape) ? CSS.escape(blockId) : blockId.replace(/["\\\\\\]\\[#.:>+~*^$=()| ]/g, "\\\\$&");
     return document.querySelector('[data-block-id="' + esc + '"]') || document.querySelector('#' + esc);
   }
-  function placeRange(anchor){
-    var el = findBlock(anchor.blockId);
+  // Place ONE segment (block) of an anchor → its <mark>s, or null on a placement miss.
+  function placeSegment(seg){
+    var el = findBlock(seg.blockId);
     if (!el) return null;
     var text = el.textContent || "";
-    var snippet = anchor.textSnippet;
+    var snippet = seg.textSnippet;
     if (!snippet) return null;
     var start = -1;
-    if (anchor.offset >= 0 && text.slice(anchor.offset, anchor.offset + snippet.length) === snippet) start = anchor.offset;
+    if (seg.offset >= 0 && text.slice(seg.offset, seg.offset + snippet.length) === snippet) start = seg.offset;
     else { var at = text.indexOf(snippet); if (at >= 0) start = at; }
     if (start < 0) return null;
     return wrapTextRange(el, start, start + snippet.length);
+  }
+  // Place EVERY block an anchor spans (mirrors placeAnchorAll). A multi_range anchor carries
+  // segments[] (one per intersected block) → wrap EACH; otherwise wrap the single top-level block.
+  // Returns the accumulated marks (>=1) or null if NO segment placed.
+  function placeRange(anchor){
+    var segs = (anchor.segments && anchor.segments.length > 1)
+      ? anchor.segments
+      : [{ blockId: anchor.blockId, textSnippet: anchor.textSnippet, offset: anchor.offset, length: anchor.length }];
+    var marks = [];
+    for (var si = 0; si < segs.length; si++){
+      var m = placeSegment(segs[si]);
+      if (m && m.length) marks.push.apply(marks, m);
+    }
+    return marks.length ? marks : null;
   }
   // Wrap [start,end) chars of an element's text in <mark>s — ONE per intersected text node. A range
   // that spans multiple text nodes (a container block, or text broken by <br>/inline tags like the

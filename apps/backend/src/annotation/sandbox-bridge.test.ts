@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import {
   selectionToAnchor,
   placeAnchor,
+  placeAnchorAll,
   bridgeScript,
   injectBridge,
   generateNonce,
@@ -156,6 +157,38 @@ test("AS-004: cross-block selection → segments[] spanning both blocks", () => 
   expect(anchor.segments![1].blockId).toBe("block-p-2");
   // Top-level fields mirror the first segment.
   expect(anchor.blockId).toBe("block-p-1");
+});
+
+test("AS-004-place: cross-block anchor places EACH segment's block, not just the first", () => {
+  // Regression: drawHighlight/placeRange only placed the TOP-LEVEL anchor.blockId, so a
+  // cross-block (multi_range) highlight stopped at the end of the FIRST block instead of
+  // running through every spanned block — markdown's placeAnnotations already iterates
+  // segments[]; the in-iframe bridge did not. sandbox-bridge.ts placeRange broke this.
+  const { doc } = dom('<p id="block-p-1">first block text</p><p id="block-p-2">second block text</p>');
+  const anchor = {
+    blockId: "block-p-1",
+    textSnippet: "block text",
+    offset: 6,
+    length: 10,
+    segments: [
+      { blockId: "block-p-1", textSnippet: "block text", offset: 6, length: 10 },
+      { blockId: "block-p-2", textSnippet: "second", offset: 0, length: 6 },
+    ],
+  };
+  const placed = placeAnchorAll(anchor, doc);
+  const ok = placed.filter((p) => p.ok) as Extract<(typeof placed)[number], { ok: true }>[];
+  expect(ok.length).toBe(2);
+  expect(ok.map((p) => p.blockId).sort()).toEqual(["block-p-1", "block-p-2"]);
+  // The end-block segment must reach into block-p-2 (the "couldn't end at the right place" bug).
+  const p2 = ok.find((p) => p.blockId === "block-p-2")!;
+  expect(p2.text).toBe("second");
+});
+
+test("AS-004-place: a single-block anchor (no segments) → exactly one placement via placeAnchorAll", () => {
+  const { doc } = dom('<p id="block-p-1">Payment expires after 24h</p>');
+  const placed = placeAnchorAll({ blockId: "block-p-1", textSnippet: "expires", offset: 8, length: 7 }, doc);
+  expect(placed.length).toBe(1);
+  expect(placed[0]!.ok).toBe(true);
 });
 
 // ---------------------------------------------------------------------------
