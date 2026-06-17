@@ -1,0 +1,19 @@
+{
+  "name": "@anchord/anchor",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build:iife": "bun run scripts/build-iife.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "bun-types": "^1.3.14",
+    "happy-dom": "^15.11.7",
+    "typescript": "^6.0.3"
+  }
+}

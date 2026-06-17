@@ -1,7 +1,7 @@
 {
   "name": "anchord",
   "private": true,
-  "workspaces": ["apps/*"],
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "bun --filter backend dev",
     "dev:web": "bun --filter web dev",

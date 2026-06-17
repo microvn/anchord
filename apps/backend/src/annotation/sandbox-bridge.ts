@@ -5,8 +5,18 @@
 // see render/sandbox.ts). The FE viewer cannot reach into that iframe (cross-origin), so
 // to turn a user's in-iframe text selection into an annotation anchor we inject a tiny
 // bridge script that runs INSIDE the sandbox and talks to the parent over a dedicated
-// MessageChannel. This module owns (a) the pure anchor walk/placement logic (unit-testable
-// without a browser) and (b) the bridge script string + its injection into the served HTML.
+// MessageChannel. This module owns (a) re-exporting the pure anchor walk/placement logic
+// (now sourced from @anchord/anchor — S-005) and (b) the bridge script string + its
+// injection into the served HTML.
+//
+// S-005 — ANCHOR LOGIC IS NO LONGER HAND-MIRRORED. The selection→anchor + the locate ladder
+// (exact → nearest → whitespace-normalized → fuzzy) live in ONE pure module, `@anchord/anchor`.
+// This file imports it server-side AND inlines its browser-IIFE compile (ANCHOR_IIFE, generated
+// from packages/anchor/src/iife-entry.ts → window.__anchordAnchor) into the bridge script. So the
+// in-iframe matcher and the FE markdown matcher are the SAME ladder (C-008) — the iframe gained the
+// markdown path's whitespace-normalize + fuzzy tiers, closing GAP-005. The bridge GLUE (MessageChannel
+// handshake, wrapTextRange DOM mutation, drawHighlight, focusAnno, mark-click relay, MARK_STYLESHEET,
+// the S-007 storage shim) stays here.
 //
 // SECURITY MODEL (the part that matters — C-009, C-002, C-001):
 //  - DEDICATED CHANNEL, NOT window.postMessage. On load the bridge creates a
@@ -34,346 +44,33 @@
 // `id="block-…"` (element had no id) AND `data-block-id="block-…"` (element already had an
 // id, which we must not clobber — block-id.ts C-001).
 
-import type { Anchor, AnchorSegment } from "./annotation";
+import { ANCHOR_IIFE } from "./anchor-iife.generated";
 
-/** Max chars stored in text_snippet — keeps the anchor jsonb bounded (AS-001 data is a sentence). */
-export const SNIPPET_CAP = 400;
-
-/** CSS selector matching either block-id attribute form (see block-id.ts). */
-export const BLOCK_SELECTOR = '[data-block-id], [id^="block-"]';
-
-// --- Minimal structural DOM types (so this module type-checks server-side without `lib.dom`).
-// happy-dom / jsdom / a real browser all satisfy these; we only use the members below.
-
-interface NodeLike {
-  nodeType: number;
-  parentNode: NodeLike | null;
-  textContent: string | null;
-}
-interface ElementLike extends NodeLike {
-  closest(selector: string): ElementLike | null;
-  getAttribute(name: string): string | null;
-  contains(other: ElementLike | null): boolean;
-}
-interface RangeLike {
-  startContainer: NodeLike;
-  startOffset: number;
-  endContainer: NodeLike;
-  endOffset: number;
-  getBoundingClientRect?(): { x: number; y: number; width: number; height: number };
-}
-interface SelectionLike {
-  isCollapsed: boolean;
-  rangeCount: number;
-  toString(): string;
-  getRangeAt(i: number): RangeLike;
-}
-interface DocumentLike {
-  querySelectorAll(selector: string): ArrayLike<ElementLike>;
-  querySelector(selector: string): ElementLike | null;
-}
-
-// --- DOM mutation types for the unwrap (S-003 / C-002). Kept minimal so this still type-checks
-// server-side without `lib.dom`; happy-dom / jsdom / a real browser all satisfy them.
-interface UnwrapNodeLike {
-  parentNode: UnwrapNodeLike | null;
-  firstChild: UnwrapNodeLike | null;
-  insertBefore(node: UnwrapNodeLike, ref: UnwrapNodeLike | null): UnwrapNodeLike;
-  removeChild(node: UnwrapNodeLike): UnwrapNodeLike;
-  normalize(): void;
-}
-interface UnwrapDocumentLike {
-  querySelectorAll(selector: string): ArrayLike<UnwrapNodeLike>;
-}
-
-const ELEMENT_NODE = 1;
-
-/**
- * unwrapAnnoMarks — remove EVERY `mark[data-anno]` from the document, moving each mark's child
- * nodes out before it, then `.normalize()` the parent so adjacent text nodes re-merge (C-002).
- * This is the "clear" half of the idempotent clear-then-redraw sync: after it, the document holds
- * the original text with no annotation marks, so the redraw can rebuild the live set with no stale
- * or duplicate marks. A non-anno `<mark>` is left untouched (selector is `[data-anno]` only). No-op
- * and never throws when there are no anno marks.
- *
- * Pure DOM transform (no globals) so it unit-tests under happy-dom and mirrors the IIFE copy
- * (`unwrapAllAnnoMarks`) inlined into the bridge for the real browser.
- */
-export function unwrapAnnoMarks(doc: UnwrapDocumentLike): void {
-  const marks = Array.from(doc.querySelectorAll("mark[data-anno]"));
-  for (const mark of marks) {
-    const parent = mark.parentNode;
-    if (!parent) continue;
-    // Move each child node out before the mark, in order, then drop the now-empty mark.
-    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-    parent.removeChild(mark);
-    parent.normalize();
-  }
-}
-
-/** The block id of an element, from either attribute form. Null if it carries neither. */
-function blockIdOf(el: ElementLike): string | null {
-  const data = el.getAttribute("data-block-id");
-  if (data && data.startsWith("block-")) return data;
-  const id = el.getAttribute("id");
-  if (id && id.startsWith("block-")) return id;
-  return null;
-}
-
-/** Walk up from a node to the nearest enclosing block element; return [element, blockId] or null. */
-function enclosingBlock(node: NodeLike | null): { el: ElementLike; blockId: string } | null {
-  let cur: NodeLike | null = node;
-  // A text node has no closest(); step up to its parent element first.
-  while (cur && cur.nodeType !== ELEMENT_NODE) cur = cur.parentNode;
-  const start = cur as ElementLike | null;
-  const el = start?.closest(BLOCK_SELECTOR) ?? null;
-  if (!el) return null;
-  const blockId = blockIdOf(el);
-  if (!blockId) return null;
-  return { el, blockId };
-}
-
-/**
- * Char offset of a (container,offset) selection boundary within its enclosing block's
- * textContent. We rebuild the block's text by concatenating descendant text and locate the
- * boundary by the prefix length. Implemented WITHOUT TreeWalker (not in our minimal DOM
- * type, and happy-dom/jsdom agree on textContent concatenation order = document order).
- */
-function offsetInBlock(blockEl: ElementLike, container: NodeLike, containerOffset: number): number {
-  // If the boundary is the block element itself, containerOffset counts child *nodes*, not
-  // chars — fall back to 0 (start). The common case (selection inside a text node) is exact.
-  if (container === blockEl) return 0;
-  const blockText = blockEl.textContent ?? "";
-  const containerText = container.textContent ?? "";
-  // Find where this container's text sits inside the block text, then add the local offset.
-  // Using indexOf is exact for the typical single-text-node block; for repeated identical
-  // sub-strings it picks the first, which placeAnchor's snippet match corrects downstream.
-  const base = containerText.length > 0 ? blockText.indexOf(containerText) : 0;
-  return (base < 0 ? 0 : base) + containerOffset;
-}
-
-/**
- * selectionToAnchor — turn a DOM Selection into a stored Anchor (C-003 / AS-004).
- *
- * Single-block selection → `{blockId, textSnippet, offset, length}`.
- * Cross-block selection → the same top-level fields for the FIRST block PLUS a `segments[]`
- * of `{blockId, offset, length, textSnippet}` (one per spanned block) — matching the
- * multi_range Anchor shape (annotation.ts).
- * Empty / whitespace-only / collapsed selection, or no enclosing block → `null` (AS-004).
- *
- * Pure: no DOM mutation, no globals — takes the selection + its document explicitly so it
- * unit-tests under happy-dom and inlines verbatim into the bridge IIFE in a real browser.
- */
-export function selectionToAnchor(selection: SelectionLike | null, doc: DocumentLike): Anchor | null {
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
-  const selected = selection.toString();
-  if (selected.trim().length === 0) return null; // AS-004: whitespace-only is not a selection
-
-  const range = selection.getRangeAt(0);
-  const startBlock = enclosingBlock(range.startContainer);
-  const endBlock = enclosingBlock(range.endContainer);
-  if (!startBlock) return null; // no addressable block → cannot anchor
-
-  // Order the blocks in document order to slice each block's spanned text deterministically.
-  const blocks = Array.from(doc.querySelectorAll(BLOCK_SELECTOR));
-  const startIdx = blocks.indexOf(startBlock.el);
-  const endIdx = endBlock ? blocks.indexOf(endBlock.el) : startIdx;
-
-  const startOffset = offsetInBlock(startBlock.el, range.startContainer, range.startOffset);
-
-  // Single-block (or end-block unresolved) case.
-  if (!endBlock || endBlock.el === startBlock.el || endIdx < 0 || startIdx < 0 || endIdx === startIdx) {
-    const endOffset = endBlock && endBlock.el === startBlock.el
-      ? offsetInBlock(startBlock.el, range.endContainer, range.endOffset)
-      : startOffset + selected.length;
-    const length = Math.max(0, endOffset - startOffset);
-    const blockText = startBlock.el.textContent ?? "";
-    const textSnippet = blockText.slice(startOffset, startOffset + length).slice(0, SNIPPET_CAP);
-    if (textSnippet.trim().length === 0) return null;
-    return { blockId: startBlock.blockId, textSnippet, offset: startOffset, length };
-  }
-
-  // Cross-block selection → build a segment per spanned LEAF block (document order). Nested block-ids
-  // (an HTML spec: a story div > AS divs > Given/When/Then) mean the span includes CONTAINER blocks
-  // whose text fully overlaps their children; emitting both an ancestor segment AND its descendants'
-  // would double-wrap the same text into nested <mark>s and shatter the layout. Keep only LEAF blocks
-  // — a candidate that contains no OTHER in-range candidate (mirrors the markdown selection-anchor).
-  const lo = Math.min(startIdx, endIdx);
-  const hi = Math.max(startIdx, endIdx);
-  const candidates = blocks.slice(lo, hi + 1);
-  const leaves = candidates.filter((b) => !candidates.some((o) => o !== b && b.contains(o)));
-  const segments: AnchorSegment[] = [];
-  for (const el of leaves) {
-    const blockId = blockIdOf(el);
-    if (!blockId) continue;
-    const text = el.textContent ?? "";
-    let segOffset = 0;
-    let segLen = text.length;
-    if (el === startBlock.el) {
-      segOffset = startOffset;
-      segLen = text.length - startOffset;
-    } else if (el === endBlock.el) {
-      segOffset = 0;
-      segLen = offsetInBlock(endBlock.el, range.endContainer, range.endOffset);
-    }
-    const segSnippet = text.slice(segOffset, segOffset + segLen).slice(0, SNIPPET_CAP);
-    segments.push({ blockId, textSnippet: segSnippet, offset: segOffset, length: Math.max(0, segLen) });
-  }
-  const first = segments[0]!;
-  return { blockId: first.blockId, textSnippet: first.textSnippet, offset: first.offset, length: first.length, segments };
-}
-
-/** Result of placeAnchor: the located char range within the block, or a "couldn't place" sentinel. */
-export type PlaceResult =
-  | { ok: true; blockId: string; start: number; end: number; text: string }
-  | { ok: false; reason: "no-block" | "not-found" | "ambiguous" };
-
-/**
- * placeAnchor — locate an anchor's text within its block in CURRENT content (C-002 ladder,
- * the in-iframe half: block_id → exact snippet at offset → exact snippet anywhere → fuzzy).
- * NEVER throws — a missing block, a vanished snippet, or a duplicate that can't be
- * disambiguated all return an `{ok:false}` sentinel so the caller (and the bridge) degrade
- * gracefully into a "couldn't place" state rather than crashing the iframe script.
- *
- * Returns the matched `{blockId, start, end, text}`. The bridge wraps that range in a
- * `<mark data-anno=…>`; this pure function only computes WHERE.
- */
-export function placeAnchor(anchor: Anchor, doc: DocumentLike): PlaceResult {
-  const el = findBlock(anchor.blockId, doc);
-  if (!el) return { ok: false, reason: "no-block" };
-  const text = el.textContent ?? "";
-  const snippet = anchor.textSnippet;
-  if (snippet.length === 0) return { ok: false, reason: "not-found" };
-
-  // 1. Exact at the recorded offset.
-  if (anchor.offset >= 0 && text.slice(anchor.offset, anchor.offset + snippet.length) === snippet) {
-    return { ok: true, blockId: anchor.blockId, start: anchor.offset, end: anchor.offset + snippet.length, text: snippet };
-  }
-  // 2. Exact anywhere in the block (offset shifted by an edit). Require uniqueness; if the
-  //    snippet occurs more than once and the offset didn't pin it, we can't safely choose.
-  const first = text.indexOf(snippet);
-  if (first >= 0) {
-    const second = text.indexOf(snippet, first + 1);
-    if (second < 0) {
-      return { ok: true, blockId: anchor.blockId, start: first, end: first + snippet.length, text: snippet };
-    }
-    // Multiple matches and offset didn't land — pick the occurrence nearest the old offset.
-    const nearest = nearestOccurrence(text, snippet, anchor.offset);
-    return { ok: true, blockId: anchor.blockId, start: nearest, end: nearest + snippet.length, text: snippet };
-  }
-  // 3. Fuzzy: slide a window of the snippet length and take the best-similar position.
-  const fuzzy = fuzzyLocate(text, snippet);
-  if (fuzzy) return { ok: true, blockId: anchor.blockId, start: fuzzy.start, end: fuzzy.end, text: text.slice(fuzzy.start, fuzzy.end) };
-  return { ok: false, reason: "not-found" };
-}
-
-/**
- * placeAnchorAll — place EVERY block an anchor spans, returning one PlaceResult per segment.
- *
- * A multi_range (cross-block) anchor carries `segments[]` (one per intersected block); a
- * cross-block highlight must wrap EACH segment's block, not just the top-level `blockId` —
- * otherwise the highlight stops at the end of the first block (the markdown engine's
- * placeAnnotations already iterates segments; this is its in-iframe counterpart). A single
- * range has no segments (or one identical to the top-level fields) → place the primary anchor.
- *
- * Pure (no DOM mutation, no globals) so it unit-tests under happy-dom and the IIFE's
- * `drawHighlight` mirrors it verbatim. Never throws — each segment degrades to its own
- * `{ok:false}` sentinel.
- */
-export function placeAnchorAll(anchor: Anchor, doc: DocumentLike): PlaceResult[] {
-  const segs =
-    anchor.segments && anchor.segments.length > 1
-      ? anchor.segments
-      : [{ blockId: anchor.blockId, textSnippet: anchor.textSnippet, offset: anchor.offset, length: anchor.length }];
-  return segs.map((seg) => placeAnchor(seg as Anchor, doc));
-}
-
-function findBlock(blockId: string, doc: DocumentLike): ElementLike | null {
-  // Try data-block-id first (the don't-clobber form), then the plain id form.
-  return (
-    doc.querySelector(`[data-block-id="${cssEscape(blockId)}"]`) ??
-    doc.querySelector(`#${cssEscape(blockId)}`)
-  );
-}
-
-/** Escape a block id for use in a selector (ids are `block-tag-n`, but be defensive). */
-function cssEscape(id: string): string {
-  return id.replace(/["\\\]\[#.:>+~*^$=()| ]/g, "\\$&");
-}
-
-function nearestOccurrence(text: string, snippet: string, targetOffset: number): number {
-  let best = -1;
-  let bestDist = Infinity;
-  let from = 0;
-  for (;;) {
-    const at = text.indexOf(snippet, from);
-    if (at < 0) break;
-    const d = Math.abs(at - targetOffset);
-    if (d < bestDist) {
-      bestDist = d;
-      best = at;
-    }
-    from = at + 1;
-  }
-  return best < 0 ? 0 : best;
-}
-
-/**
- * Best-effort fuzzy locate: slide a window the length of the snippet across the block text,
- * scoring each by normalized similarity, and accept the best ≥ threshold. Cheap O(n*m) but
- * blocks are short. Mirrors the spirit of reanchor.ts's fuzzy ladder (the durable matcher
- * lives there; this is the live in-iframe placement variant).
- */
-function fuzzyLocate(text: string, snippet: string, threshold = 0.7): { start: number; end: number } | null {
-  const len = snippet.length;
-  if (len === 0 || text.length === 0) return null;
-  let best = -1;
-  let bestScore = 0;
-  const last = Math.max(0, text.length - len);
-  for (let i = 0; i <= last; i++) {
-    const window = text.slice(i, i + len);
-    const score = similarity(window, snippet);
-    if (score > bestScore) {
-      bestScore = score;
-      best = i;
-    }
-  }
-  if (best < 0 || bestScore < threshold) return null;
-  return { start: best, end: best + len };
-}
-
-/** Normalized Levenshtein similarity in [0,1] (1 = identical). */
-function similarity(a: string, b: string): number {
-  const dist = levenshtein(a, b);
-  const maxLen = Math.max(a.length, b.length);
-  return maxLen === 0 ? 1 : 1 - dist / maxLen;
-}
-
-function levenshtein(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  let prev = Array.from({ length: n + 1 }, (_, i) => i);
-  let curr = new Array<number>(n + 1);
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + cost);
-    }
-    [prev, curr] = [curr, prev];
-  }
-  return prev[n]!;
-}
+// S-005: re-export the canonical anchor surface from the shared module so existing backend importers
+// (and tests) keep importing it from here, while the SINGLE implementation lives in @anchord/anchor.
+export {
+  selectionToAnchor,
+  placeAnchor,
+  placeAnchorAll,
+  unwrapAnnoMarks,
+  SNIPPET_CAP,
+  BLOCK_SELECTOR,
+} from "@anchord/anchor";
+export type { PlaceResult } from "@anchord/anchor";
 
 // --- The bridge script (string injected into the served iframe HTML) ---
 
 /**
- * bridgeScript — the IIFE injected into the sandboxed iframe. It is a STRING because it
- * runs inside the browser sandbox, not on the server. The pure logic above is mirrored
- * inline here (the IIFE cannot import server modules); the unit tests cover the canonical
- * implementation, and this inline copy is intentionally kept behaviour-identical.
+ * bridgeScript — the IIFE injected into the sandboxed iframe. It is a STRING because it runs inside
+ * the browser sandbox, not on the server. It is built in TWO parts:
+ *   1. ANCHOR_IIFE — the browser-IIFE compile of the shared @anchord/anchor module, defining
+ *      `window.__anchordAnchor = { selectionToAnchor, placeAnchorAll, unwrapAnnoMarks, BLOCK_SELECTOR }`.
+ *      This is the SAME locate ladder the FE markdown path uses (S-005 / C-008) — no hand-mirrored
+ *      drift, and the iframe gains the whitespace-normalize + fuzzy tiers (closes GAP-005).
+ *   2. the bridge GLUE below — the transport (MessageChannel handshake), the DOM-mutation wrap
+ *      (wrapTextRange, which uses real-browser Range/surroundContents and so cannot be pure), the
+ *      draw (drawHighlight applying the app class + hue + lifecycle state), focusAnno, the mark-click
+ *      relay, and the selection/scroll posting — all of which CALL the anchor namespace from part 1.
  *
  * Protocol (the FE parent must mirror these exact shapes — see route comment in app.ts):
  *  - UP via window.postMessage ONCE on load: `{source:'anchord-bridge', type:'ready', nonce}` with `port2` transferred.
@@ -390,123 +87,45 @@ function levenshtein(a: string, b: string): number {
  */
 export function bridgeScript(nonce: string): string {
   const nonceLiteral = JSON.stringify(String(nonce));
-  return `(function(){
+  // Part 1: the shared anchor module, compiled to a browser IIFE (defines window.__anchordAnchor).
+  // Part 2: the bridge glue, which reads selectionToAnchor / placeAnchorAll / unwrapAnnoMarks /
+  // BLOCK_SELECTOR off that namespace. Both are in the SAME injected <script>.
+  return `${ANCHOR_IIFE}
+(function(){
   "use strict";
-  var SNIPPET_CAP = ${SNIPPET_CAP};
-  var BLOCK_SELECTOR = ${JSON.stringify(BLOCK_SELECTOR)};
+  var A = window.__anchordAnchor;
+  var BLOCK_SELECTOR = A.BLOCK_SELECTOR;
   var NONCE = ${nonceLiteral};
-
-  function blockIdOf(el){
-    var data = el.getAttribute("data-block-id");
-    if (data && data.indexOf("block-") === 0) return data;
-    var id = el.getAttribute("id");
-    if (id && id.indexOf("block-") === 0) return id;
-    return null;
-  }
-  function enclosingBlock(node){
-    var cur = node;
-    while (cur && cur.nodeType !== 1) cur = cur.parentNode;
-    if (!cur) return null;
-    var el = cur.closest(BLOCK_SELECTOR);
-    if (!el) return null;
-    var blockId = blockIdOf(el);
-    if (!blockId) return null;
-    return { el: el, blockId: blockId };
-  }
-  function offsetInBlock(blockEl, container, containerOffset){
-    if (container === blockEl) return 0;
-    var blockText = blockEl.textContent || "";
-    var containerText = container.textContent || "";
-    var base = containerText.length > 0 ? blockText.indexOf(containerText) : 0;
-    return (base < 0 ? 0 : base) + containerOffset;
-  }
-  function selectionToAnchor(selection, doc){
-    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
-    var selected = selection.toString();
-    if (selected.replace(/\\s+/g, "").length === 0) return null;
-    var range = selection.getRangeAt(0);
-    var startBlock = enclosingBlock(range.startContainer);
-    var endBlock = enclosingBlock(range.endContainer);
-    if (!startBlock) return null;
-    var blocks = Array.prototype.slice.call(doc.querySelectorAll(BLOCK_SELECTOR));
-    var startIdx = blocks.indexOf(startBlock.el);
-    var endIdx = endBlock ? blocks.indexOf(endBlock.el) : startIdx;
-    var startOffset = offsetInBlock(startBlock.el, range.startContainer, range.startOffset);
-    if (!endBlock || endBlock.el === startBlock.el || endIdx < 0 || startIdx < 0 || endIdx === startIdx){
-      var endOffset = (endBlock && endBlock.el === startBlock.el)
-        ? offsetInBlock(startBlock.el, range.endContainer, range.endOffset)
-        : startOffset + selected.length;
-      var length = Math.max(0, endOffset - startOffset);
-      var blockText = startBlock.el.textContent || "";
-      var snippet = blockText.slice(startOffset, startOffset + length).slice(0, SNIPPET_CAP);
-      if (snippet.replace(/\\s+/g, "").length === 0) return null;
-      return { blockId: startBlock.blockId, textSnippet: snippet, offset: startOffset, length: length };
-    }
-    var segments = [];
-    var lo = Math.min(startIdx, endIdx), hi = Math.max(startIdx, endIdx);
-    // LEAF filter: keep only blocks containing no OTHER in-range block (nested spec containers would
-    // otherwise double-wrap their children's text into nested marks → shattered layout).
-    var candidates = blocks.slice(lo, hi + 1);
-    var leaves = candidates.filter(function(b){
-      return !candidates.some(function(o){ return o !== b && b.contains(o); });
-    });
-    for (var i = 0; i < leaves.length; i++){
-      var el = leaves[i];
-      var bid = blockIdOf(el);
-      if (!bid) continue;
-      var t = el.textContent || "";
-      var so = 0, sl = t.length;
-      if (el === startBlock.el){ so = startOffset; sl = t.length - startOffset; }
-      else if (el === endBlock.el){ so = 0; sl = offsetInBlock(endBlock.el, range.endContainer, range.endOffset); }
-      segments.push({ blockId: bid, textSnippet: t.slice(so, so + sl).slice(0, SNIPPET_CAP), offset: so, length: Math.max(0, sl) });
-    }
-    var f = segments[0];
-    return { blockId: f.blockId, textSnippet: f.textSnippet, offset: f.offset, length: f.length, segments: segments };
-  }
 
   // --- placement (highlight) ---
   function findBlock(blockId){
     var esc = (window.CSS && CSS.escape) ? CSS.escape(blockId) : blockId.replace(/["\\\\\\]\\[#.:>+~*^$=()| ]/g, "\\\\$&");
     return document.querySelector('[data-block-id="' + esc + '"]') || document.querySelector('#' + esc);
   }
-  // Place ONE segment (block) of an anchor → its <mark>s, or null on a placement miss.
-  function placeSegment(seg){
-    var el = findBlock(seg.blockId);
-    if (!el) return null;
-    var text = el.textContent || "";
-    var snippet = seg.textSnippet;
-    if (!snippet) return null;
-    var start = -1;
-    if (seg.offset >= 0 && text.slice(seg.offset, seg.offset + snippet.length) === snippet) start = seg.offset;
-    else { var at = text.indexOf(snippet); if (at >= 0) start = at; }
-    if (start < 0) return null;
-    return wrapTextRange(el, start, start + snippet.length);
-  }
-  // Place EVERY block an anchor spans (mirrors placeAnchorAll). A multi_range anchor carries
-  // segments[] (one per intersected block) → wrap EACH; otherwise wrap the single top-level block.
-  // Returns the accumulated marks (>=1) or null if NO segment placed.
+  // Place EVERY block an anchor spans → its <mark>s, or null if NO segment placed. The WHERE comes
+  // from the shared placeAnchorAll (one PlaceResult per segment, the unified C-008 ladder); the wrap
+  // (DOM mutation) is local because it needs real-browser Range/surroundContents.
   function placeRange(anchor){
-    var segs = (anchor.segments && anchor.segments.length > 1)
-      ? anchor.segments
-      : [{ blockId: anchor.blockId, textSnippet: anchor.textSnippet, offset: anchor.offset, length: anchor.length }];
+    var results = A.placeAnchorAll(anchor, document);
     var marks = [];
-    for (var si = 0; si < segs.length; si++){
-      var m = placeSegment(segs[si]);
+    for (var i = 0; i < results.length; i++){
+      var r = results[i];
+      if (!r || !r.ok) continue;
+      var el = findBlock(r.blockId);
+      if (!el) continue;
+      var m = wrapTextRange(el, r.start, r.end);
       if (m && m.length) marks.push.apply(marks, m);
     }
     return marks.length ? marks : null;
   }
   // Wrap [start,end) chars of an element's text in <mark>s — ONE per intersected text node. A range
-  // that spans multiple text nodes (a container block, or text broken by <br>/inline tags like the
-  // article / Given-When-Then div) CANNOT use Range.surroundContents on the whole range: it THROWS
-  // ("InvalidStateError") whenever the range partially selects a non-Text node. So we slice PER text
-  // node and surround each slice on its own (both boundaries in the SAME text node → never throws),
-  // mirroring the markdown engine's per-text-node wrap. Returns the created <mark>s (>=1) or null.
+  // that spans multiple text nodes (a container block, or text broken by <br>/inline tags) CANNOT use
+  // Range.surroundContents on the whole range: it THROWS ("InvalidStateError") whenever the range
+  // partially selects a non-Text node. So we slice PER text node and surround each slice on its own
+  // (both boundaries in the SAME text node → never throws). Returns the created <mark>s (>=1) or null.
   function wrapTextRange(el, start, end){
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
     var pos = 0, n, segs = [];
-    // Collect (node, sliceStart, sliceEnd) FIRST — surroundContents splits a node, which would
-    // corrupt the walker mid-iteration.
     while ((n = walker.nextNode())){
       var len = n.textContent.length;
       var ns = pos, ne = pos + len;
@@ -524,7 +143,6 @@ export function bridgeScript(nonce: string): string {
       r.setStart(segs[i].node, segs[i].s);
       r.setEnd(segs[i].node, segs[i].e);
       var mark = document.createElement("mark");
-      // Both boundaries are in the SAME text node, so surroundContents never throws here.
       try { r.surroundContents(mark); marks.push(mark); } catch (e) {}
     }
     return marks.length ? marks : null;
@@ -539,7 +157,7 @@ export function bridgeScript(nonce: string): string {
 
   function postSelection(){
     var sel = (document.getSelection && document.getSelection()) || null;
-    var anchor = selectionToAnchor(sel, document);
+    var anchor = A.selectionToAnchor(sel, document);
     var rect = null;
     if (anchor && sel && sel.rangeCount > 0){
       pendingRange = sel.getRangeAt(0);
@@ -551,18 +169,9 @@ export function bridgeScript(nonce: string): string {
   }
 
   // S-003 (C-002): unwrap EVERY existing anno mark — the "clear" half of the idempotent
-  // clear-then-redraw sync. Move each mark's children out before it, drop the mark, normalize the
-  // parent so split text nodes re-merge. A non-anno <mark> is left alone. Mirrors unwrapAnnoMarks().
+  // clear-then-redraw sync. Delegates to the shared unwrapAnnoMarks (mirrors the FE engine).
   function unwrapAllAnnoMarks(){
-    var marks = Array.prototype.slice.call(document.querySelectorAll("mark[data-anno]"));
-    for (var i = 0; i < marks.length; i++){
-      var mk = marks[i];
-      var parent = mk.parentNode;
-      if (!parent) continue;
-      while (mk.firstChild) parent.insertBefore(mk.firstChild, mk);
-      parent.removeChild(mk);
-      if (parent.normalize) parent.normalize();
-    }
+    A.unwrapAnnoMarks(document);
   }
 
   // S-001/S-003: draw ONE highlight from a {anchor, annotationId, hue?} item. Returns true if it

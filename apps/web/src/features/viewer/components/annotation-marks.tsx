@@ -16,6 +16,11 @@
 //     4. zero / multiple / block-missing → "couldn't place" (GAP-005), not a crash.
 
 import { useEffect } from "react";
+// S-005: the locate ladder (exact → nearest → whitespace-normalized → fuzzy) is the ONE shared
+// matcher in @anchord/anchor — the SAME ladder the in-iframe sandbox bridge uses (C-008). Re-exported
+// here so existing FE importers/tests keep importing `locateRange` from this module.
+import { locateRange } from "@anchord/anchor";
+export { locateRange };
 
 export interface MarkAnchor {
   blockId: string;
@@ -89,99 +94,6 @@ function cssEscape(value: string): string {
   // happy-dom lacks CSS.escape in some builds; a conservative manual escape covers block ids
   // (which are server-generated `block-{tag}-{n}`, but stay defensive against odd ids).
   return value.replace(/["\\\]#.:>+~*^$|=()[ ]/g, "\\$&");
-}
-
-/**
- * Whitespace-normalize a string: collapse every run of whitespace to a single space and trim the
- * ends. Returns the normalized text plus a `map[]` from each normalized-char index → its original
- * index, so a hit in normalized space can be translated back to original (node-walkable) offsets.
- * Adopted from Plannotator's `normalizeWithMap` (Apache-2.0).
- */
-function normalizeWithMap(text: string): { text: string; map: number[] } {
-  let normalized = "";
-  const map: number[] = [];
-  let inWhitespace = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (/\s/.test(ch)) {
-      if (!inWhitespace) {
-        normalized += " ";
-        map.push(i);
-        inWhitespace = true;
-      }
-    } else {
-      normalized += ch;
-      map.push(i);
-      inWhitespace = false;
-    }
-  }
-  let start = 0;
-  let end = normalized.length;
-  while (start < end && normalized[start] === " ") start++;
-  while (end > start && normalized[end - 1] === " ") end--;
-  return { text: normalized.slice(start, end), map: map.slice(start, end) };
-}
-
-/**
- * Locate the [start,end) character range of the snippet within the block's text content, in tiers:
- *   1. exact at the recorded `offset`;
- *   2. whitespace-normalized match (Plannotator normalizeWithMap) — the recorded snippet may carry
- *      literal whitespace the rendered text collapses (newlines, indentation); match in normalized
- *      space then translate back to original offsets;
- *   3. raw indexOf fallback — when the snippet occurs >1 time, pick the occurrence whose start is
- *      NEAREST the recorded `offset` (the offset disambiguates; refusing duplicates would orphan a
- *      short repeated snippet — FIX 3);
- *   4. zero occurrences → null (couldn't place, GAP-005).
- * Returns char offsets into the concatenated text of the block.
- */
-export function locateRange(
-  blockText: string,
-  snippet: string,
-  offset: number,
-): { start: number; end: number } | null {
-  if (snippet.length === 0) return null;
-  // 1. exact: the snippet sits at the recorded offset.
-  if (offset >= 0 && blockText.substr(offset, snippet.length) === snippet) {
-    return { start: offset, end: offset + snippet.length };
-  }
-  // 3. raw fuzzy: gather every occurrence, pick the one nearest the recorded offset.
-  const raw = nearestOccurrence(blockText, snippet, offset);
-  if (raw) return raw;
-  // 2. normalized: collapse whitespace on both sides, match, translate the hit back via the map.
-  const haystack = normalizeWithMap(blockText);
-  const needle = normalizeWithMap(snippet).text;
-  if (needle.length > 0) {
-    const normIdx = haystack.text.indexOf(needle);
-    if (normIdx !== -1) {
-      const originalStart = haystack.map[normIdx]!;
-      const originalEnd = haystack.map[normIdx + needle.length - 1]! + 1;
-      return { start: originalStart, end: originalEnd };
-    }
-  }
-  return null; // 4. zero matches
-}
-
-/** All start indices of `snippet` in `text`; pick the one whose start is nearest `offset`. */
-function nearestOccurrence(
-  text: string,
-  snippet: string,
-  offset: number,
-): { start: number; end: number } | null {
-  let from = 0;
-  let best = -1;
-  let bestDist = Infinity;
-  for (;;) {
-    const at = text.indexOf(snippet, from);
-    if (at === -1) break;
-    const dist = Math.abs(at - offset);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = at;
-    }
-    from = at + 1;
-  }
-  if (best === -1) return null;
-  return { start: best, end: best + snippet.length };
 }
 
 /**
