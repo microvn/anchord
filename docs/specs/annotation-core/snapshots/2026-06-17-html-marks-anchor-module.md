@@ -1,3 +1,10 @@
+# Snapshot: annotation-html-marks
+**Date:** 2026-06-17
+**Ref:** --
+**Reason:** M1 (new story S-005 — anchor placement parity via the shared module), M6 (new constraints C-007/C-008)
+
+---
+
 # Spec: annotation-html-marks
 
 **Created:** 2026-06-17
@@ -193,51 +200,6 @@ AS-012: Focusing a thread emphasizes + scrolls the iframe to its highlight
 - **Then:** the iframe scrolls to bring the highlight into view and the highlight is emphasized
 - **Data:** focus a thread anchored below the fold
 
-### S-005: An HTML highlight tolerates snippet drift the same way a markdown highlight does (P1)
-
-**Description:** As a reviewer opening an HTML doc, an annotation whose stored snippet has drifted
-from the current content — collapsed whitespace / source indentation, or a small wording edit — still
-places its highlight, the same drift tolerance a markdown doc's annotation already has. Today the
-in-iframe matcher only does exact + substring, so a snippet carrying source indentation that the
-markdown path would still match fails to highlight in the iframe (it reads couldn't-place). This brings
-the iframe placement to parity by sourcing the locate logic from the same place the markdown path uses.
-**Source:** docs/investigate/html-annotation-couldnt-place-2026-06-16.md (GAP-005 — the in-iframe
-matcher lacks the whitespace-normalization the markdown path has); the anchor-unification feasibility
-spike (three divergent matchers, the iframe being the weakest); this spec's own System Impact drift note.
-
-**Execution:**
-- `depends_on:` none
-- `parallel_safe:` false
-- `files:` `packages/anchor/**` (new shared module: pure selection→anchor + placement + 4-tier matcher), root `package.json` (add `packages/*` to workspaces), `apps/backend/src/annotation/sandbox-bridge.ts` (replace the hand-mirrored in-iframe anchor functions with the compiled module string + a build step), `apps/web/src/features/viewer/lib/selection-anchor.ts` + `apps/web/src/features/viewer/components/annotation-marks.tsx` (import the pure logic from the package; the React `useAnnotationMarks` hook stays)
-- `autonomous:` true
-- `verify:` open an HTML doc with an annotation whose stored snippet has source indentation that the rendered block collapses → the highlight places (was couldn't-place); the same content+snippet on a markdown doc places identically; the existing html-marks + markdown highlight tests stay green.
-
-**Acceptance Scenarios:**
-
-AS-014: A snippet differing only by collapsed whitespace still places on the HTML doc
-- **Given:** an HTML doc and an annotation whose stored snippet carries source whitespace/indentation
-  ("grace\\n      period") where the rendered block reads "grace period"
-- **When:** the doc opens
-- **Then:** the highlight is placed on the matching text — the same as on a markdown doc — not reported
-  couldn't-place
-- **Data:** stored snippet "grace period", block text "the grace period is 30 days"
-
-AS-015: A snippet with a small edit still places via the fuzzy tier
-- **Given:** an HTML doc and an annotation whose stored snippet differs from the current text by a few
-  characters (a minor wording edit), above the match-confidence threshold
-- **When:** the doc opens
-- **Then:** the highlight places on the closest matching span — the same fuzzy tolerance the markdown
-  path has — rather than reading couldn't-place
-- **Data:** stored snippet "webhook reciever" (typo), current text "webhook receiver"
-
-AS-016: A snippet below the match threshold is still reported couldn't-place, not force-matched
-- **Given:** an HTML doc and an annotation whose snippet no longer matches the content (absent, or below
-  the fuzzy confidence threshold)
-- **When:** the doc opens
-- **Then:** no highlight is drawn and the thread is flagged couldn't-place; the fuzzy tier does NOT force
-  a bogus highlight onto unrelated text, and the iframe does not crash
-- **Data:** stored snippet "completely unrelated phrase" absent from the doc
-
 ## Constraints & Invariants
 
 - C-001: For an HTML doc, highlights are drawn ONLY by the in-iframe bridge over the trusted
@@ -262,14 +224,6 @@ AS-016: A snippet below the match threshold is still reported couldn't-place, no
   `blockId`; a couldn't-place is reported only when NO segment of the anchor places. This mirrors the
   markdown engine's per-segment placement. (Distinct from C-006: C-006 wraps across text nodes within a
   single block; C-007 fans out across blocks.) (AS-013)
-- C-008: The in-iframe matcher and the markdown matcher are ONE shared locate ladder — exact →
-  nearest-occurrence → whitespace-normalized → fuzzy (Levenshtein) — so a given (snippet, offset,
-  block-text) resolves identically whether the doc is HTML or markdown. The iframe is no longer the
-  weaker matcher. (AS-014, AS-015, AS-016)
-- C-009: The unification is behaviour-preserving — the existing HTML highlight appearance, lifecycle
-  state, clear-then-redraw sync, and click/scroll/focus interaction (S-001..S-004), and the opaque-origin
-  sandbox isolation (no `allow-same-origin`), are unchanged by sourcing the locate logic from the shared
-  module. (AS-001, AS-007, AS-011)
 
 ## Linked Fields
 
@@ -298,18 +252,13 @@ annotation-html-marks (the FE parent + the in-iframe bridge) consumes annotation
 
 ### System Impact & Technical Risks
 
-- The in-iframe bridge is JS serialized into the iframe and cannot `import` app/server modules at
-  runtime. The ANCHOR LOGIC (selection→anchor + the locate ladder) is therefore no longer hand-mirrored:
-  S-005 sources it from ONE pure shared module (`packages/anchor`, DOM-standard surface only — no React,
-  no app/server imports) that the FE imports directly and the bridge inlines as a build-time compiled
-  IIFE string (`bun build --target browser --format iife`, ~2KB). One source, no drift, and the iframe
-  gains the markdown path's whitespace-normalize + fuzzy tiers (closes GAP-005). The CSS `.anno-mark`
-  styling is STILL duplicated by value (`MARK_STYLESHEET` ↔ `styles.css`) — unifying the stylesheet is
-  out of scope this round (see Not in Scope); keep them in sync by value until then.
-- Already shipped (do not rebuild): the cross-node per-text-node wrap (C-006), the cross-block segment
-  fan-out (C-007), the place-existing-on-load + onPlaceFailed wiring, and the per-doc highlight
-  appearance/state/sync/interaction (S-001..S-004). S-005 swaps the locate logic underneath these for the
-  shared module WITHOUT changing their behaviour (C-009) — the existing tests are the regression net.
+- The in-iframe bridge is plain ES5 serialized into the iframe; it cannot import the app's TS/CSS, so
+  the `.anno-mark` styling must be DUPLICATED as an injected stylesheet string (kept in sync with
+  `styles.css` by value). Risk: drift between the two — mitigate by sourcing the palette from one place
+  if practical, else note the coupling.
+- Already shipped (do not rebuild): the cross-node per-text-node wrap (C-006), the place-existing-on-
+  load + onPlaceFailed wiring, and the locate ladder (`placeAnchor`). This spec layers state + sync +
+  interaction on top.
 - Security: the opaque-origin sandbox is the isolation boundary. Nothing here may add `allow-same-
   origin` or read the iframe DOM from the parent (C-001).
 
@@ -317,9 +266,7 @@ annotation-html-marks (the FE parent + the in-iframe bridge) consumes annotation
 
 - **Image-region annotations** (anchor type 2) — a separate deferred surface.
 - **The doc's own scripts using `localStorage`** (theme switch crash) — a SEPARATE bug (the doc script,
-  not the bridge); fixed by the in-iframe storage shim in `render-publish:S-007` (C-010).
-- **Unifying the `.anno-mark` CSS** (`MARK_STYLESHEET` string ↔ `styles.css`) into one source — S-005
-  unifies only the anchor LOGIC; the stylesheet stays duplicated-by-value this round. Deferred.
+  not the bridge); fix via an in-iframe storage shim, tracked elsewhere.
 - **Hover-sync** (rail hover ↔ mark hover) — markdown doesn't have it either; out of parity scope.
 - **Re-anchoring across versions inside the iframe** — handled by the backend re-anchor + the sync
   redrawing whatever the read serves; no iframe-specific re-anchor logic here.
@@ -330,4 +277,3 @@ annotation-html-marks (the FE parent + the in-iframe bridge) consumes annotation
 |------|--------|-----|
 | 2026-06-17 | Initial creation — HTML iframe highlight parity with the markdown engine: app styling + type/state appearance, clear-then-redraw sync (delete/restore), click/scroll/focus pairing, via the in-iframe bridge. Derived from the HTML-mark gap matrix (conversation 2026-06-16/17). Mode A. | -- |
 | 2026-06-17 | Mode C (Major, M6) — added AS-013 + C-007: a cross-block (multi_range `segments[]`) highlight is drawn on EVERY spanned block, not just the top-level `blockId`. Documents the gap mf-fix closed (the bridge's draw side iterated no segments while markdown's `placeAnnotations` did → cross-block highlights stopped at the first block). Snapshot `2026-06-17-html-marks-crossblock.md`. | -- |
-| 2026-06-17 | Mode C (Major, M1+M6) — + S-005 (HTML placement reaches markdown-parity drift tolerance via ONE shared anchor module, AS-014/015/016) + C-008 (shared 4-tier locate ladder, HTML==markdown) + C-009 (behaviour-preserving). Resolves GAP-005 (in-iframe matcher lacked whitespace-normalize). Rewrote the System Impact note: anchor logic no longer hand-mirrored (sourced from `packages/anchor`, compiled to IIFE); CSS `.anno-mark` dedup deferred (Not in Scope). Snapshot `2026-06-17-html-marks-anchor-module.md`. | -- |
