@@ -6,6 +6,8 @@ import {
   placeAnchorAll,
   bridgeScript,
   injectBridge,
+  injectStorageShim,
+  STORAGE_SHIM,
   generateNonce,
   unwrapAnnoMarks,
   BLOCK_SELECTOR,
@@ -157,6 +159,28 @@ test("AS-004: cross-block selection → segments[] spanning both blocks", () => 
   expect(anchor.segments![1].blockId).toBe("block-p-2");
   // Top-level fields mirror the first segment.
   expect(anchor.blockId).toBe("block-p-1");
+});
+
+test("AS-003: a cross-block selection emits ONE segment per LEAF block — never an ancestor container (no nested double-wrap)", () => {
+  // Regression: an HTML spec doc nests block-ids (a story div > AS divs > Given/When/Then). A
+  // whole-story selection spans an intermediate CONTAINER block AND its children; without a leaf
+  // filter the container's FULL text became its own segment on top of each child's segment →
+  // overlapping/nested <mark> wraps → the layout shattered. Only leaf blocks (a block containing no
+  // other in-range block) may be segments. sandbox-bridge.ts selectionToAnchor.
+  const { doc, win } = dom(
+    '<p id="block-p-1">first</p>' +
+      '<div id="block-div-2"><p id="block-p-2">middle</p></div>' +
+      '<p id="block-p-3">last</p>',
+  );
+  const range = doc.createRange();
+  range.setStart(doc.querySelector("#block-p-1")!.firstChild, 0);
+  range.setEnd(doc.querySelector("#block-p-3")!.firstChild, 4);
+  const sel = win.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const anchor = selectionToAnchor(sel as any, doc)!;
+  // Exactly the three leaf blocks, in document order — NEVER the wrapping block-div-2.
+  expect(anchor.segments!.map((s) => s.blockId)).toEqual(["block-p-1", "block-p-2", "block-p-3"]);
 });
 
 test("AS-004-place: cross-block anchor places EACH segment's block, not just the first", () => {

@@ -53,6 +53,7 @@ interface NodeLike {
 interface ElementLike extends NodeLike {
   closest(selector: string): ElementLike | null;
   getAttribute(name: string): string | null;
+  contains(other: ElementLike | null): boolean;
 }
 interface RangeLike {
   startContainer: NodeLike;
@@ -192,10 +193,17 @@ export function selectionToAnchor(selection: SelectionLike | null, doc: Document
     return { blockId: startBlock.blockId, textSnippet, offset: startOffset, length };
   }
 
-  // Cross-block selection → build a segment per spanned block (document order).
+  // Cross-block selection → build a segment per spanned LEAF block (document order). Nested block-ids
+  // (an HTML spec: a story div > AS divs > Given/When/Then) mean the span includes CONTAINER blocks
+  // whose text fully overlaps their children; emitting both an ancestor segment AND its descendants'
+  // would double-wrap the same text into nested <mark>s and shatter the layout. Keep only LEAF blocks
+  // — a candidate that contains no OTHER in-range candidate (mirrors the markdown selection-anchor).
+  const lo = Math.min(startIdx, endIdx);
+  const hi = Math.max(startIdx, endIdx);
+  const candidates = blocks.slice(lo, hi + 1);
+  const leaves = candidates.filter((b) => !candidates.some((o) => o !== b && b.contains(o)));
   const segments: AnchorSegment[] = [];
-  for (let i = Math.min(startIdx, endIdx); i <= Math.max(startIdx, endIdx); i++) {
-    const el = blocks[i]!;
+  for (const el of leaves) {
     const blockId = blockIdOf(el);
     if (!blockId) continue;
     const text = el.textContent ?? "";
@@ -436,8 +444,14 @@ export function bridgeScript(nonce: string): string {
     }
     var segments = [];
     var lo = Math.min(startIdx, endIdx), hi = Math.max(startIdx, endIdx);
-    for (var i = lo; i <= hi; i++){
-      var el = blocks[i];
+    // LEAF filter: keep only blocks containing no OTHER in-range block (nested spec containers would
+    // otherwise double-wrap their children's text into nested marks → shattered layout).
+    var candidates = blocks.slice(lo, hi + 1);
+    var leaves = candidates.filter(function(b){
+      return !candidates.some(function(o){ return o !== b && b.contains(o); });
+    });
+    for (var i = 0; i < leaves.length; i++){
+      var el = leaves[i];
       var bid = blockIdOf(el);
       if (!bid) continue;
       var t = el.textContent || "";
