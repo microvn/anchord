@@ -141,7 +141,12 @@ export async function createSuggestion(
     type: "suggestion",
     anchor,
     suggestion: payload,
-    status: "pending", // default status (AS-014)
+    // A creator who can EDIT the doc (owner/editor) has the authority to make the change the
+    // proposal asks for, so their OWN proposal is born ACCEPTED — no review limbo and no
+    // meaningless self-decide (you cannot self-approve a PENDING one — C-004). At create the `from`
+    // span is the just-selected current text, so it matches by construction (no stale risk). A
+    // commenter (no edit authority) stays `pending`, awaiting an owner decision (AS-014).
+    status: can(sessionRole, "edit") ? "accepted" : "pending",
     // S-001 / C-005 (AS-001/AS-002): the durable creator — the session actor, or null for a guest.
     authorId: authorId ?? null,
   };

@@ -99,6 +99,39 @@ test("AS-014 / C-003: create a replace suggestion — typed (replace, from->to),
   expect("setVersionContent" in repo).toBe(false);
 });
 
+test("a creator who can EDIT (owner) gets their proposal born ACCEPTED, not pending (self-authority)", async () => {
+  // An owner/editor has the authority to make the change a proposal asks for, so their OWN proposal
+  // is born accepted — no review limbo, no meaningless self-decide. A commenter's stays pending.
+  const repo = fakeRepo();
+  const res = await createSuggestion(
+    { docId: "doc-1", anchor: ANCHOR, from: "24h", againstVersion: 3, sessionRole: "owner", authorId: "u-owner" },
+    repo,
+  );
+  expect(res.created).toBe(true);
+  if (!res.created) throw new Error("expected created");
+  expect(repo.store.get(res.id)!.status).toBe("accepted");
+});
+
+test("an EDITOR's own proposal is also born accepted (editor has edit authority)", async () => {
+  const repo = fakeRepo();
+  const res = await createSuggestion(
+    { docId: "doc-1", anchor: ANCHOR, from: "24h", to: "48h", againstVersion: 3, sessionRole: "editor", authorId: "u-ed" },
+    repo,
+  );
+  if (!res.created) throw new Error("expected created");
+  expect(repo.store.get(res.id)!.status).toBe("accepted");
+});
+
+test("a COMMENTER's proposal stays pending (no edit authority → awaits owner decision)", async () => {
+  const repo = fakeRepo();
+  const res = await createSuggestion(
+    { docId: "doc-1", anchor: ANCHOR, from: "24h", againstVersion: 3, sessionRole: "commenter", authorId: "u-c" },
+    repo,
+  );
+  if (!res.created) throw new Error("expected created");
+  expect(repo.store.get(res.id)!.status).toBe("pending");
+});
+
 test("AS-001: a member-created redline records the actor as the durable creator (author_id) at create", async () => {
   // annotation-actions S-001: AS-001 spans "a comment OR a redline" — the suggestion (redline)
   // create path must persist the creator just like the plain-annotation path. Mara creates it.

@@ -346,6 +346,9 @@ function ViewerShell({
     // avatar + authorId) instead of the "You" placeholder. Null id/name for an anon/guest → the
     // guest self-name path (or the "You" fallback) still applies.
     currentUserId && currentUserName ? { id: currentUserId, name: currentUserName } : null,
+    // annotation-actions S-006: owner/editor can edit the doc → their own redline is born ACCEPTED
+    // (optimistic + reconciled), mirroring the backend auto-accept; commenter's stays pending.
+    effectiveRole === "owner" || effectiveRole === "editor",
   );
 
   // S-006 (C-009 / AS-020..023): the ACTIVE tool routes a text selection. useCompose raises

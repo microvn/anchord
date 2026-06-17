@@ -358,6 +358,18 @@ describe("Redline create flow (S-002, through ViewerScreen)", () => {
     expect(view.querySelector("#block-h1, [data-block-id='block-h1']")!.textContent).toBe(originalText);
   });
 
+  it("an OWNER's created redline is born ACCEPTED, not pending (the owner has edit authority over their own doc)", async () => {
+    // Owner/editor can make the change a proposal asks for, so their OWN proposal is born accepted —
+    // the optimistic + reconciled rows must show the Accepted pill, never Pending (which would imply
+    // it awaits a decision that isn't coming). Mirrors the backend createSuggestion auto-accept.
+    await renderViewer();
+    selectPhrase("block-h1", "Implementation Plan: Real-time Collaboration");
+    await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-redline"));
+    const card = (await screen.findAllByTestId("thread-card"))[0]!;
+    await waitFor(() => expect(within(card).getByTestId("redline-accepted-badge")).toBeInTheDocument());
+    expect(within(card).queryByTestId("redline-pending-badge")).toBeNull();
+  });
+
   it("AS-009 / C-007.T1: a refused redline write rolls back the optimistic strike + card, shows an error, no ghost", async () => {
     redlineResult = { data: null, error: { status: 403, value: { success: false } } };
     await renderViewer();

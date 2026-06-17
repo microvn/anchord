@@ -156,6 +156,11 @@ export function useCompose(
    *  shown instantly + `authorId` set so `isOwn` matches without a refetch. Null/undefined for a
    *  signed-out visitor (a guest send carries its own `guestIdentity` instead). */
   currentUser?: { id: string; name: string } | null,
+  /** annotation-actions S-006: whether the session can EDIT the doc (owner/editor). A creator with
+   *  edit authority has their OWN proposal born ACCEPTED (mirrors the backend createSuggestion
+   *  auto-accept), so the optimistic + reconciled redline shows Accepted, not Pending. Commenter →
+   *  false → the proposal stays pending awaiting an owner decision. */
+  canEditDoc?: boolean,
 ): ComposeApi {
   const [popover, setPopover] = useState<{ top: number; left: number; centered: boolean } | null>(null);
   const [active, setActive] = useState<SelectionAnchor | null>(null);
@@ -395,6 +400,10 @@ export function useCompose(
     // A redline is a signed-in member action (no guest path) → attribute it to the REAL session
     // author + durable authorId so it reads as own immediately (the owner-decide gate keys on this).
     const author = optimisticAuthor(currentUser, undefined);
+    // annotation-actions S-006: a creator who can EDIT the doc has their own proposal born ACCEPTED
+    // (mirrors the backend createSuggestion auto-accept); a commenter's stays pending. Used for BOTH
+    // the optimistic temp and the no-refetch reconciled real row so neither flashes Pending.
+    const bornStatus = canEditDoc ? "accepted" : "pending";
     // The optimistic redline thread: type=suggestion + kind=delete + pending status, with its root
     // comment. The rail renders the DELETE card; the mark renders the red strike (kind=redline).
     const optimisticRedline: ViewerAnnotation = {
@@ -411,7 +420,7 @@ export function useCompose(
         segments: anchor.segments,
       },
       suggestion: { kind: "delete", from: anchor.textSnippet, againstVersion: redlineCtx.version },
-      suggestionStatus: "pending",
+      suggestionStatus: bornStatus,
       comments: [
         {
           id: `${tempId}-c`,
@@ -496,7 +505,7 @@ export function useCompose(
             segments: anchor.segments,
           },
           suggestion: { kind: "delete", from: anchor.textSnippet, againstVersion: redlineCtx.version },
-          suggestionStatus: "pending",
+          suggestionStatus: bornStatus,
           comments: [
             { id: peelCommentId(commented.data), parentId: null, ...author.comment, body: REDLINE_ROOT_BODY, createdAt },
           ],
@@ -509,7 +518,7 @@ export function useCompose(
         setPending(false);
       }
     })();
-  }, [slug, docPaneEl, redlineCtx, onCreatedAnnotation, currentUser?.id, currentUser?.name]);
+  }, [slug, docPaneEl, redlineCtx, onCreatedAnnotation, currentUser?.id, currentUser?.name, canEditDoc]);
 
   const send = useCallback(
     (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => {
