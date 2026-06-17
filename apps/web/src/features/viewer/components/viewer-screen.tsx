@@ -629,7 +629,7 @@ function ViewerShell({
           className="fixed bottom-4 right-4 z-40 inline-flex h-11 items-center gap-2 rounded-full bg-accent px-4 text-[13px] font-semibold text-on-accent shadow-lg"
           onClick={() => setRailOpen(true)}
         >
-          <Icon name="inbox" size={16} />
+          <Icon name="highlight" size={16} />
           {anno.count + compose.optimistic.length}
         </button>
       )}

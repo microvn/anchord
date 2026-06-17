@@ -63,7 +63,7 @@ export function AnnotationsRail({
   return (
     <div data-testid="annotations-rail" className="flex h-full flex-col">
       <div className="flex h-11 flex-none items-center gap-2 border-b border-line px-3.5">
-        <Icon name="inbox" size={15} />
+        <Icon name="highlight" size={15} />
         {/* #3 (2026-06-12): the rail hosts ALL annotation types globally, not just comments —
             user-visible label renamed "Comments" → "Annotations" (internal ids/APIs unchanged). */}
         <span className="text-[13px] font-semibold text-ink">Annotations</span>
@@ -80,7 +80,7 @@ export function AnnotationsRail({
           data-testid="rail-empty"
           className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-[30px] text-center text-muted"
         >
-          <Icon name="inbox" size={24} className="text-subtle" />
+          <Icon name="highlight" size={24} className="text-subtle" />
           <div className="text-[13px] font-semibold text-ink">No annotations yet</div>
           <div className="text-[12px] leading-[1.5]">Annotations will appear here.</div>
         </div>

@@ -195,7 +195,7 @@ export function ViewerTopBar({
         className={`${ICON_BTN} ${railVisible ? "bg-elev text-ink" : ""}`}
         onClick={onToggleRail}
       >
-        <Icon name="inbox" size={16} />
+        <Icon name="highlight" size={16} />
       </button>
 
       <button
