@@ -1,0 +1,99 @@
+<!doctype html>
+<!--
+  Sandbox isolation self-test for anchord's HTML viewer.
+  Publish this as an HTML doc on YOUR OWN local anchord instance, open the
+  viewer, and read the on-page report. It probes what an AI-generated doc's
+  own inline script can reach from inside the sandbox iframe.
+
+  It does NOT exfiltrate: every result is printed on this page, nothing is
+  sent anywhere. This is a diagnostic, not a weapon.
+
+  Expected on `sandbox="allow-scripts"` (current):  every probe = BLOCKED (safe).
+  Expected if you flip on `allow-same-origin` + same-origin content: probes go
+  REACHABLE (vulnerable) — that is the severity you're measuring.
+-->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sandbox isolation probe</title>
+  <style>
+    body { font: 14px/1.5 ui-monospace, monospace; margin: 24px; background: #0e1116; color: #d7dde3; }
+    h1 { font-size: 16px; }
+    .row { padding: 8px 12px; border-radius: 6px; margin: 6px 0; }
+    .blocked { background: #16271c; border-left: 3px solid #3fb950; }
+    .reachable { background: #2b1416; border-left: 3px solid #f85149; }
+    .label { font-weight: 700; }
+    .detail { color: #8b949e; white-space: pre-wrap; word-break: break-all; margin-top: 4px; }
+    button { font: inherit; padding: 6px 10px; margin-top: 12px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>anchord sandbox isolation probe</h1>
+  <p class="detail">Green = blocked (isolation holding). Red = reachable (escape).</p>
+  <button onclick="theme()">🌙 toggle theme (the broken feature)</button>
+  <div id="out"></div>
+
+  <script>
+    const out = document.getElementById("out");
+    function report(label, reachable, detail) {
+      const div = document.createElement("div");
+      div.className = "row " + (reachable ? "reachable" : "blocked");
+      div.innerHTML =
+        '<span class="label">' + (reachable ? "REACHABLE — " : "BLOCKED — ") + label + "</span>" +
+        '<div class="detail">' + String(detail).replace(/[<&]/g, c => c === "<" ? "&lt;" : "&amp;") + "</div>";
+      out.appendChild(div);
+    }
+
+    // Probe 1 — localStorage of THIS frame (the exact thing that crashes the doc's theme script today)
+    try {
+      window.localStorage.setItem("__probe__", "1");
+      window.localStorage.removeItem("__probe__");
+      report("localStorage usable", true, "This frame has its own storage — a same-origin grant is in effect.");
+    } catch (e) {
+      report("localStorage", false, "Throws: " + e.message + "\n→ opaque origin. This is also why the doc's theme toggle crashes.");
+    }
+
+    // Probe 2 — reach into the parent app DOM
+    try {
+      const html = window.parent.document.documentElement.outerHTML;
+      report("parent DOM readable", true, "Read " + html.length + " chars of the app page. Can read private docs/comments + rewrite the app.");
+    } catch (e) {
+      report("parent DOM", false, "Throws (cross-origin): " + e.message);
+    }
+
+    // Probe 3 — read the app's localStorage via parent (where bearer tokens would live)
+    try {
+      const keys = Object.keys(window.parent.localStorage);
+      report("app localStorage readable", true, "Keys visible: " + keys.join(", ") + "\n→ any bearer/access token stored here is stolen outright.");
+    } catch (e) {
+      report("app localStorage", false, "Throws (cross-origin): " + e.message);
+    }
+
+    // Probe 4 — authenticated API call as the victim (cookies ride along on same-origin requests)
+    fetch("/api/me", { credentials: "include" })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+      .then(me => report("authenticated API as victim", true, "/api/me returned: " + JSON.stringify(me) + "\n→ doc acts as the logged-in user. Full account takeover surface."))
+      .catch(e => report("authenticated API", false, "/api/me unreachable/unauthorized: " + e.message + "\n→ request is cross-origin, no cookie attached."));
+
+    // Probe 5 — can we strip our own sandbox attribute from the parent (permanent escape)?
+    try {
+      const f = window.parent.document.querySelector('[data-testid="html-sandbox-frame"]');
+      report("can rewrite parent iframe", !!f, f ? "Found the sandbox iframe in parent — could removeAttribute('sandbox') and reload to escape permanently." : "n/a");
+    } catch (e) {
+      report("rewrite parent iframe", false, "Throws (cross-origin): " + e.message);
+    }
+
+    // The actual feature under test — a typical doc theme toggle that uses localStorage
+    function theme() {
+      try {
+        const cur = localStorage.getItem("doc-theme") === "light" ? "dark" : "light";
+        localStorage.setItem("doc-theme", cur);
+        document.body.style.background = cur === "light" ? "#fff" : "#0e1116";
+        document.body.style.color = cur === "light" ? "#111" : "#d7dde3";
+      } catch (e) {
+        alert("Theme toggle crashed (this is your bug):\n" + e.message);
+      }
+    }
+  </script>
+</body>
+</html>

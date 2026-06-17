@@ -1,0 +1,48 @@
+[x] AS-001 — resolve-access.test.ts:AS-001 owner→owner                        | owner: S-001
+[x] AS-002 — resolve-access.test.ts:AS-002 invited outsider admitted          | owner: S-001
+[x] AS-003 — resolve-access.test.ts:AS-003 ws member role                      | owner: S-001
+[x] AS-004 — resolve-access.test.ts:AS-004 anon link role                      | owner: S-001
+[x] AS-005 — resolve-access.test.ts:AS-005 cross-ws denied                     | owner: S-001
+[x] AS-006 — resolve-access.test.ts:AS-006 no source denied                    | owner: S-001
+[x] AS-007 — annotations-routes.test.ts:AS-007 annotation list gated          | owner: S-001
+[x] AS-008 — resolve-access.test.ts:AS-008 project-less fail-closed            | owner: S-001
+[x] AS-009 — doc-viewer-routes.test.ts:AS-009 slug-only read                  | owner: S-002
+[x] AS-010 — doc-viewer-routes.test.ts:AS-010 anon reads public               | owner: S-002
+[x] AS-011 — doc-viewer-routes.test.ts:AS-011 not-found-not-401 identical     | owner: S-002
+[x] AS-012 — doc-viewer-routes.test.ts:AS-012 html sandbox ref                | owner: S-002
+[x] AS-013 — public-access.test.tsx:AS-013 anon sees viewer                    | owner: S-003
+[x] AS-014 — public-access.test.tsx:AS-014 no-bounce + sign-in prompt          | owner: S-003
+[x] AS-015 — public-access.test.tsx:AS-015 signed-in no-access msg             | owner: S-003
+[x] AS-016 — public-access.test.tsx:AS-016 post-sign-in return to /d/:slug     | owner: S-003
+[x] AS-029 — viewer-top-bar.test.tsx:AS-029 anon top-bar chrome               | owner: S-003
+[x] AS-030 — doc-viewer-routes.test.ts + member-workspace-context.test.tsx:AS-030 | owner: S-003
+[x] AS-017 — annotations-doc-scoped.test.ts:AS-017 commenter creates          | owner: S-004
+[x] AS-018 — annotations-doc-scoped.test.ts:AS-018 guest + marker             | owner: S-004
+[x] AS-019 — annotations-doc-scoped.test.ts:AS-019 refused guest-off          | owner: S-004
+[x] AS-020 — composer-capability-gate.test.tsx:AS-020 no composer             | owner: S-004
+[x] AS-021 — annotations-doc-scoped.test.ts:AS-021 reply+resolve              | owner: S-004
+[x] AS-022 — annotations-doc-scoped + comment-rate-limit.test.ts:AS-022       | owner: S-004
+[x] AS-023 — annotations-doc-scoped.test.ts:AS-023 no impersonation           | owner: S-004
+[x] AS-024 — versions-doc-scoped.test.ts:AS-024 history+diff via doc link      | owner: S-005
+[x] AS-025 — versions-doc-scoped.test.ts:AS-025 no access → 404                | owner: S-005
+[x] AS-026 — versions-doc-scoped.test.ts:AS-026 /v serves requested version    | owner: S-005
+[x] AS-027 — app.test.ts:AS-027 share link /d/:slug, no backend handler        | owner: S-006
+[x] AS-028 — app.test.ts:AS-028 publish /d/:slug; /d gone; loader removed       | owner: S-006
+[x] C-001  — resolve-access + annotations-routes.test.ts (single gate)         | owner: S-001
+[x] C-002  — doc-viewer-routes.test.ts:C-002/C-007 slug-only lookup            | owner: S-002
+[x] C-003  — resolve-access.test.ts:C-003 most-permissive vs doc's own ws       | owner: S-001
+[x] C-004  — doc-viewer-routes.test.ts:AS-010+AS-011 anon-capable/existence-hide | owner: S-002
+[x] C-005  — annotations-doc-scoped.test.ts:AS-018/AS-019                       | owner: S-004
+[x] C-006  — doc-viewer-routes.test.ts:AS-012+C-006 sandbox/md sanitized        | owner: S-002
+[x] C-007  — doc-viewer-routes.test.ts:C-002/C-007 doc-addressed                | owner: S-002
+[x] C-008  — annotations-doc-scoped + comment-rate-limit.test.ts:AS-022         | owner: S-004
+[x] C-009  — annotations-doc-scoped.test.ts:AS-018/AS-023                       | owner: S-004
+[x] C-010  — doc-viewer-routes.test.ts:AS-009 slug global namespace             | owner: S-002
+[x] C-011  — resolve-access.test.ts:AS-008/C-011 project-less fail-closed       | owner: S-001
+[x] C-012  — annotations-routes.test.ts negative (anon/cross-ws → denied)       | owner: S-001
+[ ] GAP-001 — per-doc link preview deferred to v0.5 (not built)               | owner: —
+[N/A] NIS — per-doc link preview / OG metadata (deferred v0.5)                 | owner: —
+[N/A] NIS — short link /s/:code (deferred)                                     | owner: —
+[N/A] NIS — authoring/publish endpoint stays workspace-addressed              | owner: —
+[N/A] NIS — real-time multi-editor collaboration                              | owner: —
+[N/A] NIS — annotation anchor/data model unchanged                            | owner: —

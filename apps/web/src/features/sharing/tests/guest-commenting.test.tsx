@@ -169,7 +169,10 @@ describe("Guest commenting S-005", () => {
 
     // The comment write carries the guest name (email optional → undefined/empty), no userId.
     await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    const body = addComment.mock.calls[0]![3];
+    // addComment is slug-only now: (slug, annotationId, body) — the body object is arg index 2
+    // (was index 3 under the old workspace-scoped (ws, slug, annotationId, body) signature,
+    // doc-access-routing C-002). Read index 2.
+    const body = addComment.mock.calls[0]![2];
     expect(body.body).toBe("Why 24h?");
     expect(body.guestName).toBe("Lan");
     expect(body.guestEmail ?? "").toBe(""); // optional — not provided

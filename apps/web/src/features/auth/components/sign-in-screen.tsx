@@ -38,6 +38,15 @@ export function SignInScreen() {
   const [params] = useSearchParams();
   // AS-008: better-auth appended ?error=… when it returned from a failed OAuth callback.
   const oauthError = params.get("error");
+  // doc-access-routing AS-016: the "Sign in to view this doc" prompt sends the visitor here with
+  // ?redirect=/d/<slug>; after success we return them to that doc. Only an INTERNAL path is
+  // honored (must start with a single "/", never "//" or "/\" which browsers treat as
+  // protocol-relative off-site) — otherwise fall back to the default landing (no open-redirect).
+  const rawRedirect = params.get("redirect");
+  const redirectTo =
+    rawRedirect && rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") && !rawRedirect.startsWith("/\\")
+      ? rawRedirect
+      : "/";
 
   const [formError, setFormError] = useState<string | null>(null);
   // AS-002/C-001: when sign-in is refused because the email isn't verified, we show a distinct
@@ -55,9 +64,9 @@ export function SignInScreen() {
 
   useEffect(() => {
     if (signedIn && session) {
-      navigate("/", { replace: true });
+      navigate(redirectTo, { replace: true });
     }
-  }, [signedIn, session, navigate]);
+  }, [signedIn, session, navigate, redirectTo]);
   const {
     register,
     handleSubmit,

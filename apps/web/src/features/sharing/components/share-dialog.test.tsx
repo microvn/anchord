@@ -46,7 +46,7 @@ const LINK_STATE = {
     { userId: "u-act", email: "dev@acme.com", name: "Dev Dana", role: "editor" as const, status: "active" as const },
     { email: "bob@x.com", role: "commenter" as const, status: "pending" as const },
   ],
-  link: { hasPassword: true, expiresAt: "2026-07-01T00:00:00Z", viewLimit: 50, viewCount: 3, url: "anchord.local/d/web-core?k=9f2a" },
+  link: { hasPassword: true, expiresAt: "2026-07-01T00:00:00Z", viewLimit: 50, viewCount: 3, url: "/d/web-core?k=9f2a" },
 };
 
 const { ShareDialog } = await import("@/features/sharing/components/share-dialog");
@@ -165,13 +165,16 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     expect(screen.getByTestId("share-person-dev@acme.com")).toBeInTheDocument();
     expect(screen.getByTestId("share-person-pending-bob@x.com")).toBeInTheDocument();
     expect(screen.queryByTestId("share-person-pending-dev@acme.com")).not.toBeInTheDocument();
+    // SHARING tab: the link section appears inline (AS-005) once shared by link — URL rendered
+    // absolute (origin + the relative path the backend returns, query preserved) + password set.
+    expect(screen.getByTestId("share-sec-link-protection")).toBeInTheDocument();
+    expect(screen.getByTestId("share-link-url")).toHaveTextContent("/d/web-core?k=9f2a");
+    expect(screen.getByTestId("share-link-password")).toHaveAttribute("data-on", "1");
 
-    // OPTIONS tab: guest on, editors reflected, link URL + a password set
+    // OPTIONS tab: guest on, editors reflected
     await userEvent.click(screen.getByTestId("share-tab-options"));
     expect(await screen.findByTestId("share-guest-toggle")).toHaveAttribute("data-on", "1");
     expect(screen.getByTestId("share-editors-can-share-toggle")).toHaveAttribute("data-on", "0");
-    expect(screen.getByTestId("share-link-url")).toHaveTextContent("anchord.local/d/web-core?k=9f2a");
-    expect(screen.getByTestId("share-link-password")).toHaveAttribute("data-on", "1");
   });
 
   // C-002: the pure manage-eligibility gate (mirror of backend C-007).

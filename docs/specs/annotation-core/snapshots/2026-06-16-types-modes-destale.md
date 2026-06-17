@@ -1,7 +1,14 @@
+# Snapshot: annotation-core-ui-types-modes
+**Date:** 2026-06-16
+**Ref:** --
+**Reason:** M6 — Data Model + Clarifications de-staled: durable `annotations.author_id` (annotation-actions:S-001) supersedes the "annotations table has no author column / derive creator from root comment" model; lifecycle-action UI (delete/restore/2-family/pending/no-self-approve) split out to sibling annotation-actions-ui.
+
+---
+
 # Spec: annotation-core-ui-types-modes
 
 **Created:** 2026-06-14
-**Last updated:** 2026-06-16
+**Last updated:** 2026-06-15
 **Status:** Draft
 
 ## Overview
@@ -11,10 +18,7 @@ selection into one of several annotation types. "Markup" is the parent action: s
 offers **Comment · Like · Label · Redline · Suggest**. This spec OWNS the new types (Like, Label, Redline)
 + the popover/mode surface; it cross-refs the siblings that already own the other two: Comment
 (`annotation-core-ui-commenting`) and Suggest + image-region (`annotation-core-ui-suggest-image`). The
-viewer shell + DocModeToolbar live in `annotation-core-ui`. The rail-item **lifecycle-action UI** that consumes
-the `annotation-actions` backend — own-vs-others from the durable `authorId`, the 2-family action bar (incl.
-owner no-self-approve), Delete/restore + undo toast, the Pending tag, and the rail-item layout redesign — lives
-in the sibling **`annotation-actions-ui`** (added 2026-06-16).
+viewer shell + DocModeToolbar live in `annotation-core-ui`.
 
 Phase 1 (this spec) covers **Select mode** only (text-range). Pinpoint mode (whole-block element picker),
 global doc-level comment, and per-workspace label customization are deferred (see Not in Scope). Sub-spec 4
@@ -26,20 +30,12 @@ Primary input: `docs/explore/annotation-editor-types-modes.md`. Hardened by `/mf
 
 ## Data Model
 
-**Root-comment + body model (challenge #3):** EVERY annotation has a **root comment** — the creator's act is
-recorded as the first `comments` row (carrying `createdAt` + `body`), so the **thread + body pre-fill** work
-uniformly for all types. Like/Label/Redline are NOT "bare marks": picking one opens the composer with the
-`body` **pre-filled from the label/type's display text** (e.g. "Looks good", "Out of scope"), editable before
-send. A plain Comment opens with an empty body. This removes the "comment-less annotation" case entirely.
-
-> **DE-STALED 2026-06-16:** the original draft said "the `annotations` table itself has no author column" and
-> derived the creator from the root-comment author. That was **REVERSED** by `annotation-actions`:S-001, which
-> added a durable `annotations.author_id` (null for guest) written at create and served as `authorId` on the
-> read. **Creator identity now comes from the durable `authorId`, NOT the root comment.** The root-comment
-> model still holds for the *thread* and the *body pre-fill* above. Own-vs-others, the owner no-self-approve
-> gate, and delete-own are consumed from `authorId` by the sibling **`annotation-actions-ui`** (which also owns
-> the lifecycle-action UI: the 2-family action bar, Delete/restore + undo toast, the Pending tag). See that
-> spec's `## Linked Fields`.
+**Unifying model (challenge #3):** EVERY annotation has a **root comment** — the creator's act is recorded
+as the first `comments` row (carrying `authorId` + `createdAt` + `body`), so attribution and the thread
+work uniformly for all types (the `annotations` table itself has no author column). Like/Label/Redline are
+NOT "bare marks": picking one opens the composer with the `body` **pre-filled from the label/type's display
+text** (e.g. "Looks good", "Out of scope"), editable before send. A plain Comment opens with an empty body.
+This removes the "comment-less annotation" case entirely.
 
 Types ride the existing `annotations` table (`apps/backend/src/db/schema.ts`) — `annotation_type` already has
 `range · multi_range · block · doc · suggestion`, and `suggestion` jsonb already carries `kind: replace|delete`
@@ -446,12 +442,10 @@ adjudication (PO decisions in parentheses):
   create route's Zod has `to` optional (`annotations.ts:219`); `decideSuggestionHandler` enforces owner-only
   (`:371`) and the stale check (`fromStillMatches`) is kind-agnostic. Redline rides this unchanged; only
   `annotations.label` is new. (GAP-001/002 from the prior draft resolved.)
-- **Root-comment + body model (#3):** every annotation has a root comment; Like/Label/Redline pre-fill the
+- **Unifying root-comment model (#3):** every annotation has a root comment; Like/Label/Redline pre-fill the
   body from the label/type text (editable before send); `label` stays structured for the rail + MCP export.
-  Removes the comment-less-mark case → thread reuse unchanged. **(SUPERSEDED 2026-06-16:** the original "avoids
-  adding `annotations.authorId`, derive creator from the root comment" was reversed — `annotation-actions`:S-001
-  added a durable `annotations.author_id`; creator identity is now that column, served as `authorId`. The
-  root-comment model is retained only for the thread + body pre-fill. See §Data Model DE-STALED note.)
+  Removes the comment-less-mark case → thread/attribution reuse unchanged. (Avoids adding `annotations.authorId`
+  and avoids empty-body rows.)
 - **Labels are a v0 constant (#1):** shared `DEFAULT_LABEL_PRESETS`, no per-workspace table/seed in v0;
   customization + the workspace table land in Phase 4.
 - **Decide is owner-only (#10), not "author"** — wording corrected; server-enforced at `annotations.ts:371`.
@@ -477,7 +471,6 @@ routing atom, no bloat:
 
 | Date | Change | Ref |
 |------|--------|-----|
-| 2026-06-16 | Major (M6): DE-STALED §Data Model + Clarifications #3 — `annotation-actions`:S-001 reversed the "annotations table has no author column / derive creator from root comment" model by adding a durable `annotations.author_id` (served as `authorId`); creator identity now comes from that column, root-comment retained only for thread + body pre-fill. Lifecycle-action UI (own-vs-others, 2-family action bar incl. owner no-self-approve, Delete/restore + undo toast, Pending tag, rail-item redesign) split out to the new sibling `annotation-actions-ui`. Stories/AS/Constraints unchanged. Snapshot 2026-06-16-types-modes-destale.md | -- |
 | 2026-06-14 | Initial creation — annotation type taxonomy (Like/Label/Redline) + Markup popover + Select mode; Pinpoint/global/customization deferred. From docs/explore/annotation-editor-types-modes.md (Mode A). | -- |
 | 2026-06-15 | Major (M1+M4+M6): PO prototype refinement — DocModeToolbar gains a markup TOOL PALETTE (Markup·Comment·Redline·Label) where the active tool routes the selection (+S-006, AS-020..023); S-001 flow reframed (popover = the Markup tool's surface, Markup = default); +C-009 (palette + per-tool routing + collapse→icon/active+hover→expand+colour + Wide\|Focus right); UI Notes + Spec Sizing updated. Colours formalized in DESIGN.md (type/tool palette, PO-approved deviation from teal-only). Snapshot 2026-06-15-types-modes.md | PO prototype 2026-06-15 |
 | 2026-06-14 | /mf-challenge hardening (10 findings accepted): unifying root-comment model (#3); labels = v0 constant, table→Phase 4 (#1); backend `label` column Prerequisite + GAP-001 (#2); reopen-decided resets to pending owner-only (#4); stale = render-time style (#5); optimistic rollback for Like/Label (#6); server-side label validation (#7); label/suggestion mutual exclusion (#8); one labeled-create path (#9); decide owner-only wording + route cite (#10). Stories 5, AS 14→19. | -- |

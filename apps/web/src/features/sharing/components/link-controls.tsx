@@ -19,6 +19,15 @@ interface ChipState {
   limit: boolean;
 }
 
+// The backend returns an origin-relative share path (`/d/:slug`) so it stays correct on any
+// self-host origin (it can't know the public hostname). Resolve it against the browser's origin
+// so the displayed + copied link is a pasteable absolute URL, not a bare `/d/:slug`.
+function absoluteShareUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (typeof window === "undefined") return url;
+  return new URL(url, window.location.origin).toString();
+}
+
 const CHIP_META: Record<ChipKey, { icon: string; label: string; placeholder: string; testid: string }> = {
   password: { icon: "shield", label: "Password", placeholder: "Set a password", testid: "share-link-password" },
   expiry: { icon: "clock", label: "Expiry", placeholder: "YYYY-MM-DD", testid: "share-link-expiry" },
@@ -42,8 +51,10 @@ export function LinkControls({
   const [editing, setEditing] = useState<ChipKey | null>(null);
   const [draft, setDraft] = useState("");
 
+  const fullUrl = absoluteShareUrl(link.url);
+
   async function copy() {
-    await navigator.clipboard?.writeText(link.url);
+    await navigator.clipboard?.writeText(fullUrl);
     toast.success("Link copied");
   }
 
@@ -71,11 +82,10 @@ export function LinkControls({
 
   return (
     <section data-testid="share-sec-link" className="flex flex-col gap-1.5">
-      <span className="text-[12px] font-medium text-muted">Link</span>
       <div className="flex items-center gap-2 rounded-md border border-line bg-sunken px-2.5 py-1.5">
         <Icon name="link" size={14} />
         <code data-testid="share-link-url" className="min-w-0 flex-1 truncate text-[12px] text-ink">
-          {link.url}
+          {fullUrl}
         </code>
         <button
           type="button"

@@ -1,13 +1,11 @@
-import { LinkControls } from "./link-controls";
 import type { AccessControls } from "@/features/sharing/hooks/use-access-controls";
-import type { ShareLink } from "@/features/sharing/services/client";
 
-// OptionsPanel (sharing-permissions-ui S-002/S-005) — the "Options" tab of the ShareDialog. Holds
-// everything secondary that used to clutter the main flow: link protection (password / expiry /
-// view-limit, only when shared by link), guest commenting (gated to link, C-001), and the owner-only
-// "editors can change sharing" toggle (C-003). All state + writes live in the shared
-// `useAccessControls` hook (so they share one PUT …/access with the access level on the Sharing tab);
-// this panel only reads `controls` and calls its toggles. Link chips persist via their own PUT …/link.
+// OptionsPanel (sharing-permissions-ui S-002) — the "Options" tab of the ShareDialog. Holds the two
+// secondary toggles: guest commenting (gated to link, C-001) and the owner-only "editors can change
+// sharing" toggle (C-003). Link protection (password / expiry / view-limit) used to live here too,
+// but it moved to the Sharing tab inline under the access choice (AS-005) so the public-share flow
+// costs no extra clicks. All state + writes live in the shared `useAccessControls` hook (so they
+// share one PUT …/access with the access level on the Sharing tab); this panel only reads `controls`.
 
 function ToggleRow({
   sectionTestid,
@@ -59,32 +57,14 @@ function ToggleRow({
 }
 
 export function OptionsPanel({
-  workspaceId,
-  slug,
   controls,
-  link,
 }: {
-  workspaceId: string;
-  slug: string;
   controls: AccessControls;
-  link: ShareLink;
 }) {
   const { isLink, isOwner, guestCommenting, editorsCanShare, saving, toggleGuest, toggleEditorsCanShare } = controls;
 
   return (
     <div data-testid="share-options" className="flex flex-col gap-4 pt-1">
-      {/* Link protection — the password / expiry / view-limit controls (only meaningful for link). */}
-      <section className="flex flex-col gap-2">
-        <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">· Link protection</span>
-        {isLink ? (
-          <LinkControls workspaceId={workspaceId} slug={slug} link={link} />
-        ) : (
-          <p data-testid="share-link-options-disabled" className="text-[12px] text-subtle">
-            Turn on “Anyone with the link” to set a password, expiry, or view limit.
-          </p>
-        )}
-      </section>
-
       {/* Guest commenting — ENABLED only for anyone-with-link (C-001). */}
       <ToggleRow
         sectionTestid="share-sec-guest"

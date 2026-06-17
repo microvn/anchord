@@ -3,10 +3,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // sharing-permissions-ui S-002 — the Options tab UI: guest commenting (gated to anyone-with-link,
-// C-001 / AS-008) and editors-can-share (owner-editable / read-only for an editor, C-003 / AS-009),
-// plus the link-protection sub-section that only shows the chips when shared by link. The mutation
-// logic is unit-tested in use-access-controls.test; here we assert the rendered controls + that a
-// toggle drives the write. Fed through a harness that wires the real hook.
+// C-001 / AS-008) and editors-can-share (owner-editable / read-only for an editor, C-003 / AS-009).
+// Link protection moved to the Sharing tab (inline under access, AS-005) — covered by
+// share-dialog.test + link-controls.test, not here. The mutation logic is unit-tested in
+// use-access-controls.test; here we assert the rendered controls + that a toggle drives the write.
 
 import * as sharingClient from "@/features/sharing/services/client";
 
@@ -24,7 +24,7 @@ const { useAccessControls } = await import("@/features/sharing/hooks/use-access-
 
 function Harness({ initial, effectiveRole = "owner" as "owner" | "editor" | undefined }: { initial: ReturnType<typeof base>; effectiveRole?: "owner" | "editor" | undefined }) {
   const controls = useAccessControls("ws", "doc", initial, effectiveRole);
-  return <OptionsPanel workspaceId="ws" slug="doc" controls={controls} link={initial.link} />;
+  return <OptionsPanel controls={controls} />;
 }
 
 beforeEach(() => {
@@ -37,17 +37,14 @@ describe("sharing-permissions-ui S-002 — Options tab", () => {
     render(<Harness initial={base({ level: "restricted" })} />);
     expect(screen.getByTestId("share-guest-toggle")).toBeDisabled();
     expect(screen.getByTestId("share-sec-guest")).toHaveTextContent(/available only for anyone with link/i);
-    // link chips are hidden; a hint explains why
+    // link protection no longer lives here — it moved to the Sharing tab (AS-005).
     expect(screen.queryByTestId("share-sec-link")).not.toBeInTheDocument();
-    expect(screen.getByTestId("share-link-options-disabled")).toBeInTheDocument();
   });
 
   it("AS-008: on anyone-with-link the guest toggle is enabled and sends guestCommenting:true", async () => {
     render(<Harness initial={base({ level: "anyone_with_link" })} />);
     const guest = screen.getByTestId("share-guest-toggle");
     expect(guest).not.toBeDisabled();
-    // link chips now visible
-    expect(screen.getByTestId("share-sec-link")).toBeInTheDocument();
     await userEvent.click(guest);
     await waitFor(() =>
       expect(setAccess).toHaveBeenLastCalledWith("ws", "doc", expect.objectContaining({ guestCommenting: true })),

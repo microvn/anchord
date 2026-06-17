@@ -30,6 +30,7 @@ import {
 import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
+import { LinkControls } from "./link-controls";
 import { OptionsPanel } from "./options-panel";
 import { ShareLoadingSkeleton } from "./share-loading-skeleton";
 import { TabBar } from "@/components/ui/tabs";
@@ -293,8 +294,25 @@ function ShareSections({
 
       {tab === "sharing" ? (
         <div className="flex flex-col gap-4">
-          {/* Who can read? — self-describing access rows + role (S-002) */}
-          <AccessSection controls={controls} />
+          {/* Access definition group — who can read + the role + (when shared by link) the link
+              itself. These belong together (the link IS the access choice), so they sit at the
+              tighter intra-group gap-3 and read as one unit, set apart from "Invite people" below
+              by the container's gap-4. */}
+          <div className="flex flex-col gap-3">
+            {/* Who can read? — self-describing access rows + role (S-002) */}
+            <AccessSection controls={controls} />
+
+            {/* Link + protection — appears inline right under the access choice when the doc is
+                shared by link (AS-005: "the Link section appears"). Inline (not behind the Options
+                tab) makes copying the link + setting password/expiry/view-limit zero extra clicks
+                for the public-share flow, the primary action once Anyone-with-link is on. */}
+            {controls.isLink ? (
+              <section data-testid="share-sec-link-protection" className="flex flex-col gap-2">
+                <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">· Link</span>
+                <LinkControls workspaceId={workspaceId} slug={slug} link={state.link} />
+              </section>
+            ) : null}
+          </div>
 
           {/* Invite people / People list (S-003 invite field + optimistic row; S-004/S-006 controls) */}
           <section data-testid="share-sec-people" className="flex flex-col gap-3">
@@ -316,7 +334,7 @@ function ShareSections({
           </section>
         </div>
       ) : (
-        <OptionsPanel workspaceId={workspaceId} slug={slug} controls={controls} link={state.link} />
+        <OptionsPanel controls={controls} />
       )}
     </div>
   );

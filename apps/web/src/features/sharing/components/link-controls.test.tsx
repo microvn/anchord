@@ -18,8 +18,10 @@ mock.module("sonner", () => ({
   toast: Object.assign(mock(() => {}), { success: toastSuccess, error: toastError }),
 }));
 
-const OK_LINK = { hasPassword: true, url: "anchord.local/d/web-core", expiresAt: null, viewLimit: null, viewCount: 0 };
-const UNSET_LINK = { hasPassword: false, url: "anchord.local/d/web-core", expiresAt: null, viewLimit: null, viewCount: 0 };
+// The backend returns an origin-relative share path (`/d/:slug`); the component resolves it
+// against the browser origin into a pasteable absolute URL (link-controls absoluteShareUrl).
+const OK_LINK = { hasPassword: true, url: "/d/web-core", expiresAt: null, viewLimit: null, viewCount: 0 };
+const UNSET_LINK = { hasPassword: false, url: "/d/web-core", expiresAt: null, viewLimit: null, viewCount: 0 };
 
 const { LinkControls } = await import("@/features/sharing/components/link-controls");
 
@@ -39,10 +41,12 @@ describe("Sharing S-005 — link controls", () => {
     const user = userEvent.setup();
     renderLink();
     await user.click(screen.getByTestId("share-link-copy"));
-    // happy-dom has a real in-memory clipboard — assert the URL round-trips through it.
-    await waitFor(async () =>
-      expect(await navigator.clipboard.readText()).toBe("anchord.local/d/web-core"),
-    );
+    // happy-dom has a real in-memory clipboard — assert the URL round-trips through it as an
+    // ABSOLUTE link (origin + /d/:slug), never the bare relative path that can't be pasted.
+    await waitFor(async () => {
+      const copied = await navigator.clipboard.readText();
+      expect(copied).toMatch(/^https?:\/\/.+\/d\/web-core$/);
+    });
     expect(toastSuccess).toHaveBeenCalled();
   });
 

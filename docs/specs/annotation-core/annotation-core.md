@@ -1,7 +1,7 @@
 # Spec: annotation-core
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-16
 **Status:** Draft
 
 ## Overview
@@ -383,6 +383,10 @@ AS-029: A create carrying both a label and a suggestion payload is refused
   via an MCP round-trip. (AS-014, AS-015)
 - C-004: Threads are flat, one level (reply under the annotation, not deeply nested). (AS-008)
 - C-005: Resolve is a toggle; anyone with comment permission or higher can resolve/reopen. (AS-009, AS-010)
+  NOTE: this governs **remark** annotations (comment/like/label). A **proposal** (suggestion) is closed
+  by the OWNER via accept/reject, not by a commenter resolve — the family-scoped action/permission model
+  is owned by `annotation-actions` (which also adds owner-no-self-approve + delete). C-005 is no longer
+  the whole story for suggestions; see annotation-actions C-001..C-006.
 - C-006: Image-region stores normalized 0..1 coordinates relative to the original image, durable across zoom/screen changes. (AS-005, AS-006, AS-007)
 - C-007: Anonymous viewers are assigned a random name; guest comments require a name. (AS-016, AS-017)
 - C-008 [harden C3]: comment `body` and `guest_name` are untrusted; render escaped/sanitized
@@ -421,7 +425,8 @@ AS-029: A create carrying both a label and a suggestion payload is refused
 - C-016: Reopening a DECIDED suggestion (accepted/rejected) is OWNER-only and resets it to `pending`
   (clearing the decision) — distinct from an ordinary annotation resolve/reopen, which any commenter may
   toggle (C-005). This prevents a non-owner resurfacing a decided proposal or leaving `status` and
-  `suggestion_status` desynced. (AS-026)
+  `suggestion_status` desynced. (AS-026) NOTE: the full proposal action/permission model (incl. the
+  owner-no-self-approve refinement) is consolidated in `annotation-actions`.
 
 ## Linked Fields
 
@@ -621,5 +626,6 @@ AS is now AT the hard cap of 30 — any further AS forces a phase/scope-by-layer
 | 2026-06-11 | Major: + S-008 (dismiss / re-attach a detached annotation, AS-023/024/025) + C-013 + `dismissed_at` (Data Model) + API rows (dismiss/reattach); annotation-core-ui prerequisite #3. ImageViewer contract (#4) is FE-side (suggest-image C-006), no backend change. Snapshot 2026-06-11.md | -- |
 | 2026-06-11 | Major: GAP-004 RESOLVED — built the in-iframe sandbox bridge served into `/v` (commit `0c49d53`), effort M; + C-014 (CSP `sandbox allow-scripts` stays / nonce inert / bridge is defense-in-depth — never add `script-src`); + GAP-005 (nested-iframe realm isolation deferred; SES/ShadowRealm/CSP rejected). Surfaced by /mf-build of annotation-core-ui-commenting S-002. Snapshot 2026-06-11.md | -- |
 | 2026-06-12 | Minor (Clarifications): `…/annotations/:id/comments` creates a top-level comment when `parentId` absent / a flat reply when present (build fix: was routed reply-only → parent_not_found); annotation list ordered newest-first (comments within a thread stay creation-order) | commits `6801e53`,`7ae892e` |
+| 2026-06-16 | Minor: C-005 + C-016 gain pointers to the new `annotation-actions` sub-spec (the consolidated 2-family action/permission model — proposal owner-decide, owner-no-self-approve, delete, serve authorId). No behaviour change here; annotation-actions is the authoritative model. | annotation-actions |
 | 2026-06-15 | Major (M6): + AS-030 (S-006) — the annotations list read serves the `suggestion` payload + `suggestion_status` (parallel to AS-027 serving `label`), so the viewer renders redline/suggestion lifecycle state on a real read; C-011 coverage += AS-030; API GET row + Data Model + Linked Fields (suggestion entry now pins the list-read surface) updated. Closes the S1 gap surfaced by annotation-core-ui-types-modes S-002 (/mf-build). Snapshot 2026-06-15.md | annotation-core-ui-types-modes:S-002 |
 | 2026-06-14 | Major: + S-009 (labeled annotation Like/Label, AS-027/028/029) + AS-026 (decided-suggestion reopen → pending, owner-only) + C-015 (label validation + label/suggestion mutual-exclusion) + C-016 (decided-reopen owner-only reset); Data Model += `label`/`suggestion`/`suggestion_status` (vá drift, + DEFAULT_LABEL_PRESETS constant); API create += `label?` / GET serves `label` / resolution owner-only on decided reopen; Linked Fields pin label + delete-kind + decided-reopen (producer for annotation-core-ui-types-modes). Snapshot 2026-06-14-4.md | annotation-core-ui-types-modes:GAP-001 |

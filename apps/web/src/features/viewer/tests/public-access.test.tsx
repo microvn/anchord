@@ -155,6 +155,9 @@ describe("doc-access-routing S-003 — public viewer for signed-out visitors", (
     expect(screen.getByTestId("no-access-title")).toHaveTextContent(/don.t have access/i);
     expect(screen.queryByTestId("no-access-signin")).toBeNull();
     expect(bounced).toBe(false);
+    // S-003 polish: the no-access state is a CLEAN standalone page — it must NOT mount the 3-pane
+    // viewer shell (which leaked a "Not found" top bar + empty annotations rail + outline gutter).
+    expect(screen.queryByTestId("viewer-screen")).toBeNull();
   });
 
   it("AS-014 / C-004: the REAL shared QueryClient exempts a viewerRead read from the session bounce", async () => {

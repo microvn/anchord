@@ -93,6 +93,57 @@ beforeEach(() => {
   getSessionMock.mockClear();
 });
 
+// doc-access-routing AS-016: the "Sign in to view this doc" prompt sends the visitor to
+// /signin?redirect=/d/<slug>; after a successful sign-in they must be RETURNED to that doc,
+// not dropped on the workspace home. An unsafe redirect (off-site / protocol-relative) must
+// be ignored and fall back to the default landing (no open-redirect).
+function RedirectApp() {
+  return (
+    <Routes>
+      <Route path="/signin" element={<SignInScreen />} />
+      <Route path="/d/:slug" element={<div>DOC PAGE</div>} />
+      <Route element={<AuthGuard />}>
+        <Route index element={<div>Welcome to your workspace</div>} />
+      </Route>
+    </Routes>
+  );
+}
+
+describe("auth-ui — sign-in honors a safe ?redirect target (AS-016)", () => {
+  it("AS-016: signing in with ?redirect=/d/auth-spec returns to that doc, not the workspace home", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/signin?redirect=%2Fd%2Fauth-spec"]}>
+        <RedirectApp />
+      </MemoryRouter>,
+    );
+    await user.type(screen.getByLabelText(/email/i), "a@b.co");
+    await user.type(screen.getByLabelText(/password/i), "correct-horse");
+    await act(async () => {
+      await user.click(screen.getByRole("button", { name: /sign in/i }));
+    });
+    await waitFor(() => expect(screen.getByText("DOC PAGE")).toBeInTheDocument());
+    expect(screen.queryByText(/welcome to your workspace/i)).not.toBeInTheDocument();
+  });
+
+  it("AS-016 / C-015: an unsafe off-site ?redirect is ignored — falls back to the default landing", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/signin?redirect=https%3A%2F%2Fevil.com"]}>
+        <RedirectApp />
+      </MemoryRouter>,
+    );
+    await user.type(screen.getByLabelText(/email/i), "a@b.co");
+    await user.type(screen.getByLabelText(/password/i), "correct-horse");
+    await act(async () => {
+      await user.click(screen.getByRole("button", { name: /sign in/i }));
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/welcome to your workspace/i)).toBeInTheDocument(),
+    );
+  });
+});
+
 describe("auth-ui — sign-in success redirects off /signin once the session commits", () => {
   it("AS-002: a valid sign-in navigates into the app AFTER the session resolves (no guard bounce)", async () => {
     const user = userEvent.setup();
