@@ -19,6 +19,11 @@ const ICONS: Record<string, string> = {
   inbox:
     '<path d="M3 12h5l1.5 3h5L21 12"/><path d="M5 6h14l2 6v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6Z"/>',
   pencil: '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  // annotation/highlight glyph: two text lines + a filled "highlight" bar over the third — the
+  // annotate-text gesture (distinct from `pencil`=edit/rename and `mail`/`inbox`=comment). The bar
+  // fills with currentColor so it tints with the surrounding text colour.
+  highlight:
+    '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="11" x2="13" y2="11"/><rect x="3.5" y="14.5" width="13" height="4" rx="1.3" fill="currentColor" stroke="none"/>',
   trash:
     '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   members:

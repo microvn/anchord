@@ -44,16 +44,16 @@ export function VersionTag({ version }: { version: number }) {
 
 /**
  * The active-annotation-count cell, `.doc-comments`. Faint when zero. Shows the doc's
- * ACTIVE-annotation count (workspace-project-ui S-007 / C-006) beside an ANNOTATION icon
- * (the pencil glyph) — never an envelope/comment/mail icon: the count is annotations, not
- * the comment total across threads.
+ * ACTIVE-annotation count (workspace-project-ui S-007 / C-006) beside the dedicated ANNOTATION
+ * icon (`highlight` — the annotate-text glyph) — NOT `pencil` (that is edit/rename) and never an
+ * envelope/comment/mail icon: the count is annotations, not the comment total across threads.
  */
 export function AnnotationCount({ count }: { count: number }) {
   return (
     <span
       className={`inline-flex items-center gap-[5px] text-[12.5px] tabular-nums ${count > 0 ? "text-muted" : "text-faint"}`}
     >
-      <Icon name="pencil" size={13} />
+      <Icon name="highlight" size={13} />
       {count}
     </span>
   );
