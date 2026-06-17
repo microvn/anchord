@@ -113,7 +113,10 @@ test("AS-022 / C-009: empty served content does not crash the route", async () =
   const body = await res.text();
   expect(body).toContain("anchord-bridge"); // bridge injected even for empty content
   expect(body).toContain(".anno-mark"); // S-001: highlight stylesheet injected too
-  expect(body.startsWith("<style>")).toBe(true); // nothing before the injected style → content was empty
+  // S-007/C-010: the storage shim is PREPENDED (runs before any doc script), so for empty content
+  // the output now leads with the shim <script> (not the <style>) — nothing of a doc body precedes it.
+  expect(body.startsWith("<script")).toBe(true);
+  expect(body).toContain("memStorage"); // the injected shim leads; the doc-content portion was empty
 });
 
 // doc-access-routing S-006 — the share link opens the app; the bare server page is gone.

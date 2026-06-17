@@ -526,3 +526,136 @@ test("C-005: the injected stylesheet carries the .anno-mark--focus emphasis rule
   const out = injectBridge(injectBlockIds("<p>x</p>"), "n-focus2");
   expect(out).toContain(".anno-mark--focus");
 });
+
+// ── S-007: in-iframe client-storage shim (render-publish C-010) ──────────────────────────
+// The /v content is served on an opaque origin, where the doc's OWN scripts throw SecurityError
+// when they touch localStorage/sessionStorage/caches/BroadcastChannel. The shim replaces those
+// with in-memory, per-frame, non-bridged stubs so the doc's scripts run. These tests execute the
+// REAL injected shim string against a fake window whose storage getters throw (simulating opaque
+// origin), so they exercise the exact artifact shipped to the browser.
+
+/** A fake window whose client-storage getters throw, like an opaque-origin sandbox. */
+function opaqueWindow(opts: { idbThrows?: boolean } = {}) {
+  const w: any = {};
+  const denied = () => {
+    throw new Error("SecurityError: storage is not available on an opaque origin");
+  };
+  for (const key of ["localStorage", "sessionStorage", "caches"]) {
+    Object.defineProperty(w, key, { configurable: true, get: denied });
+  }
+  if (opts.idbThrows) Object.defineProperty(w, "indexedDB", { configurable: true, get: denied });
+  // bare `BroadcastChannel` reference inside the shim — passed as a constructor that throws.
+  const BC = function () {
+    denied();
+  } as unknown as typeof BroadcastChannel;
+  return { w, BC };
+}
+
+/** Run the real STORAGE_SHIM string in a controlled scope (window + BroadcastChannel injected). */
+function runShim(w: any, BC: any) {
+  // eslint-disable-next-line no-new-func
+  const fn = new Function("window", "BroadcastChannel", STORAGE_SHIM);
+  fn(w, BC);
+}
+
+test("AS-024: a doc's storage-using script runs (read returns null, not a throw) and round-trips", () => {
+  const { w, BC } = opaqueWindow();
+  runShim(w, BC);
+  // the theme-toggle pattern: read a saved preference on load — must NOT throw, returns null when unset.
+  expect(w.localStorage.getItem("spec-theme")).toBeNull();
+  // set then read back works for the session.
+  w.localStorage.setItem("spec-theme", "dark");
+  expect(w.localStorage.getItem("spec-theme")).toBe("dark");
+  // sessionStorage shimmed too.
+  w.sessionStorage.setItem("k", "v");
+  expect(w.sessionStorage.getItem("k")).toBe("v");
+});
+
+test("AS-024: the shim is a real Storage-shaped Proxy — bracket/dot access and `in` route to the store", () => {
+  const { w, BC } = opaqueWindow();
+  runShim(w, BC);
+  w.localStorage.theme = "dark"; // dot-set
+  expect(w.localStorage.theme).toBe("dark"); // dot-get
+  expect(w.localStorage["theme"]).toBe("dark"); // bracket-get
+  expect("theme" in w.localStorage).toBe(true); // has
+  expect(w.localStorage.length).toBe(1);
+  w.localStorage.removeItem("theme");
+  expect("theme" in w.localStorage).toBe(false);
+  expect(w.localStorage.length).toBe(0);
+});
+
+test("AS-024: the cache store is stubbed to a benign no-op instead of throwing", async () => {
+  const { w, BC } = opaqueWindow();
+  runShim(w, BC);
+  expect(() => w.caches).not.toThrow();
+  const cache = await w.caches.open("v1");
+  expect(await cache.match("/x")).toBeUndefined();
+  // a stubbed cross-tab channel constructs without throwing and accepts a post.
+  expect(() => new w.BroadcastChannel("t")).not.toThrow();
+});
+
+test("AS-025: stored values are session-only — a fresh frame starts empty (nothing persisted)", () => {
+  const a = opaqueWindow();
+  runShim(a.w, a.BC);
+  a.w.localStorage.setItem("spec-theme", "dark");
+  expect(a.w.localStorage.getItem("spec-theme")).toBe("dark");
+  // a SECOND frame (fresh shim run) shares nothing — its own in-memory store starts empty.
+  const b = opaqueWindow();
+  runShim(b.w, b.BC);
+  expect(b.w.localStorage.getItem("spec-theme")).toBeNull();
+});
+
+test("AS-025: the shim is not bridged — it never reaches the parent/app origin", () => {
+  // a non-bridged shim has no channel OUT of the frame: no parent reference, no MessageChannel.
+  // (the BroadcastChannel stub's own postMessage is a no-op on a fake object, not a bridge.)
+  expect(STORAGE_SHIM).not.toContain("parent");
+  expect(STORAGE_SHIM).not.toContain("MessageChannel");
+  expect(STORAGE_SHIM).not.toContain(".port");
+});
+
+test("AS-026: an unshimmed capability (indexedDB) still degrades without taking down the shimmed ones", () => {
+  const { w, BC } = opaqueWindow({ idbThrows: true });
+  runShim(w, BC);
+  // indexedDB is deliberately NOT stubbed (half-stub hangs/throws under wrapper libs) — still throws.
+  expect(() => w.indexedDB).toThrow();
+  // but the shimmed storage works — the shim did not crash on the unshimmed one.
+  expect(w.localStorage.getItem("x")).toBeNull();
+  w.localStorage.setItem("x", "1");
+  expect(w.localStorage.getItem("x")).toBe("1");
+});
+
+test("S-007: injectStorageShim PREPENDS the shim before the doc's own scripts (after <head>)", () => {
+  const doc = "<html><head><title>t</title></head><body><script>localStorage.getItem('x')</script></body></html>";
+  const out = injectStorageShim(doc, "n1");
+  const shimAt = out.indexOf("nonce=\"n1\"");
+  const docScriptAt = out.indexOf("localStorage.getItem('x')");
+  expect(shimAt).toBeGreaterThan(-1);
+  // the shim runs BEFORE the doc's own script — otherwise the head/body script already crashed.
+  expect(shimAt).toBeLessThan(docScriptAt);
+  // inserted just after the <head> open tag.
+  expect(out.indexOf("<head>")).toBeLessThan(shimAt);
+});
+
+test("S-007: injectStorageShim prepends before the first script when there is no <head>", () => {
+  const out = injectStorageShim("<p>hi</p><script>localStorage.x=1</script>", "n2");
+  expect(out.indexOf("nonce=\"n2\"")).toBeLessThan(out.indexOf("localStorage.x=1"));
+});
+
+test("S-007: the injected shim is static — identical regardless of the doc it wraps (no interpolation)", () => {
+  const a = injectStorageShim("<head></head><p>A</p>", "n");
+  const b = injectStorageShim("<head></head><div>completely different</div>", "n");
+  // extract the shim <script>…</script> from each — they must be byte-identical.
+  const grab = (s: string) => s.slice(s.indexOf("<script nonce=\"n\">"), s.indexOf("</script>") + 9);
+  expect(grab(a)).toBe(grab(b));
+  expect(STORAGE_SHIM).not.toContain("</script"); // static body needs no escaping, carries no close-tag
+});
+
+test("AS-026/C-010: the full serve keeps the opaque-origin CSP and never adds allow-same-origin", () => {
+  // regression guard: shim is injected into the serve path but the isolation CSP is unchanged.
+  const served = injectBridge(injectStorageShim(injectBlockIds("<head></head><p>x</p>"), "ng"), "ng");
+  expect(served).toContain("nonce=\"ng\""); // shim present
+  expect(CONTENT_SECURITY_POLICY).toContain("sandbox");
+  expect(CONTENT_SECURITY_POLICY).toContain("allow-scripts");
+  expect(CONTENT_SECURITY_POLICY).not.toContain("allow-same-origin");
+  expect(served).not.toContain("allow-same-origin");
+});

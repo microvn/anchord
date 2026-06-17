@@ -2,7 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { contentHeaders } from "./render/sandbox";
 import { injectBlockIds } from "./annotation/block-id";
-import { injectBridge, generateNonce } from "./annotation/sandbox-bridge";
+import { injectBridge, injectStorageShim, generateNonce } from "./annotation/sandbox-bridge";
 import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
 import { viewerDocRoutes, docViewerRoutes, type ViewerDocRoutesDeps, type DocViewerRoutesDeps } from "./routes/viewer-doc";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
@@ -351,8 +351,11 @@ export function createApp(deps: AppDeps) {
       // origin, not stripping). Adding `script-src 'nonce-…'` would also neutralize body
       // scripts, contradicting AS-006/AS-007 — deferred to a spec decision (S2 signal). The
       // nonce attribute is present now so that flip is a one-line CSP change later.
+      // S-007/C-010: PREPEND an in-memory client-storage shim BEFORE the doc's own scripts so a
+      // theme-toggle (etc.) that reads localStorage on load runs instead of crashing on the opaque
+      // origin. Per-frame, non-persistent, NOT bridged — does not weaken the opaque-origin isolation.
       const nonce = generateNonce();
-      const served = injectBridge(injectBlockIds(v.content), nonce);
+      const served = injectBridge(injectStorageShim(injectBlockIds(v.content), nonce), nonce);
       return new Response(served, { headers: contentHeaders() });
     });
   }

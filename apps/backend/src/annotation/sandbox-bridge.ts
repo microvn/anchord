@@ -713,6 +713,127 @@ export function injectBridge(html: string, nonce: string): string {
 }
 
 /**
+ * STORAGE_SHIM — render-publish S-007 / C-010. The doc's OWN scripts run on the opaque sandbox
+ * origin, where `localStorage` / `sessionStorage` / `caches` / `BroadcastChannel` THROW SecurityError
+ * on access. A theme-toggle that reads a saved preference on load thus crashes at its first storage
+ * read and aborts (the toggle dies). This shim replaces the THROWING capabilities with harmless,
+ * in-memory, per-frame stubs so the doc's scripts run.
+ *
+ * SECURITY (C-010): the store is a `Map` scoped to THIS frame's realm — values do not persist across
+ * a reload and are NEVER bridged to or readable at the app origin or any other doc. It grants a
+ * (possibly hostile) doc NOTHING it didn't already have (it can already run arbitrary JS + make its
+ * own objects in the isolated realm). It does NOT touch the iframe sandbox attribute or the response
+ * CSP — the opaque origin (no `allow-same-origin`) stays the isolation boundary. NEVER bridge this to
+ * the app's real `localStorage` (that would be an unbounded app-origin write + a cross-doc channel).
+ *
+ * SHAPE: a `Proxy` over the Map (not a plain object) so `localStorage['k']`, `localStorage.k = v`, and
+ * `'k' in localStorage` route to the store like the real `Storage` exotic object. Each `defineProperty`
+ * is wrapped in its own try/catch (a non-configurable `window.localStorage` on some engines would
+ * otherwise throw and abort the whole shim), and each stub installs only when the real capability
+ * actually throws (so a normal origin is untouched).
+ *
+ * NOT stubbed: `indexedDB`. A half-stub (`open()` returning `{onsuccess:null}`) silently never fires
+ * its callback and throws under the common `idb` wrapper libs — worse than letting it throw. A doc
+ * using IndexedDB degrades on its own (render-publish AS-026) without taking down the shimmed set.
+ *
+ * STATIC: this body has no interpolation — no doc-derived content, no XSS surface.
+ */
+export const STORAGE_SHIM = `(function(){
+  "use strict";
+  function memStorage(){
+    var m = new Map();
+    var api = {
+      getItem: function(k){ k = String(k); return m.has(k) ? m.get(k) : null; },
+      setItem: function(k, v){ m.set(String(k), String(v)); },
+      removeItem: function(k){ m.delete(String(k)); },
+      clear: function(){ m.clear(); },
+      key: function(i){ var ks = Array.from(m.keys()); return (i >= 0 && i < ks.length) ? ks[i] : null; }
+    };
+    return new Proxy(api, {
+      get: function(t, p){
+        if (p === "length") return m.size;
+        if (p in t) return t[p];
+        if (typeof p === "symbol") return undefined;
+        var k = String(p); return m.has(k) ? m.get(k) : undefined;
+      },
+      set: function(t, p, v){ if (p in t) return false; m.set(String(p), String(v)); return true; },
+      has: function(t, p){ return (p in t) || m.has(String(p)); },
+      deleteProperty: function(t, p){ m.delete(String(p)); return true; },
+      ownKeys: function(){ return Array.from(m.keys()); },
+      getOwnPropertyDescriptor: function(t, p){
+        if (m.has(String(p))) return { value: m.get(String(p)), writable: true, enumerable: true, configurable: true };
+        return undefined;
+      }
+    });
+  }
+  function def(name, value){
+    try { Object.defineProperty(window, name, { value: value, writable: true, configurable: true }); } catch (e) {}
+  }
+  // per-document + per-session storage — install only when the real API throws (opaque origin).
+  try { window.localStorage.getItem("__anchord_probe"); } catch (e) { def("localStorage", memStorage()); }
+  try { window.sessionStorage.getItem("__anchord_probe"); } catch (e) { def("sessionStorage", memStorage()); }
+  // the cache store — a benign no-op (every method resolves to empty), only if access throws.
+  try { void window.caches; } catch (e) {
+    function emptyCache(){
+      return {
+        match: function(){ return Promise.resolve(undefined); },
+        add: function(){ return Promise.resolve(); },
+        addAll: function(){ return Promise.resolve(); },
+        put: function(){ return Promise.resolve(); },
+        delete: function(){ return Promise.resolve(false); },
+        keys: function(){ return Promise.resolve([]); }
+      };
+    }
+    def("caches", {
+      open: function(){ return Promise.resolve(emptyCache()); },
+      match: function(){ return Promise.resolve(undefined); },
+      has: function(){ return Promise.resolve(false); },
+      delete: function(){ return Promise.resolve(false); },
+      keys: function(){ return Promise.resolve([]); }
+    });
+  }
+  // the cross-tab channel — a no-op class, only if the real constructor throws.
+  try { var __probeBC = new BroadcastChannel("__anchord_probe"); __probeBC.close(); } catch (e) {
+    function FakeBroadcastChannel(name){ this.name = String(name); this.onmessage = null; this.onmessageerror = null; }
+    FakeBroadcastChannel.prototype.postMessage = function(){};
+    FakeBroadcastChannel.prototype.close = function(){};
+    FakeBroadcastChannel.prototype.addEventListener = function(){};
+    FakeBroadcastChannel.prototype.removeEventListener = function(){};
+    FakeBroadcastChannel.prototype.dispatchEvent = function(){ return false; };
+    def("BroadcastChannel", FakeBroadcastChannel);
+  }
+})();`;
+
+/**
+ * injectStorageShim — render-publish S-007. PREPEND the storage shim so it runs BEFORE the doc's own
+ * scripts (unlike `injectBridge`, which APPENDS the bridge after </body> — too late, a head/early
+ * body script would already have crashed). Insertion point, in order of preference: just after the
+ * first `<head…>` open tag → before the first `<script` → after the first `<body…>` / `<html…>` open
+ * → else the very start of the string. Best-effort on malformed input (mirrors injectBlockIds AS-022).
+ *
+ * The shim carries a `nonce` attribute like the bridge — inert under the current `sandbox allow-scripts`
+ * CSP, but load-bearing if a future spec flips to `script-src 'nonce-…'` (render/sandbox.ts note).
+ */
+export function injectStorageShim(html: string, nonce: string): string {
+  const body = STORAGE_SHIM.replace(/<\/(script)/gi, "<\\/$1");
+  const tag = `<script nonce="${escapeAttr(nonce)}">${body}</script>`;
+  const insertAfter = (re: RegExp): string | null => {
+    const m = re.exec(html);
+    if (!m) return null;
+    const at = m.index + m[0].length;
+    return html.slice(0, at) + tag + html.slice(at);
+  };
+  // after <head> open — earliest point that still precedes head scripts.
+  const afterHead = insertAfter(/<head[^>]*>/i);
+  if (afterHead) return afterHead;
+  // else immediately before the doc's first <script> so the shim runs first.
+  const firstScript = /<script[\s/>]/i.exec(html);
+  if (firstScript) return html.slice(0, firstScript.index) + tag + html.slice(firstScript.index);
+  // else after <body>/<html> open, else prepend to the raw string.
+  return insertAfter(/<body[^>]*>/i) ?? insertAfter(/<html[^>]*>/i) ?? tag + html;
+}
+
+/**
  * MARK_STYLESHEET — the `.anno-mark` rule set injected into the served iframe so a drawn highlight
  * reads in the app's visual language inside the opaque sandbox (S-001 / C-003).
  *
