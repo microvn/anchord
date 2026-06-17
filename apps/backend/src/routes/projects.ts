@@ -215,7 +215,7 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
             title: d.title,
             kind: d.kind,
             version: d.latestVersion,
-            commentCount: d.commentCount,
+            annotationCount: d.annotationCount,
             authorName: d.ownerName,
             status,
           };

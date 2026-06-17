@@ -3,7 +3,7 @@ import { FORMAT_META, type DocKind, type DocStatus } from "@/features/docs/types
 
 // Shared presentational bits for the doc browse surfaces, 1:1 with Anchord-Design's
 // FormatBadge / .doc-fmt / .doc-fmt-tag + the columnar row cells (.doc-ver / .doc-comments /
-// .status-tag). The docs-list endpoint now returns version + commentCount + authorName +
+// .status-tag). The docs-list endpoint now returns version + annotationCount + authorName +
 // status, so these columns carry real values.
 
 /** The teal rounded format glyph (Anchord-Design `.doc-fmt` / `.doc-card-fmt`). */
@@ -42,13 +42,18 @@ export function VersionTag({ version }: { version: number }) {
   );
 }
 
-/** The comment-count cell (✉ N), `.doc-comments`. Faint when zero. */
-export function CommentCount({ count }: { count: number }) {
+/**
+ * The active-annotation-count cell, `.doc-comments`. Faint when zero. Shows the doc's
+ * ACTIVE-annotation count (workspace-project-ui S-007 / C-006) beside an ANNOTATION icon
+ * (the pencil glyph) — never an envelope/comment/mail icon: the count is annotations, not
+ * the comment total across threads.
+ */
+export function AnnotationCount({ count }: { count: number }) {
   return (
     <span
       className={`inline-flex items-center gap-[5px] text-[12.5px] tabular-nums ${count > 0 ? "text-muted" : "text-faint"}`}
     >
-      <Icon name="inbox" size={13} />
+      <Icon name="pencil" size={13} />
       {count}
     </span>
   );

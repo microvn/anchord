@@ -21,3 +21,8 @@
 [ ] AS-017 — notifications: failed load does not break the bell                      | owner: S-005 (DEFERRED — GAP-001)
 [ ] AS-018 — AccessIndicator reflects general_access                                 | owner: S-006 (DEFERRED — GAP-002)
 [ ] C-004  — unread badge = unread count; no faked count                             | owner: S-005 (DEFERRED — GAP-001)
+[x] AS-019.T1 — docsInProject returns annotationCount=3 (not 7) → projects.itest.ts "AS-019/C-006…" | owner: S-007
+[x] AS-019.T2 — soft-deleted annotation excluded (not 4) → projects.itest.ts "AS-019/C-006…"        | owner: S-007
+[x] AS-019.T3 — AnnotationCount renders count + pencil (non-envelope) icon → doc-bits.test.tsx "AS-019.T3" | owner: S-007
+[x] AS-020 — tile "Annotations" sums annotationCount=12 → workspace-home.test.tsx "AS-020/C-006…"   | owner: S-007
+[x] C-006  — active-annotation metric + annotation icon, no envelope → doc-bits.test.tsx + projects.itest.ts AS-019/C-006 | owner: S-007

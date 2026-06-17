@@ -156,12 +156,12 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     const docA: ProjectDocRow = {
       id: "dA", slug: "doc-a", title: "Secret A", kind: "markdown",
       ownerId: "u_a", generalAccess: "restricted",
-      latestVersion: 1, commentCount: 0, ownerName: "Alice",
+      latestVersion: 1, annotationCount: 0, ownerName: "Alice",
     };
     const docB: ProjectDocRow = {
       id: "dB", slug: "doc-b", title: "Shared B", kind: "markdown",
       ownerId: "u_a", generalAccess: "anyone_in_workspace",
-      latestVersion: 3, commentCount: 5, ownerName: "Alice",
+      latestVersion: 3, annotationCount: 5, ownerName: "Alice",
     };
     const ctx = fakeCtx({
       docs: new Map([["p_1", [docA, docB]]]),
@@ -172,11 +172,11 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     const json = (await res.json()) as any;
     const ids = json.data.docs.map((d: any) => d.id);
     expect(ids).toEqual(["dB"]);
-    // The browse columns surface for the visible doc: version/commentCount/author/status.
+    // The browse columns surface for the visible doc: version/annotationCount/author/status.
     expect(json.data.docs[0]).toMatchObject({
       id: "dB",
       version: 3,
-      commentCount: 5,
+      annotationCount: 5,
       authorName: "Alice",
       status: "live", // anyone_in_workspace → shared → live
     });

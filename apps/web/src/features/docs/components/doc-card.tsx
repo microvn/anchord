@@ -1,11 +1,11 @@
 import { Link } from "react-router-dom";
-import { FormatBadge, MetaDot, VersionTag, CommentCount, StatusTag } from "./doc-bits";
+import { FormatBadge, MetaDot, VersionTag, AnnotationCount, StatusTag } from "./doc-bits";
 import { DocMoreMenu } from "./move-copy-dialog";
 import { FORMAT_META, type DocRow, type ProjectRow } from "@/features/docs/types";
 
 // DocCard — the grid tile in the All-docs browser, 1:1 with Anchord-Design's DocCard
 // (.doc-card: top row [format glyph · ver · ⋯], body [title · project · author], foot
-// [format label · spacer · ✉ comments · status]). Version/commentCount/author/status now
+// [format label · spacer · ✎ annotations · status]). Version/annotationCount/author/status now
 // come from the docs-list endpoint, so the card carries real metadata. When `workspaceId` +
 // `projects` are supplied (the browse screen), a ⋯ more-menu offers Move / Copy (S-001).
 
@@ -50,7 +50,7 @@ export function DocCard({
         )}
       </div>
       <div className="flex items-center gap-[9px] border-t border-line px-[14px] py-[10px]">
-        <CommentCount count={doc.commentCount} />
+        <AnnotationCount count={doc.annotationCount} />
         <span className="ml-auto">
           <StatusTag status={doc.status} />
         </span>

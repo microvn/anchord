@@ -123,6 +123,28 @@ describe("workspace-project S-003 — workspace dashboard", () => {
     expect(screen.getByTestId("doc-row-rfc")).toHaveTextContent("Render + publish pipeline RFC");
   });
 
+  it("AS-020/C-006: the overview tile is labelled 'Annotations' and sums per-doc annotationCount (12)", async () => {
+    projects = env({
+      projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }],
+    });
+    docsByProject.p1 = env({
+      docs: [
+        { id: "d1", slug: "a", title: "A", kind: "markdown", annotationCount: 5 },
+        { id: "d2", slug: "b", title: "B", kind: "markdown", annotationCount: 4 },
+        { id: "d3", slug: "c", title: "C", kind: "markdown", annotationCount: 3 },
+      ],
+    });
+
+    render(<App />);
+
+    // The tile is the "Annotations" stat (NOT "Comments"), and it reads the 5+4+3 = 12 sum.
+    const tile = await waitFor(() => screen.getByTestId("stat-annotations"));
+    expect(tile).toHaveTextContent("Annotations");
+    expect(tile).toHaveTextContent("12");
+    // The old "Comments" tile is gone.
+    expect(screen.queryByTestId("stat-comments")).not.toBeInTheDocument();
+  });
+
   it("a workspace with zero docs shows the EmptyState (not a doc list)", async () => {
     projects = env({
       projects: [{ id: "p1", name: "default", isDefault: true, archived: false }],

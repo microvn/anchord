@@ -2,7 +2,7 @@
 // These mirror the EXACT wire shapes the mounted routes return — read
 // apps/backend/src/routes/{projects,docs,search}.ts. We deliberately model ONLY the
 // fields the backend actually exposes today; the Anchord-Design DocCard shows richer
-// metadata (version/author/access/detached/commentCount) that no mounted endpoint
+// metadata (version/author/access/detached/annotationCount) that no mounted endpoint
 // surfaces yet, so those are rendered when present and omitted otherwise (never faked).
 
 /** A doc's source format. Backend field is `kind`; the design calls the chip a "format". */
@@ -19,8 +19,8 @@ export interface DocRow {
   kind: DocKind;
   /** Highest published version number (0 when nothing is published yet). */
   version: number;
-  /** Total comments across the doc's annotations. */
-  commentCount: number;
+  /** Active annotation count (annotations whose soft-delete tombstone is unset). */
+  annotationCount: number;
   /** The first-publisher's display name (null for a seeded/owner-less doc). */
   authorName: string | null;
   /** live (shared beyond restricted) / draft (restricted). */

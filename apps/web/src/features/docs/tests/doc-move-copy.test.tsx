@@ -43,7 +43,7 @@ const DOC: DocRow = {
   title: "Auth Spec",
   kind: "markdown",
   version: 1,
-  commentCount: 0,
+  annotationCount: 0,
   authorName: "Me",
   status: "draft",
   projectId: "p-bill",

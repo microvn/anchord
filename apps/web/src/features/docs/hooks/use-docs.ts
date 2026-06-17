@@ -22,7 +22,7 @@ interface ProjectsResult {
 interface ProjectDocsResult {
   docs: Pick<
     DocRow,
-    "id" | "slug" | "title" | "kind" | "version" | "commentCount" | "authorName" | "status"
+    "id" | "slug" | "title" | "kind" | "version" | "annotationCount" | "authorName" | "status"
   >[];
 }
 interface SearchResult {

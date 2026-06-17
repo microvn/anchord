@@ -1,14 +1,14 @@
 import { Link } from "react-router-dom";
-import { FormatBadge, FormatTag, MetaDot, VersionTag, CommentCount, StatusTag } from "./doc-bits";
+import { FormatBadge, FormatTag, MetaDot, VersionTag, AnnotationCount, StatusTag } from "./doc-bits";
 import { DocMoreMenu } from "./move-copy-dialog";
 import type { DocRow, ProjectRow } from "@/features/docs/types";
 
 // The "Documents · Recent" list rows on the dashboard + the All-docs list view, 1:1 with
 // Anchord-Design's DocList (.list wrapper of .doc-row). Each row is COLUMNAR
 // (grid 30px 1fr 70px 96px 96px, the design's exact track sizes):
-//   [format glyph] · (title + "FORMAT · project · author" subline) · version · ✉ comments · status
-// All columns are real: version + commentCount + authorName + status now come from the
-// docs-list endpoint. On narrow widths the version + comments columns drop (design @720px).
+//   [format glyph] · (title + "FORMAT · project · author" subline) · version · ✎ annotations · status
+// All columns are real: version + annotationCount + authorName + status now come from the
+// docs-list endpoint. On narrow widths the version + annotation columns drop (design @720px).
 
 export function DocList({
   docs,
@@ -58,9 +58,9 @@ export function DocList({
           <span className="hidden justify-self-start sm:block">
             <VersionTag version={d.version} />
           </span>
-          {/* comments — hidden below sm. */}
+          {/* annotations — hidden below sm. */}
           <span className="hidden justify-end sm:flex">
-            <CommentCount count={d.commentCount} />
+            <AnnotationCount count={d.annotationCount} />
           </span>
           {/* status — always visible, right-aligned; the ⋯ menu rides alongside it. */}
           <span className="flex items-center justify-end gap-1">

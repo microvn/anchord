@@ -207,7 +207,7 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
       title: "Auth Spec",
       kind: "markdown" as const,
       version: 1,
-      commentCount: 0,
+      annotationCount: 0,
       authorName: "Me",
       status: "draft" as const,
       projectId: "p-bill",

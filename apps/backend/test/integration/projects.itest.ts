@@ -26,7 +26,10 @@ import { docs, projects, user as userTable } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
-import { createProjectRepo } from "../../src/workspace/repo";
+import { createProjectRepo, createProjectsRouteRepo } from "../../src/workspace/repo";
+import { createDocRepo } from "../../src/publish/repo";
+import { annotations, comments } from "../../src/db/schema";
+import { seedWorkspace } from "./harness";
 import { createTenancyRepo, createWorkspaceAccess } from "../../src/workspace/tenancy-repo";
 import { createResolveAccess } from "../../src/sharing/resolve-access";
 import { createResolveDocRole, createIsDocOwner } from "../../src/sharing/resolve-doc-role-repo";
@@ -231,6 +234,65 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
       .from(projects)
       .where(and(eq(projects.ownerId, A.userId), eq(projects.isDefault, true)));
     expect(row!.projectId).toBe(def!.id);
+  });
+
+  // workspace-project-ui S-007 (AS-019 / C-006): docsInProject must count a doc's ACTIVE
+  // annotations (deletedAt IS NULL), NOT the comment total across its annotation threads.
+  // Seed: 3 active annotations on one doc, one of which carries 4 reply comments (7 comments
+  // total), PLUS 1 soft-deleted annotation. The row's annotationCount must read 3.
+  test("AS-019/C-006: docsInProject counts ACTIVE annotations (3), not comments (7), excluding soft-deleted", async () => {
+    // A standalone user + workspace + project + doc seeded directly (no auth round-trip needed
+    // to exercise the repo's aggregation SQL).
+    const [u] = await h.db
+      .insert(userTable)
+      .values({
+        id: `u-s007-${process.pid}`,
+        name: "Counter",
+        email: `s007-${process.pid}@itest.local`,
+        emailVerified: true,
+      })
+      .returning({ id: userTable.id });
+    const seeded = await seedWorkspace(h.db, { userId: u!.id, withProject: true });
+    const projectId = seeded.projectId!;
+
+    const { id: docId } = await createDocRepo(h.db).createDocWithV1({
+      slug: `s007-doc-${process.pid}`,
+      title: "Annotation Count Doc",
+      kind: "markdown",
+      content: "# body",
+      contentHash: `hash-s007-${process.pid}`,
+      ownerId: u!.id,
+      projectId,
+    });
+
+    // 3 ACTIVE annotations (deletedAt null).
+    const active = await h.db
+      .insert(annotations)
+      .values([
+        { docId, type: "range", anchor: {} },
+        { docId, type: "range", anchor: {} },
+        { docId, type: "range", anchor: {} },
+      ])
+      .returning({ id: annotations.id });
+    // 1 SOFT-DELETED annotation (deletedAt set) — must NOT be counted.
+    await h.db
+      .insert(annotations)
+      .values({ docId, type: "range", anchor: {}, deletedAt: new Date() });
+
+    // Pile 7 comments onto the FIRST active annotation (a root + replies) so the old
+    // comment-count metric would read 7 — proving the new metric is annotations, not comments.
+    const a0 = active[0]!.id;
+    await h.db.insert(comments).values(
+      Array.from({ length: 7 }, (_, i) => ({ annotationId: a0, body: `c${i}` })),
+    );
+
+    const rows = await createProjectsRouteRepo(h.db).docsInProject(projectId);
+    const row = rows.find((r) => r.id === docId);
+    expect(row).toBeTruthy();
+    // AS-019.T1: active-annotation count, not the 7 comment total.
+    expect(row!.annotationCount).toBe(3);
+    // AS-019.T2: the soft-deleted annotation is excluded (else this would be 4).
+    expect(row!.annotationCount).not.toBe(4);
   });
 
   test("publish with a supplied-but-invalid projectId → 404 (never silent-default)", async () => {

@@ -5,7 +5,7 @@
 // (now workspace-scoped), and the browse-context repo (isInvited + docsInProject).
 
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { annotations, comments, docs, docVersions, projects, user } from "../db/schema";
+import { annotations, docs, docVersions, projects, user } from "../db/schema";
 import type { DB } from "../db/client";
 import { ensureDefaultProject, ProjectRejected, type ProjectRepo, type ProjectRow } from "./projects";
 import { activeRolesFor } from "../sharing/doc-member-repo";
@@ -113,10 +113,11 @@ export interface ProjectDocRow {
   generalAccess: "restricted" | "anyone_in_workspace" | "anyone_with_link";
   // Browse columns (workspace-project dashboard rows, Anchord-Design columnar layout).
   // Derived in one query via correlated subqueries — no N+1. Honest values: latestVersion is
-  // the doc's highest published version number (0 if none yet); commentCount counts every
-  // comment across the doc's annotations; ownerName is the first-publisher's display name.
+  // the doc's highest published version number (0 if none yet); annotationCount counts the
+  // doc's ACTIVE annotations (deleted_at IS NULL — soft-deleted tombstones excluded, per
+  // workspace-project-ui S-007 / C-006); ownerName is the first-publisher's display name.
   latestVersion: number;
-  commentCount: number;
+  annotationCount: number;
   ownerName: string | null;
 }
 
@@ -140,16 +141,18 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
     },
     async docsInProject(projectId): Promise<ProjectDocRow[]> {
       // Correlated subqueries keep this a single round-trip (no per-doc fan-out): the latest
-      // published version, the total comment count across the doc's annotations, and the
-      // first-publisher's display name. COALESCE keeps version/count numeric (0) when absent.
+      // published version, the count of ACTIVE annotations on the doc, and the first-
+      // publisher's display name. COALESCE keeps version/count numeric (0) when absent.
+      // workspace-project-ui S-007 / C-006: count the doc's ACTIVE annotations (deleted_at
+      // IS NULL — soft-deleted ones excluded), NOT the comment total across its threads.
       const latestVersion = sql<number>`coalesce((
         select max(${docVersions.version}) from ${docVersions}
         where ${docVersions.docId} = ${docs.id}
       ), 0)`;
-      const commentCount = sql<number>`coalesce((
-        select count(*) from ${comments}
-        join ${annotations} on ${annotations.id} = ${comments.annotationId}
+      const annotationCount = sql<number>`coalesce((
+        select count(*) from ${annotations}
         where ${annotations.docId} = ${docs.id}
+          and ${annotations.deletedAt} is null
       ), 0)`;
       const rows = await db
         .select({
@@ -160,7 +163,7 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
           ownerId: docs.ownerId,
           generalAccess: docs.generalAccess,
           latestVersion,
-          commentCount,
+          annotationCount,
           ownerName: user.name,
         })
         .from(docs)
@@ -170,7 +173,7 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
       return rows.map((r) => ({
         ...r,
         latestVersion: Number(r.latestVersion),
-        commentCount: Number(r.commentCount),
+        annotationCount: Number(r.annotationCount),
       }));
     },
   };

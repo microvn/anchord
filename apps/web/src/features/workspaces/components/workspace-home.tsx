@@ -18,8 +18,8 @@ import { ErrorState } from "@/components/error-state";
 // Wired to real data: useWorkspaceDocs (the union of access-filtered docs across the
 // workspace's projects — no workspace-wide list endpoint exists) drives the DOCS + PROJECTS
 // counts + the recent list. MEMBERS is read from the admin-only directory when the caller is
-// an admin (else shown as "—"). COMMENTS has NO mounted aggregate or per-doc-count endpoint,
-// so it is shown as "—" rather than faked. EmptyState only when the workspace has 0 docs.
+// an admin (else shown as "—"). ANNOTATIONS sums the per-doc active-annotation count the
+// docs-list endpoint returns (S-007 / C-006). EmptyState only when the workspace has 0 docs.
 
 const RECENT_LIMIT = 6;
 
@@ -37,10 +37,11 @@ export function WorkspaceHome() {
     { k: "Docs", v: docsQuery.isPending ? "—" : String(docs.length) },
     { k: "Projects", v: docsQuery.isPending ? "—" : String(projects.length) },
     { k: "Members", v: memberCount == null ? "—" : String(memberCount) },
-    // Comments now sum the per-doc commentCount the docs-list endpoint returns.
+    // Annotations sum the per-doc active-annotation count the docs-list endpoint returns
+    // (workspace-project-ui S-007 / C-006 — the review unit, not the raw comment total).
     {
-      k: "Comments",
-      v: docsQuery.isPending ? "—" : String(docs.reduce((a, d) => a + (d.commentCount ?? 0), 0)),
+      k: "Annotations",
+      v: docsQuery.isPending ? "—" : String(docs.reduce((a, d) => a + (d.annotationCount ?? 0), 0)),
     },
   ];
 
