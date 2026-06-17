@@ -132,7 +132,12 @@ export function bridgeScript(nonce: string): string {
       if (ne > start && ns < end){
         var s = start > ns ? start - ns : 0;
         var e = end < ne ? end - ns : len;
-        if (e > s) segs.push({ node: n, s: s, e: e });
+        // Skip a whitespace-only slice. The newline+indent text node that sits BETWEEN block
+        // children (directly inside a dl / ul / grid container) would otherwise be wrapped in a mark
+        // that becomes a DIRECT child of that container — a stray grid/flex item that shifts every
+        // real child and shatters the layout (the AS-card grid bug), plus it renders an empty
+        // highlight bar. The markdown engine wrapRange (annotation-marks.tsx) skips these too.
+        if (e > s && n.textContent.slice(s, e).trim().length > 0) segs.push({ node: n, s: s, e: e });
       }
       pos = ne;
       if (ne >= end) break;

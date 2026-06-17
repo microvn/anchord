@@ -146,6 +146,33 @@ test("AS-002: the in-iframe draw applies class=anno-mark + the hue (data-anno-hu
   expect(script).toContain('setProperty("--mark-hue"');
 });
 
+test("C-006/layout: wrapTextRange skips whitespace-only nodes so a grid container's mark is never a stray grid item", () => {
+  // BUG: a cross-block highlight that spans a structured block (an AS card whose body is a CSS-grid
+  // <dl class="gwt">) used to wrap the whitespace text node sitting DIRECTLY inside the <dl> (the
+  // "\n      " between the grid's children). That <mark> became a direct child of the grid → a stray
+  // grid item that shifted every dt/dd by one cell and shattered the layout (+ rendered empty bars).
+  // The fix mirrors the markdown engine's wrapRange: never wrap a whitespace-only slice.
+  const src = bridgeScript("n-wrap");
+  const m = src.match(/function wrapTextRange\(el, start, end\)\{[\s\S]*?return marks\.length \? marks : null;\s*\}/);
+  expect(m).toBeTruthy();
+  const win = new Window();
+  win.document.body.innerHTML =
+    '<div id="b"><dl class="gwt">\n      <dt>Given</dt><dd>hello</dd>\n      <dt>When</dt><dd>world</dd>\n    </dl></div>';
+  const doc: any = win.document;
+  const wrapTextRange = new Function("document", "NodeFilter", `${m![0]} return wrapTextRange;`)(
+    doc,
+    (win as any).NodeFilter,
+  );
+  const block = doc.querySelector("#b");
+  wrapTextRange(block, 0, (block.textContent || "").length); // the cross-block segment wraps the WHOLE card
+  const dl = doc.querySelector("dl.gwt");
+  // No <mark> is a DIRECT child of the grid — otherwise it's a stray grid item.
+  const strayMarks = Array.from(dl.children).filter((c: any) => c.tagName === "MARK");
+  expect(strayMarks.length).toBe(0);
+  // The grid's direct children stay exactly the dt/dd pairs, in order (layout intact).
+  expect(Array.from(dl.children).map((c: any) => c.tagName)).toEqual(["DT", "DD", "DT", "DD"]);
+});
+
 test("C-001: the injected style does NOT weaken the sandbox CSP — inline <style> allowed, no same-origin/style-src", () => {
   expect(CONTENT_SECURITY_POLICY).toBe("sandbox allow-scripts");
   expect(CONTENT_SECURITY_POLICY).not.toContain("allow-same-origin");
