@@ -49,6 +49,24 @@ function selectionRect(sel: Selection | null): RectLike | null {
 
 let optimisticSeq = 0;
 
+/**
+ * Build the author attribution for an optimistic created annotation AND the no-refetch reconciled
+ * real row (both must match so there's no name/avatar flicker when the temp is swapped). A signed-in
+ * member uses their REAL session display name + durable `authorId` — so the rail shows the real name
+ * + avatar immediately and `isOwn` (authorId === currentUserId) matches without waiting for a
+ * refetch. A guest uses its self-entered name and carries NO authorId (a guest matches no signed-in
+ * user). The literal "You" is only a last-resort fallback for the rare window where a signed-in
+ * session's name has not resolved yet.
+ */
+export function optimisticAuthor(
+  currentUser: { id: string; name: string } | null | undefined,
+  guestIdentity: { guestName: string } | undefined,
+): { comment: { authorName?: string; guestName?: string }; authorId?: string } {
+  if (guestIdentity) return { comment: { guestName: guestIdentity.guestName } };
+  if (currentUser?.name) return { comment: { authorName: currentUser.name }, authorId: currentUser.id };
+  return { comment: { authorName: "You" } };
+}
+
 // S-003 (C-003 / challenge #9): the Like preset. Picking Like opens the composer pre-filled with the
 // preset's display text (editable) and creates a signal annotation carrying `label="looks-good"`.
 // Only `looks-good` matters for S-003 — the full preset set + LabelPicker are S-004's job.
@@ -133,6 +151,11 @@ export function useCompose(
   /** S-002: called after a successful create with the anchor + the real annotation id, so the
    *  screen can relay a highlight DOWN to the in-iframe bridge (the parent can't draw the mark). */
   onCreated?: (anchor: SelectionAnchor, annotationId: string) => void,
+  /** annotation-actions-ui S-001 (C-001): the signed-in session user (id + display name). Used to
+   *  attribute the optimistic + reconciled created annotation to the REAL author — real name/avatar
+   *  shown instantly + `authorId` set so `isOwn` matches without a refetch. Null/undefined for a
+   *  signed-out visitor (a guest send carries its own `guestIdentity` instead). */
+  currentUser?: { id: string; name: string } | null,
 ): ComposeApi {
   const [popover, setPopover] = useState<{ top: number; left: number; centered: boolean } | null>(null);
   const [active, setActive] = useState<SelectionAnchor | null>(null);
@@ -369,10 +392,14 @@ export function useCompose(
     }
     const tempId = `optimistic-${++optimisticSeq}`;
     const createdAt = new Date().toISOString();
+    // A redline is a signed-in member action (no guest path) → attribute it to the REAL session
+    // author + durable authorId so it reads as own immediately (the owner-decide gate keys on this).
+    const author = optimisticAuthor(currentUser, undefined);
     // The optimistic redline thread: type=suggestion + kind=delete + pending status, with its root
     // comment. The rail renders the DELETE card; the mark renders the red strike (kind=redline).
     const optimisticRedline: ViewerAnnotation = {
       id: tempId,
+      ...(author.authorId ? { authorId: author.authorId } : {}),
       type: "suggestion",
       status: "unresolved",
       isOrphaned: false,
@@ -389,7 +416,7 @@ export function useCompose(
         {
           id: `${tempId}-c`,
           parentId: null,
-          authorName: "You",
+          ...author.comment,
           // C-003: every annotation has a root comment. Redline's default is the deletion intent; the
           // backend rejects an empty body, so a concise non-empty default stands in (S3 guard).
           body: REDLINE_ROOT_BODY,
@@ -457,6 +484,7 @@ export function useCompose(
         }
         const real: ViewerAnnotation = {
           id: suggestionId,
+          ...(author.authorId ? { authorId: author.authorId } : {}),
           type: "suggestion",
           status: "unresolved",
           isOrphaned: false,
@@ -470,7 +498,7 @@ export function useCompose(
           suggestion: { kind: "delete", from: anchor.textSnippet, againstVersion: redlineCtx.version },
           suggestionStatus: "pending",
           comments: [
-            { id: peelCommentId(commented.data), parentId: null, authorName: "You", body: REDLINE_ROOT_BODY, createdAt },
+            { id: peelCommentId(commented.data), parentId: null, ...author.comment, body: REDLINE_ROOT_BODY, createdAt },
           ],
         };
         onCreatedAnnotation(real);
@@ -481,7 +509,7 @@ export function useCompose(
         setPending(false);
       }
     })();
-  }, [slug, docPaneEl, redlineCtx, onCreatedAnnotation]);
+  }, [slug, docPaneEl, redlineCtx, onCreatedAnnotation, currentUser?.id, currentUser?.name]);
 
   const send = useCallback(
     (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => {
@@ -500,16 +528,19 @@ export function useCompose(
       // visible timestamp jump when the temp is swapped for the real cache row).
       const createdAt = new Date().toISOString();
       // The author attribution is shared by the optimistic temp AND the reconciled real row: a
-      // guest's self-entered name (C-010) or "You" for a member. NOTE: "You" is a placeholder — the
-      // server's real display name only lands on a later genuine read; acceptable for the local echo.
-      const attribution = guestIdentity
-        ? { guestName: guestIdentity.guestName }
-        : { authorName: "You" };
+      // guest's self-entered name (C-010), or — for a signed-in member — the REAL session name +
+      // durable authorId, so the rail shows the real name/avatar immediately and `isOwn` matches
+      // without a refetch (the "You" placeholder bug). optimisticAuthor owns the precedence.
+      const author = optimisticAuthor(currentUser, guestIdentity);
+      const attribution = author.comment;
       const optimisticThread: ViewerAnnotation = {
         id: tempId,
         type: "range",
         status: "unresolved",
         isOrphaned: false,
+        // C-001: carry the durable authorId so the just-created thread reads as OWN immediately (the
+        // no-self-approve gate + own controls), not as a guest until a refetch. Absent for a guest.
+        ...(author.authorId ? { authorId: author.authorId } : {}),
         // S-003 (AS-010 / AS-011): a Like carries the label optimistically so the rail shows the 👍
         // "Looks good" row instantly; if the write is refused, the whole optimistic thread (label row
         // included) is rolled back (C-007). A plain comment has no label.
@@ -616,6 +647,9 @@ export function useCompose(
             type: "range",
             status: "unresolved",
             isOrphaned: false,
+            // C-001: same durable authorId as the optimistic temp so the reconciled (no-refetch) row
+            // keeps reading as OWN with the real name/avatar — no flip to guest/"You" on reconcile.
+            ...(author.authorId ? { authorId: author.authorId } : {}),
             // S-003: preserve the label on the reconciled real row so the rail keeps the 👍 row after
             // the optimistic temp is swapped out (no flicker of the label line).
             ...(label ? { label } : {}),
@@ -649,7 +683,7 @@ export function useCompose(
         }
       })();
     },
-    [active, slug, docPaneEl, composeLabel, onCreatedAnnotation, onCreated],
+    [active, slug, docPaneEl, composeLabel, onCreatedAnnotation, onCreated, currentUser?.id, currentUser?.name],
   );
 
   return {

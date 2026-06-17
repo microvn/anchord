@@ -177,6 +177,7 @@ export function ViewerScreen() {
       anonymous={!signedIn}
       // S-001 (C-001): the session user id for the rail's own-vs-others attribution.
       currentUserId={currentUserId}
+      currentUserName={session?.user?.name ?? null}
       onSignIn={goSignIn}
     />
   );
@@ -204,6 +205,7 @@ function ViewerShell({
   guest = false,
   anonymous = false,
   currentUserId = null,
+  currentUserName = null,
   onSignIn,
 }: {
   title: string;
@@ -236,6 +238,10 @@ function ViewerShell({
   /** annotation-actions-ui S-001 (C-001): the session user id, forwarded to the rail so each
    *  ThreadCard marks own-vs-others from the durable `authorId`. Null for an anon/guest. */
   currentUserId?: string | null;
+  /** annotation-actions-ui S-001 (C-001): the session user's display name — used to attribute an
+   *  optimistically-created annotation to the REAL author (real name + avatar shown instantly,
+   *  authorId set) instead of the "You" placeholder. Null for an anon/guest. */
+  currentUserName?: string | null;
 }) {
   const { drawerMode, tocDrawer } = useViewerLayoutMode();
   const navigate = useNavigate();
@@ -336,6 +342,10 @@ function ViewerShell({
       // consequence of the real annotation, never of the untrusted selection hint itself.
       if (isHtml) htmlFrameRef.current?.postHighlight(anchor, annotationId);
     },
+    // C-001: attribute an optimistic/reconciled create to the REAL signed-in author (real name +
+    // avatar + authorId) instead of the "You" placeholder. Null id/name for an anon/guest → the
+    // guest self-name path (or the "You" fallback) still applies.
+    currentUserId && currentUserName ? { id: currentUserId, name: currentUserName } : null,
   );
 
   // S-006 (C-009 / AS-020..023): the ACTIVE tool routes a text selection. useCompose raises
