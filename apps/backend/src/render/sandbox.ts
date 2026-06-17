@@ -27,6 +27,10 @@ export function contentHeaders(): Record<string, string> {
     "Content-Security-Policy": CONTENT_SECURITY_POLICY,
     "X-Content-Type-Options": "nosniff",
     "Content-Type": "text/html; charset=utf-8",
+    // The /v content is access-gated AND carries a per-request bridge nonce — it must never be
+    // cached (a stale cached copy would also mask a re-served fix, and could leak an authed render
+    // to a later request). no-store keeps the iframe always fresh.
+    "Cache-Control": "no-store",
   };
 }
 

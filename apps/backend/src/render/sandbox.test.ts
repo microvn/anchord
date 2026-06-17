@@ -10,6 +10,8 @@ test("AS-007 / C-001: content is served with a CSP sandbox header that forces an
   const h = contentHeaders();
   expect(h["Content-Security-Policy"]).toBe(CONTENT_SECURITY_POLICY);
   expect(h["X-Content-Type-Options"]).toBe("nosniff");
+  // Access-gated + per-request nonce → never cache (a stale iframe copy must not mask a re-served fix).
+  expect(h["Cache-Control"]).toBe("no-store");
 });
 
 test("AS-006 / C-001: the viewer iframe runs scripts but is NOT same-origin", () => {
