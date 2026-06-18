@@ -76,6 +76,7 @@ function App() {
 // A browse doc row carries status/access/format/timestamps so the faceted filter (S-002) can
 // partition it. Tests override only the axes they care about.
 const docRow = (d: Record<string, unknown>) => ({
+  kind: "markdown",
   version: 1,
   annotationCount: 0,
   authorName: "Me",
@@ -193,6 +194,44 @@ describe("workspace-project-browse S-002 — faceted filter on All-docs", () => 
     await userEvent.click(screen.getByTestId("facet-status-draft"));
     expect(await screen.findByRole("button", { name: /clear/i })).toBeInTheDocument();
     expect(screen.queryByTestId("doc-card-spec")).not.toBeInTheDocument();
+  });
+});
+
+// ── workspace-project-browse S-003 — sort (integration on All-docs) ─────────────────────────
+// The comparator is unit-tested in lib/doc-filter.test.ts (AS-012/013/014). This asserts the Sort
+// control on the bar reorders the rendered grid (AS-012 default Updated-desc, AS-013 Title A→Z).
+const slugOrder = () =>
+  Array.from(document.querySelectorAll('[data-testid^="doc-card-"]')).map((el) =>
+    el.getAttribute("data-testid")!.replace("doc-card-", ""),
+  );
+
+describe("workspace-project-browse S-003 — sort on All-docs", () => {
+  beforeEach(() => {
+    // Updated order (desc) is webhook, auth, calendar — deliberately NOT alphabetical, so the
+    // Title sort visibly reorders.
+    docsByProject.p1 = env({
+      docs: [
+        docRow({ id: "d1", slug: "webhook", title: "Webhook", updatedAt: "2026-06-18T00:00:00.000Z" }),
+        docRow({ id: "d2", slug: "auth", title: "Auth", updatedAt: "2026-06-10T00:00:00.000Z" }),
+        docRow({ id: "d3", slug: "calendar", title: "Calendar", updatedAt: "2026-06-01T00:00:00.000Z" }),
+      ],
+    });
+  });
+
+  it("AS-012: the default order is most-recently-updated first", async () => {
+    render(<App />);
+    await screen.findByTestId("doc-card-webhook");
+    // Updated desc: webhook (06-18), auth (06-10), calendar (06-01).
+    expect(slugOrder()).toEqual(["webhook", "auth", "calendar"]);
+  });
+
+  it("AS-013/C-007: choosing Sort = Title reorders the grid A→Z", async () => {
+    render(<App />);
+    await screen.findByTestId("doc-card-webhook");
+    expect(slugOrder()).toEqual(["webhook", "auth", "calendar"]); // updated-desc default
+    await userEvent.selectOptions(screen.getByTestId("doc-sort"), "title");
+    // Title A→Z: Auth, Calendar, Webhook — different from the default updated order.
+    await waitFor(() => expect(slugOrder()).toEqual(["auth", "calendar", "webhook"]));
   });
 });
 

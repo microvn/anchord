@@ -6,6 +6,7 @@ import {
   accessCounts,
   updatedCounts,
   isFilterActive,
+  sortDocs,
   ALL_STATUS,
   ALL_FORMAT,
   ALL_ACCESS,
@@ -103,6 +104,34 @@ describe("doc-filter — dynamic counts (C-004)", () => {
 
   it("AS-008: updated-window counts nest (7d ⊆ 30d ⊆ any)", () => {
     expect(updatedCounts(DOCS, all.s, all.f, all.a, NOW)).toEqual({ any: 5, "7d": 2, "30d": 4 });
+  });
+});
+
+describe("doc-filter — sort (C-007: Updated/Created desc, Title asc)", () => {
+  // Distinct created vs updated orderings so a wrong key is caught.
+  const SORT_DOCS: DocRow[] = [
+    doc({ id: "webhook", title: "Webhook", createdAt: daysAgo(2), updatedAt: daysAgo(30) }),
+    doc({ id: "auth", title: "Auth", createdAt: daysAgo(30), updatedAt: daysAgo(1) }),
+    doc({ id: "calendar", title: "Calendar", createdAt: daysAgo(10), updatedAt: daysAgo(10) }),
+  ];
+
+  it("AS-012: Updated orders most-recently-updated first (the default key)", () => {
+    // updated: auth(1) < calendar(10) < webhook(30) ago → auth, calendar, webhook.
+    expect(sortDocs(SORT_DOCS, "updated").map((d) => d.id)).toEqual(["auth", "calendar", "webhook"]);
+  });
+
+  it("AS-014: Created orders by creation time, newest first", () => {
+    // created: webhook(2) < calendar(10) < auth(30) ago → webhook, calendar, auth.
+    expect(sortDocs(SORT_DOCS, "created").map((d) => d.id)).toEqual(["webhook", "calendar", "auth"]);
+  });
+
+  it("AS-013: Title orders alphabetically A→Z", () => {
+    expect(sortDocs(SORT_DOCS, "title").map((d) => d.id)).toEqual(["auth", "calendar", "webhook"]);
+  });
+
+  it("a row missing the timestamp sorts last under Updated/Created", () => {
+    const withMissing: DocRow[] = [doc({ id: "dated", updatedAt: daysAgo(5) }), doc({ id: "undated", updatedAt: undefined })];
+    expect(sortDocs(withMissing, "updated").map((d) => d.id)).toEqual(["dated", "undated"]);
   });
 });
 

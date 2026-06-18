@@ -156,6 +156,25 @@ describe("workspace-project-browse S-001 — per-project doc browse", () => {
     expect(screen.queryByTestId("doc-grid")).not.toBeInTheDocument();
   });
 
+  it("AS-015/C-007: the chosen sort applies to a per-project view too (Title A→Z)", async () => {
+    // Insertion order webhook, auth, calendar (NOT alphabetical) → Title sort must reorder.
+    docsByProject.p1 = env({
+      docs: [
+        { ...mkDocs(["webhook"])[0], title: "Webhook" },
+        { ...mkDocs(["auth"])[0], title: "Auth" },
+        { ...mkDocs(["calendar"])[0], title: "Calendar" },
+      ],
+    });
+    const slugOrder = () =>
+      Array.from(document.querySelectorAll('[data-testid^="doc-card-"]')).map((el) =>
+        el.getAttribute("data-testid")!.replace("doc-card-", ""),
+      );
+    render(<App initial="/w/ws-acme/projects/p1" />);
+    await screen.findByTestId("doc-card-webhook");
+    await userEvent.selectOptions(screen.getByTestId("doc-sort"), "title");
+    await waitFor(() => expect(slugOrder()).toEqual(["auth", "calendar", "webhook"]));
+  });
+
   it("AS-011/C-005: the same faceted filter narrows a per-project view (deselect HTML)", async () => {
     docsByProject.p1 = env({
       docs: [
