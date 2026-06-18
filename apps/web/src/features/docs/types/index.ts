@@ -11,6 +11,9 @@ export type DocKind = "html" | "markdown" | "image";
 /** A doc's published state, derived from general_access on the backend. */
 export type DocStatus = "live" | "draft";
 
+/** A doc's general-access level (who can reach it without an explicit per-doc role). */
+export type GeneralAccess = "restricted" | "anyone_in_workspace" | "anyone_with_link";
+
 /** A doc as the project-docs browse endpoint returns it (GET …/projects/:id/docs → data.docs[]). */
 export interface DocRow {
   id: string;
@@ -25,6 +28,9 @@ export interface DocRow {
   authorName: string | null;
   /** live (shared beyond restricted) / draft (restricted). */
   status: DocStatus;
+  /** The raw general-access level — drives the per-card AccessIndicator (S-006/AS-018).
+   *  `status` collapses link vs workspace into "live"; this keeps the 3-way distinction. */
+  generalAccess: GeneralAccess;
   /** Filled in by the workspace docs aggregator: the project this doc belongs to. */
   projectId?: string;
   /** The project's display name (joined client-side from the projects list). */
@@ -62,4 +68,12 @@ export const FORMAT_META: Record<DocKind, { label: string; icon: string }> = {
   markdown: { label: "MD", icon: "docs" },
   html: { label: "HTML", icon: "link" },
   image: { label: "IMG", icon: "docs" },
+};
+
+/** The per-card access indicator label + Anchord-Design icon for a general-access level
+ *  (S-006/AS-018). restricted → shield; anyone_in_workspace → people; anyone_with_link → link. */
+export const ACCESS_META: Record<GeneralAccess, { label: string; icon: string }> = {
+  restricted: { label: "Restricted", icon: "shield" },
+  anyone_in_workspace: { label: "Workspace", icon: "members" },
+  anyone_with_link: { label: "Link", icon: "link" },
 };

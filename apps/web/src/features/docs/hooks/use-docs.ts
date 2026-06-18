@@ -40,7 +40,15 @@ interface ProjectsResult {
 interface ProjectDocsResult {
   docs: Pick<
     DocRow,
-    "id" | "slug" | "title" | "kind" | "version" | "annotationCount" | "authorName" | "status"
+    | "id"
+    | "slug"
+    | "title"
+    | "kind"
+    | "version"
+    | "annotationCount"
+    | "authorName"
+    | "status"
+    | "generalAccess"
   >[];
   pagination?: PaginationMeta;
 }

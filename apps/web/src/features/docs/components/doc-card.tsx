@@ -1,5 +1,12 @@
 import { Link } from "react-router-dom";
-import { FormatBadge, MetaDot, VersionTag, AnnotationCount, StatusTag } from "./doc-bits";
+import {
+  FormatBadge,
+  MetaDot,
+  VersionTag,
+  AnnotationCount,
+  AccessIndicator,
+  StatusTag,
+} from "./doc-bits";
 import { DocMoreMenu } from "./move-copy-dialog";
 import { FORMAT_META, type DocRow, type ProjectRow } from "@/features/docs/types";
 
@@ -50,6 +57,8 @@ export function DocCard({
         )}
       </div>
       <div className="flex items-center gap-[9px] border-t border-line px-[14px] py-[10px]">
+        <AccessIndicator access={doc.generalAccess} />
+        <MetaDot />
         <AnnotationCount count={doc.annotationCount} />
         <span className="ml-auto">
           <StatusTag status={doc.status} />

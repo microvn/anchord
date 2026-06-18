@@ -1,5 +1,11 @@
 import { Icon } from "@/components/icon";
-import { FORMAT_META, type DocKind, type DocStatus } from "@/features/docs/types";
+import {
+  ACCESS_META,
+  FORMAT_META,
+  type DocKind,
+  type DocStatus,
+  type GeneralAccess,
+} from "@/features/docs/types";
 
 // Shared presentational bits for the doc browse surfaces, 1:1 with Anchord-Design's
 // FormatBadge / .doc-fmt / .doc-fmt-tag + the columnar row cells (.doc-ver / .doc-comments /
@@ -55,6 +61,22 @@ export function AnnotationCount({ count }: { count: number }) {
     >
       <Icon name="highlight" size={13} />
       {count}
+    </span>
+  );
+}
+
+/**
+ * The per-card access indicator (S-006/AS-018), 1:1 with Anchord-Design's AccessIndicator —
+ * an icon + label reflecting the doc's `general_access`: Restricted (shield) / Workspace
+ * (anyone_in_workspace, people glyph) / Link (anyone_with_link, link glyph). Chrome recedes:
+ * rendered in the muted column-cell weight, same style family as the other foot bits.
+ */
+export function AccessIndicator({ access }: { access: GeneralAccess }) {
+  const meta = ACCESS_META[access] ?? ACCESS_META.restricted;
+  return (
+    <span className="inline-flex items-center gap-[5px] text-[11.5px] text-subtle" title={meta.label}>
+      <Icon name={meta.icon} size={13} />
+      {meta.label}
     </span>
   );
 }
