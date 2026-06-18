@@ -121,13 +121,16 @@ export function ProjectsScreen() {
               }`}
             >
               {/* Whole-card navigation lives on this absolute overlay so the ⋯ menu (a real
-                  button) can sit above it without nesting buttons. */}
+                  button) can sit above it without nesting buttons. z-10 lifts the overlay ABOVE
+                  the relative content rows so a click anywhere on the card hits it (not just the
+                  padding gaps); cursor-pointer because Tailwind v4 no longer sets it on <button>.
+                  The ⋯ menu is raised to z-20 (below) so it stays clickable above this overlay. */}
               <button
                 type="button"
                 aria-label={`Open ${p.name}`}
                 data-testid={`proj-open-${p.id}`}
                 onClick={() => navigate(`/w/${workspace.id}/projects/${p.id}`)}
-                className="absolute inset-0 rounded-[11px]"
+                className="absolute inset-0 z-10 cursor-pointer rounded-[11px]"
               />
               <div className="relative flex items-center gap-[10px]">
                 <span className="grid size-8 flex-none place-items-center rounded-sm bg-accent-soft text-accent-ink">
@@ -150,7 +153,10 @@ export function ProjectsScreen() {
                     Default
                   </span>
                 )}
-                <ProjectCardMoreMenu project={p} workspaceId={workspace.id} />
+                {/* z-20 keeps the ⋯ menu above the z-10 nav overlay so it stays clickable. */}
+                <span className="relative z-20 inline-flex">
+                  <ProjectCardMoreMenu project={p} workspaceId={workspace.id} />
+                </span>
               </div>
               <div className="relative mt-[14px] text-[13px] tabular-nums text-muted">
                 {p.docCount ?? 0} {p.docCount === 1 ? "doc" : "docs"}

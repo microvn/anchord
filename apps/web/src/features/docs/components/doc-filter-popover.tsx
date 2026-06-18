@@ -43,7 +43,7 @@ function FacetButton({
       title={`${label} · ${count}`}
       onClick={onToggle}
       className={[
-        "flex min-h-[34px] items-center gap-2 rounded-[6px] border px-2 py-1.5 text-left text-[12.5px] font-medium transition-colors",
+        "flex min-h-[34px] cursor-pointer items-center gap-2 rounded-[6px] border px-2 py-1.5 text-left text-[12.5px] font-medium transition-colors",
         active
           ? "border-accent/40 bg-accent-soft text-ink"
           : "border-line bg-transparent text-subtle hover:text-ink",
@@ -140,7 +140,7 @@ export function DocFilterPopover({ filter }: { filter: DocFilterState }) {
               aria-checked={isActive}
               onClick={() => filter.setUpdated(w)}
               className={[
-                "flex min-h-[34px] items-center gap-2 rounded-[6px] border px-2 py-1.5 text-left text-[12.5px] font-medium transition-colors",
+                "flex min-h-[34px] cursor-pointer items-center gap-2 rounded-[6px] border px-2 py-1.5 text-left text-[12.5px] font-medium transition-colors",
                 isActive
                   ? "border-accent/40 bg-accent-soft text-ink"
                   : "border-line bg-transparent text-subtle hover:text-ink",
@@ -164,7 +164,7 @@ export function DocFilterPopover({ filter }: { filter: DocFilterState }) {
         type="button"
         data-testid="doc-filter-reset"
         onClick={filter.reset}
-        className="min-h-[34px] rounded-[6px] border border-line px-2 py-1.5 text-[12px] font-medium text-subtle transition-colors hover:text-ink"
+        className="min-h-[34px] cursor-pointer rounded-[6px] border border-line px-2 py-1.5 text-[12px] font-medium text-subtle transition-colors hover:text-ink"
       >
         Reset
       </button>

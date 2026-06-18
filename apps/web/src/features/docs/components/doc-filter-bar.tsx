@@ -49,7 +49,7 @@ export function DocFilterBar({ browse, showing }: { browse: DocBrowse; showing: 
           aria-haspopup="dialog"
           onClick={() => setOpen((o) => !o)}
           className={[
-            "inline-flex h-8 items-center gap-1.5 rounded-md border px-[11px] text-[13px] font-medium transition-colors",
+            "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-[11px] text-[13px] font-medium transition-colors",
             filter.active
               ? "border-accent/40 bg-accent-soft text-ink"
               : "border-line bg-sunken text-muted hover:text-ink",
@@ -121,7 +121,7 @@ function ViewButton({
       aria-pressed={active}
       data-testid={testid}
       onClick={onClick}
-      className={`grid size-7 place-items-center rounded-sm transition-colors ${
+      className={`grid size-7 cursor-pointer place-items-center rounded-sm transition-colors ${
         active ? "bg-surface text-accent-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]" : "text-subtle hover:text-ink"
       }`}
     >
