@@ -157,11 +157,13 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
       id: "dA", slug: "doc-a", title: "Secret A", kind: "markdown",
       ownerId: "u_a", generalAccess: "restricted",
       latestVersion: 1, annotationCount: 0, ownerName: "Alice",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
     const docB: ProjectDocRow = {
       id: "dB", slug: "doc-b", title: "Shared B", kind: "markdown",
       ownerId: "u_a", generalAccess: "anyone_in_workspace",
       latestVersion: 3, annotationCount: 5, ownerName: "Alice",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
     const ctx = fakeCtx({
       docs: new Map([["p_1", [docA, docB]]]),
@@ -180,9 +182,11 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
       authorName: "Alice",
       status: "live", // anyone_in_workspace → shared → live
     });
-    // No metadata of doc A leaks anywhere in the response body.
+    // No metadata of doc A leaks anywhere in the response body. (Assert on doc A's UNIQUE
+    // markers — its title/slug — and that no row carries its id; a bare "dA" substring check
+    // would false-positive on field names like "createdAt".)
+    expect(json.data.docs.some((d: any) => d.id === "dA")).toBe(false);
     const raw = JSON.stringify(json);
-    expect(raw).not.toContain("dA");
     expect(raw).not.toContain("Secret A");
     expect(raw).not.toContain("doc-a");
   });
@@ -195,6 +199,7 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
       id: "dWs", slug: "doc-ws", title: "Workspace Doc", kind: "markdown",
       ownerId: "u_a", generalAccess: "anyone_in_workspace",
       latestVersion: 1, annotationCount: 0, ownerName: "Alice",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
     const linkDoc: ProjectDocRow = {
       // owned by the caller (u_x) so it is browsable — an anyone_with_link doc is reachable by link
@@ -202,6 +207,7 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
       id: "dLink", slug: "doc-link", title: "Link Doc", kind: "markdown",
       ownerId: "u_x", generalAccess: "anyone_with_link",
       latestVersion: 1, annotationCount: 0, ownerName: "Xavier",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
     const ctx = fakeCtx({ docs: new Map([["p_1", [wsDoc, linkDoc]]]) });
     const app = buildApp(asUser("u_x"), f.repo, ctx);
@@ -215,6 +221,41 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     // ...which `status` cannot express: both are "live", yet their access levels differ.
     expect(rowFor("dWs").status).toBe("live");
     expect(rowFor("dLink").status).toBe("live");
+  });
+
+  test("AS-022: each browse row carries the doc's created + updated times (for Created/Updated sort)", async () => {
+    const f = fakeRepo([
+      { id: "p_1", workspaceId: WS, name: "Billing", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const older: ProjectDocRow = {
+      id: "dOld", slug: "doc-old", title: "Older", kind: "markdown",
+      ownerId: "u_a", generalAccess: "anyone_in_workspace",
+      latestVersion: 1, annotationCount: 0, ownerName: "Alice",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-18T00:00:00.000Z"),
+    };
+    const newer: ProjectDocRow = {
+      id: "dNew", slug: "doc-new", title: "Newer", kind: "markdown",
+      ownerId: "u_a", generalAccess: "anyone_in_workspace",
+      latestVersion: 1, annotationCount: 0, ownerName: "Alice",
+      createdAt: new Date("2026-06-10T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-12T00:00:00.000Z"),
+    };
+    const ctx = fakeCtx({ docs: new Map([["p_1", [older, newer]]]) });
+    const app = buildApp(asUser("u_a"), f.repo, ctx);
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    const rowFor = (id: string) => json.data.docs.find((d: any) => d.id === id);
+    // Each row reports BOTH timestamps (ISO strings after JSON serialization) so the consumer
+    // can sort by Created or Updated without a second fetch (workspace-project-browse:S-003).
+    expect(rowFor("dOld").createdAt).toBe("2026-06-01T00:00:00.000Z");
+    expect(rowFor("dOld").updatedAt).toBe("2026-06-18T00:00:00.000Z");
+    expect(rowFor("dNew").createdAt).toBe("2026-06-10T00:00:00.000Z");
+    expect(rowFor("dNew").updatedAt).toBe("2026-06-12T00:00:00.000Z");
+    // The two docs have distinct created vs updated ordering → a consumer can sort either axis.
+    expect(rowFor("dOld").createdAt < rowFor("dNew").createdAt).toBe(true);
+    expect(rowFor("dOld").updatedAt > rowFor("dNew").updatedAt).toBe(true);
   });
 
   test("AS-006: empty project → 200 { docs: [] }", async () => {
@@ -294,6 +335,8 @@ describe("/api/projects pagination (workspace-project S-007)", () => {
       latestVersion: 1,
       annotationCount: 0,
       ownerName: "Alice",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     }));
 
   test("AS-016: a project's doc browse returns one page (≤20) with a total summary stating more pages exist", async () => {
@@ -376,6 +419,8 @@ describe("/api/projects pagination (workspace-project S-007)", () => {
       latestVersion: 1,
       annotationCount: 0,
       ownerName: "Alice",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     }));
     const f = fakeRepo([
       { id: "p_1", workspaceId: WS, name: "Mixed", ownerId: "u_a", isDefault: false, archivedAt: null },

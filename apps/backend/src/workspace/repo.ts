@@ -119,6 +119,11 @@ export interface ProjectDocRow {
   latestVersion: number;
   annotationCount: number;
   ownerName: string | null;
+  // S-003/AS-022: the doc's own created + last-updated times, so a browse consumer can sort
+  // by Created or Updated without a second fetch (workspace-project-browse:S-003). Serialized
+  // to ISO strings on the wire.
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 /**
@@ -168,6 +173,8 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
           latestVersion,
           annotationCount,
           ownerName: user.name,
+          createdAt: docs.createdAt,
+          updatedAt: docs.updatedAt,
         })
         .from(docs)
         .leftJoin(user, eq(user.id, docs.ownerId))

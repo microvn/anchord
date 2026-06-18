@@ -241,6 +241,10 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
             // anyone_with_link) so the FE AccessIndicator (workspace-project-ui:S-006) can show
             // the 3-way badge — `status` collapses link vs workspace, this does not.
             generalAccess: d.generalAccess,
+            // S-003/AS-022: created + last-updated times so the browse can sort by Created /
+            // Updated (workspace-project-browse:S-003) without a second fetch.
+            createdAt: d.createdAt,
+            updatedAt: d.updatedAt,
           };
         }),
         pagination: buildPagination({ page: page.page, limit: page.limit, total }),
