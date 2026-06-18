@@ -126,6 +126,11 @@ export interface ComposeApi {
   repositionFromRect: (rect: RectLike) => void;
   /** MƯỢT TASK 1: the popover reports its measured size so placePopover can flip/clamp correctly. */
   setPopoverSize: (size: { width: number; height: number }) => void;
+  /** S-004 (AS-017): arm a one-shot intercept for the NEXT valid text selection's anchor — used by
+   *  re-attach. When armed, the next selection routes its anchor to `handler` (the viewer calls the
+   *  reattach route) INSTEAD of raising the create popover, then disarms. Pass `null` to cancel an
+   *  armed intercept. Reuses the SAME selection→anchor builder the create path uses (no new path). */
+  armSelectionIntercept: (handler: ((anchor: SelectionAnchor) => void) | null) => void;
 }
 
 /** The anchor shape `beginCompose` accepts (the bridge's `segments` is optional; we normalize). */
@@ -185,6 +190,13 @@ export function useCompose(
   // scroll/resize reposition can re-read it. Set when a Markdown selection raises the popover;
   // null for the bridge path (the iframe re-posts its own rect — TASK 3).
   const liveRect = useRef<(() => RectLike | null) | null>(null);
+  // S-004 (AS-017): a one-shot intercept for the NEXT valid selection's anchor (re-attach). When set,
+  // a committed selection's anchor goes to this handler INSTEAD of raising the create popover, then
+  // the ref is cleared (one-shot). Reuses the SAME selectionToAnchor builder as create — no new path.
+  const selectionIntercept = useRef<((anchor: SelectionAnchor) => void) | null>(null);
+  const armSelectionIntercept = useCallback((handler: ((anchor: SelectionAnchor) => void) | null) => {
+    selectionIntercept.current = handler;
+  }, []);
 
   // Compute the on-screen {top,left,centered} for a selection rect via placePopover (above-centered,
   // flip-below, clamp). `centered` rides through so the popover applies translateX(-50%).
@@ -216,6 +228,14 @@ export function useCompose(
       const anchor = selectionToAnchor(sel);
       if (!anchor) {
         // C-003: empty / whitespace-only (or out-of-block) selection → no popover, nothing created.
+        return;
+      }
+      // S-004 (AS-017): a re-attach intercept is armed → route this selection's anchor to it (one-shot)
+      // instead of raising the create popover. The viewer calls the reattach route with this anchor.
+      if (selectionIntercept.current) {
+        const handler = selectionIntercept.current;
+        selectionIntercept.current = null;
+        handler(anchor);
         return;
       }
       pendingAnchor.current = anchor;
@@ -303,6 +323,14 @@ export function useCompose(
           },
         ],
       };
+      // S-004 (AS-017): a re-attach intercept armed on the bridge (HTML) path routes the relayed
+      // selection's anchor to it (one-shot), mirroring the markdown commit path above.
+      if (selectionIntercept.current) {
+        const handler = selectionIntercept.current;
+        selectionIntercept.current = null;
+        handler(normalized);
+        return;
+      }
       pendingAnchor.current = normalized;
       // Bridge path: the iframe owns the selection; there's no parent-readable Range to re-read on
       // scroll, so clear liveRect. The iframe re-posts its rect over the port instead (TASK 3).
@@ -712,6 +740,7 @@ export function useCompose(
     beginCompose,
     repositionFromRect,
     setPopoverSize,
+    armSelectionIntercept,
   };
 }
 

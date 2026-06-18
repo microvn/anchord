@@ -32,6 +32,8 @@ mock.module("@/features/viewer/services/client", () => ({
   decideSuggestion: mock(async () => ({ data: { success: true, data: { status: "accepted" } }, error: null })),
   deleteAnnotation: mock(async () => ({ data: { success: true, data: { deleted: true } }, error: null })),
   restoreAnnotation: mock(async () => ({ data: { success: true, data: { restored: true } }, error: null })),
+  dismissAnnotation: mock(async () => ({ data: { success: true, data: { dismissed: true } }, error: null })),
+  reattachAnnotation: mock(async () => ({ data: { success: true, data: { isOrphaned: false } }, error: null })),
   canComment: (role: string | undefined) => role !== "viewer",
 }));
 

@@ -27,6 +27,8 @@ mock.module("@/features/viewer/services/client", () => ({
   addComment: mock(async () => ({ data: {}, error: null })),
   deleteAnnotation: mock(async () => ({ data: { success: true, data: { deleted: true } }, error: null })),
   restoreAnnotation: mock(async () => ({ data: { success: true, data: { restored: true } }, error: null })),
+  dismissAnnotation: mock(async () => ({ data: { success: true, data: { dismissed: true } }, error: null })),
+  reattachAnnotation: mock(async () => ({ data: { success: true, data: { isOrphaned: false } }, error: null })),
 }));
 
 const { useCompose } = await import("@/features/viewer/hooks/use-compose");

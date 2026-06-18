@@ -56,6 +56,8 @@ import {
   decideSuggestion,
   deleteAnnotation,
   restoreAnnotation,
+  dismissAnnotation,
+  reattachAnnotation,
   canComment,
   type ViewerDocResponse,
   type ListAnnotationsResponse,
@@ -390,6 +392,27 @@ function ViewerShell({
     // new selection (a new popover object) re-routes, but a re-render with the same popover doesn't.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compose.popover, activeTool]);
+
+  // S-004 (AS-017): when a detached card is armed for re-attach (reattachPendingId set), arm the
+  // compose selection intercept so the NEXT text selection's anchor routes to reattachWith (instead
+  // of opening the create composer) — reusing the SAME selection→anchor path the create flow uses.
+  // Disarm when nothing is pending. The captured annotation is looked up from the current set so the
+  // patch carries the right id; reattachWith clears the pending id (success or failure).
+  const reattachPendingId = anno.railProps.reattachPendingId;
+  useEffect(() => {
+    if (!reattachPendingId) {
+      compose.armSelectionIntercept(null);
+      return;
+    }
+    compose.armSelectionIntercept((anchor) => {
+      const target = anno.railProps.annotations.find((a) => a.id === reattachPendingId);
+      if (target) void anno.reattachWith(target, anchor);
+    });
+    return () => compose.armSelectionIntercept(null);
+    // compose.armSelectionIntercept is a stable callback; anno.reattachWith is stable per ws/slug. Key
+    // on the pending id so re-arming only happens when the armed annotation changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reattachPendingId]);
 
   const toggleRail = () => (drawerMode ? setRailOpen((o) => !o) : setRailVisible((v) => !v));
   // The outline-toggle: in tocDrawer mode it opens/closes the TOC overlay drawer; on desktop it
@@ -849,7 +872,19 @@ function useAnnotations(
     onDecide?: (annotation: ViewerAnnotation, decision: "accept" | "reject") => Promise<boolean>;
     /** S-003 (C-004/C-005): delete an anchored thread — optimistic remove + undo toast + restore. */
     onDelete?: (annotation: ViewerAnnotation) => Promise<boolean>;
+    /** S-004 (C-004): the session may comment → the detached cards show Re-attach + Dismiss. */
+    canCompose: boolean;
+    /** S-004 (AS-017): the detached annotation currently armed for re-attach (null → none). */
+    reattachPendingId: string | null;
+    /** S-004 (AS-016): dismiss a detached annotation — optimistic remove + rollback. */
+    onDismissDetached?: (annotation: ViewerAnnotation) => Promise<boolean>;
+    /** S-004 (AS-017): arm/cancel re-attach for a detached annotation. */
+    onReattachDetached?: (annotation: ViewerAnnotation) => void;
   };
+  /** S-004 (AS-017): re-attach a detached annotation to a freshly-selected anchor (called by the
+   *  viewer once it captures the next selection via the compose intercept). Patches the cache:
+   *  isOrphaned → false + the new anchor, so it moves out of the detached section + gets a highlight. */
+  reattachWith: (annotation: ViewerAnnotation, anchor: ViewerAnnotation["anchor"]) => Promise<boolean>;
 } {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   // S-007 (C-009): the TWO-AXIS filter selection, lifted here (like focusedId) so the SAME selection
@@ -1256,12 +1291,89 @@ function useAnnotations(
         }
       : undefined;
 
+  // S-004 (AS-016/AS-017 / C-004): manage a DETACHED (isOrphaned) annotation — dismiss it (it leaves
+  // the rail) or re-attach it to a freshly-selected range (it becomes anchored). Both routes are
+  // WORKSPACE-scoped + commenter+ (the backend re-authorizes; a viewer is refused 403). They're wired
+  // ONLY when a workspaceId is reachable AND the session can comment — same gate family as reply/
+  // resolve/delete; an anon / project-less doc / viewer-only role gets display-only detached cards.
+  //
+  //   • Dismiss (AS-016): optimistically REMOVE the annotation from the cached list (it vanishes from
+  //     the detached section + the rail total drops), call dismissAnnotation. On a refused/failed
+  //     write RE-ADD the snapshot + toast — no silent loss. A dismissed row is excluded from the
+  //     active read, so the optimistic remove stays consistent on a refetch (no reappear on reload).
+  //   • Re-attach (AS-017): arming is owned by the shell (it sets the compose selection intercept);
+  //     once the next selection is captured the shell calls reattachWith(annotation, anchor). On
+  //     success we PATCH the cache: isOrphaned → false + the NEW anchor — the annotation moves out of
+  //     the detached section into the anchored thread list and the placer draws its highlight on the
+  //     new range. On a refused/failed/400-mismatch write we keep it detached + toast.
+  const [reattachPendingId, setReattachPendingId] = useState<string | null>(null);
+  const detachedEnabled = canCompose && Boolean(workspaceId) && Boolean(slug);
+  const onDismissDetached = detachedEnabled
+    ? async (annotation: ViewerAnnotation): Promise<boolean> => {
+        const snapshot = annotation;
+        removeFromCache(annotation.id); // AS-016: optimistic remove — leaves the detached section now
+        try {
+          const res = await dismissAnnotation(workspaceId!, annotation.id);
+          if (res.error) {
+            reinsertIntoCache(snapshot); // refused → roll back (no silent loss)
+            toast.error("Couldn't dismiss this annotation");
+            return false;
+          }
+          return true;
+        } catch {
+          reinsertIntoCache(snapshot);
+          toast.error("Couldn't dismiss this annotation");
+          return false;
+        }
+      }
+    : undefined;
+  // AS-017: clicking Re-attach arms (or cancels) the next-selection capture for THIS annotation. The
+  // shell wires the actual selection intercept (it owns useCompose) — here we only track which one is
+  // armed so the rail card reads as armed. Re-clicking the armed card cancels (toggle off).
+  const onReattachDetached = detachedEnabled
+    ? (annotation: ViewerAnnotation): void => {
+        setReattachPendingId((cur) => (cur === annotation.id ? null : annotation.id));
+      }
+    : undefined;
+  const reattachWith = useCallback(
+    async (annotation: ViewerAnnotation, anchor: ViewerAnnotation["anchor"]): Promise<boolean> => {
+      setReattachPendingId(null); // disarm regardless of outcome
+      if (!workspaceId || !slug) return false;
+      try {
+        const res = await reattachAnnotation(workspaceId, annotation.id, anchor);
+        if (res.error) {
+          // 400 anchor-mismatch or a refused write — keep it detached, surface it (no silent move).
+          toast.error("Couldn't re-attach this annotation");
+          return false;
+        }
+        // Success (AS-017): clear isOrphaned + set the new anchor in the cache → the annotation moves
+        // out of the detached section into the anchored list; the marks effect draws its highlight.
+        queryClient.setQueryData<ListAnnotationsResponse>(annoKey, (old) =>
+          old
+            ? {
+                ...old,
+                items: old.items.map((a) =>
+                  a.id === annotation.id ? { ...a, isOrphaned: false, anchor } : a,
+                ),
+              }
+            : old,
+        );
+        return true;
+      } catch {
+        toast.error("Couldn't re-attach this annotation");
+        return false;
+      }
+    },
+    [workspaceId, slug, queryClient], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
   return {
     count: annotations.length,
     refetch: () => annoQuery.refetch(),
     prependAnnotation,
     htmlPlaceable,
     reportUnplaceableHtml,
-    railProps: { annotations, focusedId, unplaceableIds, activeStatus, activeType, onToggleStatus: toggleStatus, onToggleType: toggleType, onResetFilter: resetFilter, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete },
+    railProps: { annotations, focusedId, unplaceableIds, activeStatus, activeType, onToggleStatus: toggleStatus, onToggleType: toggleType, onResetFilter: resetFilter, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete, canCompose, reattachPendingId, onDismissDetached, onReattachDetached },
+    reattachWith,
   };
 }

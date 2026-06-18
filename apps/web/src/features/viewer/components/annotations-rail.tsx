@@ -45,6 +45,10 @@ export function AnnotationsRail({
   onResolve,
   onDecide,
   onDelete,
+  canCompose = false,
+  reattachPendingId = null,
+  onDismissDetached,
+  onReattachDetached,
 }: {
   annotations: ViewerAnnotation[];
   focusedId: string | null;
@@ -88,6 +92,18 @@ export function AnnotationsRail({
    *  the doc owner (canDelete) AND when this is wired. Absent → no Delete affordance (read-only / a
    *  rail with no delete capability). */
   onDelete?: (annotation: ViewerAnnotation) => unknown | Promise<unknown>;
+  /** S-004 (C-004): the session may comment → the detached cards show Re-attach + Dismiss. A
+   *  viewer-only role → display-only detached cards (no actions). Default false. */
+  canCompose?: boolean;
+  /** S-004 (AS-017): the detached annotation currently armed for re-attach (its next-selection capture
+   *  is live). Drives the armed affordance on that one card. Null → none armed. */
+  reattachPendingId?: string | null;
+  /** S-004 (AS-016): dismiss a detached annotation. The consumer (viewer-screen) owns the optimistic
+   *  remove + rollback. Absent → no Dismiss affordance (read-only / no workspace reachable). */
+  onDismissDetached?: (annotation: ViewerAnnotation) => unknown | Promise<unknown>;
+  /** S-004 (AS-017): arm/cancel re-attach for a detached annotation. Clicking Re-attach calls this so
+   *  the viewer captures the NEXT text selection's anchor and re-attaches. Absent → no Re-attach. */
+  onReattachDetached?: (annotation: ViewerAnnotation) => void;
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
 
@@ -183,7 +199,15 @@ export function AnnotationsRail({
             <div className="text-[13px] font-semibold text-ink">No annotations match the filter</div>
             <div className="text-[12px] leading-[1.5]">Turn a facet back on, or Reset the filter.</div>
           </div>
-          {detached.length > 0 && <DetachedSection detached={detached} />}
+          {detached.length > 0 && (
+            <DetachedSection
+              detached={detached}
+              canCompose={canCompose}
+              reattachPendingId={reattachPendingId}
+              onDismissDetached={onDismissDetached}
+              onReattachDetached={onReattachDetached}
+            />
+          )}
         </div>
       ) : (
         <div className="flex flex-1 flex-col gap-[10px] overflow-auto p-3">
@@ -209,7 +233,15 @@ export function AnnotationsRail({
             />
           ))}
 
-          {detached.length > 0 && <DetachedSection detached={detached} />}
+          {detached.length > 0 && (
+            <DetachedSection
+              detached={detached}
+              canCompose={canCompose}
+              reattachPendingId={reattachPendingId}
+              onDismissDetached={onDismissDetached}
+              onReattachDetached={onReattachDetached}
+            />
+          )}
         </div>
       )}
     </div>
@@ -219,7 +251,19 @@ export function AnnotationsRail({
 // S-004/C-004: the amber detached section — orphaned annotations, shown separately, never as
 // anchored. S-007 (C-009): it ALWAYS renders regardless of filter state (the filter narrows only the
 // anchored thread list), so it's a shared component used by both the normal and the no-match body.
-function DetachedSection({ detached }: { detached: ViewerAnnotation[] }) {
+function DetachedSection({
+  detached,
+  canCompose = false,
+  reattachPendingId = null,
+  onDismissDetached,
+  onReattachDetached,
+}: {
+  detached: ViewerAnnotation[];
+  canCompose?: boolean;
+  reattachPendingId?: string | null;
+  onDismissDetached?: (annotation: ViewerAnnotation) => unknown | Promise<unknown>;
+  onReattachDetached?: (annotation: ViewerAnnotation) => void;
+}) {
   return (
     <section data-testid="detached-section" className="flex flex-col gap-[10px] pt-1">
       <div className="flex items-center gap-[7px] px-0.5 py-1 font-mono text-[11px] font-medium uppercase tracking-[0.06em] text-amber">
@@ -227,7 +271,16 @@ function DetachedSection({ detached }: { detached: ViewerAnnotation[] }) {
         <span data-testid="detached-count">{detached.length} detached</span>
       </div>
       {detached.map((a) => (
-        <DetachedCard key={a.id} annotation={a} />
+        <DetachedCard
+          key={a.id}
+          annotation={a}
+          canCompose={canCompose}
+          reattachPending={reattachPendingId === a.id}
+          // S-004 (AS-016/017): bind dismiss + re-attach to THIS detached annotation. The card hands
+          // the consumer no args (it already knows which one). Undefined → display-only card (C-004).
+          onDismiss={onDismissDetached ? () => onDismissDetached(a) : undefined}
+          onReattach={onReattachDetached ? () => onReattachDetached(a) : undefined}
+        />
       ))}
     </section>
   );

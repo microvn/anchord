@@ -370,3 +370,52 @@ export function decideSuggestion(
     .suggestions({ id: suggestionId })
     .patch(body) as Promise<EdenResult<DecideSuggestionResult>>;
 }
+
+// --- Detached management: dismiss + re-attach (S-004) --------------------------------------
+// A detached (`isOrphaned`) annotation can be DISMISSED (it leaves the active list, kept not hard-
+// deleted) or RE-ATTACHED to a range the user selects in the current version (clears isOrphaned, sets
+// a fresh anchor). Both backend routes are WORKSPACE-scoped on the ANNOTATION id (NOT doc-scoped —
+// mirrors decideSuggestion), verified against the S-008 backend (commit 5c584be):
+//   POST /api/w/:workspaceId/annotations/:id/dismiss            → { dismissed: true }
+//   POST /api/w/:workspaceId/annotations/:id/reattach { anchor } → { isOrphaned: false }
+// Both are commenter+ server-side (a viewer is refused 403, annotation-core AS-025), 404 on no-access,
+// and reattach is 400 when the new anchor doesn't place against the current version. The slug-only
+// public viewer sources the workspaceId from the doc-read response (`doc.workspaceId`, member-only) —
+// the SAME field that feeds the redline decide path; an anon / project-less doc has no workspaceId so
+// the detached actions aren't offered. The FE affordance is a CLIENT HINT — the backend re-authorizes.
+
+export interface DismissAnnotationResult {
+  dismissed: true;
+}
+
+export interface ReattachAnnotationResult {
+  isOrphaned: false;
+}
+
+/** POST /api/w/:workspaceId/annotations/:id/dismiss — dismiss a detached annotation (S-008 backend,
+ *  AS-016). It leaves the active list (soft, kept not hard-deleted) → an optimistic remove from the
+ *  cached list stays consistent on a refetch (the dismissed row is excluded from the active read). */
+export function dismissAnnotation(
+  workspaceId: string,
+  annotationId: string,
+): Promise<EdenResult<DismissAnnotationResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .annotations({ id: annotationId })
+    .dismiss.post() as Promise<EdenResult<DismissAnnotationResult>>;
+}
+
+/** POST /api/w/:workspaceId/annotations/:id/reattach — re-attach a detached annotation to a new range
+ *  (S-008 backend, AS-017). The body carries the new anchor (the user's selection in the current
+ *  version); the server validates it places against the current version (else 400) and clears
+ *  isOrphaned. On success the annotation moves out of the detached section and reads as anchored. */
+export function reattachAnnotation(
+  workspaceId: string,
+  annotationId: string,
+  anchor: CreateAnchor,
+): Promise<EdenResult<ReattachAnnotationResult>> {
+  return treaty.api
+    .w({ workspaceId })
+    .annotations({ id: annotationId })
+    .reattach.post({ anchor }) as Promise<EdenResult<ReattachAnnotationResult>>;
+}

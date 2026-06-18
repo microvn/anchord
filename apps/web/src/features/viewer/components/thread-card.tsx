@@ -876,14 +876,53 @@ export function ThreadCard({
   );
 }
 
-/** DetachedCard (S-004 DISPLAY only, AS-011): an isOrphaned annotation in the amber detached
- *  section — quote + body, NO highlight. .thread.detached: amber border + amber quote rule. */
-export function DetachedCard({ annotation }: { annotation: ViewerAnnotation }) {
+/** DetachedCard (S-004, AS-011/016/017): an isOrphaned annotation in the amber detached section —
+ *  quote + body, NO highlight (.thread.detached: amber border + amber quote rule), PLUS the Re-attach
+ *  + Dismiss actions. Actions are commenter+ (gated by `canCompose` AND the callbacks being supplied,
+ *  same as reply/resolve); a viewer-only role sees a display-only card. `reattachPending` reflects
+ *  that THIS card is awaiting the user's next text selection (Re-attach was clicked) — the affordance
+ *  reads as armed + a hint to select a range. The backend re-authorizes every action (C-004). */
+export function DetachedCard({
+  annotation,
+  canCompose = false,
+  reattachPending = false,
+  onDismiss,
+  onReattach,
+}: {
+  annotation: ViewerAnnotation;
+  /** S-004 (C-004): the session may comment → show Re-attach + Dismiss. A viewer-only role → none. */
+  canCompose?: boolean;
+  /** S-004 (AS-017): THIS detached card is armed — the next text selection re-attaches it. */
+  reattachPending?: boolean;
+  /** S-004 (AS-016): dismiss this detached annotation (consumer owns the optimistic remove + rollback). */
+  onDismiss?: () => unknown | Promise<unknown>;
+  /** S-004 (AS-017): arm re-attach for this annotation — the viewer captures the next selection's
+   *  anchor and calls the reattach route. Passing undefined toggles re-attach OFF (cancel). */
+  onReattach?: () => void;
+}) {
   const root = (annotation.comments ?? [])[0]; // tolerate an absent thread (see ThreadCard)
+  // C-004: the actions show only for a comment-capable role AND when wired (the consumer supplies the
+  // callbacks only when a workspace is reachable + the session can comment). Otherwise display-only.
+  const showActions = canCompose && Boolean(onDismiss) && Boolean(onReattach);
+  const [dismissing, setDismissing] = useState(false);
+  const handleDismiss = () => {
+    if (dismissing || !onDismiss) return;
+    setDismissing(true);
+    // The consumer (viewer-screen) owns the optimistic remove; this card typically unmounts on it, so
+    // resetting the in-flight flag is best-effort (a refused dismiss re-adds + re-renders the card).
+    void (async () => {
+      try {
+        await onDismiss();
+      } finally {
+        setDismissing(false);
+      }
+    })();
+  };
   return (
     <div
       data-testid="detached-card"
       data-anno-detached={annotation.id}
+      data-reattach-pending={reattachPending ? "true" : undefined}
       className="rounded-md border border-amber/40 bg-amber-bg/60 p-[11px]"
     >
       <div className="mb-[9px] border-l-2 border-amber py-px pl-[9px] text-[12px] italic leading-[1.45] text-muted">
@@ -894,6 +933,31 @@ export function DetachedCard({ annotation }: { annotation: ViewerAnnotation }) {
           <CommentHead c={root} />
           <div className="mt-[6px] text-[12.5px] leading-[1.5] text-ink">{root.body}</div>
         </>
+      )}
+      {showActions && (
+        <div className="mt-[9px] flex items-center gap-1.5">
+          <button
+            type="button"
+            data-testid="detached-reattach"
+            data-active={reattachPending ? "true" : undefined}
+            onClick={() => onReattach!()}
+            className={[
+              "cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold hover:bg-elev",
+              reattachPending ? "text-accent" : "text-muted hover:text-ink",
+            ].join(" ")}
+          >
+            {reattachPending ? "Select a range…" : "Re-attach"}
+          </button>
+          <button
+            type="button"
+            data-testid="detached-dismiss"
+            disabled={dismissing}
+            onClick={handleDismiss}
+            className="cursor-pointer rounded-[4px] px-[5px] py-[3px] text-[11.5px] font-semibold text-muted hover:bg-elev hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Dismiss
+          </button>
+        </div>
       )}
     </div>
   );
