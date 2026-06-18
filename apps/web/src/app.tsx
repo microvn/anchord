@@ -17,6 +17,7 @@ import { WorkspaceHome } from "./features/workspaces/components/workspace-home";
 import { MembersScreen } from "./features/workspaces/components/members-screen";
 import { DocsScreen } from "./features/docs/components/docs-screen";
 import { ProjectsScreen } from "./features/docs/components/projects-screen";
+import { ProjectDocsScreen } from "./features/docs/components/project-docs-screen";
 import { ActivityScreen } from "./features/docs/components/activity-screen";
 import { SearchScreen } from "./features/docs/components/search-screen";
 import { ViewerScreen } from "./features/viewer/components/viewer-screen";
@@ -75,6 +76,9 @@ export function AppRoutes() {
                 the legacy /docs/new route lands on the All-docs grid where the dialog lives. */}
             <Route path="docs/new" element={<DocsScreen />} />
             <Route path="projects" element={<ProjectsScreen />} />
+            {/* workspace-project-browse S-001: a project card opens its OWN doc browse (only that
+                project's docs), not the workspace-wide union. */}
+            <Route path="projects/:projectId" element={<ProjectDocsScreen />} />
             <Route path="activity" element={<ActivityScreen />} />
             <Route path="search" element={<SearchScreen />} />
           </Route>

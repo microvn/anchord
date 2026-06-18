@@ -1,0 +1,23 @@
+[x] AS-001 — opening a project lists ONLY that project's docs; project name is the view title | owner: S-001
+[x] AS-002 — back-to-Projects control returns to the Projects screen                          | owner: S-001
+[x] AS-003 — per-project list paginates with the numbered control like All-docs               | owner: S-001
+[x] AS-004 — a project with no accessible docs shows an empty state (named + back control)     | owner: S-001
+[x] C-001  — clicking a project opens its own doc view (id in route), never the union; names + back | owner: S-001
+[x] C-002  — per-project reuses DocGrid + numbered pagination + AccessIndicator; backend access-filtered | owner: S-001
+[ ] AS-005 — Filter popover lists 4 facet groups w/ counts, all selected; Sort+grid/list, NO search box | owner: S-002
+[ ] AS-006 — deselecting a Format value narrows the grid; result count updates                 | owner: S-002
+[ ] AS-007 — facets combine AND-across (Draft AND Restricted); a live/shared doc hidden        | owner: S-002
+[ ] AS-008 — Updated window single-select narrows by recency (others not also active)          | owner: S-002
+[ ] AS-009 — facet counts dynamic vs the other axes' selection                                 | owner: S-002
+[ ] AS-010 — header "showing X of N" + Filter active while narrowed; Reset re-selects all      | owner: S-002
+[ ] AS-011 — the same filter narrows a per-project view (deselect format)                      | owner: S-002
+[ ] C-003  — 4 facets, OR-within/AND-across, defaults all selected, one popover, no search box | owner: S-002
+[ ] C-004  — dynamic counts; "showing X of N"; Filter active state; Reset                      | owner: S-002
+[ ] C-005  — same filter component both surfaces; replaces the dead 3-tab filter               | owner: S-002
+[ ] C-006  — DESIGN.md dark-operator + responsive (popover→bottom-sheet, ≥40px) [→MANUAL]+PW   | owner: S-002
+[ ] AS-012 — default order is most-recently-updated first                                      | owner: S-003
+[ ] AS-013 — Sort=Title orders A→Z                                                             | owner: S-003
+[ ] AS-014 — Sort=Created orders by creation time, newest first                                | owner: S-003
+[ ] AS-015 — the chosen sort applies to a per-project view too                                 | owner: S-003
+[ ] C-007  — Sort beside Filter (Updated/Created/Title); default Updated desc, Title asc; both surfaces; orthogonal | owner: S-003
+[ ] GAP-001 — open (backend): "Has detached" facet needs a per-doc detached count the row lacks → deferred | owner: —

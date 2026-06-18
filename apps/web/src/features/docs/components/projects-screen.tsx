@@ -28,8 +28,8 @@ import {
 // (browser.jsx). page-head (Workspace eyebrow + Fraunces title + New-project) · a proj-grid
 // of proj-cards (folder glyph · name · Default pin · doc-count stat) + a dashed "New project"
 // tile. Wired to GET …/projects (active projects, with per-project doc counts derived from
-// useWorkspaceDocs) and POST …/projects (create). Opening a project routes to its filtered
-// doc browse (deferred to a per-project route; for now it navigates to All-docs).
+// useWorkspaceDocs) and POST …/projects (create). Opening a project routes to its OWN doc browse
+// `/w/:workspaceId/projects/:id` (workspace-project-browse S-001), not the All-docs union.
 
 export function ProjectsScreen() {
   const { workspace } = useActiveWorkspace();
@@ -126,7 +126,7 @@ export function ProjectsScreen() {
                 type="button"
                 aria-label={`Open ${p.name}`}
                 data-testid={`proj-open-${p.id}`}
-                onClick={() => navigate(`/w/${workspace.id}/docs`)}
+                onClick={() => navigate(`/w/${workspace.id}/projects/${p.id}`)}
                 className="absolute inset-0 rounded-[11px]"
               />
               <div className="relative flex items-center gap-[10px]">

@@ -12,6 +12,8 @@
 [x] C-002  — members create projects/docs; only admins manage settings/members        | owner: S-003
 [x] C-005  — archive hides project from browse; reachable by link; unarchive shows     | owner: S-003
 [x] C-009  — default project per account; MCP fallback target                          | owner: S-003
+[x] AS-021 — browse doc row carries general_access level (3-way, finer than status)    | owner: S-003
+[x] AS-022 — browse doc row carries created + updated times (Created/Updated sort)     | owner: S-003
 [x] AS-008 — move a doc to another project; access/sharing/version/annotation kept     | owner: S-004
 [x] AS-013 — copy a doc → new doc, new slug, current version as v1, no annotations     | owner: S-004
 [x] C-008  — copy = new doc no annotations; move = doc as-is                           | owner: S-004

@@ -151,6 +151,52 @@ export function useProjectsBrowse(workspaceId: string, includeArchived = false) 
   });
 }
 
+/** The per-project doc browse (workspace-project-browse S-001): one project + its COMPLETE
+ *  access-filtered doc set. `project` is undefined when the id resolves to no accessible project. */
+export interface ProjectDocsView {
+  project: ProjectRow | undefined;
+  docs: DocRow[];
+}
+
+/**
+ * One project's docs, for the per-project browse view (`/w/:workspaceId/projects/:id`). Reads the
+ * project (for its name) and its COMPLETE access-filtered doc set (page through `hasNext`, like the
+ * other aggregation reads — the screen paginates client-side, S-001/AS-003). Includes archived
+ * projects when resolving the NAME (the card you clicked may be archived), but the doc set is
+ * whatever the backend lists as accessible. Keyed by workspaceId + projectId.
+ */
+export function useProjectDocs(workspaceId: string, projectId: string) {
+  return useQuery<ProjectDocsView, ApiError>({
+    queryKey: [...queryKeys.docs(workspaceId), "project", projectId] as const,
+    enabled: !!projectId,
+    retry: (failureCount, error) => !error?.isUnauthenticated && failureCount < 1,
+    queryFn: async (): Promise<ProjectDocsView> => {
+      // Resolve the project name (include archived so a clicked archived card still names it).
+      const { items: projectList } = await fetchAllPages<ProjectRow>(async (page, limit) => {
+        const res = unwrapEnvelope<ProjectsResult>(await fetchProjects(workspaceId, true, page, limit));
+        if (res.error) throw toApiError(res.error);
+        return { items: res.data?.projects ?? [], pagination: res.data?.pagination };
+      });
+      const found = projectList.find((p) => p.id === projectId);
+      const { items, total } = await fetchAllPages<ProjectDocsResult["docs"][number]>(
+        async (page, limit) => {
+          const res = unwrapEnvelope<ProjectDocsResult>(
+            await fetchProjectDocs(workspaceId, projectId, page, limit),
+          );
+          if (res.error) throw toApiError(res.error);
+          return { items: res.data?.docs ?? [], pagination: res.data?.pagination };
+        },
+      );
+      const docs: DocRow[] = items.map((d) => ({
+        ...d,
+        projectId,
+        projectName: found?.name,
+      }));
+      return { project: found ? { ...found, docCount: total } : undefined, docs };
+    },
+  });
+}
+
 export interface WorkspaceDocs {
   /** Active projects, each annotated with its browse-visible doc count. */
   projects: ProjectRow[];
