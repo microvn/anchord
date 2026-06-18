@@ -229,7 +229,8 @@ describe("workspace-project-browse S-003 — sort on All-docs", () => {
     render(<App />);
     await screen.findByTestId("doc-card-webhook");
     expect(slugOrder()).toEqual(["webhook", "auth", "calendar"]); // updated-desc default
-    await userEvent.selectOptions(screen.getByTestId("doc-sort"), "title");
+    await userEvent.click(screen.getByTestId("doc-sort"));
+    await userEvent.click(await screen.findByRole("option", { name: "Title" }));
     // Title A→Z: Auth, Calendar, Webhook — different from the default updated order.
     await waitFor(() => expect(slugOrder()).toEqual(["auth", "calendar", "webhook"]));
   });

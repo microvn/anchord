@@ -171,7 +171,8 @@ describe("workspace-project-browse S-001 — per-project doc browse", () => {
       );
     render(<App initial="/w/ws-acme/projects/p1" />);
     await screen.findByTestId("doc-card-webhook");
-    await userEvent.selectOptions(screen.getByTestId("doc-sort"), "title");
+    await userEvent.click(screen.getByTestId("doc-sort"));
+    await userEvent.click(await screen.findByRole("option", { name: "Title" }));
     await waitFor(() => expect(slugOrder()).toEqual(["auth", "calendar", "webhook"]));
   });
 

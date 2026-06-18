@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DocFilterPopover } from "./doc-filter-popover";
 import { SORT_ORDER, SORT_LABEL, type SortKey } from "@/features/docs/lib/doc-filter";
 import type { DocBrowse } from "@/features/docs/hooks/use-doc-browse";
@@ -70,21 +77,21 @@ export function DocFilterBar({ browse, showing }: { browse: DocBrowse; showing: 
       </span>
 
       <div className="ml-auto flex items-center gap-[10px]">
-        <label className="inline-flex items-center gap-1.5 text-[13px] text-subtle">
+        <div className="inline-flex items-center gap-1.5 text-[13px] text-subtle">
           <span className="font-mono text-[10.5px] uppercase tracking-[0.07em]">Sort</span>
-          <select
-            data-testid="doc-sort"
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            className="h-8 rounded-md border border-line bg-sunken px-2 text-[13px] text-ink outline-none focus:border-accent"
-          >
-            {SORT_ORDER.map((k) => (
-              <option key={k} value={k}>
-                {SORT_LABEL[k]}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+            <SelectTrigger data-testid="doc-sort" aria-label="Sort docs" className="h-8 bg-sunken">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_ORDER.map((k) => (
+                <SelectItem key={k} value={k} data-testid={`doc-sort-${k}`}>
+                  {SORT_LABEL[k]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="flex gap-0.5 rounded-md border border-line bg-sunken p-0.5">
           <ViewButton active={view === "grid"} onClick={() => setView("grid")} icon="grid" label="Grid view" testid="view-grid" />
           <ViewButton active={view === "list"} onClick={() => setView("list")} icon="list" label="List view" testid="view-list" />
