@@ -295,6 +295,51 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     expect(row!.annotationCount).not.toBe(4);
   });
 
+  // workspace-project-ui S-007 (AS-027 / C-006): a DISMISSED detached annotation
+  // (annotation-core S-008/C-013, dismissedAt set) must also be excluded from the count, so the
+  // browse/overview count matches the viewer rail's active read. Seed: 3 active + 1 dismissed → 3.
+  test("AS-027/C-006: docsInProject excludes a dismissed annotation from the count (3 active + 1 dismissed → 3)", async () => {
+    const [u] = await h.db
+      .insert(userTable)
+      .values({
+        id: `u-s007d-${process.pid}`,
+        name: "Dismiss Counter",
+        email: `s007d-${process.pid}@itest.local`,
+        emailVerified: true,
+      })
+      .returning({ id: userTable.id });
+    const seeded = await seedWorkspace(h.db, { userId: u!.id, withProject: true });
+    const projectId = seeded.projectId!;
+
+    const { id: docId } = await createDocRepo(h.db).createDocWithV1({
+      slug: `s007d-doc-${process.pid}`,
+      title: "Dismiss Count Doc",
+      kind: "markdown",
+      content: "# body",
+      contentHash: `hash-s007d-${process.pid}`,
+      ownerId: u!.id,
+      projectId,
+    });
+
+    // 3 ACTIVE annotations.
+    await h.db.insert(annotations).values([
+      { docId, type: "range", anchor: {} },
+      { docId, type: "range", anchor: {} },
+      { docId, type: "range", anchor: {} },
+    ]);
+    // 1 DISMISSED detached annotation (dismissedAt set, deletedAt null) — must NOT be counted.
+    await h.db
+      .insert(annotations)
+      .values({ docId, type: "range", anchor: {}, isOrphaned: true, dismissedAt: new Date() });
+
+    const rows = await createProjectsRouteRepo(h.db).docsInProject(projectId);
+    const row = rows.find((r) => r.id === docId);
+    expect(row).toBeTruthy();
+    // The dismissed annotation is excluded (else this would be 4) — matches the rail's active read.
+    expect(row!.annotationCount).toBe(3);
+    expect(row!.annotationCount).not.toBe(4);
+  });
+
   test("publish with a supplied-but-invalid projectId → 404 (never silent-default)", async () => {
     const bogus = "00000000-0000-0000-0000-000000000000";
     const pub = await app.handle(

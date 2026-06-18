@@ -143,8 +143,10 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
       // Correlated subqueries keep this a single round-trip (no per-doc fan-out): the latest
       // published version, the count of ACTIVE annotations on the doc, and the first-
       // publisher's display name. COALESCE keeps version/count numeric (0) when absent.
-      // workspace-project-ui S-007 / C-006: count the doc's ACTIVE annotations (deleted_at
-      // IS NULL — soft-deleted ones excluded), NOT the comment total across its threads.
+      // workspace-project-ui S-007 / C-006: count the doc's ACTIVE annotations — deleted_at
+      // IS NULL (soft-deleted excluded) AND dismissed_at IS NULL (dismissed detached excluded,
+      // annotation-core S-008/C-013) — so this matches the viewer rail's active read exactly
+      // (annotation/repo.ts listByDoc), NOT the comment total across its threads.
       const latestVersion = sql<number>`coalesce((
         select max(${docVersions.version}) from ${docVersions}
         where ${docVersions.docId} = ${docs.id}
@@ -153,6 +155,7 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
         select count(*) from ${annotations}
         where ${annotations.docId} = ${docs.id}
           and ${annotations.deletedAt} is null
+          and ${annotations.dismissedAt} is null
       ), 0)`;
       const rows = await db
         .select({
