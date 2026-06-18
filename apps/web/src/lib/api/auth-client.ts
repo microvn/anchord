@@ -27,4 +27,8 @@ export const {
   verifyEmail,
   useSession,
   getSession,
+  // account-settings S-002: edit the signed-in user's display name; read the linked
+  // sign-in provider from the better-auth `account` record (no new backend endpoint).
+  updateUser,
+  listAccounts,
 } = authClient;
