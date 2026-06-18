@@ -121,6 +121,22 @@ function fakeResolutionRepo() {
   return { repo, calls };
 }
 
+function fakeDismissReattachRepo() {
+  const calls = {
+    dismissed: [] as string[],
+    reattached: [] as { id: string; anchor: any }[],
+  };
+  const repo = {
+    async dismiss(annotationId: string) {
+      calls.dismissed.push(annotationId);
+    },
+    async reattach(annotationId: string, anchor: any) {
+      calls.reattached.push({ id: annotationId, anchor });
+    },
+  };
+  return { repo, calls };
+}
+
 function fakeSuggestionRepo(seed: SuggestionRow[] = []) {
   const rows = [...seed];
   let n = 0;
@@ -200,6 +216,7 @@ function buildApp(opts: {
   suggestionRepo?: ReturnType<typeof fakeSuggestionRepo>;
   annotationLookupRepo?: AnnotationLookupRepo;
   loadShareConfig?: LoadShareConfig;
+  dismissReattachRepo?: ReturnType<typeof fakeDismissReattachRepo>;
 }) {
   const resolveDocRole = opts.resolveDocRole ?? asOwner;
   // Default gate: admit, mirroring the resolved role (anon → null role but still admitted
@@ -219,6 +236,9 @@ function buildApp(opts: {
       deleteRepo: { async setDeletedAt() {} },
       // annotation-actions S-005: a no-op restore repo so the routes build without `db`.
       restoreRepo: { async clearDeletedAt() {} },
+      // annotation-core S-008: a recording dismiss/re-attach repo (no-op default) so the routes
+      // build without `db` and the tests can assert the write fired (or didn't, on a refusal).
+      dismissReattachRepo: (opts.dismissReattachRepo ?? fakeDismissReattachRepo()).repo,
       suggestionRepo: (opts.suggestionRepo ?? fakeSuggestionRepo()).repo,
       lookupRepo: fakeLookupRepo(opts.doc === undefined ? VISIBLE_DOC : opts.doc),
       annotationLookupRepo: opts.annotationLookupRepo ?? fakeAnnotationLookupRepo({}),
@@ -797,6 +817,119 @@ describe("PATCH /api/annotations/:id/resolution (S-004)", () => {
     expect(res.status).toBe(403);
     expect(rr.calls.sets).toHaveLength(0);
     expect(rr.calls.resets).toHaveLength(0);
+  });
+});
+
+// ── annotation-core S-008: dismiss / re-attach a detached annotation ─────────
+// Route GLUE for the two workspace-scoped, session-required endpoints. The pure authz +
+// the writes are unit-tested in src/annotation/dismiss-reattach.test.ts; these tests pin the
+// HTTP contract: session-required (commenter+) → dismiss 200 { dismissed: true } / re-attach
+// 200 { isOrphaned: false }; a viewer → 403 with nothing written (AS-025); a re-attach anchor
+// that doesn't place against the current version → 400 (AS-024).
+describe("POST /api/w/:workspaceId/annotations/:id/dismiss (S-008)", () => {
+  test("AS-023: a commenter dismisses a detached annotation → 200 { dismissed: true }, the dismiss write fired", async () => {
+    const dr = fakeDismissReattachRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, dismissReattachRepo: dr });
+    const res = await app.handle(req("/api/w/ws_1/annotations/ann_1/dismiss", { method: "POST" }));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.dismissed).toBe(true);
+    // soft: only the dismiss marker is written (the row is kept, not hard-deleted).
+    expect(dr.calls.dismissed).toEqual(["ann_1"]);
+  });
+
+  test("AS-025: a viewer cannot dismiss → 403, nothing written (annotation unchanged)", async () => {
+    const dr = fakeDismissReattachRepo();
+    const app = buildApp({ resolveDocRole: asViewer, dismissReattachRepo: dr });
+    const res = await app.handle(req("/api/w/ws_1/annotations/ann_1/dismiss", { method: "POST" }));
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("FORBIDDEN");
+    expect(dr.calls.dismissed).toHaveLength(0);
+  });
+
+  test("no session → 401 (handler never runs)", async () => {
+    const dr = fakeDismissReattachRepo();
+    const app = buildApp({ resolveSession: noSession, dismissReattachRepo: dr });
+    const res = await app.handle(req("/api/w/ws_1/annotations/ann_1/dismiss", { method: "POST" }));
+    expect(res.status).toBe(401);
+    expect(dr.calls.dismissed).toHaveLength(0);
+  });
+
+  test("AS-025 (existence-hiding): dismiss on a no-access parent doc → 404, nothing written", async () => {
+    const dr = fakeDismissReattachRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, resolveAccess: denyAll, dismissReattachRepo: dr });
+    const res = await app.handle(req("/api/w/ws_1/annotations/ann_1/dismiss", { method: "POST" }));
+    expect(res.status).toBe(404);
+    expect(dr.calls.dismissed).toHaveLength(0);
+  });
+});
+
+describe("POST /api/w/:workspaceId/annotations/:id/reattach (S-008)", () => {
+  // The current version contains the snippet, so the re-anchor matcher PLACES the submitted range.
+  const matchingLookup = fakeAnnotationLookupRepo({ currentHtml: "<p>hello world</p>" });
+  const reattachAnchor = { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 };
+
+  test("AS-024: a commenter re-attaches onto a range in the current version → 200 { isOrphaned: false }, anchor set to the new range", async () => {
+    const dr = fakeDismissReattachRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, dismissReattachRepo: dr, annotationLookupRepo: matchingLookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/reattach", { method: "POST", body: JSON.stringify({ anchor: reattachAnchor }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.isOrphaned).toBe(false);
+    // the fresh anchor is written (clears is_orphaned + sets the new block/snippet/offset).
+    expect(dr.calls.reattached).toHaveLength(1);
+    expect(dr.calls.reattached[0]?.id).toBe("ann_1");
+    expect(dr.calls.reattached[0]?.anchor.blockId).toBe("block-p-1");
+  });
+
+  test("AS-024: a re-attach anchor that doesn't match the current version → 400, nothing written", async () => {
+    const dr = fakeDismissReattachRepo();
+    // current version has totally different text → the submitted snippet places nowhere.
+    const missLookup = fakeAnnotationLookupRepo({ currentHtml: "<p>completely different content here</p>" });
+    const app = buildApp({ resolveDocRole: asCommenter, dismissReattachRepo: dr, annotationLookupRepo: missLookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/reattach", {
+        method: "POST",
+        body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "nonexistent snippet", offset: 0, length: 19 } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(dr.calls.reattached).toHaveLength(0);
+  });
+
+  test("AS-025: a viewer cannot re-attach → 403, nothing written (even with a matching anchor)", async () => {
+    const dr = fakeDismissReattachRepo();
+    const app = buildApp({ resolveDocRole: asViewer, dismissReattachRepo: dr, annotationLookupRepo: matchingLookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/reattach", { method: "POST", body: JSON.stringify({ anchor: reattachAnchor }) }),
+    );
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("FORBIDDEN");
+    expect(dr.calls.reattached).toHaveLength(0);
+  });
+
+  test("bad body (missing anchor) → 400 VALIDATION_ERROR", async () => {
+    const app = buildApp({ resolveDocRole: asCommenter, annotationLookupRepo: matchingLookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/reattach", { method: "POST", body: JSON.stringify({}) }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  test("no session → 401", async () => {
+    const app = buildApp({ resolveSession: noSession, annotationLookupRepo: matchingLookup });
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/reattach", { method: "POST", body: JSON.stringify({ anchor: reattachAnchor }) }),
+    );
+    expect(res.status).toBe(401);
   });
 });
 

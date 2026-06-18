@@ -267,6 +267,13 @@ export const annotations = pgTable(
     // (delete-own by the author, or owner-moderation). The READ-side total-exclusion + terminal
     // guards + restore are S-005; this column + its delete authz are S-004.
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // dismissed_at (annotation-core S-008 / C-013): a SOFT-DISMISS marker for a DETACHED
+    // (is_orphaned) annotation. NULL = active; a timestamp = dismissed (commenter+ cleared it
+    // from the detached list, AS-023). Dismissed rows are EXCLUDED from the active list read
+    // (alongside deleted_at) but are NOT hard-deleted — the row is kept. Distinct from
+    // deleted_at: dismiss is detached-list housekeeping (any commenter+), delete is an
+    // ownership action (own/owner). Additive nullable column, no backfill.
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [index("annotations_doc_idx").on(t.docId)],

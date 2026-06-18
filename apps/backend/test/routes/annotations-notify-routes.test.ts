@@ -124,6 +124,8 @@ function buildApp(opts: {
       deleteRepo: { async setDeletedAt() {} },
       // annotation-actions S-005: a no-op restore repo so the routes build without `db`.
       restoreRepo: { async clearDeletedAt() {} },
+      // annotation-core S-008: a no-op dismiss/re-attach repo so the routes build without `db`.
+      dismissReattachRepo: { async dismiss() {}, async reattach() {} },
       suggestionRepo: {
         async insertSuggestion() { return { id: "s" }; },
         async getSuggestion() { return null; },

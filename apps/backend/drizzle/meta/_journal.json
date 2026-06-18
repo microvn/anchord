@@ -29,6 +29,13 @@
       "when": 1781578195894,
       "tag": "0003_special_talos",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781775782711,
+      "tag": "0004_cooing_ironclad",
+      "breakpoints": true
     }
   ]
 }

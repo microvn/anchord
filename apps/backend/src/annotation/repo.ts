@@ -20,6 +20,7 @@ import type {
 import type { CommentRepo, CommentRow } from "./reply";
 import type { ResolutionRepo, AnnotationStatus } from "./resolve";
 import type { DeleteRepo, RestoreRepo } from "./delete";
+import type { DismissReattachRepo } from "./dismiss-reattach";
 import type {
   SuggestionRepo,
   SuggestionRow,
@@ -68,7 +69,9 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
         // S-005 / C-007 (AS-014): exclude soft-deleted annotations from the active list. This
         // SAME read backs the re-anchor enumeration (reanchor-job reads via listByDoc), so a
         // deleted annotation is also never re-anchored nor counted in the detached-rate metric.
-        .where(and(eq(annotations.docId, docId), isNull(annotations.deletedAt)))
+        // S-008 / C-013 (AS-023): a DISMISSED detached annotation is excluded the same way —
+        // it leaves the active list (and the re-anchor enumeration) but is kept, not hard-deleted.
+        .where(and(eq(annotations.docId, docId), isNull(annotations.deletedAt), isNull(annotations.dismissedAt)))
         // #4 (2026-06-12): newest annotation/thread first — a freshly created thread "appears at the
         // top of the rail" (spec). Only the ANNOTATION ordering is DESC; comments WITHIN a thread
         // stay ASC (root then replies, top-down) — see listCommentsByDoc below.
@@ -108,7 +111,8 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
         .leftJoin(user, eq(comments.authorId, user.id))
         // S-005 / C-007 (AS-014): a soft-deleted annotation's thread (its highlight + comments)
         // must not surface on the active read either — exclude comments whose annotation is deleted.
-        .where(and(eq(annotations.docId, docId), isNull(annotations.deletedAt)))
+        // S-008 / C-013 (AS-023): likewise exclude the thread of a DISMISSED detached annotation.
+        .where(and(eq(annotations.docId, docId), isNull(annotations.deletedAt), isNull(annotations.dismissedAt)))
         .orderBy(asc(comments.createdAt)); // root(s) then replies in creation order.
       return rows.map((r) => ({
         id: r.id,
@@ -403,6 +407,28 @@ export function createReanchorApplyRepo(db: DB): ReanchorApplyRepo {
         .update(annotations)
         .set({ isOrphaned: true })
         .where(eq(annotations.id, annotationId));
+    },
+  };
+}
+
+// ── S-008: dismiss / re-attach a detached annotation (DismissReattachRepo) ─────
+
+/**
+ * Construct a DismissReattachRepo backed by a Drizzle DB handle (annotation-core S-008 /
+ * C-013). `dismiss` stamps `dismissed_at` (the soft, kept marker that the active-read
+ * excludes alongside `deleted_at`); `reattach` clears `is_orphaned` and writes the fresh
+ * anchor so the annotation returns anchored. Thin write glue — the comment-permission gate +
+ * the anchor-placement validation run in the service (dismiss-reattach.ts) and the route.
+ */
+export function createDismissReattachRepo(db: DB): DismissReattachRepo {
+  return {
+    async dismiss(annotationId: string): Promise<void> {
+      // AS-023: soft-dismiss — set the marker; the row is kept (excluded from the active list).
+      await db.update(annotations).set({ dismissedAt: new Date() }).where(eq(annotations.id, annotationId));
+    },
+    async reattach(annotationId: string, anchor: Anchor): Promise<void> {
+      // AS-024: clear is_orphaned + set the fresh anchor → returns as an anchored annotation.
+      await db.update(annotations).set({ isOrphaned: false, anchor }).where(eq(annotations.id, annotationId));
     },
   };
 }

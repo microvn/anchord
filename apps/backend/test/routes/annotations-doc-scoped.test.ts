@@ -238,6 +238,8 @@ function buildApp(opts: {
       resolutionRepo: (opts.resolutionRepo ?? fakeResolutionRepo()).repo,
       deleteRepo: (opts.deleteRepo ?? fakeDeleteRepo()).repo,
       restoreRepo: (opts.restoreRepo ?? fakeRestoreRepo()).repo,
+      // annotation-core S-008: a no-op dismiss/re-attach repo so the routes build without `db`.
+      dismissReattachRepo: { async dismiss() {}, async reattach() {} },
       suggestionRepo: opts.suggestionRepo ?? {
         async insertSuggestion() { return { id: "s" }; },
         async getSuggestion() { return null; },

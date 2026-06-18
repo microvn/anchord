@@ -53,6 +53,12 @@ import { addReply, addComment, type CommentRepo } from "../annotation/reply";
 import { createGuestComment, type GuestCommentRepo } from "../annotation/guest";
 import { setResolution, type ResolutionRepo } from "../annotation/resolve";
 import { deleteAnnotation, restoreAnnotation, type DeleteRepo, type RestoreRepo } from "../annotation/delete";
+import {
+  dismissAnnotation,
+  reattachAnnotation,
+  type DismissReattachRepo,
+} from "../annotation/dismiss-reattach";
+import { reanchorAnnotation } from "../annotation/reanchor";
 import { createSuggestion, decideSuggestion, type SuggestionRepo } from "../annotation/suggestion";
 import {
   createAnnotationRepo,
@@ -60,6 +66,7 @@ import {
   createGuestCommentRepo,
   createResolutionRepo,
   createDeleteRepo,
+  createDismissReattachRepo,
   createSuggestionRepo,
 } from "../annotation/repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
@@ -222,6 +229,8 @@ export interface AnnotationsRoutesDeps {
   deleteRepo?: DeleteRepo;
   /** annotation-actions S-005 / C-007: the restore (clear-tombstone) write port (built from `db` if omitted). */
   restoreRepo?: RestoreRepo;
+  /** annotation-core S-008 / C-013: the dismiss + re-attach write port (built from `db` if omitted). */
+  dismissReattachRepo?: DismissReattachRepo;
   suggestionRepo?: SuggestionRepo;
   lookupRepo?: DocLookupRepo;
   annotationLookupRepo?: AnnotationLookupRepo;
@@ -346,6 +355,15 @@ const decideSuggestionSchema = z.object({
 });
 
 /**
+ * S-008 / AS-024: re-attach body — the fresh range the caller selected in the current version.
+ * A text anchor (the only kind that re-anchors); the placement against the current content is
+ * validated in the handler (a non-matching anchor → 400).
+ */
+const reattachSchema = z.object({
+  anchor: textAnchorSchema,
+});
+
+/**
  * Build a storage Anchor from the validated request anchor. An image-region anchor
  * (carries `region`) goes through imageRegionAnchor so the SAME normalization backs
  * AS-007; a text anchor passes through verbatim (AS-003: block_id stored as chosen).
@@ -368,6 +386,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   const deleteRepo = deps.deleteRepo ?? (deps.db ? createDeleteRepo(deps.db) : need("deleteRepo"));
   // S-005/C-007: restore shares the createDeleteRepo factory (it exposes both set + clear).
   const restoreRepo = deps.restoreRepo ?? (deps.db ? createDeleteRepo(deps.db) : need("restoreRepo"));
+  // S-008/C-013: dismiss + re-attach a detached annotation.
+  const dismissReattachRepo =
+    deps.dismissReattachRepo ?? (deps.db ? createDismissReattachRepo(deps.db) : need("dismissReattachRepo"));
   const suggestionRepo = deps.suggestionRepo ?? (deps.db ? createSuggestionRepo(deps.db) : need("suggestionRepo"));
   const lookupRepo = deps.lookupRepo ?? (deps.db ? createDocLookupRepo(deps.db) : need("lookupRepo"));
   const annotationLookupRepo =
@@ -631,6 +652,57 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     return { restored: true };
   }
 
+  /**
+   * annotation-core S-008 / C-013 (AS-023): DISMISS a detached annotation (soft) — it leaves the
+   * doc's active list but is kept, not hard-deleted. Mounted in the SESSION-REQUIRED, workspace-
+   * scoped group (the `actor` is always present), so a viewer is the only refusal: commenter+ may
+   * dismiss (AS-025). The SAME existence-hiding gate every annotation route uses runs on the
+   * resolved parent doc (404 on missing/no-access), then the caller's doc-scoped role gates the
+   * comment-permission check in the service.
+   */
+  async function dismissHandler({ params, actor }: any) {
+    const viewer: Viewer = { kind: "user", userId: actor.userId };
+    const found = await annotationLookupRepo.findAnnotationDoc(params.id);
+    const parent = await enforceParentAccess(found, viewer); // 404 on missing/no-access
+    const sessionRole = await docRole(parent.docId, actor.userId); // server re-auth
+    const result = await dismissAnnotation({ annotationId: params.id, sessionRole }, dismissReattachRepo);
+    if (!result.ok) throw new ForbiddenError(); // viewer → 403 (AS-025)
+    return { dismissed: true };
+  }
+
+  /**
+   * annotation-core S-008 / C-013 (AS-024): RE-ATTACH a detached annotation onto a range the
+   * caller selected in the CURRENT version — clears `is_orphaned` and sets the fresh anchor, so
+   * it returns anchored. Session-required + existence-hiding 404 + comment-permission gate (a
+   * viewer → 403, AS-025) exactly like dismiss. PLUS an anchor-placement check: the submitted
+   * anchor must match a block/snippet in the current version content (resolved via
+   * getCurrentVersionContent + the re-anchor matcher) — a non-matching anchor → 400 (the range
+   * isn't in the current version). The viewer refusal runs BEFORE the anchor check so a viewer's
+   * 403 never leaks whether their anchor would have placed (AS-025: unchanged).
+   */
+  async function reattachHandler({ params, actor, validBody }: any) {
+    const body = validBody as z.infer<typeof reattachSchema>;
+    const viewer: Viewer = { kind: "user", userId: actor.userId };
+    const found = await annotationLookupRepo.findAnnotationDoc(params.id);
+    const parent = await enforceParentAccess(found, viewer); // 404 on missing/no-access
+    const sessionRole = await docRole(parent.docId, actor.userId); // server re-auth
+    // The current version content the submitted range must place against (AS-024). Empty when the
+    // doc has no version content → no anchor can place → anchor_mismatch (the route 400s).
+    const currentHtml = (await annotationLookupRepo.getCurrentVersionContent(parent.docId)) ?? "";
+    const anchorPlaces = (anchor: Anchor) =>
+      reanchorAnnotation(anchor, currentHtml).status === "carried";
+    const result = await reattachAnnotation(
+      { annotationId: params.id, anchor: body.anchor as Anchor, sessionRole },
+      anchorPlaces,
+      dismissReattachRepo,
+    );
+    if (!result.ok && result.reason === "anchor_mismatch") {
+      throw new ValidationError("The selected range doesn't match the current version", { field: "anchor" });
+    }
+    if (!result.ok) throw new ForbiddenError(); // viewer → 403 (AS-025)
+    return { isOrphaned: false };
+  }
+
   // S-003 reply (session) OR S-007 guest (no session). The guest path requires a
   // name + the doc's guest-commenting toggle; the service sanitizes body+name (C-008).
   async function commentHandler({ params, request, validBody, set }: any) {
@@ -820,6 +892,10 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         .group("", (a) => a.use(withValidation(createAnnotationSchema)).post("/api/w/:workspaceId/docs/:slug/annotations", createAnnotationHandler))
         .get("/api/w/:workspaceId/docs/:slug/annotations", listAnnotationsHandler)
         .group("", (a) => a.use(withValidation(resolutionSchema)).patch("/api/w/:workspaceId/annotations/:id/resolution", resolutionHandler))
+        // annotation-core S-008 / C-013: dismiss (AS-023, no body) + re-attach (AS-024, { anchor })
+        // a detached annotation. Session-required (commenter+); the handler 403s a viewer (AS-025).
+        .post("/api/w/:workspaceId/annotations/:id/dismiss", dismissHandler)
+        .group("", (a) => a.use(withValidation(reattachSchema)).post("/api/w/:workspaceId/annotations/:id/reattach", reattachHandler))
         .group("", (a) => a.use(withValidation(createSuggestionSchema)).post("/api/w/:workspaceId/docs/:slug/suggestions", createSuggestionHandler))
         .group("", (a) => a.use(withValidation(decideSuggestionSchema)).patch("/api/w/:workspaceId/suggestions/:id", decideSuggestionHandler)),
     )
