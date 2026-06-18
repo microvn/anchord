@@ -246,3 +246,124 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// S-007: the browse + projects-list reads return ONE bounded page (default size 20) plus a
+// `pagination` summary (total + hasNext). The domain keys `docs`/`projects` are RETAINED; the
+// summary is ADDITIVE. Access filtering (C-003) runs BEFORE the page is taken, so the total
+// counts only accessible items and no out-of-access doc appears in any page (AS-020).
+describe("/api/projects pagination (workspace-project S-007)", () => {
+  // Build N markdown docs in one project, every one accessible (anyone_in_workspace).
+  const mkDocs = (n: number, access: ProjectDocRow["generalAccess"] = "anyone_in_workspace"): ProjectDocRow[] =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `d${i + 1}`,
+      slug: `doc-${i + 1}`,
+      title: `Doc ${i + 1}`,
+      kind: "markdown" as const,
+      ownerId: "u_a",
+      generalAccess: access,
+      latestVersion: 1,
+      annotationCount: 0,
+      ownerName: "Alice",
+    }));
+
+  test("AS-016: a project's doc browse returns one page (≤20) with a total summary stating more pages exist", async () => {
+    const f = fakeRepo([
+      { id: "p_1", workspaceId: WS, name: "Big", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const ctx = fakeCtx({ docs: new Map([["p_1", mkDocs(45)]]) });
+    const app = buildApp(asUser("u_a"), f.repo, ctx);
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.docs).toHaveLength(20);
+    expect(json.data.docs[0].id).toBe("d1");
+    expect(json.data.docs[19].id).toBe("d20");
+    expect(json.data.pagination).toMatchObject({
+      page: 1,
+      limit: 20,
+      total: 45,
+      totalPages: 3,
+      hasNext: true,
+      hasPrevious: false,
+    });
+  });
+
+  test("AS-017: requesting a later page returns that slice and the summary states no further page exists", async () => {
+    const f = fakeRepo([
+      { id: "p_1", workspaceId: WS, name: "Big", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const ctx = fakeCtx({ docs: new Map([["p_1", mkDocs(45)]]) });
+    const app = buildApp(asUser("u_a"), f.repo, ctx);
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs?page=3"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    // page 3 of 45 at size 20 = docs 41..45 (5 items).
+    expect(json.data.docs.map((d: any) => d.id)).toEqual(["d41", "d42", "d43", "d44", "d45"]);
+    expect(json.data.pagination).toMatchObject({
+      page: 3,
+      total: 45,
+      hasNext: false,
+      hasPrevious: true,
+    });
+  });
+
+  test("AS-019: the projects list returns one page (≤20) with a total summary stating more pages exist", async () => {
+    const seed = Array.from({ length: 30 }, (_, i) => ({
+      id: `p_${i + 1}`,
+      workspaceId: WS,
+      name: `Project ${i + 1}`,
+      ownerId: "u_a",
+      isDefault: false,
+      archivedAt: null,
+    }));
+    const f = fakeRepo(seed);
+    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({}));
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.projects).toHaveLength(20);
+    expect(json.data.pagination).toMatchObject({
+      page: 1,
+      limit: 20,
+      total: 30,
+      totalPages: 2,
+      hasNext: true,
+      hasPrevious: false,
+    });
+  });
+
+  test("AS-020: the page total counts only accessible docs (filter BEFORE paginate); no out-of-access doc in any page", async () => {
+    // 40 docs: the first 22 are accessible (anyone_in_workspace), the last 18 are restricted
+    // and u_x is uninvited → access-filtered OUT. Total must reflect 22, two pages, never 40.
+    const accessible = mkDocs(22, "anyone_in_workspace");
+    const hidden = Array.from({ length: 18 }, (_, i) => ({
+      id: `secret${i + 1}`,
+      slug: `secret-${i + 1}`,
+      title: `Secret ${i + 1}`,
+      kind: "markdown" as const,
+      ownerId: "u_a",
+      generalAccess: "restricted" as const,
+      latestVersion: 1,
+      annotationCount: 0,
+      ownerName: "Alice",
+    }));
+    const f = fakeRepo([
+      { id: "p_1", workspaceId: WS, name: "Mixed", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const ctx = fakeCtx({ docs: new Map([["p_1", [...accessible, ...hidden]]]) });
+    const app = buildApp(asUser("u_x"), f.repo, ctx);
+
+    const page1 = (await (await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs"))).json()) as any;
+    expect(page1.data.pagination).toMatchObject({ total: 22, totalPages: 2, hasNext: true });
+    expect(page1.data.docs).toHaveLength(20);
+
+    const page2 = (await (await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs?page=2"))).json()) as any;
+    expect(page2.data.docs).toHaveLength(2);
+    expect(page2.data.pagination).toMatchObject({ total: 22, hasNext: false });
+
+    // Existence-hiding holds across BOTH pages: no restricted doc's bytes appear anywhere.
+    const raw = JSON.stringify(page1) + JSON.stringify(page2);
+    expect(raw).not.toContain("secret");
+    expect(raw).not.toContain("Secret ");
+  });
+});

@@ -160,4 +160,31 @@ describe("/api/search route glue (workspace-project S-005)", () => {
     await app.handle(req("/api/w/ws_1/search?q=x&userId=u_attacker"));
     expect(seenUser).toBe("u_real");
   });
+
+  // S-007: search returns ONE bounded page (default size 20) plus a `pagination` summary. The
+  // service already access-filters (C-003), so the page is taken over the accessible set; the
+  // `results` key is RETAINED, `pagination` is ADDITIVE.
+  test("AS-018: search returns one page (≤20) of the 28 accessible matches plus a total summary stating more pages exist", async () => {
+    // 28 docs, all accessible, all matching "spec". The service returns the full accessible
+    // set (cap 50); the route slices the first 20 and reports total=28, hasNext=true.
+    const docs = Array.from({ length: 28 }, (_, i) => ({
+      hit: mkHit(`d${i + 1}`, `Spec ${i + 1}`, "content" as const),
+      matchesQuery: (q: string) => q.includes("spec"),
+      accessibleTo: () => true,
+    }));
+    const app = buildApp(asUser("u_x"), fakeRepo(docs));
+    const res = await app.handle(req("/api/w/ws_1/search?q=spec"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.results).toHaveLength(20);
+    expect(json.data.results[0].docId).toBe("d1");
+    expect(json.data.pagination).toMatchObject({
+      page: 1,
+      limit: 20,
+      total: 28,
+      totalPages: 2,
+      hasNext: true,
+      hasPrevious: false,
+    });
+  });
 });

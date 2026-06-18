@@ -25,7 +25,11 @@ import { validateBody } from "../http/validate";
 import { search, SearchRejected, type SearchDeps } from "../search/search";
 import { createSearchRepo, type SearchRepo } from "../search/search-repo";
 import { ValidationError } from "../http/errors";
+import { paginationQuery, buildPagination, type PaginationParams } from "../http/pagination";
 import type { DB } from "../db/client";
+
+// S-007: page parser for search (default size 20, clamp to 100). `page` < 1 → 400.
+const searchPage = paginationQuery({ defaultLimit: 20, maxLimit: 100 });
 
 /** Query schema: q is required + non-empty; projectId optional uuid. Unknown keys stripped. */
 export const searchQuerySchema = z.object({
@@ -63,6 +67,7 @@ export function searchRoutes(deps: SearchRoutesDeps) {
       // Validate the QUERY object (q + optional projectId). A blank q → 400 here OR
       // via the service's parseQuery; both surface as VALIDATION_ERROR.
       const { q, projectId } = validateBody(searchQuerySchema, query);
+      const page = searchPage.parse(query) as PaginationParams;
       try {
         // workspaces S-006/C-002: search is scoped to the path workspace; only docs in
         // THIS workspace (and only those the caller can access) are returned.
@@ -70,7 +75,15 @@ export function searchRoutes(deps: SearchRoutesDeps) {
           { q, userId: actor.userId, projectId, workspaceId: ws.workspaceId },
           serviceDeps,
         );
-        return { results };
+        // S-007/C-010/C-003: search() already returns the ACCESS-FILTERED set, so the page is
+        // taken over accessible matches only — total counts accessible matches, never raw rows.
+        // The `results` key is RETAINED; `pagination` is additive.
+        const total = results.length;
+        const start = (page.page - 1) * page.limit;
+        return {
+          results: results.slice(start, start + page.limit),
+          pagination: buildPagination({ page: page.page, limit: page.limit, total }),
+        };
       } catch (err) {
         if (err instanceof SearchRejected) throw new ValidationError(err.message);
         throw err;

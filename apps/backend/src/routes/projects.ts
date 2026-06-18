@@ -43,7 +43,12 @@ import {
   type ProjectRepo,
 } from "../workspace/projects";
 import { createProjectRepo, createProjectsRouteRepo, type ProjectsRouteRepo } from "../workspace/repo";
+import { paginationQuery, buildPagination, type PaginationParams } from "../http/pagination";
 import type { DB } from "../db/client";
+
+// S-007: the shared page parser for the browse + projects-list reads (default size 20,
+// limit clamped to 100). `page` < 1 is rejected as 400 VALIDATION_ERROR (pagination.ts).
+const browsePage = paginationQuery({ defaultLimit: 20, maxLimit: 100 });
 
 export const createProjectBodySchema = z.object({
   name: z.string().min(1, "project name is required").max(MAX_PROJECT_NAME_LENGTH),
@@ -138,14 +143,21 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
     // GET — browse list (active by default; includeArchived=true shows all).
     .get("/api/w/:workspaceId/projects", async ({ query, ws }) => {
       const includeArchived = (query as Record<string, string>).includeArchived === "true";
+      const page = browsePage.parse(query) as PaginationParams;
       const list = await listProjects({ workspaceId: ws.workspaceId, includeArchived }, { repo });
+      // S-007/C-010: paginate AFTER the (archive) filter — total is the filtered count, and
+      // the `projects` key is RETAINED; `pagination` is additive.
+      const total = list.length;
+      const start = (page.page - 1) * page.limit;
+      const slice = list.slice(start, start + page.limit);
       return {
-        projects: list.map((p) => ({
+        projects: slice.map((p) => ({
           id: p.id,
           name: p.name,
           isDefault: p.isDefault,
           archived: p.archivedAt != null,
         })),
+        pagination: buildPagination({ page: page.page, limit: page.limit, total }),
       };
     })
     // POST archive — hide from browse (owner-or-admin; default protected).
@@ -191,9 +203,10 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
     // doc is ABSENT (existence-hiding). The project must exist in the workspace (else 404).
     // anyone_in_workspace resolves against THIS workspace (the caller is already a member,
     // proven by the gate) — AS-019/AS-020.
-    .get("/api/w/:workspaceId/projects/:id/docs", async ({ params, actor, ws }) => {
+    .get("/api/w/:workspaceId/projects/:id/docs", async ({ params, actor, ws, query }) => {
       const project = await repo.findById(ws.workspaceId, params.id);
       if (!project) throw new NotFoundError("project not found");
+      const page = browsePage.parse(query) as PaginationParams;
       const projectDocs = await ctx.docsInProject(project.id);
       const visible = await filterBrowsableDocs(actor.userId, projectDocs, {
         isInvited: (docId, userId) => ctx.isInvited(docId, userId),
@@ -201,9 +214,15 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         // in that workspace, so anyone_in_workspace resolves true for them here.
         isWorkspaceMember: () => Promise.resolve(true),
       });
+      // S-007/C-010/AS-020: paginate AFTER the access filter (C-003). `total` is the count of
+      // ACCESSIBLE docs (never the raw projectDocs.length), so no out-of-access doc is ever
+      // counted or paged into view. The `docs` key is RETAINED; `pagination` is additive.
+      const total = visible.length;
+      const start = (page.page - 1) * page.limit;
+      const pageDocs = visible.slice(start, start + page.limit);
       const byId = new Map(projectDocs.map((d) => [d.id, d]));
       return {
-        docs: visible.map((v) => {
+        docs: pageDocs.map((v) => {
           const d = byId.get(v.id)!;
           // status maps from general_access: a doc shared beyond "restricted" is LIVE
           // (reachable by its audience); a restricted doc is still a private DRAFT. This is
@@ -220,6 +239,7 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
             status,
           };
         }),
+        pagination: buildPagination({ page: page.page, limit: page.limit, total }),
       };
     });
 
