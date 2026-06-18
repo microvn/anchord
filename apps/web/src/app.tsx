@@ -21,6 +21,7 @@ import { ProjectDocsScreen } from "./features/docs/components/project-docs-scree
 import { ActivityScreen } from "./features/docs/components/activity-screen";
 import { SearchScreen } from "./features/docs/components/search-screen";
 import { ViewerScreen } from "./features/viewer/components/viewer-screen";
+import { SettingsPage } from "./features/settings/components/settings-page";
 import { Toaster } from "./components/ui/sonner";
 
 // One shared QueryClient for the app's server-state layer (S-002). Its cache-level onError
@@ -54,6 +55,14 @@ export function AppRoutes() {
 
         {/* S-001: the app root resolves the landing workspace and redirects into its /w/:id/. */}
         <Route index element={<WorkspaceRootRedirect />} />
+
+        {/* account-settings S-001 (C-001): the Settings area is ACCOUNT-level — a sibling of
+            /w/:workspaceId, NOT workspace-scoped — and lives inside this AuthGuard block, so a
+            signed-out visitor to /settings is redirected to sign-in (AS-003). Sections are
+            deep-linkable by slug via /settings/:section; an unknown slug falls back to Account
+            inside SettingsPage (C-002 / AS-004). */}
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/:section" element={<SettingsPage />} />
 
         {/* doc-access-routing S-003: the old workspace-scoped viewer route is retired — the viewer
             is now the public slug-only `/d/:slug` above. Keep this as a thin redirect so any stale

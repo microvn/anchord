@@ -85,8 +85,12 @@ export function UserMenu({ foldedItems }: { foldedItems?: ReactNode }) {
         <button
           type="button"
           data-testid="menu-settings"
-          onClick={() => setOpen(false)}
-          // No settings route ships in web-core (workspace-project-ui owns it) — inert placeholder.
+          // account-settings S-001 (AS-001): open the account-level Settings area (Account
+          // section by default). Close the menu, then navigate to /settings.
+          onClick={() => {
+            setOpen(false);
+            navigate("/settings");
+          }}
           className={MENU_ITEM}
         >
           <Icon name="settings" size={16} />
