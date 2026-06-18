@@ -187,6 +187,36 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     expect(raw).not.toContain("doc-a");
   });
 
+  test("AS-021: each browse row carries the doc's general_access level (finer than status)", async () => {
+    const f = fakeRepo([
+      { id: "p_1", workspaceId: WS, name: "Billing", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const wsDoc: ProjectDocRow = {
+      id: "dWs", slug: "doc-ws", title: "Workspace Doc", kind: "markdown",
+      ownerId: "u_a", generalAccess: "anyone_in_workspace",
+      latestVersion: 1, annotationCount: 0, ownerName: "Alice",
+    };
+    const linkDoc: ProjectDocRow = {
+      // owned by the caller (u_x) so it is browsable — an anyone_with_link doc is reachable by link
+      // but only LISTED in browse for its owner/invitee, not for every workspace member.
+      id: "dLink", slug: "doc-link", title: "Link Doc", kind: "markdown",
+      ownerId: "u_x", generalAccess: "anyone_with_link",
+      latestVersion: 1, annotationCount: 0, ownerName: "Xavier",
+    };
+    const ctx = fakeCtx({ docs: new Map([["p_1", [wsDoc, linkDoc]]]) });
+    const app = buildApp(asUser("u_x"), f.repo, ctx);
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    const rowFor = (id: string) => json.data.docs.find((d: any) => d.id === id);
+    // Each row reports its OWN general-access level — the 3-way value the AccessIndicator needs.
+    expect(rowFor("dWs").generalAccess).toBe("anyone_in_workspace");
+    expect(rowFor("dLink").generalAccess).toBe("anyone_with_link");
+    // ...which `status` cannot express: both are "live", yet their access levels differ.
+    expect(rowFor("dWs").status).toBe("live");
+    expect(rowFor("dLink").status).toBe("live");
+  });
+
   test("AS-006: empty project → 200 { docs: [] }", async () => {
     const f = fakeRepo([
       { id: "p_1", workspaceId: WS, name: "Empty", ownerId: "u_a", isDefault: false, archivedAt: null },

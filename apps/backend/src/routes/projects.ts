@@ -237,6 +237,10 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
             annotationCount: d.annotationCount,
             authorName: d.ownerName,
             status,
+            // S-003/AS-021: the raw general-access level (restricted | anyone_in_workspace |
+            // anyone_with_link) so the FE AccessIndicator (workspace-project-ui:S-006) can show
+            // the 3-way badge — `status` collapses link vs workspace, this does not.
+            generalAccess: d.generalAccess,
           };
         }),
         pagination: buildPagination({ page: page.page, limit: page.limit, total }),
