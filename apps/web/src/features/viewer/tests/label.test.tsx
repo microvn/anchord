@@ -282,7 +282,7 @@ describe("Label create flow (S-004, through ViewerScreen)", () => {
       expect(screen.queryAllByTestId("thread-card")).toHaveLength(0);
     });
     expect(view.querySelector("[data-anno]")).toBeNull();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
     expect(addComment).not.toHaveBeenCalled();
     await waitFor(() => expect(toastError).toHaveBeenCalled());
   });

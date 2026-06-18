@@ -46,6 +46,10 @@ export interface PlaceableAnnotation {
   /** S-002 (AS-007): a drifted redline whose pinned span no longer matches the current version —
    *  rendered in a DISTINCT muted/dashed style (not a confident strike), and not acceptable. */
   stale?: boolean;
+  /** S-007 (C-009): this mark's status chip is toggled OFF, so its highlight is DIMMED (de-emphasized)
+   *  in the doc — distinct from the resolved/redline/stale styles, which convey lifecycle, not filter
+   *  state. Rendered via a `data-anno-filtered` hook the CSS reads. Absent/false → not dimmed. */
+  filtered?: boolean;
   /** DESIGN.md type/tool palette: the highlight HUE (a CSS colour) for this mark — a label/like mark
    *  carries its preset colour, a plain comment the Comment amber, so the content reads multi-colour
    *  (the mark + its rail row share the hue). A redline ignores this (the red strike wins via `kind`);
@@ -218,6 +222,9 @@ export function placeAnnotations(
 
     // Tag EVERY mark (across all segments) uniformly so a multi-block highlight reads consistently.
     if (ann.status === "resolved") marks.forEach((m) => (m.dataset.resolved = "true"));
+    // S-007 (C-009): a mark whose status chip is toggled off is DIMMED. Orthogonal to the lifecycle
+    // styles (resolved/redline/stale) — they all still read, just de-emphasized while filtered out.
+    if (ann.filtered) marks.forEach((m) => (m.dataset.annoFiltered = "true"));
     // S-002: tag the redline kind + stale state so the CSS renders the red strike / muted-dashed
     // stale style (C-002/AS-007). A stale redline is the muted-dashed, NOT a confident red strike.
     if (ann.kind === "redline") {

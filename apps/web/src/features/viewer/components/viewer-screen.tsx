@@ -13,7 +13,7 @@ import type { HtmlSandboxFrameHandle } from "./html-sandbox-frame";
 import type { BridgeAnchor } from "@/features/viewer/lib/bridge";
 import { DocModeToolbar, type MarkupTool } from "./doc-mode-toolbar";
 import { TocSidebar } from "./toc-sidebar";
-import { AnnotationsRail } from "./annotations-rail";
+import { AnnotationsRail, annotationBucket, ALL_CHIPS_ACTIVE, type ChipKey } from "./annotations-rail";
 import { ViewerTopBar } from "./viewer-top-bar";
 import { MetaStrip } from "./meta-strip";
 import type { SpecMeta } from "@/features/viewer/types";
@@ -818,13 +818,17 @@ function useAnnotations(
   prependAnnotation: (real: ViewerAnnotation) => void;
   /** HTML-PLACE: the placeable anchors to post down the iframe bridge (html docs only draw this way).
    *  Non-orphaned, anchored annotations mapped to the bridge's `{id, anchor}` shape. */
-  htmlPlaceable: { id: string; anchor: BridgeAnchor; hue?: string }[];
+  htmlPlaceable: { id: string; anchor: BridgeAnchor; hue?: string; filtered?: boolean }[];
   /** HTML-PLACE: route an in-iframe placement failure to the rail's couldn't-place badge (additive). */
   reportUnplaceableHtml: (id: string) => void;
   railProps: {
     annotations: ViewerAnnotation[];
     focusedId: string | null;
     unplaceableIds: Set<string>;
+    /** S-007 (C-009): the active status chips + the toggle, lifted here so the SAME set drives the
+     *  rail filter AND the in-text mark dimming. */
+    activeChips: ReadonlySet<ChipKey>;
+    onToggleChip: (chip: ChipKey) => void;
     /** S-002 (C-002): the session is the doc owner — forwarded to each card's proposal close family. */
     isOwner: boolean;
     onFocusThread: (id: string) => void;
@@ -836,6 +840,24 @@ function useAnnotations(
   };
 } {
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  // S-007 (C-009): the active status-chip filter, lifted here (like focusedId) so the SAME set drives
+  // BOTH the rail thread list AND the in-text mark dimming. All three active by default. Toggling a
+  // chip OFF hides its group from the rail + dims its marks; the detached section is unaffected (C-004).
+  const [activeChips, setActiveChips] = useState<ReadonlySet<ChipKey>>(ALL_CHIPS_ACTIVE);
+  const toggleChip = useCallback((chip: ChipKey) => {
+    setActiveChips((prev) => {
+      const next = new Set(prev);
+      if (next.has(chip)) next.delete(chip);
+      else next.add(chip);
+      return next;
+    });
+  }, []);
+  // S-007 (AS-026): acting on an annotation whose chip is OFF must re-activate that chip (never a dead
+  // no-op). Used by the click-on-mark and the rail-thread focus paths before they focus the thread.
+  const ensureChipActive = useCallback((a: { type: string; status: "unresolved" | "resolved" }) => {
+    const chip = annotationBucket(a);
+    setActiveChips((prev) => (prev.has(chip) ? prev : new Set(prev).add(chip)));
+  }, []);
   const queryClient = useQueryClient();
   // The cache key for this doc's annotation list (matches useApiQuery below). All post-write
   // reconciles patch THIS entry directly via setQueryData instead of refetching.
@@ -915,9 +937,12 @@ function useAnnotations(
           kind: isRedline ? ("redline" as const) : undefined,
           stale: a.suggestionStatus === "stale",
           hue,
+          // S-007 (C-009): the mark is DIMMED when its status chip is toggled off. Detached items
+          // carry no highlight (excluded below / by the placer), so this only affects anchored marks.
+          filtered: !activeChips.has(annotationBucket(a)),
         };
       }),
-    [annotations],
+    [annotations, activeChips],
   );
 
   // HTML-PLACE: the placeable set in the bridge's `{id, anchor}` shape, for an HTML doc to post down
@@ -940,6 +965,9 @@ function useAnnotations(
           resolved: a.status === "resolved",
           kind: a.kind,
           stale: a.stale,
+          // S-007 (C-009): carry the dim state down the bridge so the in-iframe mark dims too (the
+          // markdown placer + the HTML bridge are the TWO placement paths; both must dim, AS-023).
+          filtered: a.filtered,
         })),
     [placeable],
   );
@@ -962,11 +990,23 @@ function useAnnotations(
   // null for every anchor and false-flag ALL of them "couldn't place". HTML is drawn the only way it
   // can be: each anchor posted down the bridge by HtmlSandboxFrame (placement failures come back via
   // onPlaceFailed → reportUnplaceableHtml). So feed the placer an empty set for non-markdown.
+  // S-007 (AS-026): a click on a (possibly filtered-out, dimmed) highlight must re-activate that
+  // annotation's chip before focusing — so its thread reappears in the rail and the click is never a
+  // dead no-op. Looks the annotation up by id to find its chip.
+  const reactivateChipFor = useCallback(
+    (id: string) => {
+      const a = annotations.find((x) => x.id === id);
+      if (a) ensureChipActive(a);
+    },
+    [annotations, ensureChipActive],
+  );
+
   useAnnotationMarks(
     docPaneEl,
     isMarkdown ? placeable : EMPTY_PLACEABLE,
     focusedId,
     (id) => {
+      reactivateChipFor(id); // AS-026: clicking a dimmed/filtered mark re-activates its chip
       setFocusedId(id);
       onHighlightTap();
     },
@@ -974,6 +1014,7 @@ function useAnnotations(
   );
 
   const focusThread = (id: string) => {
+    reactivateChipFor(id); // AS-026: focusing a thread in a toggled-off group re-activates its chip
     setFocusedId(id);
     scrollToAnno(docPaneEl, id); // AS-009: scroll to + emphasise the highlight.
   };
@@ -1190,6 +1231,6 @@ function useAnnotations(
     prependAnnotation,
     htmlPlaceable,
     reportUnplaceableHtml,
-    railProps: { annotations, focusedId, unplaceableIds, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete },
+    railProps: { annotations, focusedId, unplaceableIds, activeChips, onToggleChip: toggleChip, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete },
   };
 }

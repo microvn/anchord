@@ -252,7 +252,7 @@ describe("Like create flow (S-003, through ViewerScreen)", () => {
       expect(screen.queryAllByTestId("thread-card")).toHaveLength(0);
     });
     expect(view.querySelector("[data-anno]")).toBeNull();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
     // The comment write never fired since the annotation create was refused.
     expect(addComment).not.toHaveBeenCalled();
     // An error toast is shown.

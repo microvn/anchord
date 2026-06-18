@@ -158,6 +158,6 @@ describe("Markup popover S-001", () => {
     await Promise.resolve();
     expect(screen.queryByTestId("selection-popover")).toBeNull();
     expect(createAnnotation).not.toHaveBeenCalled();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
   });
 });

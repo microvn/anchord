@@ -319,7 +319,7 @@ describe("Create boundary — server-authorized writes on every type (S-005)", (
     expect(screen.queryByTestId("selection-popover")).toBeNull();
     expect(createAnnotation).not.toHaveBeenCalled();
     expect(createRedline).not.toHaveBeenCalled();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
   });
 
   it("AS-018: a create that is nonetheless refused server-side rolls back — no persisted annotation, no ghost", async () => {
@@ -341,7 +341,7 @@ describe("Create boundary — server-authorized writes on every type (S-005)", (
     // The refused create rolls back: no thread card, no [data-anno] strike mark survives (no ghost).
     await waitFor(() => expect(screen.queryAllByTestId("thread-card")).toHaveLength(0));
     expect(view.querySelector("[data-anno]")).toBeNull();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
     expect(addComment).not.toHaveBeenCalled();
     await waitFor(() => expect(toastError).toHaveBeenCalled());
   });

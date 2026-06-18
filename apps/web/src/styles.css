@@ -401,6 +401,16 @@ main[data-doc-width="focus"] .doc-prose {
   text-decoration: none;
   opacity: 0.7;
 }
+/* S-007 (C-009): a FILTERED mark — its status chip is toggled off, so the highlight is dimmed
+   (de-emphasized) in the doc. Orthogonal to the lifecycle styles: it sits LAST so it wins the visual
+   weight (fades the tint + drops the underline) while the underlying type/resolved/redline style is
+   what returns when the chip is toggled back on. Still clickable (AS-026 re-activates its chip). */
+.anno-mark[data-anno-filtered="true"] {
+  background: color-mix(in oklab, currentColor 6%, transparent);
+  border-bottom-color: transparent;
+  text-decoration-color: transparent;
+  opacity: 0.4;
+}
 /* One annotation can wrap as MULTIPLE adjacent <mark> (per-node, cross-inline ranges).
    Collapse the inner 1px padding between back-to-back marks so the run reads as ONE
    continuous highlight — no doubled gap. Only the run's outer edges keep their 1px. */

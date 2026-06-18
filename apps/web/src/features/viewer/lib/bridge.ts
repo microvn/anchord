@@ -42,6 +42,9 @@ export interface BridgeHighlightState {
   resolved?: boolean;
   kind?: "redline";
   stale?: boolean;
+  /** S-007 (C-009): the mark's status chip is toggled OFF → the in-iframe highlight is DIMMED
+   *  (de-emphasized), mirroring the markdown placer's `data-anno-filtered`. */
+  filtered?: boolean;
 }
 
 /** One item in a full-set highlight batch (S-003) — the anchor + id + hue + lifecycle state. */

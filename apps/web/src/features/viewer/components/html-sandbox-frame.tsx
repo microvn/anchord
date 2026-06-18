@@ -48,6 +48,8 @@ export const HtmlSandboxFrame = forwardRef<
       resolved?: boolean;
       kind?: "redline";
       stale?: boolean;
+      /** S-007 (C-009): the status chip is toggled off → dim the in-iframe highlight. */
+      filtered?: boolean;
     }[];
     /** HTML-PLACE: the in-iframe bridge couldn't place a posted highlight → surface it so the rail
      *  can badge only that annotation "couldn't place" (markdown reports this via the light-DOM placer). */
@@ -144,6 +146,8 @@ export const HtmlSandboxFrame = forwardRef<
         resolved: a.resolved,
         kind: a.kind,
         stale: a.stale,
+        // S-007 (C-009): dim the in-iframe highlight when its chip is toggled off (AS-023).
+        filtered: a.filtered,
       })),
     );
   }, [ready, annotations]);

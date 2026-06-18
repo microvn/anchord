@@ -485,7 +485,7 @@ describe("Sandbox bridge in ViewerScreen S-002", () => {
     // AS-004.T3: exactly one thread (the reconciled real row) shows; the count is 1.
     await waitFor(() => expect(screen.getAllByTestId("thread-card")).toHaveLength(1));
     expect(screen.getAllByTestId("thread-card")[0]).toHaveTextContent("Why three?");
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("1");
+    expect(screen.getByTestId("chip-open")).toHaveTextContent("1");
   });
 
   it("AS-005: a forged postMessage from the doc body creates nothing and opens no composer", async () => {
@@ -516,7 +516,7 @@ describe("Sandbox bridge in ViewerScreen S-002", () => {
     expect(addComment).not.toHaveBeenCalled();
     expect(screen.queryByTestId("composer")).toBeNull();
     expect(screen.queryByTestId("selection-popover")).toBeNull();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
   });
 
   it("C-010: for a kind=html doc the app-origin light-DOM placer never runs — no in-app <mark data-anno>", async () => {

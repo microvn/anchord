@@ -233,6 +233,10 @@ export function bridgeScript(nonce: string): string {
       if (item.resolved) mk.setAttribute("data-resolved", "true");
       if (item.kind === "redline") mk.setAttribute("data-anno-kind", "redline");
       if (item.stale) mk.setAttribute("data-anno-stale", "true");
+      // S-007 (C-009): a filtered mark (its status chip toggled off) is DIMMED — the SAME hook the
+      // markdown engine sets (data-anno-filtered). The stylesheet's filtered rule sits LAST so it
+      // wins the visual weight over the type/lifecycle styles until the chip is re-activated (AS-023).
+      if (item.filtered) mk.setAttribute("data-anno-filtered", "true");
     }
     return true;
   }
@@ -512,6 +516,10 @@ export const MARK_STYLESHEET = [
   // never reads as a confident strike on possibly-wrong text (--subtle inlined). Emitted LAST so it
   // overrides the redline rule above at equal specificity (stale wins) — matching styles.css order.
   '.anno-mark[data-anno-stale="true"]{background:transparent;border-bottom:1.5px dashed #677074;text-decoration:none;opacity:0.7;}',
+  // S-007/C-009: a FILTERED mark (its status chip toggled off) → dimmed/de-emphasized. Emitted LAST
+  // so it overrides the type/lifecycle styles at equal specificity until the chip is re-activated
+  // (mirrors styles.css .anno-mark[data-anno-filtered]).
+  '.anno-mark[data-anno-filtered="true"]{background:color-mix(in oklab, currentColor 6%, transparent);border-bottom-color:transparent;text-decoration-color:transparent;opacity:0.4;}',
   // adjacent-mark padding collapse so a multi-node run reads as one continuous highlight.
   ".anno-mark + .anno-mark{padding-left:0;}",
   ".anno-mark:has(+ .anno-mark){padding-right:0;}",

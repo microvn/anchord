@@ -4,9 +4,52 @@ import type { ViewerAnnotation } from "@/features/viewer/services/client";
 
 // AnnotationsRail (S-003): the right-hand pane. Splits the annotation list into anchored threads
 // (rail threads paired 1:1 to in-text highlights, C-003) and detached/orphaned annotations (the
-// amber DetachedSection, C-004 — shown separately, never as anchored). Header shows the anchored
-// thread count; an empty list shows the "no comments yet" empty state (AS-015). Clicking a thread
-// focuses + scrolls to its highlight (AS-009) — the parent wires onFocusThread.
+// amber DetachedSection, C-004 — shown separately, never as anchored). Clicking a thread focuses +
+// scrolls to its highlight (AS-009) — the parent wires onFocusThread.
+//
+// S-007 (C-009): the header summarizes the ACTIVE set as three status chips (Open · Resolved ·
+// Suggestion — icon + count) that PARTITION it, replacing the single total. Each chip is an
+// independent multi-toggle, all active by default. Toggling a chip OFF hides its group from the
+// thread list AND dims its in-text highlights (the dim rides the placer's `filtered` flag, wired in
+// viewer-screen); toggling ON restores both. The detached section ALWAYS renders regardless of chip
+// state (C-004). No chip selected → a distinct no-match state (≠ the empty-doc state, AS-025).
+
+// S-007 (C-009): the three status-chip buckets. A chip is keyed on identity, not the noun: the chips
+// PARTITION the active set so the counts always sum to the active total.
+export type ChipKey = "open" | "resolved" | "suggestion";
+
+// Partition an annotation into exactly one chip (C-009 ordering): Suggestion FIRST (type=suggestion,
+// ANY lifecycle — a decided/resolved suggestion still partitions as Suggestion, never Resolved),
+// then Resolved (not a suggestion, status resolved), then Open (everything else). Detached/orphaned
+// items partition by the SAME rule (they're counted into their chip; the detached section is C-004).
+export function annotationBucket(a: Pick<ViewerAnnotation, "type" | "status">): ChipKey {
+  if (a.type === "suggestion") return "suggestion";
+  if (a.status === "resolved") return "resolved";
+  return "open";
+}
+
+// Count the active set by chip — the three counts sum to the active total (the partition invariant).
+export function bucketCounts(
+  annotations: Pick<ViewerAnnotation, "type" | "status">[],
+): Record<ChipKey, number> {
+  const counts: Record<ChipKey, number> = { open: 0, resolved: 0, suggestion: 0 };
+  for (const a of annotations) counts[annotationBucket(a)] += 1;
+  return counts;
+}
+
+// The default chip filter — all three active (every group shown).
+export const ALL_CHIPS_ACTIVE: ReadonlySet<ChipKey> = new Set<ChipKey>(["open", "resolved", "suggestion"]);
+
+// Chip display metadata (DESIGN.md: compact icon + count; existing glyphs, no new SVG):
+//   Open       → `clock` (an unresolved/pending thread)
+//   Resolved   → `check` (closed)
+//   Suggestion → `highlight` (the annotate/proposal glyph; distinct from edit/email)
+const CHIP_META: Record<ChipKey, { label: string; icon: string }> = {
+  open: { label: "Open", icon: "clock" },
+  resolved: { label: "Resolved", icon: "check" },
+  suggestion: { label: "Suggestion", icon: "highlight" },
+};
+const CHIP_ORDER: ChipKey[] = ["open", "resolved", "suggestion"];
 
 export function AnnotationsRail({
   annotations,
@@ -14,6 +57,8 @@ export function AnnotationsRail({
   unplaceableIds,
   currentUserId,
   isOwner,
+  activeChips = ALL_CHIPS_ACTIVE,
+  onToggleChip,
   onFocusThread,
   onReply,
   onResolve,
@@ -22,6 +67,11 @@ export function AnnotationsRail({
 }: {
   annotations: ViewerAnnotation[];
   focusedId: string | null;
+  /** S-007 (C-009): which status chips are active (their groups shown). Defaults to all three. The
+   *  parent (viewer-screen) owns this so the SAME set also drives the in-text mark dimming. */
+  activeChips?: ReadonlySet<ChipKey>;
+  /** S-007 (C-009): toggle a chip on/off. Absent → the chips render but are inert (read-only). */
+  onToggleChip?: (chip: ChipKey) => void;
   /** ids the FE couldn't anchor at runtime (GAP-005) — flagged, no scroll target. */
   unplaceableIds: Set<string>;
   /** annotation-actions-ui S-001 (C-001): the current session user id, forwarded to each ThreadCard
@@ -60,19 +110,52 @@ export function AnnotationsRail({
   // hosts the composing UI, so the empty state is purely a function of the annotation count.
   const isEmpty = annotations.length === 0;
 
+  // S-007 (C-009): the chip counts PARTITION the ACTIVE set (anchored + detached — a detached item is
+  // counted into its chip too, AND still shows in the detached section). The thread list, by
+  // contrast, only shows the ANCHORED threads whose chip is active.
+  const counts = bucketCounts(annotations);
+  const visibleAnchored = anchored.filter((a) => activeChips.has(annotationBucket(a)));
+  // No chip selected → the no-match state (distinct from the empty-doc state). Only when the doc HAS
+  // annotations (an empty doc shows the empty state regardless of chip selection).
+  const noMatch = !isEmpty && activeChips.size === 0;
+
   return (
     <div data-testid="annotations-rail" className="flex h-full flex-col">
-      <div className="flex h-11 flex-none items-center gap-2 border-b border-line px-3.5">
-        <Icon name="highlight" size={15} />
-        {/* #3 (2026-06-12): the rail hosts ALL annotation types globally, not just comments —
-            user-visible label renamed "Comments" → "Annotations" (internal ids/APIs unchanged). */}
+      {/* S-007: the header summarizes the active set as three status chips, replacing the single
+          total. An empty doc shows just the label (nothing to summarize). */}
+      <div className="flex h-11 flex-none items-center gap-1.5 border-b border-line px-3.5">
+        {/* #3 (2026-06-12): the rail hosts ALL annotation types globally — label "Annotations". */}
         <span className="text-[13px] font-semibold text-ink">Annotations</span>
-        <span
-          data-testid="rail-count"
-          className="ml-auto font-mono text-[11px] text-subtle"
-        >
-          {anchored.length}
-        </span>
+        {!isEmpty && (
+          <div className="ml-auto flex items-center gap-1" role="group" aria-label="Filter annotations by status">
+            {CHIP_ORDER.map((chip) => {
+              const meta = CHIP_META[chip];
+              const active = activeChips.has(chip);
+              return (
+                <button
+                  key={chip}
+                  type="button"
+                  data-testid={`chip-${chip}`}
+                  data-count={counts[chip]}
+                  aria-pressed={active}
+                  aria-label={`${meta.label} ${counts[chip]}`}
+                  title={`${meta.label} · ${counts[chip]}`}
+                  onClick={() => onToggleChip?.(chip)}
+                  className={[
+                    "inline-flex items-center gap-1 rounded-[5px] border px-1.5 py-1 font-mono text-[11px] font-semibold transition-colors",
+                    onToggleChip ? "cursor-pointer" : "cursor-default",
+                    active
+                      ? "border-accent/40 bg-accent-soft text-accent"
+                      : "border-line bg-transparent text-subtle hover:text-ink",
+                  ].join(" ")}
+                >
+                  <Icon name={meta.icon} size={12} />
+                  <span>{counts[chip]}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {isEmpty ? (
@@ -84,9 +167,23 @@ export function AnnotationsRail({
           <div className="text-[13px] font-semibold text-ink">No annotations yet</div>
           <div className="text-[12px] leading-[1.5]">Annotations will appear here.</div>
         </div>
+      ) : noMatch ? (
+        // AS-025: no chip selected → a no-match state DISTINCT from the empty-doc state. The detached
+        // section still renders below (C-004 — toggles never hide it).
+        <div className="flex flex-1 flex-col gap-[10px] overflow-auto p-3">
+          <div
+            data-testid="rail-no-match"
+            className="flex flex-col items-center justify-center gap-2 px-6 py-[30px] text-center text-muted"
+          >
+            <Icon name="search" size={24} className="text-subtle" />
+            <div className="text-[13px] font-semibold text-ink">No annotations match the filter</div>
+            <div className="text-[12px] leading-[1.5]">Turn a status chip back on to see its annotations.</div>
+          </div>
+          {detached.length > 0 && <DetachedSection detached={detached} />}
+        </div>
       ) : (
         <div className="flex flex-1 flex-col gap-[10px] overflow-auto p-3">
-          {anchored.map((a) => (
+          {visibleAnchored.map((a) => (
             <ThreadCard
               key={a.id}
               annotation={a}
@@ -108,19 +205,26 @@ export function AnnotationsRail({
             />
           ))}
 
-          {detached.length > 0 && (
-            <section data-testid="detached-section" className="flex flex-col gap-[10px] pt-1">
-              <div className="flex items-center gap-[7px] px-0.5 py-1 font-mono text-[11px] font-medium uppercase tracking-[0.06em] text-amber">
-                <Icon name="alert" size={12} />
-                <span data-testid="detached-count">{detached.length} detached</span>
-              </div>
-              {detached.map((a) => (
-                <DetachedCard key={a.id} annotation={a} />
-              ))}
-            </section>
-          )}
+          {detached.length > 0 && <DetachedSection detached={detached} />}
         </div>
       )}
     </div>
+  );
+}
+
+// S-004/C-004: the amber detached section — orphaned annotations, shown separately, never as
+// anchored. S-007 (C-009): it ALWAYS renders regardless of chip state (the chips filter only the
+// anchored thread list), so it's a shared component used by both the normal and the no-match body.
+function DetachedSection({ detached }: { detached: ViewerAnnotation[] }) {
+  return (
+    <section data-testid="detached-section" className="flex flex-col gap-[10px] pt-1">
+      <div className="flex items-center gap-[7px] px-0.5 py-1 font-mono text-[11px] font-medium uppercase tracking-[0.06em] text-amber">
+        <Icon name="alert" size={12} />
+        <span data-testid="detached-count">{detached.length} detached</span>
+      </div>
+      {detached.map((a) => (
+        <DetachedCard key={a.id} annotation={a} />
+      ))}
+    </section>
   );
 }

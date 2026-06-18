@@ -179,7 +179,7 @@ describe("Commenting S-001", () => {
     // would render TWICE / the count would double-count (the bug this guards). The mock stays on its
     // default empty `annoResponse` impl — a second listAnnotations call would be a regression.
     await renderViewer();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
 
     // Select "Payment expires after 24h" → popover appears.
     selectPhrase("block-p-1", "Payment expires after 24h");
@@ -234,7 +234,7 @@ describe("Commenting S-001", () => {
     expect(threads[0]).toHaveTextContent("Why 24h and not 48h?");
 
     // AS-001.T4: the count is EXACTLY 1 — no double-count from a lingering optimistic thread.
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("1");
+    expect(screen.getByTestId("chip-open")).toHaveTextContent("1");
 
     // NO post-write refetch: listAnnotations ran ONLY for the initial mount. The reconcile happened
     // entirely via the react-query cache update — a second call would be the old refetch regression.
@@ -299,7 +299,7 @@ describe("Commenting S-001", () => {
     await Promise.resolve();
     expect(createAnnotation).not.toHaveBeenCalled();
     expect(screen.queryByTestId("composer")).toBeNull();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
   });
 
   it("AS-003 / C-004: a viewer-only role gets no popover/composer and a read-only rail", async () => {
@@ -343,7 +343,7 @@ describe("Commenting S-001", () => {
       expect(screen.queryAllByTestId("thread-card")).toHaveLength(0);
     });
     expect(screen.getByTestId("markdown-view").querySelector("[data-anno]")).toBeNull();
-    expect(screen.getByTestId("rail-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
     // No comment write happened since the annotation create was refused.
     expect(addComment).not.toHaveBeenCalled();
 
