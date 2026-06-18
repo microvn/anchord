@@ -72,8 +72,10 @@ function App({ initial = "/w/ws-acme/projects/p1" }: { initial?: string } = {}) 
   );
 }
 
+// Constant timestamps so the default Updated-desc sort (S-003) is a no-op tie → the docs keep
+// insertion order, letting the pagination test assert doc-1..18 deterministically.
 const mkDocs = (slugs: string[]) =>
-  slugs.map((s, i) => ({
+  slugs.map((s) => ({
     id: `d-${s}`,
     slug: s,
     title: `Doc ${s}`,
@@ -83,8 +85,8 @@ const mkDocs = (slugs: string[]) =>
     authorName: "Me",
     status: "live",
     generalAccess: "anyone_in_workspace",
-    createdAt: `2026-06-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
-    updatedAt: `2026-06-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
   }));
 
 beforeEach(() => {
@@ -152,5 +154,24 @@ describe("workspace-project-browse S-001 — per-project doc browse", () => {
     expect(screen.getByTestId("project-docs-title")).toHaveTextContent("Billing");
     expect(screen.getByTestId("back-to-projects")).toBeInTheDocument();
     expect(screen.queryByTestId("doc-grid")).not.toBeInTheDocument();
+  });
+
+  it("AS-011/C-005: the same faceted filter narrows a per-project view (deselect HTML)", async () => {
+    docsByProject.p1 = env({
+      docs: [
+        { ...mkDocs(["billing-md"])[0], kind: "markdown" },
+        { ...mkDocs(["billing-html"])[0], kind: "html" },
+      ],
+    });
+    render(<App initial="/w/ws-acme/projects/p1" />);
+    expect(await screen.findByTestId("doc-card-billing-md")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-card-billing-html")).toBeInTheDocument();
+
+    // Open the SAME filter bar and deselect HTML → the html doc leaves Billing's grid.
+    await userEvent.click(screen.getByTestId("doc-filter-button"));
+    await userEvent.click(await screen.findByTestId("facet-format-html"));
+    await waitFor(() => expect(screen.queryByTestId("doc-card-billing-html")).not.toBeInTheDocument());
+    expect(screen.getByTestId("doc-card-billing-md")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-filter-showing")).toHaveTextContent("showing 1 of 2");
   });
 });

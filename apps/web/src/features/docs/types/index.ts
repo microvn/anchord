@@ -35,6 +35,12 @@ export interface DocRow {
   projectId?: string;
   /** The project's display name (joined client-side from the projects list). */
   projectName?: string;
+  /** ISO timestamp the doc was created (served by workspace-project:AS-022). Drives the Created
+   *  sort + the Updated facet. Optional so a legacy/mocked row without it degrades gracefully. */
+  createdAt?: string;
+  /** ISO timestamp the doc was last updated (served by workspace-project:AS-022). The default sort
+   *  key and the Updated facet read it. */
+  updatedAt?: string;
 }
 
 /** One project as the list endpoint returns it (GET …/projects → data.projects[]). */

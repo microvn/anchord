@@ -1,0 +1,124 @@
+import { useEffect, useRef, useState } from "react";
+import { Icon } from "@/components/icon";
+import { DocFilterPopover } from "./doc-filter-popover";
+import { SORT_ORDER, SORT_LABEL, type SortKey } from "@/features/docs/lib/doc-filter";
+import type { DocBrowse } from "@/features/docs/hooks/use-doc-browse";
+
+// DocFilterBar (workspace-project-browse S-002 + S-003): the shared browse bar mounted on BOTH the
+// All-docs DocsScreen and the per-project ProjectDocsScreen (C-005). Left: the Filter control (opens
+// the faceted popover; shows an active dot when narrowed) + "showing X of N". Right: the Sort control
+// (Updated / Created / Title, C-007) + the grid/list view toggle. NO search box — global search is a
+// separate surface (C-003). Replaces the dead 3-tab All/Shared/Has-detached strip.
+
+export function DocFilterBar({ browse, showing }: { browse: DocBrowse; showing: number }) {
+  const { filter, view, setView, sort, setSort, total } = browse;
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Click-outside / Escape closes the popover (mirrors the rail's dismiss behaviour).
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="mb-[18px] flex flex-wrap items-center gap-3" data-testid="doc-filter-bar">
+      <div className="relative" ref={wrapRef}>
+        <button
+          type="button"
+          data-testid="doc-filter-button"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          onClick={() => setOpen((o) => !o)}
+          className={[
+            "inline-flex h-8 items-center gap-1.5 rounded-md border px-[11px] text-[13px] font-medium transition-colors",
+            filter.active
+              ? "border-accent/40 bg-accent-soft text-ink"
+              : "border-line bg-sunken text-muted hover:text-ink",
+          ].join(" ")}
+        >
+          <Icon name="settings" size={14} />
+          Filter
+          {filter.active && (
+            <span data-testid="doc-filter-active-dot" className="size-1.5 rounded-full bg-accent" />
+          )}
+        </button>
+        {open && <DocFilterPopover filter={filter} />}
+      </div>
+
+      <span className="text-[13px] tabular-nums text-subtle" data-testid="doc-filter-showing">
+        {filter.active ? (
+          <>
+            showing {showing} of {total}
+          </>
+        ) : (
+          <>
+            {total} {total === 1 ? "doc" : "docs"}
+          </>
+        )}
+      </span>
+
+      <div className="ml-auto flex items-center gap-[10px]">
+        <label className="inline-flex items-center gap-1.5 text-[13px] text-subtle">
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.07em]">Sort</span>
+          <select
+            data-testid="doc-sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="h-8 rounded-md border border-line bg-sunken px-2 text-[13px] text-ink outline-none focus:border-accent"
+          >
+            {SORT_ORDER.map((k) => (
+              <option key={k} value={k}>
+                {SORT_LABEL[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex gap-0.5 rounded-md border border-line bg-sunken p-0.5">
+          <ViewButton active={view === "grid"} onClick={() => setView("grid")} icon="grid" label="Grid view" testid="view-grid" />
+          <ViewButton active={view === "list"} onClick={() => setView("list")} icon="list" label="List view" testid="view-list" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ViewButton({
+  active,
+  onClick,
+  icon,
+  label,
+  testid,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: string;
+  label: string;
+  testid: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      data-testid={testid}
+      onClick={onClick}
+      className={`grid size-7 place-items-center rounded-sm transition-colors ${
+        active ? "bg-surface text-accent-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]" : "text-subtle hover:text-ink"
+      }`}
+    >
+      <Icon name={icon} size={15} />
+    </button>
+  );
+}

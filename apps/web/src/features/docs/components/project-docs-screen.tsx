@@ -2,28 +2,28 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useActiveWorkspace } from "@/features/workspaces/components/active-workspace";
 import { useProjectDocs, DOCS_PAGE_SIZE } from "@/features/docs/hooks/use-docs";
+import { useDocBrowse } from "@/features/docs/hooks/use-doc-browse";
 import { DocCard } from "./doc-card";
 import { DocList } from "./doc-list";
+import { DocFilterBar } from "./doc-filter-bar";
 import { Pagination } from "@/components/pagination";
 import { Icon } from "@/components/icon";
 import { Skeleton } from "@/components/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
+import { NoResultsState } from "@/components/no-results-state";
 
 // `/w/:workspaceId/projects/:projectId` — the per-project doc browse (workspace-project-browse
 // S-001). Clicking a project card on the Projects screen lands here: ONLY that project's docs
 // (its own grid + numbered pagination + per-doc AccessIndicator, reused from All-docs), the
 // project name as the view title, and a back-to-Projects control (AS-001/AS-002/AS-003). An
-// empty project shows a named empty state, not a blank grid (AS-004). The faceted filter +
-// sort bar (S-002/S-003) mounts here too, shared with All-docs.
-
-type View = "grid" | "list";
+// empty project shows a named empty state, not a blank grid (AS-004). The SAME faceted filter +
+// sort bar as All-docs mounts here (S-002/S-003, C-005).
 
 export function ProjectDocsScreen() {
   const { workspace } = useActiveWorkspace();
   const { projectId = "" } = useParams();
   const query = useProjectDocs(workspace.id, projectId);
-  const [view, setView] = useState<View>("grid");
   const [page, setPage] = useState(1);
 
   const docs = query.data?.docs ?? [];
@@ -32,16 +32,19 @@ export function ProjectDocsScreen() {
   // neutral title so the view never renders nameless.
   const projectName = project?.name ?? "Project";
 
-  const totalPages = Math.ceil(docs.length / DOCS_PAGE_SIZE);
+  // S-002/S-003: the SAME faceted filter + sort engine as All-docs (C-005).
+  const browse = useDocBrowse(docs);
+  const visible = browse.visible;
+  const totalPages = Math.ceil(visible.length / DOCS_PAGE_SIZE);
   useEffect(() => {
     if (page > totalPages && totalPages >= 1) setPage(totalPages);
   }, [page, totalPages]);
-  // A new project id resets paging to the first page.
+  // A new project id, or a filter/sort change, resets paging to the first page.
   useEffect(() => {
     setPage(1);
-  }, [projectId]);
+  }, [projectId, visible.length, browse.sort]);
   const safePage = Math.min(page, Math.max(1, totalPages));
-  const pageDocs = docs.slice((safePage - 1) * DOCS_PAGE_SIZE, safePage * DOCS_PAGE_SIZE);
+  const pageDocs = visible.slice((safePage - 1) * DOCS_PAGE_SIZE, safePage * DOCS_PAGE_SIZE);
 
   return (
     <section className="mx-auto max-w-[1100px] px-6 py-8" data-testid="project-docs-screen">
@@ -62,15 +65,6 @@ export function ProjectDocsScreen() {
             {projectName}
           </h1>
         </div>
-        <div className="ml-auto flex flex-none items-center gap-2">
-          <span className="text-[13px] tabular-nums text-subtle" data-testid="project-docs-count">
-            {docs.length} {docs.length === 1 ? "doc" : "docs"}
-          </span>
-          <div className="flex gap-0.5 rounded-md border border-line bg-sunken p-0.5">
-            <ViewButton active={view === "grid"} onClick={() => setView("grid")} icon="grid" label="Grid view" testid="view-grid" />
-            <ViewButton active={view === "list"} onClick={() => setView("list")} icon="list" label="List view" testid="view-list" />
-          </div>
-        </div>
       </div>
 
       {query.isPending ? (
@@ -86,7 +80,10 @@ export function ProjectDocsScreen() {
         </div>
       ) : (
         <>
-          {view === "grid" ? (
+          <DocFilterBar browse={browse} showing={visible.length} />
+          {visible.length === 0 ? (
+            <NoResultsState query="this filter" onClear={() => browse.filter.reset()} />
+          ) : browse.view === "grid" ? (
             <div
               data-testid="doc-grid"
               className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-3"
@@ -98,38 +95,11 @@ export function ProjectDocsScreen() {
           ) : (
             <DocList docs={pageDocs} workspaceId={workspace.id} projects={project ? [project] : []} />
           )}
-          <Pagination page={safePage} totalPages={totalPages} onPageChange={setPage} />
+          {visible.length > 0 && (
+            <Pagination page={safePage} totalPages={totalPages} onPageChange={setPage} />
+          )}
         </>
       )}
     </section>
-  );
-}
-
-function ViewButton({
-  active,
-  onClick,
-  icon,
-  label,
-  testid,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: string;
-  label: string;
-  testid: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={active}
-      data-testid={testid}
-      onClick={onClick}
-      className={`grid size-7 place-items-center rounded-sm transition-colors ${
-        active ? "bg-surface text-accent-ink shadow-[0_1px_2px_rgba(0,0,0,0.08)]" : "text-subtle hover:text-ink"
-      }`}
-    >
-      <Icon name={icon} size={15} />
-    </button>
   );
 }

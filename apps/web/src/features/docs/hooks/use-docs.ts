@@ -49,6 +49,8 @@ interface ProjectDocsResult {
     | "authorName"
     | "status"
     | "generalAccess"
+    | "createdAt"
+    | "updatedAt"
   >[];
   pagination?: PaginationMeta;
 }

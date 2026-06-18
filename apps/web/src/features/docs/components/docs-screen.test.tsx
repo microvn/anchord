@@ -73,13 +73,26 @@ function App() {
   );
 }
 
+// A browse doc row carries status/access/format/timestamps so the faceted filter (S-002) can
+// partition it. Tests override only the axes they care about.
+const docRow = (d: Record<string, unknown>) => ({
+  version: 1,
+  annotationCount: 0,
+  authorName: "Me",
+  status: "live",
+  generalAccess: "anyone_in_workspace",
+  createdAt: "2026-06-01T00:00:00.000Z",
+  updatedAt: "2026-06-01T00:00:00.000Z",
+  ...d,
+});
+
 beforeEach(() => {
   fetchProjectDocs.mockImplementation(defaultProjectDocs);
   projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
   docsByProject.p1 = env({
     docs: [
-      { id: "d1", slug: "spec", title: "Web-core spec", kind: "markdown" },
-      { id: "d2", slug: "rfc", title: "Publish RFC", kind: "html" },
+      docRow({ id: "d1", slug: "spec", title: "Web-core spec", kind: "markdown" }),
+      docRow({ id: "d2", slug: "rfc", title: "Publish RFC", kind: "html" }),
     ],
   });
 });
@@ -99,20 +112,87 @@ describe("workspace-project S-003 — All-docs browser", () => {
     expect(screen.queryByTestId("doc-grid")).not.toBeInTheDocument();
     expect(screen.getByTestId("doc-row-spec")).toBeInTheDocument();
   });
+});
+
+// ── workspace-project-browse S-002 — faceted filter (integration on All-docs) ───────────────
+// The pure engine is unit-tested in lib/doc-filter.test.ts (AS-005..010 logic + counts). These
+// assert the DocFilterBar + popover wired into DocsScreen: the popover opens with the four groups
+// all selected and NO search box (AS-005); deselecting a facet narrows the grid + updates "showing
+// X of N" (AS-006); Reset re-selects everything and the header returns to the full count (AS-010);
+// the same filter component drives the screen (C-005).
+describe("workspace-project-browse S-002 — faceted filter on All-docs", () => {
+  beforeEach(() => {
+    // A mix: a live markdown (spec), a live html (rfc), a draft restricted markdown (draft-md).
+    docsByProject.p1 = env({
+      docs: [
+        docRow({ id: "d1", slug: "spec", title: "Web-core spec", kind: "markdown" }),
+        docRow({ id: "d2", slug: "rfc", title: "Publish RFC", kind: "html" }),
+        docRow({ id: "d3", slug: "draft-md", title: "Draft MD", kind: "markdown", status: "draft", generalAccess: "restricted" }),
+      ],
+    });
+  });
+
+  it("AS-005: the Filter popover lists the four facet groups (all selected) with NO search box; bar has Sort + grid/list", async () => {
+    render(<App />);
+    await screen.findByTestId("doc-card-spec");
+    // No search box on the bar; a Sort control + grid/list toggle ARE present.
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.getByTestId("doc-sort")).toBeInTheDocument();
+    expect(screen.getByTestId("view-grid")).toBeInTheDocument();
+
+    // Open the popover → four groups, each value selected (aria-pressed / aria-checked true).
+    await userEvent.click(screen.getByTestId("doc-filter-button"));
+    expect(await screen.findByTestId("doc-filter-popover")).toBeInTheDocument();
+    expect(screen.getByTestId("facet-status-live")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("facet-format-markdown")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("facet-access-restricted")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("facet-updated-any")).toHaveAttribute("aria-checked", "true");
+    // Format counts are dynamic totals: 2 markdown, 1 html.
+    expect(screen.getByTestId("facet-format-markdown-count")).toHaveTextContent("2");
+    expect(screen.getByTestId("facet-format-html-count")).toHaveTextContent("1");
+    // All three docs show.
+    expect(screen.getByTestId("doc-card-spec")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-card-rfc")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-card-draft-md")).toBeInTheDocument();
+  });
+
+  it("AS-006: deselecting the Markdown format value narrows the grid and updates the count", async () => {
+    render(<App />);
+    await screen.findByTestId("doc-card-spec");
+    await userEvent.click(screen.getByTestId("doc-filter-button"));
+    await userEvent.click(await screen.findByTestId("facet-format-markdown"));
+    // Markdown docs leave; the html doc stays.
+    await waitFor(() => expect(screen.queryByTestId("doc-card-spec")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("doc-card-draft-md")).not.toBeInTheDocument();
+    expect(screen.getByTestId("doc-card-rfc")).toBeInTheDocument();
+    // "showing 1 of 3"
+    expect(screen.getByTestId("doc-filter-showing")).toHaveTextContent("showing 1 of 3");
+  });
+
+  it("AS-010/C-005: Reset re-selects everything and the header returns to the full count", async () => {
+    render(<App />);
+    await screen.findByTestId("doc-card-spec");
+    await userEvent.click(screen.getByTestId("doc-filter-button"));
+    await userEvent.click(await screen.findByTestId("facet-format-markdown"));
+    expect(screen.getByTestId("doc-filter-showing")).toHaveTextContent("showing 1 of 3");
+    // The Filter control reads active while narrowed.
+    expect(screen.getByTestId("doc-filter-active-dot")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId("doc-filter-reset"));
+    await waitFor(() => expect(screen.getByTestId("doc-card-spec")).toBeInTheDocument());
+    expect(screen.getByTestId("doc-filter-showing")).toHaveTextContent("3 docs");
+    expect(screen.queryByTestId("doc-filter-active-dot")).not.toBeInTheDocument();
+  });
 
   it("a filter that matches nothing shows NoResultsState (distinct from empty)", async () => {
     render(<App />);
     await screen.findByTestId("doc-card-spec");
-
-    // The "Has detached" filter resolves to 0 (no endpoint exposes detached counts) →
-    // NoResultsState with a Clear search action, NOT the empty-data create CTA.
-    await userEvent.click(screen.getByTestId("filter-detached"));
-    expect(await screen.findByRole("button", { name: /clear search/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("doc-filter-button"));
+    // Deselect BOTH statuses → nothing matches → NoResultsState (not the empty-data CTA).
+    await userEvent.click(await screen.findByTestId("facet-status-live"));
+    await userEvent.click(screen.getByTestId("facet-status-draft"));
+    expect(await screen.findByRole("button", { name: /clear/i })).toBeInTheDocument();
     expect(screen.queryByTestId("doc-card-spec")).not.toBeInTheDocument();
-
-    // Clear returns to All → the docs reappear.
-    await userEvent.click(screen.getByRole("button", { name: /clear search/i }));
-    await waitFor(() => expect(screen.getByTestId("doc-card-spec")).toBeInTheDocument());
   });
 });
 
@@ -127,7 +207,16 @@ function pageOfDocs(page: number, limit: number, total: number) {
   const start = (page - 1) * limit;
   const docs = Array.from({ length: Math.max(0, Math.min(limit, total - start)) }, (_, i) => {
     const n = start + i + 1;
-    return { id: `d${n}`, slug: `doc-${n}`, title: `Doc ${n}`, kind: "markdown" };
+    // status/generalAccess so the faceted filter's default-all selection keeps every doc; no
+    // timestamps → the default Updated-desc sort is an all-tie (stable), preserving doc-1..N order.
+    return {
+      id: `d${n}`,
+      slug: `doc-${n}`,
+      title: `Doc ${n}`,
+      kind: "markdown",
+      status: "live",
+      generalAccess: "anyone_in_workspace",
+    };
   });
   return env({
     docs,
