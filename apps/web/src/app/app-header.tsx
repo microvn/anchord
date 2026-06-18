@@ -1,8 +1,11 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useQuery, skipToken } from "@tanstack/react-query";
 import { UserMenu } from "./user-menu";
 import { useTheme } from "./theme-provider";
 import { useBootstrap } from "@/features/workspaces/hooks/use-bootstrap";
+import { workspaceLabel } from "@/features/workspaces/types";
+import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { isCompact, useBreakpoint } from "@/hooks/use-breakpoint";
 import { Icon } from "@/components/icon";
 
@@ -21,25 +24,70 @@ export interface Crumb {
   /** Stable key + emphasis target. */
   id: string;
   label: string;
+  /** When set, the crumb is a link to this route (a parent crumb). The last/active crumb omits it. */
+  to?: string;
+  /** True while a name is still resolving (project crumb on a cold deep-link) → show a skeleton. */
+  loading?: boolean;
 }
 
-// Derive the breadcrumb crumbs from the route pathname + the active workspace name. Pure +
-// DOM-free so it's unit-testable. Doc/project NAMES aren't loadable in web-core (those screens
-// live in workspace-project-ui) → fall back to the route id/slug as the crumb label; do NOT
-// invent a fetch (dispatch note). Only the levels present in the route are shown.
-export function deriveCrumbs(pathname: string, workspaceName: string | undefined): Crumb[] {
-  const crumbs: Crumb[] = [];
+/** Capitalize the first letter of a label (workspace "default" → "Default"). */
+function capitalizeFirst(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+// Page-segment → display label for workspace sub-routes (AS-025). A segment not listed falls back
+// to its capitalized self so a new route is never blank.
+const SEGMENT_LABEL: Record<string, string> = {
+  docs: "All Docs",
+  projects: "Projects",
+  members: "Members",
+  activity: "Activity",
+  search: "Search",
+};
+
+// Derive the breadcrumb crumbs from the route pathname (C-008). Pure + DOM-free so it's
+// unit-testable. The caller resolves the dynamic labels (workspace label, project name) and passes
+// them in — this never fetches. Crumbs carry `to` for parent (link) levels; the last crumb is the
+// active page (no `to`). A project crumb whose name hasn't resolved yet is marked `loading`.
+//   - /settings[...]            → "Account" (static) › "Settings" [› Section]   (account branch)
+//   - /w/:id                    → workspace root crumb ALONE (dashboard, AS-024)
+//   - /w/:id/docs               → workspace › "All Docs"          (AS-025)
+//   - /w/:id/projects           → workspace › "Projects"          (AS-025)
+//   - /w/:id/projects/:pid      → workspace › [project name]      (AS-026, name from cache)
+export function deriveCrumbs(
+  pathname: string,
+  opts: { workspaceLabel?: string; projectName?: string } = {},
+): Crumb[] {
+  // Account branch — settings lives outside the workspace path (AS-028).
+  if (pathname === "/settings" || pathname.startsWith("/settings/")) {
+    const crumbs: Crumb[] = [{ id: "account", label: "Account" }]; // static root, never a link
+    const section = pathname.match(/^\/settings\/([^/]+)/)?.[1];
+    crumbs.push({ id: "settings", label: "Settings", to: section ? "/settings" : undefined });
+    if (section) crumbs.push({ id: `settings-${section}`, label: capitalizeFirst(section) });
+    return crumbs;
+  }
+
   const ws = pathname.match(/^\/w\/([^/]+)/)?.[1];
-  if (!ws) return crumbs;
-  crumbs.push({ id: `ws-${ws}`, label: workspaceName ?? ws });
+  if (!ws) return [];
+  const home = `/w/${ws}`;
+  const rootLabel = opts.workspaceLabel ?? ws;
+  const rest = pathname.slice(home.length).replace(/^\/+/, "");
+  // Dashboard / workspace root — the root crumb alone, active (AS-024).
+  if (!rest) return [{ id: `ws-${ws}`, label: rootLabel }];
 
-  const project = pathname.match(/\/projects\/([^/]+)/)?.[1];
-  if (project) crumbs.push({ id: `project-${project}`, label: project });
-
-  const doc = pathname.match(/\/docs\/([^/]+)/)?.[1];
-  // `/docs` (the All-docs list) carries no id segment → no doc crumb; only a concrete doc id does.
-  if (doc && doc !== "new") crumbs.push({ id: `doc-${doc}`, label: doc });
-
+  // Root crumb becomes a link to the workspace home (AS-027).
+  const crumbs: Crumb[] = [{ id: `ws-${ws}`, label: rootLabel, to: home }];
+  const seg = rest.split("/");
+  if (seg[0] === "projects" && seg[1]) {
+    // Project detail → workspace › [project name] (AS-026). Skeleton until the name resolves.
+    crumbs.push({
+      id: `project-${seg[1]}`,
+      label: opts.projectName ?? "",
+      loading: !opts.projectName,
+    });
+  } else {
+    crumbs.push({ id: `page-${seg[0]}`, label: SEGMENT_LABEL[seg[0]] ?? capitalizeFirst(seg[0]) });
+  }
   return crumbs;
 }
 
@@ -52,6 +100,8 @@ function Breadcrumb({ crumbs }: { crumbs: Crumb[] }) {
     >
       {crumbs.map((c, i) => {
         const last = i === crumbs.length - 1;
+        // AS-027: last crumb = active page, emphasized (`ink`), not a link; parents are `muted` links.
+        const base = `truncate text-[12.5px] ${last ? "font-semibold text-ink" : "text-muted"}`;
         return (
           <Fragment key={c.id}>
             {i > 0 && (
@@ -59,14 +109,29 @@ function Breadcrumb({ crumbs }: { crumbs: Crumb[] }) {
                 ›
               </span>
             )}
-            <span
-              data-testid={`crumb-${c.id}`}
-              // AS-017: last crumb emphasized (`ink`, semibold); parents `muted`.
-              className={`cursor-default truncate text-[12.5px] ${last ? "font-semibold text-ink" : "text-muted"}`}
-              aria-current={last ? "page" : undefined}
-            >
-              {c.label}
-            </span>
+            {c.loading ? (
+              <span
+                data-testid={`crumb-${c.id}`}
+                aria-label="Loading"
+                className="inline-block h-[12px] w-16 animate-pulse rounded bg-elev align-middle"
+              />
+            ) : c.to && !last ? (
+              <Link
+                to={c.to}
+                data-testid={`crumb-${c.id}`}
+                className={`${base} cursor-pointer transition-colors hover:text-ink`}
+              >
+                {c.label}
+              </Link>
+            ) : (
+              <span
+                data-testid={`crumb-${c.id}`}
+                className={`${base} cursor-default`}
+                aria-current={last ? "page" : undefined}
+              >
+                {c.label}
+              </span>
+            )}
           </Fragment>
         );
       })}
@@ -195,8 +260,22 @@ export function AppHeader({ contextActions }: { contextActions?: ReactNode }) {
   const compact = isCompact(tier);
 
   const workspaceId = pathname.match(/^\/w\/([^/]+)/)?.[1] ?? query.data?.activeWorkspaceId ?? undefined;
-  const workspaceName = query.data?.workspaces.find((w) => w.id === workspaceId)?.name;
-  const crumbs = deriveCrumbs(pathname, workspaceName);
+  const ws = query.data?.workspaces.find((w) => w.id === workspaceId);
+  // AS-017: the admin-qualified switcher label with the workspace name capitalized ("My Default").
+  const wsLabel = ws ? workspaceLabel({ ...ws, name: capitalizeFirst(ws.name) }) : undefined;
+  // AS-026: on a project route, resolve the project's real name from the per-project browse cache
+  // the ProjectDocsScreen populates. enabled:false → the header NEVER fetches; it reads the cache
+  // reactively (skeleton until the screen fills it). No new request is issued from the header.
+  const projectId = pathname.match(/^\/w\/[^/]+\/projects\/([^/]+)/)?.[1];
+  const projectCache = useQuery<{ project?: { name?: string } } | undefined>({
+    queryKey: workspaceId && projectId
+      ? [...queryKeys.docs(workspaceId), "project", projectId]
+      : ["noop-project-crumb"],
+    // skipToken = never fetch from the header; read the cache the screen populates (reactively).
+    queryFn: skipToken,
+  });
+  const projectName = projectId ? projectCache.data?.project?.name : undefined;
+  const crumbs = deriveCrumbs(pathname, { workspaceLabel: wsLabel, projectName });
 
   // On mobile the theme toggle + notifications fold into the avatar menu (AS-019).
   const folded = compact ? (

@@ -1,5 +1,5 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
-import { render, screen, within, act } from "@testing-library/react";
+import { render, screen, within, act, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
@@ -94,39 +94,85 @@ function renderHeader(path: string) {
   );
 }
 
-describe("web-core S-005 — header breadcrumb (AS-017)", () => {
-  it("AS-017: the header shows a `Workspace › Project › Doc` breadcrumb in order, last crumb emphasized (ink), parents muted, separator faint", async () => {
-    const bc = within(await renderAndFindBreadcrumb("/w/ws-1/projects/proj-7/docs/doc-9"));
-    const crumbs = bc.getAllByTestId(/^crumb-/);
-    // Three crumbs in order: workspace name (from bootstrap) › project › doc.
-    expect(crumbs).toHaveLength(3);
-    expect(crumbs[0]).toHaveTextContent("Acme");
-    expect(crumbs[1]).toHaveTextContent("proj-7");
-    expect(crumbs[2]).toHaveTextContent("doc-9");
-
-    // Last crumb emphasized = ink; parents = muted.
-    expect(crumbs[2].className).toContain("text-ink");
-    expect(crumbs[0].className).toContain("text-muted");
-    expect(crumbs[1].className).toContain("text-muted");
-
-    // Separators are faint.
-    const sep = bc.getAllByTestId("header-separator")[0];
-    expect(sep.className).toContain("text-faint");
-  });
-
-  it("AS-017: on a workspace-root screen only the workspace crumb shows (no invented project/doc crumbs)", async () => {
+describe("web-core S-005 — header breadcrumb (C-008)", () => {
+  it("AS-017/AS-024: the dashboard shows ONLY the root crumb, admin-qualified + capitalized ('My Acme'), emphasized", async () => {
     const bc = within(await renderAndFindBreadcrumb("/w/ws-1"));
     const crumbs = bc.getAllByTestId(/^crumb-/);
     expect(crumbs).toHaveLength(1);
-    expect(crumbs[0]).toHaveTextContent("Acme");
-    // The single (last) crumb is emphasized.
+    // Admin of workspace "Acme" → "My Acme" (capitalized, switcher-style), not the raw id.
+    expect(crumbs[0]).toHaveTextContent("My Acme");
+    // The single (last) crumb is the active page — emphasized, not a link.
     expect(crumbs[0].className).toContain("text-ink");
+    expect(crumbs[0].closest("a")).toBeNull();
+  });
+
+  it("AS-025/AS-027: a list route appends its page crumb; the root is a link, the page is the active last crumb", async () => {
+    const docs = within(await renderAndFindBreadcrumb("/w/ws-1/docs"));
+    const dc = docs.getAllByTestId(/^crumb-/);
+    expect(dc.map((c) => c.textContent)).toEqual(["My Acme", "All Docs"]);
+    // Root crumb is a LINK to the workspace home; the page crumb is active (not a link).
+    expect(dc[0].closest("a")).not.toBeNull();
+    expect(dc[0].getAttribute("href")).toBe("/w/ws-1");
+    expect(dc[1].closest("a")).toBeNull();
+    expect(dc[1].className).toContain("text-ink");
+
+    cleanup(); // drop the first render before the second (no afterEach cleanup in this file)
+    const projects = within(await renderAndFindBreadcrumb("/w/ws-1/projects"));
+    expect(projects.getAllByTestId(/^crumb-/).map((c) => c.textContent)).toEqual(["My Acme", "Projects"]);
+  });
+
+  it("AS-026: a project route shows the project's real name from cache (never the raw id)", async () => {
+    const qc = client();
+    // The ProjectDocsScreen populates this cache entry; the header reads it without fetching.
+    qc.setQueryData(["w", "ws-1", "docs", "project", "proj-7"], { project: { id: "proj-7", name: "Billing" } });
+    renderHeaderWith(qc, "/w/ws-1/projects/proj-7");
+    const bc = within(await screen.findByTestId("header-breadcrumb"));
+    const crumbs = bc.getAllByTestId(/^crumb-/);
+    expect(crumbs.map((c) => c.textContent)).toEqual(["My Acme", "Billing"]);
+    expect(bc.queryByText("proj-7")).toBeNull(); // never the raw id
+  });
+
+  it("AS-026: a cold deep-link (name not cached yet) shows a loading skeleton crumb, not the id", async () => {
+    const bc = within(await renderAndFindBreadcrumb("/w/ws-1/projects/proj-7"));
+    const projectCrumb = bc.getByTestId("crumb-project-proj-7");
+    // Skeleton: no text, an accessible Loading label — and crucially NOT the raw id.
+    expect(projectCrumb).toHaveAttribute("aria-label", "Loading");
+    expect(projectCrumb.textContent).toBe("");
+  });
+
+  it("AS-028: the settings route shows a static Account root then Settings (+ section)", async () => {
+    const s = within(await renderAndFindBreadcrumb("/settings"));
+    const sc = s.getAllByTestId(/^crumb-/);
+    expect(sc.map((c) => c.textContent)).toEqual(["Account", "Settings"]);
+    // "Account" is a static label, never a link; "Settings" is the active page here.
+    expect(sc[0].closest("a")).toBeNull();
+    expect(sc[1].className).toContain("text-ink");
+
+    cleanup();
+    const sec = within(await renderAndFindBreadcrumb("/settings/appearance"));
+    const secc = sec.getAllByTestId(/^crumb-/);
+    expect(secc.map((c) => c.textContent)).toEqual(["Account", "Settings", "Appearance"]);
+    // Now "Settings" is a link to /settings; "Appearance" is the active last crumb.
+    expect(secc[1].getAttribute("href")).toBe("/settings");
+    expect(secc[2].closest("a")).toBeNull();
   });
 });
 
 async function renderAndFindBreadcrumb(path: string) {
   renderHeader(path);
   return await screen.findByTestId("header-breadcrumb");
+}
+
+function renderHeaderWith(qc: QueryClient, path: string) {
+  return render(
+    <ThemeProvider>
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[path]}>
+          <AppHeader />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
+  );
 }
 
 describe("web-core S-005 — header right cluster (AS-018.T1)", () => {

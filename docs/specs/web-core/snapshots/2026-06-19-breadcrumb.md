@@ -1,7 +1,14 @@
+# Snapshot: web-core
+**Date:** 2026-06-19
+**Ref:** --
+**Reason:** M1 (new AS added to S-005) + M4 (AS-017 breadcrumb flow reworked) — breadcrumb becomes a real clickable, page-aware, name-resolving control.
+
+---
+
 # Spec: web-core
 
 **Created:** 2026-06-09
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-09
 **Status:** Draft
 
 ## Overview
@@ -192,47 +199,17 @@ and the workspace switcher is never duplicated here.
 **Execution:**
 - `depends_on:` S-004
 - `parallel_safe:` false
-- `files:` `apps/web/src/app/app-shell.tsx`, `apps/web/src/app/app-header.tsx` (deriveCrumbs + Breadcrumb), `apps/web/src/app/user-menu.tsx`; reads the project name from the workspace-project React Query cache
+- `files:` `apps/web/src/app/app-shell.tsx` + `apps/web/src/app/user-menu.tsx`
 - `autonomous:` true
-- `verify:` signed in → the header shows a breadcrumb on the left reflecting the current page (workspace root alone on the dashboard; `My Default › Projects` on the projects list; `My Default › [Project Name]` on a project), every crumb but the last is a link, the last is emphasized; on the right, search + theme + the avatar menu (with sign-out); the workspace switcher is NOT in the header.
+- `verify:` signed in → the header shows a breadcrumb on the left and, on the right, search + theme + the avatar menu (with sign-out); the workspace switcher is NOT in the header.
 
 **Acceptance Scenarios:**
 
-AS-017: The breadcrumb's root crumb is the active workspace, capitalized and admin-qualified
-- **Given:** I am the admin of a workspace whose stored name is "default"
-- **When:** the header renders on any page in that workspace
-- **Then:** the breadcrumb's root crumb reads "My Default" — the same admin-qualified label the sidebar switcher uses, with the workspace name's first letter capitalized — never the raw stored name or the workspace id
-- **Data:** workspace name "default", caller is its admin → "My Default"
-
-AS-024: The workspace dashboard shows only the root crumb
-- **Given:** I am on the workspace dashboard/home route (the workspace root, no sub-section)
+AS-017: The header shows a breadcrumb on the left
+- **Given:** I am on a doc inside a project
 - **When:** the header renders
-- **Then:** the breadcrumb shows ONLY the workspace root crumb — no second crumb and no separator
-- **Data:** the workspace home route
-
-AS-025: A list route appends its page crumb
-- **Given:** I am on a workspace list route
-- **When:** the header renders
-- **Then:** the breadcrumb appends a page crumb after the workspace root — "All Docs" on the All-docs route, "Projects" on the Projects route
-- **Data:** All-docs route → "My Default › All Docs"; Projects route → "My Default › Projects"
-
-AS-026: A project detail route shows the project's real name, with a skeleton until it resolves
-- **Given:** I open a single project's doc view
-- **When:** the header renders and the project's name is already in the loaded browse cache
-- **Then:** the breadcrumb appends the project's real NAME as the last crumb (never the raw project id); while the name is not yet resolved (e.g. a cold deep-link before the list loads) that crumb shows a small skeleton placeholder, swapped for the name once it resolves — no blocking fetch is issued
-- **Data:** project named "Billing" → "My Default › Billing"; cold deep-link → skeleton then "Billing"
-
-AS-027: Parent crumbs are links; the last crumb is the active page
-- **Given:** the breadcrumb shows more than one crumb
-- **When:** I read and click it
-- **Then:** every crumb except the last is a clickable link that navigates to that level (the workspace root crumb → the workspace home, "All Docs" → the All-docs list, "Projects" → the projects list); the last crumb is the current page — emphasized and NOT a link
-- **Data:** on `My Default › Projects`, clicking "My Default" goes to the workspace home; "Projects" is emphasized, not clickable
-
-AS-028: The account/settings route shows a static Account root then Settings
-- **Given:** I am on the settings route (outside the workspace path)
-- **When:** the header renders
-- **Then:** the breadcrumb reads "Account › Settings" — "Account" is a static label (not a link, there is no account landing page), "Settings" is the active page; a settings sub-section appends "› [Section]" with the section as the active crumb
-- **Data:** /settings → "Account › Settings"; /settings/appearance → "Account › Settings › Appearance"
+- **Then:** it shows a `Workspace › Project › Doc` breadcrumb with the last crumb emphasized and the parents muted
+- **Data:** a doc two levels deep
 
 AS-018: The account and utilities live in the header right, not the switcher
 - **Given:** I am signed in
@@ -305,14 +282,6 @@ AS-023: A failed load is recoverable
 - C-007: Empty and no-results are distinct states (empty → a create CTA; no-results → name the
   query + Clear search); loading uses a shape-matching skeleton, not a full-page spinner; a failed
   load is recoverable with Retry, never blank or crashed. (AS-020, AS-021, AS-022, AS-023)
-- C-008: The breadcrumb reflects the active route as a path of crumbs. The root crumb is the active
-  workspace, shown with the admin-qualified, first-letter-capitalized label the switcher uses (never
-  the raw stored name or an id). The workspace dashboard shows that root crumb alone; list routes
-  append a page crumb (All Docs / Projects); a project route appends the project's real name resolved
-  from the loaded browse cache (a skeleton until it resolves — no blocking fetch — never a raw id);
-  the settings route shows a static "Account" root then "Settings" (+ section). Every crumb except the
-  last is a link to its level; the last crumb is the emphasized active page. (AS-017, AS-024, AS-025,
-  AS-026, AS-027, AS-028)
 
 ## Linked Fields
 
@@ -331,12 +300,7 @@ web-core is the **consumer**; the backend `auth` cluster is the producer (alread
   (admin-only management). ✔ surface match (the bootstrap carries my role per workspace).
 - **nav destinations** (Dashboard / All docs / Projects / Activity screens) — consumed by
   web-core:S-004 (AS-012/013) as routes the nav points at. Produced by `workspace-project-ui`
-  (now built). ✔ destinations exist (GAP-002 resolved).
-- **project name** — consumed by web-core:S-005 (AS-026) for the project-detail breadcrumb crumb,
-  read from the workspace-project React Query cache (the project list / project-docs reads already
-  loaded by the screens). Produced by `workspace-project`:S-003 (the projects list + project-docs
-  rows carry the project name) + `workspace-project-browse`:S-001 (the per-project view loads it).
-  ✔ read-from-cache, no new fetch; skeleton until the cache is warm (cold deep-link).
+  (NOT YET BUILT). ✘ destinations pending → GAP-002; the shell renders the nav + routes regardless.
 - **notifications count** (the bell) — consumed by web-core:S-005 (AS-018 utilities). No backend
   notifications-count producer exists yet. ✘ → GAP-003; the bell is a placeholder until a
   notifications slice ships.
@@ -398,19 +362,19 @@ Precedence: AS / Constraints > Tree.
   email+password and defers the others. Source: user request "Eden + login" (method unspecified).
   *(Note: auth-ui has since built the OAuth buttons + verify/invite screens; revisit whether
   this gap is now resolved by auth-ui when web-core is next touched.)*
-- GAP-002 (status: resolved): the sidebar nav destination screens (Dashboard / All docs / Projects /
-  Activity) are now built by `workspace-project-ui` + `workspace-project-browse`. The breadcrumb
-  (AS-026) also reads the project name from those screens' query cache. Resolved 2026-06-19.
+- GAP-002 (status: deferred): the sidebar nav points at Dashboard / All docs / Projects / Activity,
+  whose destination screens are owned by `workspace-project-ui` (not yet built). The shell renders
+  the nav + routing now; a nav item with no destination yet routes to an empty/placeholder view
+  until workspace-project-ui ships. Owner: workspace-project-ui. Source: scope note "destination screens out of scope here".
 - GAP-003 (status: open): the header notifications bell has no backend count endpoint yet — it
   renders as a placeholder (no badge / inert) until a notifications slice ships. Source: dispatch note "Notifications backend may not exist yet".
 
 ## Spec Sizing Notes
 
-Stories=6 (target 7 — under). AS=28 (target 20 — in the G7 overage range ≤30).
+Stories=6 (target 7 — under). AS=23 (target 20 — in the G7 overage range ≤30).
 
 G1 splits producing the excess AS (each AS = one atom; no AS gộp):
 - S-004 sidebar: 5 AS for 5 atoms (frame/order, active-item marking, admin-only Members, collapse-to-rail, mobile drawer) — collapse (desktop rail) and the mobile drawer are distinct mechanisms at distinct breakpoints, not one responsive AS.
-- S-005 breadcrumb: 6 AS for 6 atoms (root label, dashboard-only-root, list page crumb, project-name+skeleton, link-vs-active, account/settings branch) — each is a distinct breadcrumb behavior the product owner stated separately; merging would hide a case.
 - S-006 states: 4 AS for 4 atoms (empty, no-results-distinct, loading-skeleton, error-retry) — empty vs no-results is an explicit product distinction (C-007), not a merge.
 
 No bloat — each AS traces to one stated atom.
@@ -421,4 +385,3 @@ No bloat — each AS traces to one stated atom.
 |------|--------|-----|
 | 2026-06-09 | Initial creation (FE core: auth lifecycle + shared client + design-system shell) | -- |
 | 2026-06-09 | Added S-004 (left sidebar nav frame), S-005 (header breadcrumb + account), S-006 (empty/loading/error states) + C-005/006/007, Linked Fields (switcher slot, role-gating, nav destinations, notifications), GAP-002/003. App shell = sidebar + header (supersedes AppTopBar); switcher in sidebar, account in header. Snapshot 2026-06-09.md (M1). | -- |
-| 2026-06-19 | Reworked the breadcrumb (S-005): AS-017 now specifies the admin-qualified capitalized root label; added AS-024 (dashboard shows root only), AS-025 (list page crumb All Docs/Projects), AS-026 (project real name from cache + skeleton, no raw id), AS-027 (parent crumbs link, last is active), AS-028 (Account › Settings static-root branch); +C-008. Supersedes the old "names not loadable → fall back to id" limitation. GAP-002 resolved (destinations + name cache now exist). Linked Field for project-name (read-from-cache). Major (M1+M4); snapshot 2026-06-19-breadcrumb.md. | -- |
