@@ -128,8 +128,9 @@ describe("AnnotationsRail S-003", () => {
     await renderViewer();
 
     expect(screen.getAllByTestId("thread-card")).toHaveLength(3);
-    // S-007: the single total count was replaced by status chips; 3 open annotations → Open chip 3.
-    expect(screen.getByTestId("chip-open")).toHaveTextContent("3");
+    // S-007 (rework): the header shows the doc total ("showing X of N" only while narrowed). With the
+    // filter at its default (all facets selected) it reads the full total — 3 anchored.
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("3");
 
     // Each quoted range is highlighted in the doc, paired by data-anno (C-003).
     const view = screen.getByTestId("markdown-view");
@@ -225,8 +226,9 @@ describe("AnnotationsRail S-003", () => {
     expect(screen.getByTestId("rail-empty")).toBeInTheDocument();
     // #3 (2026-06-12): the rail hosts ALL annotation types — empty copy renamed to "annotations".
     expect(screen.getByTestId("rail-empty")).toHaveTextContent("No annotations yet");
-    // S-007: an empty doc shows no status chips at all (nothing to summarize).
-    expect(screen.queryByTestId("chip-open")).toBeNull();
+    // S-007: an empty doc shows no Filter control + no "showing" signal (nothing to filter).
+    expect(screen.queryByTestId("filter-control")).toBeNull();
+    expect(screen.queryByTestId("rail-showing")).toBeNull();
     expect(screen.queryAllByTestId("thread-card")).toHaveLength(0);
     expect(screen.getByTestId("markdown-view").querySelectorAll("[data-anno]")).toHaveLength(0);
     // The doc still renders.
@@ -305,204 +307,254 @@ describe("AnnotationsRail S-003", () => {
     expect(timeNode).toHaveTextContent("now");
   });
 
-  // ---- S-007: status chips (summarize + filter the rail) ------------------------------------
-  // The header replaces the single count with three status chips (Open · Resolved · Suggestion);
-  // toggling a chip filters the rail AND dims non-matching highlights in the doc. The chips
-  // PARTITION the active set (C-009): Suggestion (type=suggestion, any lifecycle), then Open
-  // (not a suggestion, unresolved), then Resolved (not a suggestion, resolved). Detached items are
-  // counted into their chip AND still render in the separate detached section (C-004).
+  // ---- S-007 (REWORK): two-axis Filter popover (Status × Type) -------------------------------
+  // The header carries the doc total + a "showing X of N" signal + a Filter control that opens a
+  // popover with TWO axes — Status {Open, Resolved} × Type {Markup, Comment, Redline, Label}. A
+  // thread shows iff its status facet AND its type facet are both selected (OR within an axis, AND
+  // across — C-009); both default all-selected. Counts are DYNAMIC (each axis scoped to the OTHER
+  // axis's selection — C-010). Toggling a facet hides + dims; Reset re-selects all; act-on-filtered
+  // re-activates BOTH facets (AS-028). The detached section always renders (C-004).
 
-  // A doc with 20 open + 1 resolved + 2 suggestion = 23 active. Each anchors to a distinct block so
-  // every active one gets an in-text highlight (the test MD has 4 blocks; reuse them round-robin —
-  // dimming is asserted by data-anno-filtered on the marks, not by per-block uniqueness).
-  function mixedSet() {
+  // A 23-annotation set matching the AS-022 numbers exactly: Open 20 / Resolved 3; by TYPE
+  // Comment 18 / Markup 2 / Redline 2 / Label 1. Type derivation: redline = suggestion+delete;
+  // label = a label id; markup = a replace suggestion (the catch-all); comment = plain. Statuses
+  // distributed so the totals land: comments 18 (17 open + 1 res), markup 2 (open), redline 2
+  // (1 open + 1 res), label 1 (res). → Open 20, Resolved 3. Anchors round-robin over the 4 blocks
+  // (dimming is asserted by data-anno-filtered, not per-block uniqueness).
+  function set23() {
     const items: Record<string, unknown>[] = [];
     const blocks = ["block-p-1", "block-p-2", "block-p-3", "block-p-4"];
     const snippets = ["expires after 24h", "bleed across", "last-admin invariant", "onboarding copy"];
-    // 20 open
-    for (let i = 0; i < 20; i++) {
-      const b = i % 4;
-      items.push(
-        makeAnnotation({
-          id: `open-${i}`,
-          status: "unresolved",
-          anchor: { blockId: blocks[b], textSnippet: snippets[b], offset: i === 0 ? 8 : 0, length: 5 },
-        }),
-      );
-    }
-    // 1 resolved
-    items.push(
-      makeAnnotation({
-        id: "res-0",
-        status: "resolved",
-        anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 },
-      }),
-    );
-    // 2 suggestion (a redline = type suggestion, delete-kind). ANY lifecycle counts as Suggestion.
-    items.push(
-      makeAnnotation({
-        id: "sug-0",
-        type: "suggestion",
-        suggestion: { kind: "delete" },
-        suggestionStatus: "pending",
-        anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 },
-      }),
-    );
-    items.push(
-      makeAnnotation({
-        id: "sug-1",
-        type: "suggestion",
-        suggestion: { kind: "delete" },
-        suggestionStatus: "accepted",
-        status: "resolved", // a decided suggestion is resolved — still partitions as Suggestion (C-009)
-        anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 },
-      }),
-    );
+    const anchorFor = (i: number) => ({ blockId: blocks[i % 4], textSnippet: snippets[i % 4], offset: i === 0 ? 8 : 0, length: 5 });
+    for (let i = 0; i < 17; i++) items.push(makeAnnotation({ id: `comment-${i}`, status: "unresolved", anchor: anchorFor(i) }));
+    items.push(makeAnnotation({ id: "comment-res", status: "resolved", anchor: anchorFor(1) })); // 18th comment, resolved
+    items.push(makeAnnotation({ id: "markup-0", type: "suggestion", suggestion: { kind: "replace" }, suggestionStatus: "pending", status: "unresolved", anchor: anchorFor(0) }));
+    items.push(makeAnnotation({ id: "markup-1", type: "suggestion", suggestion: { kind: "replace" }, suggestionStatus: "pending", status: "unresolved", anchor: anchorFor(1) }));
+    items.push(makeAnnotation({ id: "redline-open", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", status: "unresolved", anchor: anchorFor(2) }));
+    items.push(makeAnnotation({ id: "redline-res", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "accepted", status: "resolved", anchor: anchorFor(3) }));
+    items.push(makeAnnotation({ id: "label-0", label: "out-of-scope", status: "resolved", anchor: anchorFor(0) }));
     return items;
   }
 
-  it("AS-022: the rail header shows three status chips whose counts sum to the active total", async () => {
-    annoResponse = ok({ items: mixedSet() });
+  async function openFilter() {
+    await userEvent.click(screen.getByTestId("filter-control"));
+    await screen.findByTestId("filter-popover");
+  }
+
+  it("AS-022: the Filter popover lists both axes with counts, all selected by default; rail shows all 23", async () => {
+    annoResponse = ok({ items: set23() });
     await renderViewer();
 
-    const open = screen.getByTestId("chip-open");
-    const resolved = screen.getByTestId("chip-resolved");
-    const suggestion = screen.getByTestId("chip-suggestion");
+    // The rail shows all 23 anchored threads (none orphaned in this set).
+    expect(screen.getAllByTestId("thread-card")).toHaveLength(23);
+    // Header reads the full total while the filter is at default (not narrowed).
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("23");
 
-    // Each chip is an icon + its count. Suggestion partitions BEFORE status (C-009): the
-    // decided/resolved suggestion counts as Suggestion, not Resolved.
-    expect(open).toHaveTextContent("20");
-    expect(resolved).toHaveTextContent("1");
-    expect(suggestion).toHaveTextContent("2");
+    await openFilter();
 
-    // All active by default.
-    expect(open.getAttribute("aria-pressed")).toBe("true");
-    expect(resolved.getAttribute("aria-pressed")).toBe("true");
-    expect(suggestion.getAttribute("aria-pressed")).toBe("true");
+    // Status axis: Open 20 · Resolved 3 (whole-doc per-facet totals while both axes full).
+    expect(screen.getByTestId("facet-status-open")).toHaveTextContent("20");
+    expect(screen.getByTestId("facet-status-resolved")).toHaveTextContent("3");
+    // Type axis: Markup 2 · Comment 18 · Redline 2 · Label 1.
+    expect(screen.getByTestId("facet-type-markup")).toHaveTextContent("2");
+    expect(screen.getByTestId("facet-type-comment")).toHaveTextContent("18");
+    expect(screen.getByTestId("facet-type-redline")).toHaveTextContent("2");
+    expect(screen.getByTestId("facet-type-label")).toHaveTextContent("1");
 
-    // The three counts sum to the active total (23).
-    const sum = [open, resolved, suggestion]
-      .map((c) => Number(c.getAttribute("data-count")))
-      .reduce((a, b) => a + b, 0);
-    expect(sum).toBe(23);
-    // The single legacy total count is gone — chips replace it.
-    expect(screen.queryByTestId("rail-count")).toBeNull();
+    // Every facet selected by default.
+    for (const id of [
+      "facet-status-open",
+      "facet-status-resolved",
+      "facet-type-markup",
+      "facet-type-comment",
+      "facet-type-redline",
+      "facet-type-label",
+    ]) {
+      expect(screen.getByTestId(id).getAttribute("aria-pressed")).toBe("true");
+    }
+    // The old single-axis chips are gone.
+    expect(screen.queryByTestId("chip-open")).toBeNull();
+    expect(screen.queryByTestId("chip-suggestion")).toBeNull();
   });
 
-  it("AS-023: toggling a chip off hides its group from the rail and dims its marks; others unaffected", async () => {
+  it("AS-023: deselecting a Type facet filters the rail and dims those marks; others + detached unaffected", async () => {
     annoResponse = ok({
       items: [
-        makeAnnotation({ id: "open-0", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
-        makeAnnotation({ id: "res-0", status: "resolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
-        makeAnnotation({ id: "sug-0", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 } }),
+        makeAnnotation({ id: "comment-0", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
+        makeAnnotation({ id: "redline-0", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
+        makeAnnotation({ id: "label-0", label: "out-of-scope", anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 } }),
         makeAnnotation({ id: "det-0", isOrphaned: true, anchor: { blockId: "block-p-4", textSnippet: "onboarding copy", offset: 8, length: 15 } }),
       ],
     });
     await renderViewer();
-
     const rail = screen.getByTestId("annotations-rail");
     const view = screen.getByTestId("markdown-view");
-    // All three anchored threads present to start.
-    expect(rail.querySelector('[data-anno-thread="open-0"]')).not.toBeNull();
-    expect(rail.querySelector('[data-anno-thread="res-0"]')).not.toBeNull();
 
-    await userEvent.click(screen.getByTestId("chip-resolved"));
+    await openFilter();
+    await userEvent.click(screen.getByTestId("facet-type-redline")); // deselect Redline
 
-    // The resolved thread leaves the rail; the open + suggestion threads stay.
-    expect(rail.querySelector('[data-anno-thread="res-0"]')).toBeNull();
-    expect(rail.querySelector('[data-anno-thread="open-0"]')).not.toBeNull();
-    expect(rail.querySelector('[data-anno-thread="sug-0"]')).not.toBeNull();
+    // The redline thread leaves the rail; comment + label stay.
+    expect(rail.querySelector('[data-anno-thread="redline-0"]')).toBeNull();
+    expect(rail.querySelector('[data-anno-thread="comment-0"]')).not.toBeNull();
+    expect(rail.querySelector('[data-anno-thread="label-0"]')).not.toBeNull();
 
-    // The resolved highlight dims (filtered flag); the others do not.
-    expect(view.querySelector('[data-anno="res-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
-    expect(view.querySelector('[data-anno="open-0"]')!.getAttribute("data-anno-filtered")).toBeNull();
-    expect(view.querySelector('[data-anno="sug-0"]')!.getAttribute("data-anno-filtered")).toBeNull();
+    // The redline highlight dims; the others do not.
+    expect(view.querySelector('[data-anno="redline-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
+    expect(view.querySelector('[data-anno="comment-0"]')!.getAttribute("data-anno-filtered")).toBeNull();
+    expect(view.querySelector('[data-anno="label-0"]')!.getAttribute("data-anno-filtered")).toBeNull();
 
-    // The detached section is unaffected by chip state (C-004).
+    // The detached section is unaffected by the filter (C-004).
     const section = screen.getByTestId("detached-section");
     expect(within(section).getByTestId("detached-count")).toHaveTextContent("1 detached");
   });
 
-  it("AS-024: toggling the chip back on restores its threads and its marks return to resolved (not filtered)", async () => {
+  it("AS-024: the two axes combine — shown iff status AND type both selected", async () => {
     annoResponse = ok({
       items: [
-        makeAnnotation({ id: "open-0", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
-        makeAnnotation({ id: "res-0", status: "resolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
+        makeAnnotation({ id: "redline-open", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
+        makeAnnotation({ id: "redline-res", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "accepted", status: "resolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
+        makeAnnotation({ id: "comment-open", status: "unresolved", anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 } }),
       ],
     });
     await renderViewer();
-
     const rail = screen.getByTestId("annotations-rail");
     const view = screen.getByTestId("markdown-view");
 
-    await userEvent.click(screen.getByTestId("chip-resolved")); // off
-    expect(rail.querySelector('[data-anno-thread="res-0"]')).toBeNull();
-    expect(view.querySelector('[data-anno="res-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
+    await openFilter();
+    // Narrow Status to only Open: deselect Resolved.
+    await userEvent.click(screen.getByTestId("facet-status-resolved"));
+    // Narrow Type to only Redline: deselect Markup, Comment, Label.
+    await userEvent.click(screen.getByTestId("facet-type-markup"));
+    await userEvent.click(screen.getByTestId("facet-type-comment"));
+    await userEvent.click(screen.getByTestId("facet-type-label"));
 
-    await userEvent.click(screen.getByTestId("chip-resolved")); // back on
-    // Thread returns to the rail.
-    expect(rail.querySelector('[data-anno-thread="res-0"]')).not.toBeNull();
-    // Highlight is no longer filtered-dimmed; it reads as resolved again (its own resolved style).
-    const mark = view.querySelector('[data-anno="res-0"]') as HTMLElement;
-    expect(mark.getAttribute("data-anno-filtered")).toBeNull();
-    expect(mark.dataset.resolved).toBe("true");
+    // Only the OPEN REDLINE matches. The resolved redline (wrong status) and the open comment (wrong
+    // type) are both hidden.
+    expect(rail.querySelector('[data-anno-thread="redline-open"]')).not.toBeNull();
+    expect(rail.querySelector('[data-anno-thread="redline-res"]')).toBeNull();
+    expect(rail.querySelector('[data-anno-thread="comment-open"]')).toBeNull();
+    expect(screen.getAllByTestId("thread-card")).toHaveLength(1);
+
+    // Every non-matching highlight is dimmed.
+    expect(view.querySelector('[data-anno="redline-open"]')!.getAttribute("data-anno-filtered")).toBeNull();
+    expect(view.querySelector('[data-anno="redline-res"]')!.getAttribute("data-anno-filtered")).toBe("true");
+    expect(view.querySelector('[data-anno="comment-open"]')!.getAttribute("data-anno-filtered")).toBe("true");
   });
 
-  it("AS-025: with no chip selected the rail shows a distinct no-match state (not the empty-doc state)", async () => {
+  it("AS-025: facet counts are dynamic — recompute against the other axis's selection", async () => {
+    // 2 redlines (one open, one resolved) + some open comments. Narrowing Type to Redline scopes the
+    // Status counts to redlines: Open 1 · Resolved 1 (not the whole-doc totals).
     annoResponse = ok({
       items: [
-        makeAnnotation({ id: "open-0", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
-        makeAnnotation({ id: "res-0", status: "resolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
-        makeAnnotation({ id: "sug-0", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 } }),
+        makeAnnotation({ id: "redline-open", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
+        makeAnnotation({ id: "redline-res", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "accepted", status: "resolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
+        makeAnnotation({ id: "comment-0", status: "unresolved", anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 } }),
+        makeAnnotation({ id: "comment-1", status: "unresolved", anchor: { blockId: "block-p-4", textSnippet: "onboarding copy", offset: 8, length: 15 } }),
       ],
     });
     await renderViewer();
 
-    await userEvent.click(screen.getByTestId("chip-open"));
-    await userEvent.click(screen.getByTestId("chip-resolved"));
-    await userEvent.click(screen.getByTestId("chip-suggestion"));
+    await openFilter();
+    // Whole-doc Status counts (both axes full): Open 3 · Resolved 1.
+    expect(screen.getByTestId("facet-status-open")).toHaveTextContent("3");
+    expect(screen.getByTestId("facet-status-resolved")).toHaveTextContent("1");
 
-    // The no-match state is shown and is DISTINCT from the empty-doc "no annotations yet" state.
+    // Narrow Type to only Redline.
+    await userEvent.click(screen.getByTestId("facet-type-markup"));
+    await userEvent.click(screen.getByTestId("facet-type-comment"));
+    await userEvent.click(screen.getByTestId("facet-type-label"));
+
+    // Status facets now scoped to redlines only: Open 1 · Resolved 1 (NOT the whole-doc 3 · 1).
+    expect(screen.getByTestId("facet-status-open")).toHaveTextContent("1");
+    expect(screen.getByTestId("facet-status-resolved")).toHaveTextContent("1");
+  });
+
+  it("AS-026: with an axis fully deselected the rail shows a distinct no-match state", async () => {
+    annoResponse = ok({
+      items: [
+        makeAnnotation({ id: "comment-0", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
+        makeAnnotation({ id: "redline-0", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
+        makeAnnotation({ id: "label-0", label: "out-of-scope", anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 } }),
+      ],
+    });
+    await renderViewer();
+
+    await openFilter();
+    // Deselect EVERY facet in the Type axis → no annotation can match.
+    await userEvent.click(screen.getByTestId("facet-type-markup"));
+    await userEvent.click(screen.getByTestId("facet-type-comment"));
+    await userEvent.click(screen.getByTestId("facet-type-redline"));
+    await userEvent.click(screen.getByTestId("facet-type-label"));
+
+    // A no-match state DISTINCT from the empty-doc "no annotations yet" state.
     const noMatch = screen.getByTestId("rail-no-match");
     expect(noMatch).toBeInTheDocument();
     expect(screen.queryByTestId("rail-empty")).toBeNull();
     expect(noMatch).not.toHaveTextContent("No annotations yet");
-    // No thread cards rendered; no mark is emphasized (focus) — all dimmed.
     expect(screen.queryAllByTestId("thread-card")).toHaveLength(0);
+    // No highlight is emphasized (focus); all dimmed.
     const view = screen.getByTestId("markdown-view");
     expect(view.querySelector(".anno-mark--focus")).toBeNull();
-    expect(view.querySelector('[data-anno="open-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
+    expect(view.querySelector('[data-anno="comment-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
   });
 
-  it("AS-026: clicking a filtered-out highlight re-activates its chip and focuses the thread", async () => {
+  it("AS-027: the header shows how much is showing and Reset clears the filter", async () => {
+    annoResponse = ok({ items: set23() });
+    await renderViewer();
+
+    await openFilter();
+    // Narrow so exactly 4 of 23 match: Status stays all (Open + Resolved); Type = Markup(2) +
+    // Redline(2) by deselecting Comment + Label → 2 + 2 = 4 anchored threads.
+    await userEvent.click(screen.getByTestId("facet-type-comment")); // off
+    await userEvent.click(screen.getByTestId("facet-type-label")); // off → Markup(2)+Redline(2)=4
+
+    // While narrowed: header reads "showing 4 of 23" and the Filter control reads active.
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("showing 4 of 23");
+    expect(screen.getByTestId("filter-control").getAttribute("data-active")).toBe("true");
+
+    // Reset → every facet selected again; header shows the full total; Filter reads inactive.
+    await userEvent.click(screen.getByTestId("filter-reset"));
+    for (const id of ["facet-type-comment", "facet-type-label", "facet-status-open", "facet-status-resolved"]) {
+      expect(screen.getByTestId(id).getAttribute("aria-pressed")).toBe("true");
+    }
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("23");
+    expect(screen.getByTestId("filter-control").getAttribute("data-active")).toBeNull();
+  });
+
+  it("AS-028: acting on a filtered-out highlight re-activates BOTH its facets, then focuses it", async () => {
     annoResponse = ok({
       items: [
-        makeAnnotation({ id: "open-0", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
-        makeAnnotation({ id: "res-0", status: "resolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
+        makeAnnotation({ id: "redline-open", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
+        makeAnnotation({ id: "comment-0", status: "unresolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
       ],
     });
     await renderViewer();
-
     const rail = screen.getByTestId("annotations-rail");
     const view = screen.getByTestId("markdown-view");
 
-    // Toggle Open off → its highlight dims + its thread leaves the rail.
-    await userEvent.click(screen.getByTestId("chip-open"));
-    expect(rail.querySelector('[data-anno-thread="open-0"]')).toBeNull();
-    const mark = view.querySelector('[data-anno="open-0"]') as HTMLElement;
+    await openFilter();
+    // Hide the open redline by deselecting BOTH its facets: Status Open OFF and Type Redline OFF.
+    await userEvent.click(screen.getByTestId("facet-status-open"));
+    await userEvent.click(screen.getByTestId("facet-type-redline"));
+    expect(rail.querySelector('[data-anno-thread="redline-open"]')).toBeNull();
+    const mark = view.querySelector('[data-anno="redline-open"]') as HTMLElement;
     expect(mark.getAttribute("data-anno-filtered")).toBe("true");
 
-    // Click the dimmed highlight → the Open chip re-activates, the thread reappears + focuses.
+    // Click the dimmed highlight → BOTH the Open status facet and the Redline type facet re-activate.
     await userEvent.click(mark);
 
     await waitFor(() => {
-      expect(screen.getByTestId("chip-open").getAttribute("aria-pressed")).toBe("true");
+      expect(rail.querySelector('[data-anno-thread="redline-open"]')).not.toBeNull();
     });
-    const thread = rail.querySelector('[data-anno-thread="open-0"]')!;
-    expect(thread).not.toBeNull();
+    // Its thread reappears + focuses; its highlight is no longer dimmed.
+    const thread = rail.querySelector('[data-anno-thread="redline-open"]')!;
     expect(thread.getAttribute("aria-current")).toBe("true");
-    // The highlight is no longer filtered (re-activation restored its group).
-    expect(view.querySelector('[data-anno="open-0"]')!.getAttribute("data-anno-filtered")).toBeNull();
+    expect(view.querySelector('[data-anno="redline-open"]')!.getAttribute("data-anno-filtered")).toBeNull();
+
+    // Both facets read active again (open the popover to check).
+    await openFilter();
+    expect(screen.getByTestId("facet-status-open").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("facet-type-redline").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("AS-011 / C-004: a detached (isOrphaned) annotation shows in the amber detached section, never as anchored", async () => {
@@ -528,9 +580,9 @@ describe("AnnotationsRail S-003", () => {
     expect(screen.getByTestId("annotations-rail").querySelector('[data-anno-thread="d1"]')).toBeNull();
     expect(screen.getByTestId("markdown-view").querySelector('[data-anno="d1"]')).toBeNull();
 
-    // Count reflects the active set; the one anchored open annotation still highlights.
-    // S-007: the detached item is counted into its status chip too (C-009) — both open → Open chip 2.
-    expect(screen.getByTestId("chip-open")).toHaveTextContent("2");
+    // S-007: the header "showing X of N" counts the ANCHORED set (detached lives in its own
+    // always-rendered section) — 1 anchored, all facets selected → reads the total 1.
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("1");
     expect(screen.getByTestId("markdown-view").querySelector('[data-anno="a1"]')).not.toBeNull();
   });
 });

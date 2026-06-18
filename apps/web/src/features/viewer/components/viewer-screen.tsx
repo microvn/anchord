@@ -13,7 +13,16 @@ import type { HtmlSandboxFrameHandle } from "./html-sandbox-frame";
 import type { BridgeAnchor } from "@/features/viewer/lib/bridge";
 import { DocModeToolbar, type MarkupTool } from "./doc-mode-toolbar";
 import { TocSidebar } from "./toc-sidebar";
-import { AnnotationsRail, annotationBucket, ALL_CHIPS_ACTIVE, type ChipKey } from "./annotations-rail";
+import { AnnotationsRail } from "./annotations-rail";
+import {
+  type StatusFacet,
+  type TypeFacet,
+  ALL_STATUS,
+  ALL_TYPE,
+  statusFacet,
+  typeFacet,
+  isShown,
+} from "@/features/viewer/lib/annotation-filter";
 import { ViewerTopBar } from "./viewer-top-bar";
 import { MetaStrip } from "./meta-strip";
 import type { SpecMeta } from "@/features/viewer/types";
@@ -825,10 +834,13 @@ function useAnnotations(
     annotations: ViewerAnnotation[];
     focusedId: string | null;
     unplaceableIds: Set<string>;
-    /** S-007 (C-009): the active status chips + the toggle, lifted here so the SAME set drives the
-     *  rail filter AND the in-text mark dimming. */
-    activeChips: ReadonlySet<ChipKey>;
-    onToggleChip: (chip: ChipKey) => void;
+    /** S-007 (C-009): the active Status / Type facet sets + their toggles + Reset, lifted here so the
+     *  SAME selection drives the rail filter AND the in-text mark dimming. */
+    activeStatus: ReadonlySet<StatusFacet>;
+    activeType: ReadonlySet<TypeFacet>;
+    onToggleStatus: (f: StatusFacet) => void;
+    onToggleType: (f: TypeFacet) => void;
+    onResetFilter: () => void;
     /** S-002 (C-002): the session is the doc owner — forwarded to each card's proposal close family. */
     isOwner: boolean;
     onFocusThread: (id: string) => void;
@@ -840,23 +852,41 @@ function useAnnotations(
   };
 } {
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  // S-007 (C-009): the active status-chip filter, lifted here (like focusedId) so the SAME set drives
-  // BOTH the rail thread list AND the in-text mark dimming. All three active by default. Toggling a
-  // chip OFF hides its group from the rail + dims its marks; the detached section is unaffected (C-004).
-  const [activeChips, setActiveChips] = useState<ReadonlySet<ChipKey>>(ALL_CHIPS_ACTIVE);
-  const toggleChip = useCallback((chip: ChipKey) => {
-    setActiveChips((prev) => {
+  // S-007 (C-009): the TWO-AXIS filter selection, lifted here (like focusedId) so the SAME selection
+  // drives BOTH the rail thread list AND the in-text mark dimming. Both axes all-selected by default.
+  // Toggling a facet OFF hides its threads + dims their marks; the detached section is unaffected
+  // (C-004). A thread shows iff its status facet AND its type facet are both selected (AND across).
+  const [activeStatus, setActiveStatus] = useState<ReadonlySet<StatusFacet>>(ALL_STATUS);
+  const [activeType, setActiveType] = useState<ReadonlySet<TypeFacet>>(ALL_TYPE);
+  const toggleStatus = useCallback((f: StatusFacet) => {
+    setActiveStatus((prev) => {
       const next = new Set(prev);
-      if (next.has(chip)) next.delete(chip);
-      else next.add(chip);
+      if (next.has(f)) next.delete(f);
+      else next.add(f);
       return next;
     });
   }, []);
-  // S-007 (AS-026): acting on an annotation whose chip is OFF must re-activate that chip (never a dead
-  // no-op). Used by the click-on-mark and the rail-thread focus paths before they focus the thread.
-  const ensureChipActive = useCallback((a: { type: string; status: "unresolved" | "resolved" }) => {
-    const chip = annotationBucket(a);
-    setActiveChips((prev) => (prev.has(chip) ? prev : new Set(prev).add(chip)));
+  const toggleType = useCallback((f: TypeFacet) => {
+    setActiveType((prev) => {
+      const next = new Set(prev);
+      if (next.has(f)) next.delete(f);
+      else next.add(f);
+      return next;
+    });
+  }, []);
+  // S-007 (AS-027): Reset re-selects every facet on both axes.
+  const resetFilter = useCallback(() => {
+    setActiveStatus(ALL_STATUS);
+    setActiveType(ALL_TYPE);
+  }, []);
+  // S-007 (AS-028): acting on a filtered-out annotation must re-activate BOTH its facets (status AND
+  // type) so it matches again — never a dead no-op. Used by the click-on-mark + rail-thread focus
+  // paths before they focus the thread.
+  const ensureFacetsActive = useCallback((a: Pick<ViewerAnnotation, "type" | "status" | "suggestion" | "label">) => {
+    const sf = statusFacet(a);
+    const tf = typeFacet(a);
+    setActiveStatus((prev) => (prev.has(sf) ? prev : new Set(prev).add(sf)));
+    setActiveType((prev) => (prev.has(tf) ? prev : new Set(prev).add(tf)));
   }, []);
   const queryClient = useQueryClient();
   // The cache key for this doc's annotation list (matches useApiQuery below). All post-write
@@ -937,12 +967,13 @@ function useAnnotations(
           kind: isRedline ? ("redline" as const) : undefined,
           stale: a.suggestionStatus === "stale",
           hue,
-          // S-007 (C-009): the mark is DIMMED when its status chip is toggled off. Detached items
-          // carry no highlight (excluded below / by the placer), so this only affects anchored marks.
-          filtered: !activeChips.has(annotationBucket(a)),
+          // S-007 (C-009): the mark is DIMMED when the annotation is NOT shown by the two-axis filter
+          // (its status facet OR its type facet is toggled off). Detached items carry no highlight
+          // (excluded below / by the placer), so this only affects anchored marks.
+          filtered: !isShown(a, activeStatus, activeType),
         };
       }),
-    [annotations, activeChips],
+    [annotations, activeStatus, activeType],
   );
 
   // HTML-PLACE: the placeable set in the bridge's `{id, anchor}` shape, for an HTML doc to post down
@@ -990,15 +1021,15 @@ function useAnnotations(
   // null for every anchor and false-flag ALL of them "couldn't place". HTML is drawn the only way it
   // can be: each anchor posted down the bridge by HtmlSandboxFrame (placement failures come back via
   // onPlaceFailed → reportUnplaceableHtml). So feed the placer an empty set for non-markdown.
-  // S-007 (AS-026): a click on a (possibly filtered-out, dimmed) highlight must re-activate that
-  // annotation's chip before focusing — so its thread reappears in the rail and the click is never a
-  // dead no-op. Looks the annotation up by id to find its chip.
-  const reactivateChipFor = useCallback(
+  // S-007 (AS-028): a click on a (possibly filtered-out, dimmed) highlight must re-activate BOTH the
+  // annotation's facets (status AND type) before focusing — so its thread reappears in the rail and
+  // the click is never a dead no-op. Looks the annotation up by id to find its facets.
+  const reactivateFacetsFor = useCallback(
     (id: string) => {
       const a = annotations.find((x) => x.id === id);
-      if (a) ensureChipActive(a);
+      if (a) ensureFacetsActive(a);
     },
-    [annotations, ensureChipActive],
+    [annotations, ensureFacetsActive],
   );
 
   useAnnotationMarks(
@@ -1006,7 +1037,7 @@ function useAnnotations(
     isMarkdown ? placeable : EMPTY_PLACEABLE,
     focusedId,
     (id) => {
-      reactivateChipFor(id); // AS-026: clicking a dimmed/filtered mark re-activates its chip
+      reactivateFacetsFor(id); // AS-028: clicking a dimmed/filtered mark re-activates BOTH its facets
       setFocusedId(id);
       onHighlightTap();
     },
@@ -1014,7 +1045,7 @@ function useAnnotations(
   );
 
   const focusThread = (id: string) => {
-    reactivateChipFor(id); // AS-026: focusing a thread in a toggled-off group re-activates its chip
+    reactivateFacetsFor(id); // AS-028: focusing a filtered-out thread re-activates BOTH its facets
     setFocusedId(id);
     scrollToAnno(docPaneEl, id); // AS-009: scroll to + emphasise the highlight.
   };
@@ -1231,6 +1262,6 @@ function useAnnotations(
     prependAnnotation,
     htmlPlaceable,
     reportUnplaceableHtml,
-    railProps: { annotations, focusedId, unplaceableIds, activeChips, onToggleChip: toggleChip, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete },
+    railProps: { annotations, focusedId, unplaceableIds, activeStatus, activeType, onToggleStatus: toggleStatus, onToggleType: toggleType, onResetFilter: resetFilter, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete },
   };
 }

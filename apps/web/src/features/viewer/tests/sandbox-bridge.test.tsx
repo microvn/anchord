@@ -485,7 +485,8 @@ describe("Sandbox bridge in ViewerScreen S-002", () => {
     // AS-004.T3: exactly one thread (the reconciled real row) shows; the count is 1.
     await waitFor(() => expect(screen.getAllByTestId("thread-card")).toHaveLength(1));
     expect(screen.getAllByTestId("thread-card")[0]).toHaveTextContent("Why three?");
-    expect(screen.getByTestId("chip-open")).toHaveTextContent("1");
+    // S-007 (rework): the rail header shows the doc total ("showing X of N" only while narrowed).
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("1");
   });
 
   it("AS-005: a forged postMessage from the doc body creates nothing and opens no composer", async () => {

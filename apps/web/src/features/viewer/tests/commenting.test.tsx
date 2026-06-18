@@ -234,7 +234,8 @@ describe("Commenting S-001", () => {
     expect(threads[0]).toHaveTextContent("Why 24h and not 48h?");
 
     // AS-001.T4: the count is EXACTLY 1 — no double-count from a lingering optimistic thread.
-    expect(screen.getByTestId("chip-open")).toHaveTextContent("1");
+    // S-007 (rework): the rail header shows the doc total ("showing X of N" only while narrowed).
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("1");
 
     // NO post-write refetch: listAnnotations ran ONLY for the initial mount. The reconcile happened
     // entirely via the react-query cache update — a second call would be the old refetch regression.

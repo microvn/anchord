@@ -1,5 +1,17 @@
+import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { ThreadCard, DetachedCard } from "./thread-card";
+import { FilterPopover } from "./filter-popover";
+import {
+  type StatusFacet,
+  type TypeFacet,
+  ALL_STATUS,
+  ALL_TYPE,
+  isShown,
+  statusCounts as computeStatusCounts,
+  typeCounts as computeTypeCounts,
+  isFilterActive,
+} from "@/features/viewer/lib/annotation-filter";
 import type { ViewerAnnotation } from "@/features/viewer/services/client";
 
 // AnnotationsRail (S-003): the right-hand pane. Splits the annotation list into anchored threads
@@ -7,49 +19,15 @@ import type { ViewerAnnotation } from "@/features/viewer/services/client";
 // amber DetachedSection, C-004 — shown separately, never as anchored). Clicking a thread focuses +
 // scrolls to its highlight (AS-009) — the parent wires onFocusThread.
 //
-// S-007 (C-009): the header summarizes the ACTIVE set as three status chips (Open · Resolved ·
-// Suggestion — icon + count) that PARTITION it, replacing the single total. Each chip is an
-// independent multi-toggle, all active by default. Toggling a chip OFF hides its group from the
-// thread list AND dims its in-text highlights (the dim rides the placer's `filtered` flag, wired in
-// viewer-screen); toggling ON restores both. The detached section ALWAYS renders regardless of chip
-// state (C-004). No chip selected → a distinct no-match state (≠ the empty-doc state, AS-025).
-
-// S-007 (C-009): the three status-chip buckets. A chip is keyed on identity, not the noun: the chips
-// PARTITION the active set so the counts always sum to the active total.
-export type ChipKey = "open" | "resolved" | "suggestion";
-
-// Partition an annotation into exactly one chip (C-009 ordering): Suggestion FIRST (type=suggestion,
-// ANY lifecycle — a decided/resolved suggestion still partitions as Suggestion, never Resolved),
-// then Resolved (not a suggestion, status resolved), then Open (everything else). Detached/orphaned
-// items partition by the SAME rule (they're counted into their chip; the detached section is C-004).
-export function annotationBucket(a: Pick<ViewerAnnotation, "type" | "status">): ChipKey {
-  if (a.type === "suggestion") return "suggestion";
-  if (a.status === "resolved") return "resolved";
-  return "open";
-}
-
-// Count the active set by chip — the three counts sum to the active total (the partition invariant).
-export function bucketCounts(
-  annotations: Pick<ViewerAnnotation, "type" | "status">[],
-): Record<ChipKey, number> {
-  const counts: Record<ChipKey, number> = { open: 0, resolved: 0, suggestion: 0 };
-  for (const a of annotations) counts[annotationBucket(a)] += 1;
-  return counts;
-}
-
-// The default chip filter — all three active (every group shown).
-export const ALL_CHIPS_ACTIVE: ReadonlySet<ChipKey> = new Set<ChipKey>(["open", "resolved", "suggestion"]);
-
-// Chip display metadata (DESIGN.md: compact icon + count; existing glyphs, no new SVG):
-//   Open       → `clock` (an unresolved/pending thread)
-//   Resolved   → `check` (closed)
-//   Suggestion → `highlight` (the annotate/proposal glyph; distinct from edit/email)
-const CHIP_META: Record<ChipKey, { label: string; icon: string }> = {
-  open: { label: "Open", icon: "clock" },
-  resolved: { label: "Resolved", icon: "check" },
-  suggestion: { label: "Suggestion", icon: "highlight" },
-};
-const CHIP_ORDER: ChipKey[] = ["open", "resolved", "suggestion"];
+// S-007 (REWORKED 2026-06-16): the header carries the doc total + a "showing X of N" signal + a
+// Filter control that opens a TWO-AXIS filter popover (Status {Open, Resolved} × Type {Markup,
+// Comment, Redline, Label}). A thread shows iff its status facet AND its type facet are both selected
+// (OR within an axis, AND across — C-009); both axes default all-selected. Toggling a facet OFF hides
+// its threads from the list AND dims their in-text highlights (the dim rides the placer's `filtered`
+// flag, wired in viewer-screen); the detached section ALWAYS renders regardless of facet state
+// (C-004). Any axis fully empty → a distinct no-match state (≠ the empty-doc state, AS-026). The
+// facet SETS + toggles are lifted to viewer-screen so the SAME selection drives the mark dimming;
+// the popover open/close is local rail state.
 
 export function AnnotationsRail({
   annotations,
@@ -57,8 +35,11 @@ export function AnnotationsRail({
   unplaceableIds,
   currentUserId,
   isOwner,
-  activeChips = ALL_CHIPS_ACTIVE,
-  onToggleChip,
+  activeStatus = ALL_STATUS,
+  activeType = ALL_TYPE,
+  onToggleStatus,
+  onToggleType,
+  onResetFilter,
   onFocusThread,
   onReply,
   onResolve,
@@ -67,11 +48,15 @@ export function AnnotationsRail({
 }: {
   annotations: ViewerAnnotation[];
   focusedId: string | null;
-  /** S-007 (C-009): which status chips are active (their groups shown). Defaults to all three. The
-   *  parent (viewer-screen) owns this so the SAME set also drives the in-text mark dimming. */
-  activeChips?: ReadonlySet<ChipKey>;
-  /** S-007 (C-009): toggle a chip on/off. Absent → the chips render but are inert (read-only). */
-  onToggleChip?: (chip: ChipKey) => void;
+  /** S-007 (C-009): which Status / Type facets are active (their threads shown). Default all-selected.
+   *  The parent (viewer-screen) owns these so the SAME selection also drives the in-text mark dimming. */
+  activeStatus?: ReadonlySet<StatusFacet>;
+  activeType?: ReadonlySet<TypeFacet>;
+  /** S-007 (C-011): toggle a facet on/off (applies LIVE). Absent → the Filter control is read-only. */
+  onToggleStatus?: (f: StatusFacet) => void;
+  onToggleType?: (f: TypeFacet) => void;
+  /** S-007 (AS-027): Reset re-selects every facet on both axes. */
+  onResetFilter?: () => void;
   /** ids the FE couldn't anchor at runtime (GAP-005) — flagged, no scroll target. */
   unplaceableIds: Set<string>;
   /** annotation-actions-ui S-001 (C-001): the current session user id, forwarded to each ThreadCard
@@ -104,57 +89,76 @@ export function AnnotationsRail({
    *  rail with no delete capability). */
   onDelete?: (annotation: ViewerAnnotation) => unknown | Promise<unknown>;
 }) {
+  const [filterOpen, setFilterOpen] = useState(false);
+
   const anchored = annotations.filter((a) => !a.isOrphaned);
   const detached = annotations.filter((a) => a.isOrphaned);
   // #3 (2026-06-12): the composer moved to an inline popover at the selection — the rail no longer
   // hosts the composing UI, so the empty state is purely a function of the annotation count.
   const isEmpty = annotations.length === 0;
 
-  // S-007 (C-009): the chip counts PARTITION the ACTIVE set (anchored + detached — a detached item is
-  // counted into its chip too, AND still shows in the detached section). The thread list, by
-  // contrast, only shows the ANCHORED threads whose chip is active.
-  const counts = bucketCounts(annotations);
-  const visibleAnchored = anchored.filter((a) => activeChips.has(annotationBucket(a)));
-  // No chip selected → the no-match state (distinct from the empty-doc state). Only when the doc HAS
-  // annotations (an empty doc shows the empty state regardless of chip selection).
-  const noMatch = !isEmpty && activeChips.size === 0;
+  // S-007 (C-009): the rail thread list shows only the ANCHORED threads whose status AND type facets
+  // are both selected (the combine predicate). The "showing X of N" header counts the ANCHORED set
+  // (detached lives in its own always-rendered section, C-004): N = anchored total, X = matched.
+  const visibleAnchored = anchored.filter((a) => isShown(a, activeStatus, activeType));
+  const showing = visibleAnchored.length;
+  const total = anchored.length;
+
+  // C-010: the DYNAMIC facet counts — each axis scoped to the OTHER axis's current selection, over the
+  // WHOLE active set (anchored + detached: a detached item is counted into its facets too, C-009).
+  const statusCounts = computeStatusCounts(annotations, activeType);
+  const typeCounts = computeTypeCounts(annotations, activeStatus);
+  const filterActive = isFilterActive(activeStatus, activeType);
+
+  // AS-026: an axis fully deselected → no thread can match → the no-match state (distinct from the
+  // empty-doc state). Only when the doc HAS annotations (an empty doc shows the empty state).
+  const noMatch = !isEmpty && showing === 0;
 
   return (
     <div data-testid="annotations-rail" className="flex h-full flex-col">
-      {/* S-007: the header summarizes the active set as three status chips, replacing the single
-          total. An empty doc shows just the label (nothing to summarize). */}
-      <div className="flex h-11 flex-none items-center gap-1.5 border-b border-line px-3.5">
+      {/* S-007: the header — the label, the "showing X of N" total signal, and a Filter control that
+          opens the two-axis popover. An empty doc shows just the label (nothing to filter). */}
+      <div className="relative flex h-11 flex-none items-center gap-2 border-b border-line px-3.5">
         {/* #3 (2026-06-12): the rail hosts ALL annotation types globally — label "Annotations". */}
         <span className="text-[13px] font-semibold text-ink">Annotations</span>
         {!isEmpty && (
-          <div className="ml-auto flex items-center gap-1" role="group" aria-label="Filter annotations by status">
-            {CHIP_ORDER.map((chip) => {
-              const meta = CHIP_META[chip];
-              const active = activeChips.has(chip);
-              return (
-                <button
-                  key={chip}
-                  type="button"
-                  data-testid={`chip-${chip}`}
-                  data-count={counts[chip]}
-                  aria-pressed={active}
-                  aria-label={`${meta.label} ${counts[chip]}`}
-                  title={`${meta.label} · ${counts[chip]}`}
-                  onClick={() => onToggleChip?.(chip)}
-                  className={[
-                    "inline-flex items-center gap-1 rounded-[5px] border px-1.5 py-1 font-mono text-[11px] font-semibold transition-colors",
-                    onToggleChip ? "cursor-pointer" : "cursor-default",
-                    active
-                      ? "border-accent/40 bg-accent-soft text-accent"
-                      : "border-line bg-transparent text-subtle hover:text-ink",
-                  ].join(" ")}
-                >
-                  <Icon name={meta.icon} size={12} />
-                  <span>{counts[chip]}</span>
-                </button>
-              );
-            })}
-          </div>
+          <>
+            {/* C-011: "showing X of N" while narrowed; just the total when the filter is inactive. */}
+            <span data-testid="rail-showing" className="font-mono text-[11px] text-subtle">
+              {filterActive ? `showing ${showing} of ${total}` : total}
+            </span>
+            <button
+              type="button"
+              data-testid="filter-control"
+              aria-haspopup="dialog"
+              aria-expanded={filterOpen}
+              // C-011: the Filter control reads ACTIVE while the filter is narrowed (any facet off).
+              data-active={filterActive ? "true" : undefined}
+              aria-label={filterActive ? "Filter (active)" : "Filter"}
+              onClick={() => setFilterOpen((o) => !o)}
+              className={[
+                "ml-auto inline-flex items-center gap-1 rounded-[6px] border px-2 py-1 text-[11px] font-semibold transition-colors",
+                filterActive
+                  ? "border-accent/40 bg-accent-soft text-accent"
+                  : "border-line bg-transparent text-subtle hover:text-ink",
+              ].join(" ")}
+            >
+              <Icon name="list" size={12} />
+              <span>Filter</span>
+            </button>
+            {filterOpen && (
+              <FilterPopover
+                activeStatus={activeStatus}
+                activeType={activeType}
+                statusCounts={statusCounts}
+                typeCounts={typeCounts}
+                onToggleStatus={(f) => onToggleStatus?.(f)}
+                onToggleType={(f) => onToggleType?.(f)}
+                onReset={() => onResetFilter?.()}
+                onDismiss={() => setFilterOpen(false)}
+              />
+            )}
+          </>
         )}
       </div>
 
@@ -168,8 +172,8 @@ export function AnnotationsRail({
           <div className="text-[12px] leading-[1.5]">Annotations will appear here.</div>
         </div>
       ) : noMatch ? (
-        // AS-025: no chip selected → a no-match state DISTINCT from the empty-doc state. The detached
-        // section still renders below (C-004 — toggles never hide it).
+        // AS-026: no thread matches → a no-match state DISTINCT from the empty-doc state. The detached
+        // section still renders below (C-004 — the filter never hides it).
         <div className="flex flex-1 flex-col gap-[10px] overflow-auto p-3">
           <div
             data-testid="rail-no-match"
@@ -177,7 +181,7 @@ export function AnnotationsRail({
           >
             <Icon name="search" size={24} className="text-subtle" />
             <div className="text-[13px] font-semibold text-ink">No annotations match the filter</div>
-            <div className="text-[12px] leading-[1.5]">Turn a status chip back on to see its annotations.</div>
+            <div className="text-[12px] leading-[1.5]">Turn a facet back on, or Reset the filter.</div>
           </div>
           {detached.length > 0 && <DetachedSection detached={detached} />}
         </div>
@@ -213,7 +217,7 @@ export function AnnotationsRail({
 }
 
 // S-004/C-004: the amber detached section — orphaned annotations, shown separately, never as
-// anchored. S-007 (C-009): it ALWAYS renders regardless of chip state (the chips filter only the
+// anchored. S-007 (C-009): it ALWAYS renders regardless of filter state (the filter narrows only the
 // anchored thread list), so it's a shared component used by both the normal and the no-match body.
 function DetachedSection({ detached }: { detached: ViewerAnnotation[] }) {
   return (
