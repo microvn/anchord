@@ -198,11 +198,11 @@ and the workspace switcher is never duplicated here.
 
 **Acceptance Scenarios:**
 
-AS-017: The breadcrumb's root crumb is the active workspace, capitalized and admin-qualified
-- **Given:** I am the admin of a workspace whose stored name is "default"
+AS-017: The breadcrumb's root crumb is the active workspace, shown with the switcher's label
+- **Given:** I am the owner of the auto-created workspace whose stored name is "default"
 - **When:** the header renders on any page in that workspace
-- **Then:** the breadcrumb's root crumb reads "My Default" — the same admin-qualified label the sidebar switcher uses, with the workspace name's first letter capitalized — never the raw stored name or the workspace id
-- **Data:** workspace name "default", caller is its admin → "My Default"
+- **Then:** the breadcrumb's root crumb reads "My Default" — the SAME label the sidebar switcher uses (title-cased workspace name, with the owner's auto-created default reading "My Default"; see workspaces-ui:AS-001) — never the raw stored name or the workspace id
+- **Data:** workspace name "default", caller is its owner → "My Default"; a workspace named "acme" → "Acme"
 
 AS-024: The workspace dashboard shows only the root crumb
 - **Given:** I am on the workspace dashboard/home route (the workspace root, no sub-section)
@@ -306,8 +306,8 @@ AS-023: A failed load is recoverable
   query + Clear search); loading uses a shape-matching skeleton, not a full-page spinner; a failed
   load is recoverable with Retry, never blank or crashed. (AS-020, AS-021, AS-022, AS-023)
 - C-008: The breadcrumb reflects the active route as a path of crumbs. The root crumb is the active
-  workspace, shown with the admin-qualified, first-letter-capitalized label the switcher uses (never
-  the raw stored name or an id). The workspace dashboard shows that root crumb alone; list routes
+  workspace, shown with the SAME label the switcher uses (title-cased name; the owner's auto-created
+  default reads "My Default" — workspaces-ui:AS-001), never the raw stored name or an id. The workspace dashboard shows that root crumb alone; list routes
   append a page crumb (All Docs / Projects); a project route appends the project's real name resolved
   from the loaded browse cache (a skeleton until it resolves — no blocking fetch — never a raw id);
   the settings route shows a static "Account" root then "Settings" (+ section). Every crumb except the
@@ -421,4 +421,5 @@ No bloat — each AS traces to one stated atom.
 |------|--------|-----|
 | 2026-06-09 | Initial creation (FE core: auth lifecycle + shared client + design-system shell) | -- |
 | 2026-06-09 | Added S-004 (left sidebar nav frame), S-005 (header breadcrumb + account), S-006 (empty/loading/error states) + C-005/006/007, Linked Fields (switcher slot, role-gating, nav destinations, notifications), GAP-002/003. App shell = sidebar + header (supersedes AppTopBar); switcher in sidebar, account in header. Snapshot 2026-06-09.md (M1). | -- |
+| 2026-06-19 | Minor — AS-017/C-008 wording aligned to the new switcher label rule (title-cased name; only the owner's auto-created default reads "My Default"); the default-owner example is unchanged. Rule owned by workspaces-ui:AS-001. | -- |
 | 2026-06-19 | Reworked the breadcrumb (S-005): AS-017 now specifies the admin-qualified capitalized root label; added AS-024 (dashboard shows root only), AS-025 (list page crumb All Docs/Projects), AS-026 (project real name from cache + skeleton, no raw id), AS-027 (parent crumbs link, last is active), AS-028 (Account › Settings static-root branch); +C-008. Supersedes the old "names not loadable → fall back to id" limitation. GAP-002 resolved (destinations + name cache now exist). Linked Field for project-name (read-from-cache). Major (M1+M4); snapshot 2026-06-19-breadcrumb.md. | -- |

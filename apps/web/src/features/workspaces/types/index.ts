@@ -45,13 +45,21 @@ export interface MembersDirectory {
   invitations: InvitationRow[];
 }
 
+/** Title-case a workspace name for display ("default" → "Default", "hoang nguyen" → "Hoang Nguyen"). */
+export function titleCaseName(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
 /**
- * The label a switcher shows for a workspace: admin-qualified so two "default"s are distinct
- * (AS-001 — "My default" / "Lan's default"). When the caller is the admin we say "My <name>";
- * otherwise "<adminName>'s <name>". Falls back to the bare name when no admin name is known.
+ * The label a switcher (and the breadcrumb) shows for a workspace (AS-001). Every workspace shows
+ * its title-cased name — "default" → "Default", "hoang nguyen" → "Hoang Nguyen". The ONLY exception:
+ * the auto-created `default` workspace, seen by its owner (admin), reads "My Default" to mark it as
+ * the user's own home workspace. No other workspace is admin-qualified.
  */
 export function workspaceLabel(ws: WorkspaceListItem): string {
-  if (ws.role === "admin") return `My ${ws.name}`;
-  if (ws.adminName) return `${ws.adminName}'s ${ws.name}`;
-  return ws.name;
+  if (ws.role === "admin" && ws.name.toLowerCase() === "default") return "My Default";
+  return titleCaseName(ws.name);
 }

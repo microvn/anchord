@@ -95,12 +95,12 @@ function renderHeader(path: string) {
 }
 
 describe("web-core S-005 — header breadcrumb (C-008)", () => {
-  it("AS-017/AS-024: the dashboard shows ONLY the root crumb, admin-qualified + capitalized ('My Acme'), emphasized", async () => {
+  it("AS-017/AS-024: the dashboard shows ONLY the root crumb, admin-qualified + capitalized ('Acme'), emphasized", async () => {
     const bc = within(await renderAndFindBreadcrumb("/w/ws-1"));
     const crumbs = bc.getAllByTestId(/^crumb-/);
     expect(crumbs).toHaveLength(1);
-    // Admin of workspace "Acme" → "My Acme" (capitalized, switcher-style), not the raw id.
-    expect(crumbs[0]).toHaveTextContent("My Acme");
+    // Admin of workspace "Acme" → "Acme" (capitalized, switcher-style), not the raw id.
+    expect(crumbs[0]).toHaveTextContent("Acme");
     // The single (last) crumb is the active page — emphasized, not a link.
     expect(crumbs[0].className).toContain("text-ink");
     expect(crumbs[0].closest("a")).toBeNull();
@@ -109,7 +109,7 @@ describe("web-core S-005 — header breadcrumb (C-008)", () => {
   it("AS-025/AS-027: a list route appends its page crumb; the root is a link, the page is the active last crumb", async () => {
     const docs = within(await renderAndFindBreadcrumb("/w/ws-1/docs"));
     const dc = docs.getAllByTestId(/^crumb-/);
-    expect(dc.map((c) => c.textContent)).toEqual(["My Acme", "All Docs"]);
+    expect(dc.map((c) => c.textContent)).toEqual(["Acme", "All Docs"]);
     // Root crumb is a LINK to the workspace home; the page crumb is active (not a link).
     expect(dc[0].closest("a")).not.toBeNull();
     expect(dc[0].getAttribute("href")).toBe("/w/ws-1");
@@ -118,7 +118,7 @@ describe("web-core S-005 — header breadcrumb (C-008)", () => {
 
     cleanup(); // drop the first render before the second (no afterEach cleanup in this file)
     const projects = within(await renderAndFindBreadcrumb("/w/ws-1/projects"));
-    expect(projects.getAllByTestId(/^crumb-/).map((c) => c.textContent)).toEqual(["My Acme", "Projects"]);
+    expect(projects.getAllByTestId(/^crumb-/).map((c) => c.textContent)).toEqual(["Acme", "Projects"]);
   });
 
   it("AS-026: a project route shows the project's real name from cache (never the raw id)", async () => {
@@ -128,7 +128,7 @@ describe("web-core S-005 — header breadcrumb (C-008)", () => {
     renderHeaderWith(qc, "/w/ws-1/projects/proj-7");
     const bc = within(await screen.findByTestId("header-breadcrumb"));
     const crumbs = bc.getAllByTestId(/^crumb-/);
-    expect(crumbs.map((c) => c.textContent)).toEqual(["My Acme", "Billing"]);
+    expect(crumbs.map((c) => c.textContent)).toEqual(["Acme", "Billing"]);
     expect(bc.queryByText("proj-7")).toBeNull(); // never the raw id
   });
 

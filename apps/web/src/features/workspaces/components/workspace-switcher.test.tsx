@@ -92,11 +92,12 @@ describe("workspaces-ui S-001 — workspace switcher", () => {
     await waitFor(() => expect(screen.getByTestId("ws-switcher-trigger")).toBeInTheDocument());
     await userEvent.click(screen.getByTestId("ws-switcher-trigger"));
 
-    // Both "default"s are listed in the menu, disambiguated by their admin (mine vs Lan's).
+    // Both "default"s are listed: my own owner-default reads "My Default"; the one I'm only a
+    // member of shows its plain title-cased name "Default" (only the owner's default gets "My").
     const activeItem = screen.getByTestId("ws-item-ws-mine");
     const otherItem = screen.getByTestId("ws-item-ws-lan");
-    expect(activeItem).toHaveTextContent("My default");
-    expect(otherItem).toHaveTextContent("Lan's default");
+    expect(activeItem).toHaveTextContent("My Default");
+    expect(otherItem).toHaveTextContent("Default");
 
     // The active workspace (ws-mine, the route) is marked; the other is not.
     expect(activeItem).toHaveAttribute("aria-current", "true");

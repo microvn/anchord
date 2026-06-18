@@ -261,8 +261,9 @@ export function AppHeader({ contextActions }: { contextActions?: ReactNode }) {
 
   const workspaceId = pathname.match(/^\/w\/([^/]+)/)?.[1] ?? query.data?.activeWorkspaceId ?? undefined;
   const ws = query.data?.workspaces.find((w) => w.id === workspaceId);
-  // AS-017: the admin-qualified switcher label with the workspace name capitalized ("My Default").
-  const wsLabel = ws ? workspaceLabel({ ...ws, name: capitalizeFirst(ws.name) }) : undefined;
+  // AS-017: the same label the switcher shows — title-cased workspace name, with the owner's
+  // auto-created "default" workspace reading "My Default" (workspaceLabel owns that rule).
+  const wsLabel = ws ? workspaceLabel(ws) : undefined;
   // AS-026: on a project route, resolve the project's real name from the per-project browse cache
   // the ProjectDocsScreen populates. enabled:false → the header NEVER fetches; it reads the cache
   // reactively (skeleton until the screen fills it). No new request is issued from the header.
