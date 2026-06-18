@@ -14,7 +14,7 @@
 [x] C-003  — 4 facets, OR-within/AND-across, defaults all selected, one popover, no search box | owner: S-002
 [x] C-004  — dynamic counts; "showing X of N"; Filter active state; Reset                      | owner: S-002
 [x] C-005  — same filter component both surfaces; replaces the dead 3-tab filter               | owner: S-002
-[~] C-006  — DESIGN.md dark-operator + responsive (popover→bottom-sheet, ≥40px) [→MANUAL]+PW   | owner: S-002
+[x] C-006  — DESIGN.md dark-operator + responsive (popover→bottom-sheet, ≥40px) [→MANUAL]+PW   | owner: S-002
 [x] AS-012 — default order is most-recently-updated first                                      | owner: S-003
 [x] AS-013 — Sort=Title orders A→Z                                                             | owner: S-003
 [x] AS-014 — Sort=Created orders by creation time, newest first                                | owner: S-003
