@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useActiveWorkspace } from "@/features/workspaces/components/active-workspace";
-import { useWorkspaceDocs, BROWSE_PAGE_SIZE } from "@/features/docs/hooks/use-docs";
+import { useWorkspaceDocs, DOCS_PAGE_SIZE } from "@/features/docs/hooks/use-docs";
 import { DocCard } from "./doc-card";
 import { DocList } from "./doc-list";
 import { NewDocButton } from "./new-doc-dialog";
@@ -42,7 +42,7 @@ export function DocsScreen() {
   // endpoint returns yet, so those filters resolve to 0 today (NoResultsState). The chips are
   // rendered 1:1 with the design; "All" is the live filter.
   const filtered = applyFilter(allDocs, filter);
-  const totalPages = Math.ceil(filtered.length / BROWSE_PAGE_SIZE);
+  const totalPages = Math.ceil(filtered.length / DOCS_PAGE_SIZE);
   // Clamp the page when the set shrinks (filter change, deletions) so a stale page never strands
   // the user on an empty slice.
   useEffect(() => {
@@ -53,7 +53,7 @@ export function DocsScreen() {
     setPage(1);
   }, [filter]);
   const safePage = Math.min(page, Math.max(1, totalPages));
-  const pageDocs = filtered.slice((safePage - 1) * BROWSE_PAGE_SIZE, safePage * BROWSE_PAGE_SIZE);
+  const pageDocs = filtered.slice((safePage - 1) * DOCS_PAGE_SIZE, safePage * DOCS_PAGE_SIZE);
 
   const filters: { id: Filter; label: string; n: number }[] = [
     { id: "all", label: "All", n: allDocs.length },

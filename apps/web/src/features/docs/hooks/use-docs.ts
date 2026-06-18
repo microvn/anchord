@@ -57,8 +57,14 @@ interface SearchResult {
   pagination?: PaginationMeta;
 }
 
-/** Fixed browse page size — 20 across all three lists (C-007). */
+/** Fixed browse page size — 20 (C-007). Projects browse fills its 3-col grid via the
+ *  New-project tile (20 + tile = 21 = 7 rows); search is server-paginated. */
 export const BROWSE_PAGE_SIZE = 20;
+/** Doc grid page size — 18, a multiple of BOTH grid column counts (3-col → 6 rows, 2-col →
+ *  9 rows) so a full page leaves NO trailing empty cell (the doc grid has no New-doc tile to
+ *  round out the last row the way the projects grid does). Client-side slice only — the
+ *  workspace doc union is already fully fetched, so this changes display paging, not any read. */
+export const DOCS_PAGE_SIZE = 18;
 /** Server-side search page size (same fixed size, C-007). */
 export const SEARCH_PAGE_SIZE = 20;
 

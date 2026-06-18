@@ -143,25 +143,25 @@ function pageOfDocs(page: number, limit: number, total: number) {
 }
 
 describe("workspace-project-ui S-008 — All-docs pagination", () => {
-  it("AS-021: a doc list of 45 shows the first 20 docs and a 3-page numbered control", async () => {
+  it("AS-021: a doc list of 45 shows the first 18 docs (full grid) and a 3-page numbered control", async () => {
     projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
-    // The paginated backend hands 45 docs across 3 pages of 20.
+    // The backend hands the complete 45-doc set; the doc grid slices at DOCS_PAGE_SIZE=18 client-side.
     fetchProjectDocs.mockImplementation(
       async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 45),
     );
 
     render(<App />);
-    // Page 1 shows docs 1..20, not doc 21.
+    // Page 1 shows docs 1..18 (a full grid, no empty cell), not doc 19.
     expect(await screen.findByTestId("doc-card-doc-1")).toBeInTheDocument();
-    expect(screen.getByTestId("doc-card-doc-20")).toBeInTheDocument();
-    expect(screen.queryByTestId("doc-card-doc-21")).not.toBeInTheDocument();
-    // A numbered control reflecting 3 pages.
+    expect(screen.getByTestId("doc-card-doc-18")).toBeInTheDocument();
+    expect(screen.queryByTestId("doc-card-doc-19")).not.toBeInTheDocument();
+    // A numbered control reflecting 3 pages (45 / 18 = 18/18/9).
     expect(screen.getByTestId("pagination")).toBeInTheDocument();
     expect(screen.getByTestId("pagination-page-3")).toBeInTheDocument();
     expect(screen.queryByTestId("pagination-page-4")).not.toBeInTheDocument();
   });
 
-  it("AS-022: navigating to the last page shows docs 41–45 and disables Next", async () => {
+  it("AS-022: navigating to the last page shows docs 37–45 and disables Next", async () => {
     projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
     fetchProjectDocs.mockImplementation(
       async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 45),
@@ -172,10 +172,10 @@ describe("workspace-project-ui S-008 — All-docs pagination", () => {
     await screen.findByTestId("doc-card-doc-1");
     await user.click(screen.getByTestId("pagination-page-3"));
 
-    // Last page shows 41..45; Next is disabled.
-    expect(await screen.findByTestId("doc-card-doc-41")).toBeInTheDocument();
+    // Last page (3) shows 37..45 (page size 18); Next is disabled.
+    expect(await screen.findByTestId("doc-card-doc-37")).toBeInTheDocument();
     expect(screen.getByTestId("doc-card-doc-45")).toBeInTheDocument();
-    expect(screen.queryByTestId("doc-card-doc-40")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("doc-card-doc-36")).not.toBeInTheDocument();
     expect(screen.getByTestId("pagination-next")).toBeDisabled();
   });
 
@@ -200,7 +200,7 @@ describe("workspace-project-ui S-008 — All-docs pagination", () => {
 
     render(<App />);
     await screen.findByTestId("doc-card-doc-1");
-    // 22 accessible at page-size 20 → exactly 2 pages, never 3 (and never 40-based).
+    // 22 accessible at page-size 18 → exactly 2 pages (18 + 4), never 3 (and never 40-based).
     expect(screen.getByTestId("pagination-page-2")).toBeInTheDocument();
     expect(screen.queryByTestId("pagination-page-3")).not.toBeInTheDocument();
   });
