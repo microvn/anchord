@@ -74,8 +74,8 @@ export function AnnotationCount({ count }: { count: number }) {
 export function AccessIndicator({ access }: { access: GeneralAccess }) {
   const meta = ACCESS_META[access] ?? ACCESS_META.restricted;
   return (
-    <span className="inline-flex items-center gap-[5px] text-[11.5px] text-subtle" title={meta.label}>
-      <Icon name={meta.icon} size={13} />
+    <span className="inline-flex items-center gap-[5px] text-[11px] text-muted" title={meta.label}>
+      <Icon name={meta.icon} size={13} className="text-subtle" />
       {meta.label}
     </span>
   );

@@ -56,13 +56,13 @@ export function DocCard({
           </div>
         )}
       </div>
-      <div className="flex items-center gap-[9px] border-t border-line px-[14px] py-[10px]">
+      {/* Foot tier — 1:1 with Anchord-Design `.doc-card-foot`: a distinct raised band (bg-elev) with
+          a top border; access indicator on the left, annotation count + status pushed right. */}
+      <div className="flex flex-wrap items-center gap-[8px] border-t border-line bg-elev px-[14px] py-[9px]">
         <AccessIndicator access={doc.generalAccess} />
-        <MetaDot />
+        <span className="ml-auto" aria-hidden="true" />
         <AnnotationCount count={doc.annotationCount} />
-        <span className="ml-auto">
-          <StatusTag status={doc.status} />
-        </span>
+        <StatusTag status={doc.status} />
       </div>
     </Link>
   );
