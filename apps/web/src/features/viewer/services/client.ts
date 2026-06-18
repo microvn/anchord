@@ -1,5 +1,9 @@
 import { api } from "@/lib/api";
 import type { EdenResult } from "@/lib/api/use-api-query";
+import {
+  fetchAllAnnotationPages,
+  type AnnotationsPage,
+} from "@/features/viewer/services/paginate-annotations";
 
 // Typed request thunk for the in-app viewer's doc read (doc-access-routing S-002/S-003):
 //   GET /api/docs/:slug   (doc-addressed, NO workspace in the path — C-002/C-007)
@@ -134,20 +138,29 @@ export interface ViewerAnnotation {
   authorId?: string | null;
 }
 
-export interface ListAnnotationsResponse {
-  items: ViewerAnnotation[];
-  pagination?: { page: number; limit: number; total: number };
-}
+/** The viewer's annotation-list payload. Re-exported from the paging helper so existing call sites
+ *  (`import { ListAnnotationsResponse } from ".../services/client"`) are unchanged. */
+export type ListAnnotationsResponse = AnnotationsPage;
 
 /** GET /api/docs/:slug/annotations — read the doc's annotations for the viewer.
  *  doc-access-routing S-003: doc-addressed (slug only, no workspace path — C-007), anon-capable.
  *  The viewer tags this read `meta.viewerRead` so a no-access reply can never bounce to /signin
  *  (AS-014). NOTE: the doc-scoped annotation READ backend route is owned by S-004; until it lands
- *  this read returns no-access for an anon, which the viewer surfaces in place (no bounce). */
+ *  this read returns no-access for an anon, which the viewer surfaces in place (no bounce).
+ *
+ *  annotation-core-ui S-003 / AS-021 / C-008: reads the COMPLETE active set, never a capped first
+ *  page. The endpoint paginates (default 20, cap 100), so a doc with >1 read-page's worth of
+ *  annotations would otherwise lose its tail from BOTH the rail list and the in-text highlights.
+ *  The paging loop (fetchAllAnnotationPages) requests the max page size and follows `pagination.
+ *  hasNext`, accumulating every page, so the returned `items` are the full set and the rail total
+ *  equals the dashboard's annotation count. The loop is its own module so a service-level test can
+ *  exercise it without the process-global `mock.module` shadow on THIS file. */
 export function listAnnotations(slug: string): Promise<EdenResult<ListAnnotationsResponse>> {
-  return treaty.api.docs({ slug }).annotations.get() as Promise<
-    EdenResult<ListAnnotationsResponse>
-  >;
+  return fetchAllAnnotationPages((page, limit) =>
+    treaty.api
+      .docs({ slug })
+      .annotations.get({ query: { page: String(page), limit: String(limit) } }),
+  );
 }
 
 // --- Annotation / comment WRITE (S-001 commenting) -----------------------------------------
