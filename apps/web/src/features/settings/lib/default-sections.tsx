@@ -1,6 +1,7 @@
 import { registerSettingsSection } from "./section-registry";
 import { ComingSoonSection } from "../components/coming-soon-section";
 import { AccountSection } from "../components/account-section";
+import { AppearanceSection } from "../components/appearance-section";
 
 // account-settings S-001 / C-006: register the sections this shell ships. Two OWNED slots
 // (account, appearance) and three RESERVED slots (developer, notifications, security) that show
@@ -45,7 +46,7 @@ export function registerDefaultSettingsSections(): void {
     icon: "settings",
     group: "owned",
     sub: "Theme and how anchord looks for you.",
-    render: () => ownedPlaceholder("Appearance"),
+    render: () => <AppearanceSection />,
   });
   registerSettingsSection({
     slug: "notifications",

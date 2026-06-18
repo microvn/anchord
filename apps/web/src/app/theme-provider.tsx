@@ -46,17 +46,22 @@ function writeSavedTheme(theme: Theme) {
 interface ThemeContextValue {
   theme: Theme;
   toggleTheme: () => void;
+  // S-003 (AS-010): the Appearance picker selects a SPECIFIC theme, not just a flip. It shares
+  // the same provider state as the header toggle, so both always reflect the same active theme.
+  setTheme: (theme: Theme) => void;
 }
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-// Reads the live theme + the toggle. Safe outside a provider (returns the canonical default
-// and a no-op) so a bare component render in a test doesn't crash.
+// Reads the live theme + the controls. Safe outside a provider (returns the canonical default
+// and no-ops) so a bare component render in a test doesn't crash.
 export function useTheme(): ThemeContextValue {
-  return useContext(ThemeContext) ?? { theme: DEFAULT_THEME, toggleTheme: () => {} };
+  return (
+    useContext(ThemeContext) ?? { theme: DEFAULT_THEME, toggleTheme: () => {}, setTheme: () => {} }
+  );
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => resolveTheme(readSavedTheme()));
+  const [theme, setThemeState] = useState<Theme>(() => resolveTheme(readSavedTheme()));
 
   // Apply on mount + whenever the theme changes (covers the S-003 load-default AND the toggle).
   useEffect(() => {
@@ -64,7 +69,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     writeSavedTheme(theme);
   }, [theme]);
 
-  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+  const toggleTheme = () => setThemeState((t) => (t === "dark" ? "light" : "dark"));
+  const setTheme = (next: Theme) => setThemeState(next);
 
-  return <ThemeContext.Provider value={{ theme, toggleTheme }}>{children}</ThemeContext.Provider>;
+  return (
+    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
 }
