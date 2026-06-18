@@ -27,10 +27,11 @@ let results: unknown;
 // S-004: the search response depends on the project scope. `scopedResults` lets a test return
 // a different (narrower) set when a projectId is passed vs the whole-workspace set otherwise.
 let scopedResults: Record<string, unknown> | null = null;
-const searchDocs = mock(async (_ws: string, _q: string, projectId?: string) => {
+const defaultSearchDocs = async (_ws: string, _q: string, projectId?: string) => {
   if (scopedResults) return projectId ? scopedResults[projectId] : scopedResults.all;
   return results;
-});
+};
+const searchDocs = mock(defaultSearchDocs);
 const PROJECTS = [
   { id: "p-billing", name: "Billing", isDefault: false, archived: false },
   { id: "p-payments", name: "Payments", isDefault: true, archived: false },
@@ -69,6 +70,7 @@ function App({ q, projectId }: { q: string; projectId?: string }) {
 }
 
 beforeEach(() => {
+  searchDocs.mockImplementation(defaultSearchDocs);
   searchDocs.mockClear();
   scopedResults = null;
 });
@@ -150,5 +152,53 @@ describe("workspace-project-ui S-004 — search scoped to a project", () => {
     expect(screen.getByTestId("search-count")).toHaveTextContent("2 results");
     // searchDocs was re-run with projectId undefined (whole-workspace).
     expect(searchDocs.mock.calls.some((c) => c[2] === undefined)).toBe(true);
+  });
+});
+
+describe("workspace-project-ui S-008 — search results pagination", () => {
+  it("AS-025: 28 matches → page 1 shows 20 with a numbered control; page 2 shows the remaining 8", async () => {
+    const TOTAL = 28;
+    const LIMIT = 20;
+    // Page-aware search: the backend access-filters then paginates (28 accessible).
+    searchDocs.mockImplementation(
+      async (_ws: string, _q: string, _projectId?: string, page = 1, limit = LIMIT) => {
+        const start = (page - 1) * limit;
+        const results = Array.from(
+          { length: Math.max(0, Math.min(limit, TOTAL - start)) },
+          (_, i) => {
+            const n = start + i + 1;
+            return { docId: `d${n}`, slug: `hit-${n}`, title: `Hit ${n}`, kind: "markdown", matchSource: "title" };
+          },
+        );
+        return env({
+          results,
+          pagination: {
+            page,
+            limit,
+            total: TOTAL,
+            totalPages: Math.ceil(TOTAL / limit),
+            hasNext: page * limit < TOTAL,
+            hasPrevious: page > 1,
+          },
+        });
+      },
+    );
+    const user = userEvent.setup();
+
+    render(<App q="hit" />);
+    // Page 1: results 1..20, not 21; a 2-page numbered control.
+    expect(await screen.findByTestId("result-row-hit-1")).toBeInTheDocument();
+    expect(screen.getByTestId("result-row-hit-20")).toBeInTheDocument();
+    expect(screen.queryByTestId("result-row-hit-21")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pagination")).toBeInTheDocument();
+    expect(screen.getByTestId("pagination-page-2")).toBeInTheDocument();
+    expect(screen.queryByTestId("pagination-page-3")).not.toBeInTheDocument();
+
+    // Page 2: the remaining 8 (21..28); Next disabled.
+    await user.click(screen.getByTestId("pagination-page-2"));
+    expect(await screen.findByTestId("result-row-hit-28")).toBeInTheDocument();
+    expect(screen.getByTestId("result-row-hit-21")).toBeInTheDocument();
+    expect(screen.queryByTestId("result-row-hit-20")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pagination-next")).toBeDisabled();
   });
 });

@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useSearch, useProjects } from "@/features/docs/hooks/use-docs";
 import { SearchScopeControl } from "./search-scope-control";
 import { FormatBadge } from "./doc-bits";
+import { Pagination } from "@/components/pagination";
 import { Skeleton } from "@/components/skeleton";
 import { ErrorState } from "@/components/error-state";
 import { NoResultsState } from "@/components/no-results-state";
@@ -21,8 +23,16 @@ export function SearchScreen() {
   // absent → whole-workspace. Arriving from a project context (a `projectId` in the URL)
   // defaults the scope to that project; otherwise it defaults to whole-workspace (AS-010/AS-011).
   const scope = params.get("projectId") ?? undefined;
-  const query = useSearch(workspaceId, q, scope);
-  const results = query.data ?? [];
+  // S-008: search paginates server-side (page size 20, C-007). The page is component state and
+  // resets to 1 whenever the query or scope changes (a new search starts at the top).
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage(1);
+  }, [q, scope]);
+  const query = useSearch(workspaceId, q, scope, page);
+  const results = query.data?.results ?? [];
+  const pagination = query.data?.pagination;
+  const totalPages = pagination?.totalPages ?? 0;
   const { data: projects } = useProjects(workspaceId);
 
   function setScope(projectId: string | undefined) {
@@ -62,9 +72,19 @@ export function SearchScreen() {
         />
       ) : (
         <>
-          <div className="mb-[10px] text-[13px] tabular-nums text-subtle" data-testid="search-count">
-            {results.length} {results.length === 1 ? "result" : "results"}
-          </div>
+          {(() => {
+            // The count reflects the access-filtered TOTAL across pages (C-007), falling back to
+            // the page length when the endpoint returns no pagination block.
+            const count = pagination?.total ?? results.length;
+            return (
+              <div
+                className="mb-[10px] text-[13px] tabular-nums text-subtle"
+                data-testid="search-count"
+              >
+                {count} {count === 1 ? "result" : "results"}
+              </div>
+            );
+          })()}
           <div
             data-testid="result-list"
             className="overflow-hidden rounded-[11px] border border-line bg-surface"
@@ -88,6 +108,7 @@ export function SearchScreen() {
               </Link>
             ))}
           </div>
+          <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
         </>
       )}
     </section>

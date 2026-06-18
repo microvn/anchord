@@ -10,59 +10,129 @@ import type { DocRow, ProjectRow, SearchResultRow } from "@/features/docs/types"
 // switching workspace never shows stale data. The backend exposes NO workspace-wide docs
 // list — only per-project docs (GET …/projects/:id/docs) — so the "all docs" view is the
 // UNION across the workspace's projects, joined to project names client-side. Doc counts
-// per project fall out of the same fetch (length of each project's browse-visible docs).
+// per project fall out of the same fetch (the pagination total, or the page length when the
+// endpoint returns no pagination block).
+//
+// S-008 pagination: the three list endpoints now return a `pagination` envelope alongside their
+// domain key. The numbered browse control is page-state lifted in each SCREEN; here we (a) keep
+// the AGGREGATION consumers whole — `useWorkspaceDocs`/`useProjects`/`useProjectsBrowse` must read
+// the COMPLETE set (page through `hasNext`), not the first 20, or counts shrink — and (b) expose
+// a per-page search read for the search screen's server-side paging.
 //
 // The simple reads go through useApiQuery (centralized error + session-expiry bounce). The
 // composed workspace-docs fan-out can't use that single-thunk hook, so it normalizes errors
 // with toApiError itself to keep the same ApiError surface.
 
+/** The pagination envelope the backend adds alongside the domain key (`docs`/`projects`/`results`). */
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
 interface ProjectsResult {
   projects: ProjectRow[];
+  pagination?: PaginationMeta;
 }
 interface ProjectDocsResult {
   docs: Pick<
     DocRow,
     "id" | "slug" | "title" | "kind" | "version" | "annotationCount" | "authorName" | "status"
   >[];
+  pagination?: PaginationMeta;
 }
 interface SearchResult {
   results: SearchResultRow[];
+  pagination?: PaginationMeta;
 }
 
-/** GET …/projects — active projects in the workspace. */
+/** Fixed browse page size — 20 across all three lists (C-007). */
+export const BROWSE_PAGE_SIZE = 20;
+/** Server-side search page size (same fixed size, C-007). */
+export const SEARCH_PAGE_SIZE = 20;
+
+/** Page size requested when paging through a list to read its COMPLETE set (the backend caps at
+ *  100; the aggregation reads must not inherit the 20-row default). */
+const COMPLETE_SET_LIMIT = 100;
+/** Safety bound so a server that always reports `hasNext` can't loop forever. */
+const MAX_PAGES = 100;
+
+/**
+ * Read the COMPLETE access-filtered set from a paginated list endpoint by following `hasNext`.
+ * `getPage(page, limit)` returns the already-envelope-unwrapped `{ items, pagination? }`. A reply
+ * with no `pagination` block is treated as one complete page (so a non-paginated/mocked endpoint
+ * passes through unchanged). Returns both the accumulated items and the accessible total (the
+ * pagination total when present, else the item count) — counts read this total, never a page slice.
+ */
+async function fetchAllPages<T>(
+  getPage: (page: number, limit: number) => Promise<{ items: T[]; pagination?: PaginationMeta }>,
+): Promise<{ items: T[]; total: number }> {
+  const all: T[] = [];
+  let total: number | undefined;
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const { items, pagination } = await getPage(page, COMPLETE_SET_LIMIT);
+    all.push(...(items ?? []));
+    total = pagination?.total;
+    if (!pagination?.hasNext) break;
+  }
+  return { items: all, total: total ?? all.length };
+}
+
+/** GET …/projects — active projects in the workspace (COMPLETE set: the picker + scope control
+ *  need every project, not a page). */
 export function useProjects(workspaceId: string) {
   return useApiQuery<ProjectRow[]>(queryKeys.projects(workspaceId), async () => {
-    const res = unwrapEnvelope<ProjectsResult>(await fetchProjects(workspaceId));
-    if (res.error) return { data: null, error: res.error };
-    return { data: (res.data?.projects ?? []).filter((p) => !p.archived), error: null };
+    try {
+      const { items } = await fetchAllPages<ProjectRow>(async (page, limit) => {
+        const res = unwrapEnvelope<ProjectsResult>(
+          await fetchProjects(workspaceId, false, page, limit),
+        );
+        if (res.error) throw toApiError(res.error);
+        return { items: res.data?.projects ?? [], pagination: res.data?.pagination };
+      });
+      return { data: items.filter((p) => !p.archived), error: null };
+    } catch (thrown) {
+      return { data: null, error: thrown };
+    }
   });
+}
+
+/** A project annotated with its browse-visible doc count, derived from the per-project docs read's
+ *  pagination total (or the doc count when the endpoint returns no pagination block). The doc
+ *  payload itself is discarded — only the access-filtered total is needed for the card stat. */
+async function projectWithCount(workspaceId: string, p: ProjectRow): Promise<ProjectRow> {
+  // limit:1 — we only need `pagination.total`, not the docs (cheap when paginated). When the
+  // endpoint returns no pagination block (legacy/mock), fall back to the returned doc count.
+  const docsRes = unwrapEnvelope<ProjectDocsResult>(await fetchProjectDocs(workspaceId, p.id, 1, 1));
+  if (docsRes.error) throw toApiError(docsRes.error);
+  const docCount = docsRes.data?.pagination?.total ?? docsRes.data?.docs?.length ?? 0;
+  return { ...p, docCount };
 }
 
 /**
  * The Projects-browse view: the workspace's projects (active by default; ALL when
- * `includeArchived`), each annotated with its browse-visible doc count. Separate from
- * `useWorkspaceDocs` because the Projects screen needs archived projects on demand (the
- * "Show archived" toggle, S-002/AS-005) — `useWorkspaceDocs` always drops archived. Keyed on
- * `includeArchived` so toggling refetches the broadened list rather than reading a stale slice.
+ * `includeArchived`), each annotated with its browse-visible doc count. Returns the COMPLETE
+ * projects list (the screen paginates it client-side, S-008) — separate from `useWorkspaceDocs`
+ * because the Projects screen needs archived projects on demand (the "Show archived" toggle,
+ * S-002/AS-005). Keyed on `includeArchived` so toggling refetches the broadened list.
  */
 export function useProjectsBrowse(workspaceId: string, includeArchived = false) {
   return useQuery<ProjectRow[], ApiError>({
     queryKey: [...queryKeys.projects(workspaceId), includeArchived ? "all" : "active"] as const,
     retry: (failureCount, error) => !error?.isUnauthenticated && failureCount < 1,
     queryFn: async (): Promise<ProjectRow[]> => {
-      const projRes = unwrapEnvelope<ProjectsResult>(await fetchProjects(workspaceId, includeArchived));
-      if (projRes.error) throw toApiError(projRes.error);
-      const projects = projRes.data?.projects ?? [];
-      const visible = includeArchived ? projects : projects.filter((p) => !p.archived);
-      return Promise.all(
-        visible.map(async (p) => {
-          const docsRes = unwrapEnvelope<ProjectDocsResult>(
-            await fetchProjectDocs(workspaceId, p.id),
-          );
-          if (docsRes.error) throw toApiError(docsRes.error);
-          return { ...p, docCount: docsRes.data?.docs?.length ?? 0 };
-        }),
-      );
+      const { items } = await fetchAllPages<ProjectRow>(async (page, limit) => {
+        const res = unwrapEnvelope<ProjectsResult>(
+          await fetchProjects(workspaceId, includeArchived, page, limit),
+        );
+        if (res.error) throw toApiError(res.error);
+        return { items: res.data?.projects ?? [], pagination: res.data?.pagination };
+      });
+      const visible = includeArchived ? items : items.filter((p) => !p.archived);
+      return Promise.all(visible.map((p) => projectWithCount(workspaceId, p)));
     },
   });
 }
@@ -75,31 +145,41 @@ export interface WorkspaceDocs {
 }
 
 /**
- * The workspace-wide docs view: fetch projects, then docs for each project, then join.
- * One composed query so the dashboard stat row + All-docs grid read a single cache slice
- * keyed by workspaceId. The per-project counts are derived here (no aggregate endpoint).
+ * The workspace-wide docs view: fetch projects, then the COMPLETE docs for each project, then join.
+ * One composed query so the dashboard stat row + All-docs grid read a single cache slice keyed by
+ * workspaceId. The All-docs screen paginates this complete union client-side (S-008); the sidebar
+ * and home tile read its counts, so this must stay the COMPLETE set (page through `hasNext`), never
+ * a 20-row first page. Per-project counts are derived here from each project's accessible total.
  */
 export function useWorkspaceDocs(workspaceId: string) {
   return useQuery<WorkspaceDocs, ApiError>({
     queryKey: queryKeys.docs(workspaceId),
     retry: (failureCount, error) => !error?.isUnauthenticated && failureCount < 1,
     queryFn: async (): Promise<WorkspaceDocs> => {
-      const projRes = unwrapEnvelope<ProjectsResult>(await fetchProjects(workspaceId));
-      if (projRes.error) throw toApiError(projRes.error);
-      const projects = (projRes.data?.projects ?? []).filter((p) => !p.archived);
+      const { items: projects } = await fetchAllPages<ProjectRow>(async (page, limit) => {
+        const res = unwrapEnvelope<ProjectsResult>(await fetchProjects(workspaceId, false, page, limit));
+        if (res.error) throw toApiError(res.error);
+        return { items: res.data?.projects ?? [], pagination: res.data?.pagination };
+      });
+      const active = projects.filter((p) => !p.archived);
 
       const perProject = await Promise.all(
-        projects.map(async (p) => {
-          const docsRes = unwrapEnvelope<ProjectDocsResult>(
-            await fetchProjectDocs(workspaceId, p.id),
+        active.map(async (p) => {
+          const { items, total } = await fetchAllPages<ProjectDocsResult["docs"][number]>(
+            async (page, limit) => {
+              const res = unwrapEnvelope<ProjectDocsResult>(
+                await fetchProjectDocs(workspaceId, p.id, page, limit),
+              );
+              if (res.error) throw toApiError(res.error);
+              return { items: res.data?.docs ?? [], pagination: res.data?.pagination };
+            },
           );
-          if (docsRes.error) throw toApiError(docsRes.error);
-          const docs: DocRow[] = (docsRes.data?.docs ?? []).map((d) => ({
+          const docs: DocRow[] = items.map((d) => ({
             ...d,
             projectId: p.id,
             projectName: p.name,
           }));
-          return { project: { ...p, docCount: docs.length }, docs };
+          return { project: { ...p, docCount: total }, docs };
         }),
       );
 
@@ -111,22 +191,30 @@ export function useWorkspaceDocs(workspaceId: string) {
   });
 }
 
+/** What the search screen consumes: one page of results plus its pagination meta (S-008). */
+export interface SearchPage {
+  results: SearchResultRow[];
+  pagination?: PaginationMeta;
+}
+
 /**
- * GET …/search?q=&projectId= — runs only when q is non-empty. When `projectId` is set the
- * search is scoped to that project (the backend project-scopes + access-filters); undefined
- * broadens to the whole workspace (S-004 / AS-010, AS-011). The scope is part of the query key
- * so scoped vs whole-workspace are distinct cache entries.
+ * GET …/search?q=&projectId=&page=&limit= — runs only when q is non-empty. When `projectId` is set
+ * the search is scoped to that project; undefined broadens to the whole workspace (S-004 /
+ * AS-010, AS-011). S-008: paginated server-side — `page` is part of the query key, so each page is
+ * its own cache entry and switching scope/query resets to page 1 (the screen owns the page state).
  */
-export function useSearch(workspaceId: string, q: string, projectId?: string) {
+export function useSearch(workspaceId: string, q: string, projectId?: string, page = 1) {
   const trimmed = q.trim();
-  return useQuery<SearchResultRow[], ApiError>({
-    queryKey: queryKeys.search(workspaceId, trimmed, projectId),
+  return useQuery<SearchPage, ApiError>({
+    queryKey: [...queryKeys.search(workspaceId, trimmed, projectId), "page", page] as const,
     enabled: trimmed.length > 0,
     retry: (failureCount, error) => !error?.isUnauthenticated && failureCount < 1,
-    queryFn: async (): Promise<SearchResultRow[]> => {
-      const res = unwrapEnvelope<SearchResult>(await searchDocs(workspaceId, trimmed, projectId));
+    queryFn: async (): Promise<SearchPage> => {
+      const res = unwrapEnvelope<SearchResult>(
+        await searchDocs(workspaceId, trimmed, projectId, page, SEARCH_PAGE_SIZE),
+      );
       if (res.error) throw toApiError(res.error);
-      return res.data?.results ?? [];
+      return { results: res.data?.results ?? [], pagination: res.data?.pagination };
     },
   });
 }

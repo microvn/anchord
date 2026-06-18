@@ -28,11 +28,19 @@ mock.module("@/features/workspaces/services/client", () => ({
 let projects: unknown;
 const docsByProject: Record<string, unknown> = {};
 const fetchProjects = mock(async () => projects);
-const fetchProjectDocs = mock(async (_w: string, id: string) => docsByProject[id]);
+const defaultProjectDocs = async (_w: string, id: string) => docsByProject[id];
+const fetchProjectDocs = mock(defaultProjectDocs);
 mock.module("@/features/docs/services/client", () => ({
   fetchProjects,
   fetchProjectDocs,
   createProject: mock(async () => env({})),
+  // The project-mutation thunks are included so this process-global mock.module does not
+  // UNDER-shadow the real client for sibling test files that use them (bun mock.module is
+  // process-wide — an incomplete mock here erases `renameProject`/etc. from project-manage.test).
+  renameProject: mock(async () => env({})),
+  archiveProject: mock(async () => env({})),
+  unarchiveProject: mock(async () => env({})),
+  deleteProject: mock(async () => env({})),
   searchDocs: mock(async () => env({ results: [] })),
   publishDoc: mock(async () => env({ docId: "d1", slug: "s1", url: "/d/s1" })),
   moveDoc: mock(async () => env({ docId: "d1", slug: "spec", projectId: "p1" })),
@@ -66,6 +74,7 @@ function App() {
 }
 
 beforeEach(() => {
+  fetchProjectDocs.mockImplementation(defaultProjectDocs);
   projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
   docsByProject.p1 = env({
     docs: [
@@ -104,5 +113,95 @@ describe("workspace-project S-003 — All-docs browser", () => {
     // Clear returns to All → the docs reappear.
     await userEvent.click(screen.getByRole("button", { name: /clear search/i }));
     await waitFor(() => expect(screen.getByTestId("doc-card-spec")).toBeInTheDocument());
+  });
+});
+
+// ── S-008 pagination ────────────────────────────────────────────────────────
+// The All-docs browse is the workspace-wide UNION of access-filtered docs (no per-project
+// route exists in anchord). The backend paginates each project-docs read; the union is fetched
+// COMPLETE (paging hasNext) so counts stay correct, then sliced into pages of 20 client-side.
+// AS-021/022/023/026 assert the numbered control over that accessible union.
+
+// 45 docs in one project, returned as paginated pages of 20 (total=45, hasNext until page 3).
+function pageOfDocs(page: number, limit: number, total: number) {
+  const start = (page - 1) * limit;
+  const docs = Array.from({ length: Math.max(0, Math.min(limit, total - start)) }, (_, i) => {
+    const n = start + i + 1;
+    return { id: `d${n}`, slug: `doc-${n}`, title: `Doc ${n}`, kind: "markdown" };
+  });
+  return env({
+    docs,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNext: page * limit < total,
+      hasPrevious: page > 1,
+    },
+  });
+}
+
+describe("workspace-project-ui S-008 — All-docs pagination", () => {
+  it("AS-021: a doc list of 45 shows the first 20 docs and a 3-page numbered control", async () => {
+    projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
+    // The paginated backend hands 45 docs across 3 pages of 20.
+    fetchProjectDocs.mockImplementation(
+      async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 45),
+    );
+
+    render(<App />);
+    // Page 1 shows docs 1..20, not doc 21.
+    expect(await screen.findByTestId("doc-card-doc-1")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-card-doc-20")).toBeInTheDocument();
+    expect(screen.queryByTestId("doc-card-doc-21")).not.toBeInTheDocument();
+    // A numbered control reflecting 3 pages.
+    expect(screen.getByTestId("pagination")).toBeInTheDocument();
+    expect(screen.getByTestId("pagination-page-3")).toBeInTheDocument();
+    expect(screen.queryByTestId("pagination-page-4")).not.toBeInTheDocument();
+  });
+
+  it("AS-022: navigating to the last page shows docs 41–45 and disables Next", async () => {
+    projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
+    fetchProjectDocs.mockImplementation(
+      async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 45),
+    );
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByTestId("doc-card-doc-1");
+    await user.click(screen.getByTestId("pagination-page-3"));
+
+    // Last page shows 41..45; Next is disabled.
+    expect(await screen.findByTestId("doc-card-doc-41")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-card-doc-45")).toBeInTheDocument();
+    expect(screen.queryByTestId("doc-card-doc-40")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pagination-next")).toBeDisabled();
+  });
+
+  it("AS-023: a 7-doc list fits one page and shows no pagination control", async () => {
+    projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
+    fetchProjectDocs.mockImplementation(
+      async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 7),
+    );
+
+    render(<App />);
+    expect(await screen.findByTestId("doc-card-doc-1")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-card-doc-7")).toBeInTheDocument();
+    expect(screen.queryByTestId("pagination")).not.toBeInTheDocument();
+  });
+
+  it("AS-026: the page count uses pagination.total (accessible only), never the raw doc count", async () => {
+    projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
+    // 22 accessible docs (the backend already dropped the 18 inaccessible ones) → total: 22.
+    fetchProjectDocs.mockImplementation(
+      async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 22),
+    );
+
+    render(<App />);
+    await screen.findByTestId("doc-card-doc-1");
+    // 22 accessible at page-size 20 → exactly 2 pages, never 3 (and never 40-based).
+    expect(screen.getByTestId("pagination-page-2")).toBeInTheDocument();
+    expect(screen.queryByTestId("pagination-page-3")).not.toBeInTheDocument();
   });
 });

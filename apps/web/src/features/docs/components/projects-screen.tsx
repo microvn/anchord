@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -6,9 +6,10 @@ import { useActiveWorkspace } from "@/features/workspaces/components/active-work
 import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
-import { useProjectsBrowse } from "@/features/docs/hooks/use-docs";
+import { useProjectsBrowse, BROWSE_PAGE_SIZE } from "@/features/docs/hooks/use-docs";
 import { createProject } from "@/features/docs/services/client";
 import { ProjectCardMoreMenu } from "./project-more-menu";
+import { Pagination } from "@/components/pagination";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/icon";
@@ -40,6 +41,23 @@ export function ProjectsScreen() {
   const query = useProjectsBrowse(workspace.id, showArchived);
 
   const projects = query.data ?? [];
+  // S-008: numbered pagination over the COMPLETE access-filtered projects list (page size 20,
+  // C-007). The list is membership-gated server-side, so its length is the accessible total; the
+  // page is sliced client-side and the control hides for a single page (AS-024 / AS-023 analogue).
+  const [page, setPage] = useState(1);
+  const totalPages = Math.ceil(projects.length / BROWSE_PAGE_SIZE);
+  useEffect(() => {
+    if (page > totalPages && totalPages >= 1) setPage(totalPages);
+  }, [page, totalPages]);
+  // Toggling "Show archived" broadens/narrows the set → back to page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [showArchived]);
+  const safePage = Math.min(page, Math.max(1, totalPages));
+  const pageProjects = projects.slice(
+    (safePage - 1) * BROWSE_PAGE_SIZE,
+    safePage * BROWSE_PAGE_SIZE,
+  );
 
   return (
     <section className="mx-auto max-w-[1100px] px-6 py-8" data-testid="projects-screen">
@@ -89,11 +107,12 @@ export function ProjectsScreen() {
           }
         />
       ) : (
+        <>
         <div
           data-testid="proj-grid"
           className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-3"
         >
-          {projects.map((p) => (
+          {pageProjects.map((p) => (
             <div
               key={p.id}
               data-testid={`proj-card-${p.id}`}
@@ -148,6 +167,8 @@ export function ProjectsScreen() {
             <span className="mt-1.5 text-[13px] font-semibold">New project</span>
           </button>
         </div>
+        <Pagination page={safePage} totalPages={totalPages} onPageChange={setPage} />
+        </>
       )}
 
       <NewProjectDialog

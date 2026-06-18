@@ -231,3 +231,34 @@ describe("workspace-project-ui S-002 — manage a project", () => {
     expect(screen.getByTestId("proj-card-p-bill")).toBeInTheDocument();
   });
 });
+
+describe("workspace-project-ui S-008 — projects list pagination", () => {
+  it("AS-024: 30 projects show the first 20 with a numbered control; page 2 shows the remaining 10", async () => {
+    // 30 accessible projects → 2 pages of 20 + 10.
+    projectsActive = Array.from({ length: 30 }, (_, i) => ({
+      id: `proj-${i + 1}`,
+      name: `Project ${i + 1}`,
+      isDefault: i === 0,
+      archived: false,
+    }));
+    projectsAll = projectsActive;
+    const user = userEvent.setup();
+
+    render(<App />);
+    // Page 1: projects 1..20, not 21.
+    expect(await screen.findByTestId("proj-card-proj-1")).toBeInTheDocument();
+    expect(screen.getByTestId("proj-card-proj-20")).toBeInTheDocument();
+    expect(screen.queryByTestId("proj-card-proj-21")).not.toBeInTheDocument();
+    // 2-page numbered control (30 / 20), never 3.
+    expect(screen.getByTestId("pagination")).toBeInTheDocument();
+    expect(screen.getByTestId("pagination-page-2")).toBeInTheDocument();
+    expect(screen.queryByTestId("pagination-page-3")).not.toBeInTheDocument();
+
+    // Page 2: the remaining 10 (21..30), and Next is disabled (last page).
+    await user.click(screen.getByTestId("pagination-page-2"));
+    expect(await screen.findByTestId("proj-card-proj-30")).toBeInTheDocument();
+    expect(screen.getByTestId("proj-card-proj-21")).toBeInTheDocument();
+    expect(screen.queryByTestId("proj-card-proj-20")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pagination-next")).toBeDisabled();
+  });
+});

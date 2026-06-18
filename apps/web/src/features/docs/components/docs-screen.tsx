@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useActiveWorkspace } from "@/features/workspaces/components/active-workspace";
-import { useWorkspaceDocs } from "@/features/docs/hooks/use-docs";
+import { useWorkspaceDocs, BROWSE_PAGE_SIZE } from "@/features/docs/hooks/use-docs";
 import { DocCard } from "./doc-card";
 import { DocList } from "./doc-list";
 import { NewDocButton } from "./new-doc-dialog";
+import { Pagination } from "@/components/pagination";
 import { Icon } from "@/components/icon";
 import { Skeleton } from "@/components/skeleton";
 import { EmptyState } from "@/components/empty-state";
@@ -27,6 +28,12 @@ export function DocsScreen() {
   const query = useWorkspaceDocs(workspace.id);
   const [filter, setFilter] = useState<Filter>("all");
   const [view, setView] = useState<View>("grid");
+  // S-008: numbered pagination over the access-filtered union (page size 20, C-007). The hook
+  // returns the COMPLETE accessible set; the page is sliced client-side (no workspace-wide doc
+  // endpoint exists to page server-side). The accessible total IS the union length (the backend
+  // already dropped inaccessible docs), so the page count reflects only what the user can see
+  // (AS-026), never the raw repository count.
+  const [page, setPage] = useState(1);
 
   const allDocs = query.data?.docs ?? [];
   const projects = query.data?.projects ?? [];
@@ -35,6 +42,18 @@ export function DocsScreen() {
   // endpoint returns yet, so those filters resolve to 0 today (NoResultsState). The chips are
   // rendered 1:1 with the design; "All" is the live filter.
   const filtered = applyFilter(allDocs, filter);
+  const totalPages = Math.ceil(filtered.length / BROWSE_PAGE_SIZE);
+  // Clamp the page when the set shrinks (filter change, deletions) so a stale page never strands
+  // the user on an empty slice.
+  useEffect(() => {
+    if (page > totalPages && totalPages >= 1) setPage(totalPages);
+  }, [page, totalPages]);
+  // Reset to page 1 whenever the active filter changes.
+  useEffect(() => {
+    setPage(1);
+  }, [filter]);
+  const safePage = Math.min(page, Math.max(1, totalPages));
+  const pageDocs = filtered.slice((safePage - 1) * BROWSE_PAGE_SIZE, safePage * BROWSE_PAGE_SIZE);
 
   const filters: { id: Filter; label: string; n: number }[] = [
     { id: "all", label: "All", n: allDocs.length },
@@ -112,17 +131,22 @@ export function DocsScreen() {
 
           {filtered.length === 0 ? (
             <NoResultsState query={labelFor(filter)} onClear={() => setFilter("all")} />
-          ) : view === "grid" ? (
-            <div
-              data-testid="doc-grid"
-              className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-3"
-            >
-              {filtered.map((d) => (
-                <DocCard key={d.id} doc={d} workspaceId={workspace.id} projects={projects} />
-              ))}
-            </div>
           ) : (
-            <DocList docs={filtered} workspaceId={workspace.id} projects={projects} />
+            <>
+              {view === "grid" ? (
+                <div
+                  data-testid="doc-grid"
+                  className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-3"
+                >
+                  {pageDocs.map((d) => (
+                    <DocCard key={d.id} doc={d} workspaceId={workspace.id} projects={projects} />
+                  ))}
+                </div>
+              ) : (
+                <DocList docs={pageDocs} workspaceId={workspace.id} projects={projects} />
+              )}
+              <Pagination page={safePage} totalPages={totalPages} onPageChange={setPage} />
+            </>
           )}
         </>
       )}

@@ -23,17 +23,33 @@ const treaty = api as any;
 export function fetchProjects(
   workspaceId: string,
   includeArchived = false,
+  page?: number,
+  limit?: number,
 ): Promise<EdenResult<unknown>> {
-  const query = includeArchived ? { query: { includeArchived: "true" } } : undefined;
+  // S-008: the list endpoint now accepts page/limit and returns a `pagination` block alongside
+  // `projects` (the domain key is retained). Omit the params when not paginating so the response
+  // shape is unchanged for the picker/complete-set consumers.
+  const q: Record<string, string> = {};
+  if (includeArchived) q.includeArchived = "true";
+  if (page != null) q.page = String(page);
+  if (limit != null) q.limit = String(limit);
+  const query = Object.keys(q).length ? { query: q } : undefined;
   return treaty.api.w({ workspaceId }).projects.get(query) as Promise<EdenResult<unknown>>;
 }
 
-/** GET /api/w/:workspaceId/projects/:id/docs — access-filtered docs in a project (S-003/AS-006). */
+/** GET /api/w/:workspaceId/projects/:id/docs — access-filtered docs in a project (S-003/AS-006).
+ *  S-008: accepts page/limit and returns `{ docs, pagination }` (domain key retained). */
 export function fetchProjectDocs(
   workspaceId: string,
   projectId: string,
+  page?: number,
+  limit?: number,
 ): Promise<EdenResult<unknown>> {
-  return treaty.api.w({ workspaceId }).projects({ id: projectId }).docs.get() as Promise<
+  const q: Record<string, string> = {};
+  if (page != null) q.page = String(page);
+  if (limit != null) q.limit = String(limit);
+  const query = Object.keys(q).length ? { query: q } : undefined;
+  return treaty.api.w({ workspaceId }).projects({ id: projectId }).docs.get(query) as Promise<
     EdenResult<unknown>
   >;
 }
@@ -99,10 +115,16 @@ export function searchDocs(
   workspaceId: string,
   q: string,
   projectId?: string,
+  page?: number,
+  limit?: number,
 ): Promise<EdenResult<unknown>> {
-  return treaty.api.w({ workspaceId }).search.get({ query: { q, projectId } }) as Promise<
-    EdenResult<unknown>
-  >;
+  // S-008: search now paginates server-side; page/limit ride the query alongside q/projectId,
+  // and the response carries a `pagination` block next to the retained `results` key.
+  const query: Record<string, string> = { q };
+  if (projectId) query.projectId = projectId;
+  if (page != null) query.page = String(page);
+  if (limit != null) query.limit = String(limit);
+  return treaty.api.w({ workspaceId }).search.get({ query }) as Promise<EdenResult<unknown>>;
 }
 
 /** Body for the JSON publish variant. The route accepts { content, kind?, title?, projectId? }. */
