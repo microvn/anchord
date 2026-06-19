@@ -320,10 +320,33 @@ function reanchorSegment(
   }
 
   // --- Tier 2: whole-doc fallback (C-001 hint MISS → search ALL blocks) ---
+  //
+  // annotation-reanchor:S-002 — DUPLICATE-quote disambiguation. The snippet may locate in MORE
+  // THAN ONE block; choosing the FIRST in document order (Plannotator's first-indexOf-wins) is the
+  // precision bug. Collect EVERY block whose match clears the threshold, then RANK them and take
+  // the best — this is where S1 beats Plannotator (C-003). Ranking keys, in order:
+  //   1. context agreement — a candidate whose stored prefix/suffix matches beats one that doesn't
+  //      (the gate from AS-003, here used as a RANKING signal so a context match always wins over a
+  //      mere same-text occurrence — never carry onto the non-matching duplicate);
+  //   2. method tier — exact < nearest < normalized < fuzzy (a stronger match wins);
+  //   3. nearest-`offset` — among equal-context, equal-method candidates, the one whose match
+  //      start is nearest the stored offset (AS-007 tie-break across blocks; `nearestOccurrence`
+  //      only biases WITHIN a block, this extends it ACROSS candidate blocks);
+  //   4. innermost / most-specific block — a parent container (<table>/<tr>) whose CONCATENATED
+  //      text incidentally contains a child cell's snippet must NEVER win over the actual <td>.
+  //      Smaller block text == more specific (the cell), so prefer the smallest containing block.
   const blocks = extractAllBlocks(injected);
   const methodRank: Record<ReanchorMethod, number> = { exact: 0, nearest: 1, normalized: 2, fuzzy: 3 };
-  let best: SegmentReanchor | null = null;
-  let bestRank = Infinity;
+
+  interface Candidate {
+    seg: SegmentReanchor;
+    contextOk: boolean;
+    rank: number;
+    offsetDist: number;
+    specificity: number; // smaller = more specific (innermost block)
+  }
+  let best: Candidate | null = null;
+
   for (const block of blocks) {
     if (block.blockId === segment.blockId && hintBlockText !== null) continue; // already tried as the hint.
     const hit = locateInBlock(block.text, segment.textSnippet, segment.offset);
@@ -331,12 +354,12 @@ function reanchorSegment(
     const score = segmentScore(block.text, hit.start, hit.end, segment.textSnippet);
     if (score < threshold) continue;
     // C-003/AS-003: a whole-doc match must agree with the stored prefix/suffix context — this is
-    // what rejects the coincidental prose mention of a deleted table cell's word.
-    if (!contextMatches(block.text, hit.start, hit.end, segment.prefix, segment.suffix)) continue;
-    const rank = methodRank[hit.method];
-    if (rank < bestRank) {
-      bestRank = rank;
-      best = {
+    // what rejects the coincidental prose mention of a deleted table cell's word. It is also the
+    // FIRST ranking key (S-002): a context-matching duplicate always beats a non-matching one.
+    const contextOk = contextMatches(block.text, hit.start, hit.end, segment.prefix, segment.suffix);
+    if (!contextOk) continue; // hard gate: never carry onto a context-mismatched occurrence (AS-003).
+    const candidate: Candidate = {
+      seg: {
         status: "carried",
         blockId: block.blockId,
         textSnippet: block.text.slice(hit.start, hit.end),
@@ -344,11 +367,30 @@ function reanchorSegment(
         length: hit.end - hit.start,
         method: hit.method,
         confidence: score,
-      };
-      if (rank === 0) break; // an exact whole-doc hit can't be beaten.
-    }
+      },
+      contextOk,
+      rank: methodRank[hit.method],
+      offsetDist: Math.abs(hit.start - segment.offset),
+      specificity: block.text.length,
+    };
+    if (best === null || candidateBeats(candidate, best)) best = candidate;
   }
-  return best; // null → orphan (AS-003/AS-006).
+  return best ? best.seg : null; // null → orphan (AS-003/AS-006).
+}
+
+/**
+ * annotation-reanchor:S-002/C-003 — total order over whole-doc duplicate candidates: lower method
+ * rank, then nearest stored offset, then innermost (smallest) block. Returns true when `a` should
+ * replace the current best `b`. (Context is a hard gate upstream — both candidates already passed —
+ * so it is not re-compared here; it stays the first key by virtue of mismatches being filtered out.)
+ */
+function candidateBeats(
+  a: { rank: number; offsetDist: number; specificity: number },
+  b: { rank: number; offsetDist: number; specificity: number },
+): boolean {
+  if (a.rank !== b.rank) return a.rank < b.rank; // 1) stronger method tier wins.
+  if (a.offsetDist !== b.offsetDist) return a.offsetDist < b.offsetDist; // 2) nearest stored offset (AS-007).
+  return a.specificity < b.specificity; // 3) innermost / most-specific block (cell beats table/row).
 }
 
 /** Similarity of a located window against the stored snippet — the precision gate shared by both

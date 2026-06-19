@@ -598,3 +598,100 @@ test("C-006: multi_range — ALL segments locatable whole-doc (even moved) → c
   expect(r.status).toBe("carried");
   if (r.status === "carried") expect(r.anchor.segments).toHaveLength(2);
 });
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// annotation-reanchor S-002 — disambiguate a DUPLICATE quote in the whole-doc fallback. When the
+// snippet locates in MORE THAN ONE block, pick the right occurrence by stored prefix/suffix
+// context, then nearest stored offset, then innermost (most specific) block — NOT first-in-doc.
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- AS-007: prefix/suffix + nearest-offset pick the correct duplicate, NOT the first ---
+
+test("AS-007: a duplicate quote in two blocks carries to the context-matching one, NOT the first", () => {
+  // "see below" appears in two paragraphs. The annotation was on the SECOND occurrence; its stored
+  // prefix/suffix is that block's context. The block_id hint has shifted, so the fallback runs
+  // doc-wide and finds BOTH. A first-match-wins matcher would carry to block-p-1 (the first) and
+  // FAIL this test; the context gate must steer it to block-p-2.
+  const v2 = doc([
+    "For the rate limits see below in the appendix",
+    "For the retry policy see below near the footer",
+  ]);
+  const anno: Anchor = {
+    blockId: "block-p-99", // hint shifted/missing → whole-doc fallback fires
+    textSnippet: "see below",
+    offset: 0,
+    length: 9,
+    // Context of the SECOND occurrence: "…retry policy " before, " near the footer" after.
+    prefix: "the retry policy ",
+    suffix: " near the footer",
+  };
+  const r = reanchorAnnotation(anno, v2);
+  expect(r.status).toBe("carried");
+  if (r.status === "carried") {
+    // The decisive assertion: it landed on the SECOND block, not the first-in-document occurrence.
+    expect(r.anchor.blockId).toBe("block-p-2");
+    expect(r.anchor.textSnippet).toBe("see below");
+  }
+});
+
+test("AS-007: ties broken toward the occurrence nearest the stored offset (context equal)", () => {
+  // Two blocks both contain "see below" with the SAME (empty) surrounding context — so the
+  // prefix/suffix gate can't separate them. The stored offset is large, biasing toward the LATER
+  // occurrence within whichever block; but across blocks the offset tie-break must steer to the
+  // block whose match start is nearest the stored offset. Here block-p-2's snippet sits at a higher
+  // offset than block-p-1's, and the stored offset is high → must pick block-p-2, not the first.
+  const v2 = doc([
+    "see below", // block-p-1: snippet at offset 0
+    "xxxxxxxxxxxxxxxxxxxxxxxxxx see below", // block-p-2: snippet at offset 26
+  ]);
+  const anno: Anchor = {
+    blockId: "block-p-99",
+    textSnippet: "see below",
+    offset: 26, // nearest to block-p-2's occurrence
+    length: 9,
+    // Context that matches BOTH (empty before, empty after won't hold here) — use undefined so the
+    // gate degrades and offset is the sole disambiguator.
+  };
+  const r = reanchorAnnotation(anno, v2);
+  expect(r.status).toBe("carried");
+  if (r.status === "carried") {
+    expect(r.anchor.blockId).toBe("block-p-2"); // nearest-offset wins the tie, NOT first-in-doc
+  }
+});
+
+// --- C-003: nested-block specificity — a cell snippet that also appears in the parent's
+//            concatenated text anchors to the CELL, not the table/row container ---
+
+test("C-003: a cell snippet present in the parent's concatenated text anchors to the cell, not the table/row", () => {
+  // extractAllBlocks enumerates the <table>, the <tr>, AND the <td>. The <table>'s concatenated
+  // text ("alpha beta gamma") contains the cell snippet "beta", as does the <tr>. A naive
+  // first-in-document, method-only ranking could carry onto the <table> (block-table-1, which is
+  // emitted first). The matcher must prefer the most SPECIFIC (innermost / smallest) block that
+  // contains the match — the actual <td>.
+  // The annotated cell is the FIRST cell, so its snippet sits at offset 0 of BOTH the <td> text
+  // AND the parent <table>/<tr> concatenated text — meaning the parent matches EXACTLY too (same
+  // method tier, offset 0). Method-rank + nearest-offset cannot separate them; only the
+  // innermost/specificity preference can. A non-specificity-aware impl carries onto block-table-1
+  // (emitted first) and FAILS.
+  // The cell holds exactly "beta" so the snippet is exact-at-offset-0 in the <td>, AND the parent
+  // <table>/<tr> concatenated text ("betaother") also has "beta" exact at offset 0. Same method
+  // tier, same offset → neither method-rank nor nearest-offset can separate them; only the
+  // innermost/specificity preference can. Context is left undefined (degrades), so specificity is
+  // the SOLE discriminator. A non-specificity-aware impl carries onto block-table-1 and FAILS.
+  const v2 = "<table><tr><td>beta</td><td>other</td></tr></table>";
+  const tableText = extractBlockText(injectBlockIds(v2), "block-table-1")!;
+  expect(tableText.startsWith("beta")).toBe(true); // parent also exact at offset 0
+  const anno: Anchor = {
+    blockId: "block-td-99", // hint missing → whole-doc fallback over table/tr/td
+    textSnippet: "beta",
+    offset: 0,
+    length: 4,
+    // prefix/suffix intentionally absent: context degrades, specificity must decide.
+  };
+  const r = reanchorAnnotation(anno, v2);
+  expect(r.status).toBe("carried");
+  if (r.status === "carried") {
+    expect(r.anchor.blockId).toBe("block-td-1"); // the cell, NOT block-table-1 / block-tr-1
+    expect(r.anchor.textSnippet).toBe("beta");
+  }
+});
