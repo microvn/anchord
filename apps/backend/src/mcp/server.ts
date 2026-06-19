@@ -66,6 +66,19 @@ export interface McpServerDeps {
   tools: Record<string, ToolDef>;
 }
 
+/**
+ * Tool errors whose MESSAGE is safe to return to the caller (a JSON-RPC INVALID_PARAMS),
+ * vs an unexpected internal that must stay generic. Recognized by `name` so server.ts
+ * never imports the tool/domain layer (avoids a cycle). `McpToolError` is a tool's own
+ * caller-facing rejection (bad params / per-resource authz); `ProjectRejected` is the
+ * publish project resolver's foreign/invalid-projectId rejection (mcp S-002 / AS-019).
+ */
+const EXPECTED_TOOL_ERROR_NAMES = new Set(["McpToolError", "ProjectRejected"]);
+
+function isExpectedToolError(e: unknown): boolean {
+  return e instanceof Error && EXPECTED_TOOL_ERROR_NAMES.has(e.name);
+}
+
 function ok(id: JsonRpcRequest["id"], result: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, result };
 }
@@ -150,7 +163,14 @@ export async function handleJsonRpc(
     const result = await tool.handler(request.params ?? {}, ctx);
     return { response: ok(id, result), resolved };
   } catch (e) {
-    // No stack/message leak beyond a generic transport error (mirrors the envelope's 500).
+    // A tool's EXPECTED rejection (bad params / per-resource authz denial — e.g. S-002's
+    // missing-docId-suggests-create or foreign-projectId-rejected) carries a caller-facing
+    // message and surfaces as INVALID_PARAMS. Recognized structurally (`name`) so the server
+    // doesn't import the tool layer (no cycle). Every OTHER throw is an unexpected internal —
+    // no stack/message leak beyond a generic transport error (mirrors the envelope's 500).
+    if (isExpectedToolError(e)) {
+      return { response: err(id, JSONRPC_INVALID_PARAMS, (e as Error).message), resolved };
+    }
     return { response: err(id, JSONRPC_INTERNAL_ERROR, "internal error"), resolved };
   }
 }

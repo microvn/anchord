@@ -27,6 +27,8 @@ import { createIsActiveMemberName } from "./routes/annotations";
 import { createCommentRateLimiter } from "./annotation/comment-rate-limit";
 import { createApiTokenRepo } from "./mcp/token-repo";
 import { McpRateLimiter } from "./mcp/rate-limit";
+import { baselineTools } from "./mcp/server";
+import { createPublishToolsForDb } from "./mcp/tools/publish-tools-wiring";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -377,7 +379,37 @@ const app = createApp({
   mcp: {
     tokens: apiTokenRepo,
     rateLimiter: mcpRateLimiter,
-    // S-001 ships the baseline `ping` tool; S-002..S-006 register the domain tools here.
+    // S-001 ships the baseline `ping` tool; S-002 registers the publish domain tools
+    // (anchord_create_document / anchord_update_document) over the existing publish +
+    // version-append + re-anchor services. resolveAccess is the shared authoritative gate
+    // (editor+ on update — AS-004/AS-005); reanchorOnNewVersion is the SAME async seam the
+    // version routes fire (C-012). S-003..S-006 will spread their fragments here too.
+    tools: {
+      ...baselineTools(),
+      ...createPublishToolsForDb({
+        db,
+        resolveAccess: sharedResolveAccess,
+        reanchorOnNewVersion: async ({ docId, version, newContentHtml }) => {
+          const versionId = `${docId}:${version}`;
+          await runReanchorForNewVersion(
+            {
+              annotations: createAnnotationRepo(db),
+              apply: createReanchorApplyRepo(db),
+              ledger: createReanchorLedgerRepo(db),
+              onSummary: (s) => {
+                if (s.alert) {
+                  console.warn(
+                    `[reanchor] doc ${docId} v${version}: ${s.detached}/${s.total} annotations detached ` +
+                      `(${Math.round(s.detachedRate * 100)}%) — over threshold`,
+                  );
+                }
+              },
+            },
+            { docId, versionId, newContentHtml },
+          );
+        },
+      }),
+    },
     allowedOrigins: [`http://localhost:${cfg.PORT}`],
   },
 }).listen(cfg.PORT);
