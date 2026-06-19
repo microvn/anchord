@@ -32,6 +32,7 @@ import { createPublishToolsForDb } from "./mcp/tools/publish-tools-wiring";
 import { createPullToolsForDb } from "./mcp/tools/pull-tools-wiring";
 import { createReadToolsForDb } from "./mcp/tools/read-tools-wiring";
 import { createWritebackToolsForDb } from "./mcp/tools/writeback-tools-wiring";
+import { createProjectToolsForDb } from "./mcp/tools/project-tools-wiring";
 import { createSearchRepo } from "./search/search-repo";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
@@ -439,6 +440,14 @@ const app = createApp({
         db,
         resolveAccess: sharedResolveAccess,
       }),
+      // S-006: the project tools (anchord_list_projects / anchord_read_project /
+      // anchord_create_project) over the workspace-project service. list/read declare
+      // projects:read, create declares projects:write (C-009/AS-016). Every read is scoped by
+      // the TOKEN's workspace_id (C-010/C-013): list/read use ProjectRepo.listActive/findById
+      // (workspace-member visibility, no per-owner ACL — a foreign projectId resolves to null →
+      // rejected-not-disclosed); create makes a non-default project owned by the token-owner in
+      // the token's workspace, returning a projectId usable by create_document.
+      ...createProjectToolsForDb(db),
     },
     allowedOrigins: [`http://localhost:${cfg.PORT}`],
   },
