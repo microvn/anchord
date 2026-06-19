@@ -150,6 +150,12 @@ describe("mcp-roundtrip S-001 — Developer settings UI", () => {
     await user.type(screen.getByTestId("token-name"), "New token");
     await user.click(screen.getByTestId("create-token-submit"));
 
+    // Create submits the default (first) workspace id via the ShadCN Select.
+    expect(createMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "New token", workspaceId: "ws-acme" }),
+      expect.anything(),
+    );
+
     // The reveal card shows the FULL plaintext token exactly once.
     const reveal = await screen.findByTestId("token-reveal");
     expect(within(reveal).getByTestId("token-reveal-value")).toHaveTextContent(FULL_TOKEN_SECRET);
@@ -158,6 +164,31 @@ describe("mcp-roundtrip S-001 — Developer settings UI", () => {
     await user.click(within(reveal).getByTestId("token-reveal-done"));
     await waitFor(() => expect(screen.queryByTestId("token-reveal")).not.toBeInTheDocument());
     expect(document.body.textContent).not.toContain(FULL_TOKEN_SECRET);
+  });
+
+  it("the workspace picker is a ShadCN Select: it shows the default label and submits the chosen workspaceId", async () => {
+    const user = userEvent.setup();
+    renderSection();
+    await user.click(screen.getByTestId("generate-token"));
+
+    // The trigger is an accessible combobox (not a native <select>) showing the default label.
+    const trigger = screen.getByTestId("token-workspace");
+    expect(trigger).toHaveAttribute("role", "combobox");
+    expect(trigger).toHaveTextContent("Acme");
+
+    // Open the listbox and pick the second workspace ("Field Io").
+    await user.click(trigger);
+    const option = await screen.findByRole("option", { name: "Field Io" });
+    await user.click(option);
+    expect(trigger).toHaveTextContent("Field Io");
+
+    // A name is required to submit; then the chosen workspace id rides the POST body.
+    await user.type(screen.getByTestId("token-name"), "Field token");
+    await user.click(screen.getByTestId("create-token-submit"));
+    expect(createMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Field token", workspaceId: "ws-field" }),
+      expect.anything(),
+    );
   });
 
   it("AS-021: clicking Revoke calls the revoke mutation; the row disappears from the active list", async () => {
@@ -245,8 +276,12 @@ describe("mcp-roundtrip S-001 — Developer settings UI", () => {
     // No workspace <select> inside the connect block (the token carries its workspace).
     expect(block.querySelector("select")).toBeNull();
     // The setup snippet uses streamable HTTP + bearer, no npx, no workspace in the path.
+    // (The command is wrapped across lines with `\` line-continuations — assert the parts.)
     const snippet = screen.getByTestId("mcp-snippet").textContent ?? "";
-    expect(snippet).toContain("claude mcp add --transport http anchord http://localhost:3000/mcp");
+    expect(snippet).toContain("claude mcp add --transport http anchord");
+    expect(snippet).toContain("http://localhost:3000/mcp");
+    expect(snippet).toContain('--header "Authorization: Bearer');
+    expect(snippet).not.toContain("/mcp/w/");
     expect(snippet).not.toContain("npx");
     // Real tool names are listed.
     expect(screen.getByTestId("mcp-tool-anchord_pull_annotations")).toBeInTheDocument();

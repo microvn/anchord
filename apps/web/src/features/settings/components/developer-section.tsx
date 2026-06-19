@@ -40,7 +40,7 @@ export function DeveloperSection() {
   const endpoint = `${mcpBaseUrl()}/mcp`;
 
   const snippets: Record<SnippetId, string> = {
-    claude: `claude mcp add --transport http anchord ${endpoint} --header "Authorization: Bearer anch_pat_…"`,
+    claude: `claude mcp add --transport http anchord \\\n  ${endpoint} \\\n  --header "Authorization: Bearer anch_pat_…"`,
     cursor: `// ~/.cursor/mcp.json\n{\n  "mcpServers": {\n    "anchord": {\n      "url": "${endpoint}",\n      "headers": { "Authorization": "Bearer anch_pat_…" }\n    }\n  }\n}`,
     codex: `# ~/.codex/config.toml\n[mcp_servers.anchord]\ntransport = "http"\nurl = "${endpoint}"\nheaders = { Authorization = "Bearer anch_pat_…" }`,
   };

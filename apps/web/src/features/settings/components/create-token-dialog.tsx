@@ -1,5 +1,16 @@
 import { useMemo, useState } from "react";
+import { CalendarIcon } from "lucide-react";
+import { format } from "date-fns";
 import { Icon } from "@/components/icon";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import {
   SCOPE_OPTIONS,
   SCOPE_PRESETS,
@@ -36,7 +47,15 @@ export function CreateTokenDialog({
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "");
   const [scopes, setScopes] = useState<TokenScope[]>(["docs:read", "annotations:read", "projects:read"]);
   const [expiryMode, setExpiryMode] = useState<"never" | "date">("never");
-  const [date, setDate] = useState("");
+  const [date, setDate] = useState<Date | undefined>(undefined);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+
+  // Disable expiry dates that are today-or-earlier (an expiry in the past is invalid).
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
 
   const activePreset = useMemo(
     () => SCOPE_PRESETS.find((p) => sameSet(p.scopes, scopes))?.label ?? null,
@@ -58,7 +77,7 @@ export function CreateTokenDialog({
       name: trimmedName,
       workspaceId,
       scopes,
-      expiresAt: expiryMode === "date" ? new Date(date).toISOString() : undefined,
+      expiresAt: expiryMode === "date" && date ? new Date(date).toISOString() : undefined,
     });
   }
 
@@ -107,22 +126,26 @@ export function CreateTokenDialog({
 
           {/* Workspace picker — the token IS bound to one workspace at creation (POST workspaceId). */}
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="token-workspace" className="text-[12.5px] font-medium text-ink">
+            <span id="token-workspace-label" className="text-[12.5px] font-medium text-ink">
               Workspace
-            </label>
-            <select
-              id="token-workspace"
-              data-testid="token-workspace"
-              className="rounded-[7px] border border-line bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-accent"
-              value={workspaceId}
-              onChange={(e) => setWorkspaceId(e.target.value)}
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {workspaceLabel(w)}
-                </option>
-              ))}
-            </select>
+            </span>
+            <Select value={workspaceId} onValueChange={setWorkspaceId}>
+              <SelectTrigger
+                id="token-workspace"
+                data-testid="token-workspace"
+                aria-labelledby="token-workspace-label"
+                className="w-full"
+              >
+                <SelectValue placeholder="Select a workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                {workspaces.map((w) => (
+                  <SelectItem key={w.id} value={w.id}>
+                    {workspaceLabel(w)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <span className="text-[11.5px] text-subtle">The token can only act inside this workspace.</span>
           </div>
 
@@ -213,13 +236,36 @@ export function CreateTokenDialog({
                 </button>
               </div>
               {expiryMode === "date" && (
-                <input
-                  type="date"
-                  data-testid="token-expiry-input"
-                  className="max-w-[180px] rounded-[7px] border border-line bg-surface px-3 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                />
+                <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="token-expiry-input"
+                      className={`inline-flex h-8 items-center gap-2 rounded-[7px] border border-line bg-surface px-3 text-[12.5px] outline-none transition-colors hover:border-subtle focus-visible:border-accent ${
+                        date ? "text-ink" : "text-subtle"
+                      }`}
+                    >
+                      <CalendarIcon className="size-[14px] text-subtle" />
+                      {date ? format(date, "MMM d, yyyy") : "Pick a date"}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    className="w-auto"
+                    data-testid="token-expiry-calendar"
+                  >
+                    <Calendar
+                      mode="single"
+                      selected={date}
+                      onSelect={(d) => {
+                        setDate(d);
+                        if (d) setDatePickerOpen(false);
+                      }}
+                      disabled={{ before: today }}
+                      autoFocus
+                    />
+                  </PopoverContent>
+                </Popover>
               )}
             </div>
           </div>
