@@ -20,7 +20,7 @@ import { createDocMembersPendingInviteRepo } from "./sharing/invite";
 import {
   createAnnotationRepo,
   createReanchorApplyRepo,
-  createReanchorLedgerRepo,
+  createAnchorResolutionRepo,
 } from "./annotation/repo";
 import { runReanchorForNewVersion } from "./annotation/reanchor-job";
 import { createIsActiveMemberName } from "./routes/annotations";
@@ -248,7 +248,7 @@ const app = createApp({
     // run logs an alert.
     reanchorOnNewVersion: async ({ docId, version, newContentHtml }) => {
       const versionId = `${docId}:${version}`;
-      const ledger = createReanchorLedgerRepo(db);
+      const ledger = createAnchorResolutionRepo(db);
       await runReanchorForNewVersion(
         {
           annotations: createAnnotationRepo(db),
@@ -400,7 +400,7 @@ const app = createApp({
             {
               annotations: createAnnotationRepo(db),
               apply: createReanchorApplyRepo(db),
-              ledger: createReanchorLedgerRepo(db),
+              ledger: createAnchorResolutionRepo(db),
               onSummary: (s) => {
                 if (s.alert) {
                   console.warn(

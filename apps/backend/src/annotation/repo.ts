@@ -7,7 +7,7 @@
 // Postgres in test/integration/annotation-repo.itest.ts.
 
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
-import { annotations, comments, reanchorLedger, user } from "../db/schema";
+import { annotations, anchorResolution, comments, reanchorLedger, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { Anchor } from "./annotation";
 import type {
@@ -458,6 +458,105 @@ export function createReanchorLedgerRepo(db: DB): DrizzleReanchorLedgerRepo {
         .returning({ id: reanchorLedger.id });
       const didInsert = inserted.length > 0;
       // Keep the cache consistent with what is now persisted.
+      cache.set(key(entry.annotationId, entry.versionId), entry);
+      return didInsert;
+    },
+  };
+}
+
+// ── annotation-reanchor S-003 / C-005: immutable per-version resolution record ──
+
+/**
+ * A ReanchorLedgerRepo backed by the `anchor_resolution` table — the DEEPENED persistence of
+ * C-012 (annotation-reanchor:S-003). It records ONE immutable row per (annotation, version)
+ * carrying status + the winning method + confidence + the resolved span, and makes a re-run a
+ * no-op (C-005): `getEntry` short-circuits recompute from the persisted row, and `persistEntry`
+ * is INSERT … ON CONFLICT DO NOTHING on UNIQUE(annotation_id, version_id) so the row is written
+ * once and never rewritten / double-applied.
+ *
+ * Same shape as DrizzleReanchorLedgerRepo (the pure-logic port wants a SYNCHRONOUS getEntry, so
+ * `loadEntries` preloads the version's rows into an in-memory cache up front; the matcher then
+ * reads the cache synchronously). The resolved span (block_id/offset/length) is reconstructed
+ * onto the carried anchor on load so a reused entry is identical to a freshly computed one.
+ */
+export interface DrizzleAnchorResolutionRepo extends ReanchorLedgerRepo {
+  /** Persist one outcome idempotently (C-005). Returns false if the pair already existed. */
+  persistEntry(entry: ReanchorLedgerEntry): Promise<boolean>;
+  /** Preload all resolution rows for a version into the in-memory cache getEntry reads. */
+  loadEntries(versionId: string): Promise<void>;
+}
+
+/** carried ⇄ anchored mapping between the matcher's ledger status and the table's enum (C-005). */
+function toResolutionStatus(status: ReanchorLedgerEntry["status"]): "anchored" | "orphaned" {
+  return status === "carried" ? "anchored" : "orphaned";
+}
+
+export function createAnchorResolutionRepo(db: DB): DrizzleAnchorResolutionRepo {
+  const cache = new Map<string, ReanchorLedgerEntry>();
+  const key = (annotationId: string, versionId: string) => `${annotationId}::${versionId}`;
+
+  return {
+    getEntry(annotationId: string, versionId: string): ReanchorLedgerEntry | undefined {
+      return cache.get(key(annotationId, versionId));
+    },
+
+    async loadEntries(versionId: string): Promise<void> {
+      const rows = await db
+        .select({
+          annotationId: anchorResolution.annotationId,
+          versionId: anchorResolution.versionId,
+          status: anchorResolution.status,
+          method: anchorResolution.method,
+          confidence: anchorResolution.confidence,
+          blockId: anchorResolution.blockId,
+          offset: anchorResolution.offset,
+          length: anchorResolution.length,
+        })
+        .from(anchorResolution)
+        .where(eq(anchorResolution.versionId, versionId));
+      for (const r of rows) {
+        const entry: ReanchorLedgerEntry =
+          r.status === "anchored"
+            ? {
+                annotationId: r.annotationId,
+                versionId: r.versionId,
+                status: "carried",
+                // Reconstruct the resolved span onto the anchor so a reused entry equals a fresh one.
+                anchor: {
+                  blockId: r.blockId ?? "",
+                  textSnippet: "",
+                  offset: r.offset ?? 0,
+                  length: r.length ?? 0,
+                } as Anchor,
+                method: (r.method ?? undefined) as ReanchorLedgerEntry["method"],
+                confidence: r.confidence ?? undefined,
+              }
+            : { annotationId: r.annotationId, versionId: r.versionId, status: "orphaned" };
+        cache.set(key(r.annotationId, r.versionId), entry);
+      }
+    },
+
+    async persistEntry(entry: ReanchorLedgerEntry): Promise<boolean> {
+      const anchored = entry.status === "carried";
+      const span = anchored ? entry.anchor : undefined;
+      const inserted = await db
+        .insert(anchorResolution)
+        .values({
+          annotationId: entry.annotationId,
+          versionId: entry.versionId,
+          status: toResolutionStatus(entry.status),
+          // C-005: method + confidence + resolved span recorded only when anchored.
+          method: anchored ? ((entry.method ?? null) as never) : null,
+          confidence: anchored ? (entry.confidence ?? null) : null,
+          blockId: span?.blockId ?? null,
+          offset: span?.offset ?? null,
+          length: span?.length ?? null,
+        })
+        .onConflictDoNothing({
+          target: [anchorResolution.annotationId, anchorResolution.versionId],
+        })
+        .returning({ id: anchorResolution.id });
+      const didInsert = inserted.length > 0;
       cache.set(key(entry.annotationId, entry.versionId), entry);
       return didInsert;
     },

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgEnum, pgTable, real, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { newId } from "./id";
 
 // Minimal foundational schema for the runnable skeleton: docs + immutable versions
@@ -329,6 +329,61 @@ export const reanchorLedger = pgTable(
   (t) => [
     // C-012: one outcome per (annotation, version) — the idempotency backstop.
     uniqueIndex("reanchor_ledger_uq").on(t.annotationId, t.versionId),
+  ],
+);
+
+// ── anchor_resolution (annotation-reanchor S-003, C-005) ───────────────────
+// The IMMUTABLE per-(annotation, version) re-anchor outcome — the deepened persistence of
+// annotation-core:C-012's ledger that the parent left as [→MANUAL]. One row records, for
+// where annotation A lands in version V: the `status` (anchored | orphaned), the winning
+// ladder `method` (blockid | exact | nearest | normalized | fuzzy — which C-002 tier won),
+// the `confidence` (the matcher's similarity score 0..1), and the RESOLVED SPAN in THIS
+// version when anchored (block_id / offset / length, all nullable — null when orphaned).
+//
+// Versions are immutable, so "where does A land in V" is also immutable: the row is computed
+// ONCE and reused (C-005 idempotency). UNIQUE(annotation_id, version_id) is the backstop —
+// a second persist for the same pair conflicts (ON CONFLICT DO NOTHING), so re-running
+// re-anchor for the same version never rewrites a row and never double-applies. This is also
+// the seam a later semantic fallback (Not-in-Scope Stage 2) writes a higher-confidence row into.
+//
+// `annotations.is_orphaned` is the DERIVED current-version projection of these rows — the rows
+// are the truth; is_orphaned mirrors the resolution for the doc's CURRENT version (set by the job).
+//
+// Portable on purpose (no DB CHECK): the status/method enums are pgEnums + validated at the app
+// boundary, consistent with how annotations does status / suggestion_status. version_id has no
+// FK (re-anchor runs OFF the publish path; a version may be referenced before/after — kept loose
+// + portable, mirroring reanchor_ledger).
+export const anchorResolutionStatus = pgEnum("anchor_resolution_status", ["anchored", "orphaned"]);
+export const anchorResolutionMethod = pgEnum("anchor_resolution_method", [
+  "blockid",
+  "exact",
+  "nearest",
+  "normalized",
+  "fuzzy",
+]);
+
+export const anchorResolution = pgTable(
+  "anchor_resolution",
+  {
+    id: id(),
+    annotationId: text("annotation_id")
+      .notNull()
+      .references(() => annotations.id, { onDelete: "cascade" }),
+    versionId: text("version_id").notNull(),
+    status: anchorResolutionStatus("status").notNull(),
+    // The winning ladder tier (C-002) when anchored; NULL when orphaned (no tier won).
+    method: anchorResolutionMethod("method"),
+    // The matcher's similarity score 0..1 when anchored; NULL when orphaned.
+    confidence: real("confidence"),
+    // The resolved span in THIS version when anchored; all NULL when orphaned.
+    blockId: text("block_id"),
+    offset: integer("offset"),
+    length: integer("length"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // C-005: one immutable outcome per (annotation, version) — the idempotency backstop.
+    uniqueIndex("anchor_resolution_uq").on(t.annotationId, t.versionId),
   ],
 );
 

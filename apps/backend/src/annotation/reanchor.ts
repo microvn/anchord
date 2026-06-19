@@ -51,6 +51,11 @@ export interface ReanchorCarried {
   /** Which ladder tier won (C-002) — recorded for the S-003 resolution ledger + AS assertions.
    *  For a multi_range, this is the LOWEST-confidence tier across its segments (the weakest link). */
   method: ReanchorMethod;
+  /** The matcher's similarity score in [0,1] for the carried match (annotation-reanchor:S-003 /
+   *  C-005 — persisted on the anchor_resolution row). 1 for an exact/normalized hit, the real
+   *  Levenshtein similarity for a fuzzy hit. For a multi_range this is the MINIMUM score across
+   *  its segments (the weakest link — same "worst" rule as `method`). */
+  confidence: number;
 }
 
 /** An annotation that no block/snippet in the new content could match. */
@@ -185,6 +190,8 @@ interface SegmentReanchor {
   offset: number;
   length: number;
   method: ReanchorMethod;
+  /** Similarity score [0,1] of the located window vs the stored snippet (S-003 confidence). */
+  confidence: number;
 }
 
 interface SegmentToReanchor {
@@ -298,7 +305,8 @@ function reanchorSegment(
   const hintBlockText = extractBlockText(injected, segment.blockId);
   if (hintBlockText !== null) {
     const hit = locateInBlock(hintBlockText, segment.textSnippet, segment.offset);
-    if (hit && segmentScore(hintBlockText, hit.start, hit.end, segment.textSnippet) >= threshold) {
+    const hintScore = hit ? segmentScore(hintBlockText, hit.start, hit.end, segment.textSnippet) : 0;
+    if (hit && hintScore >= threshold) {
       return {
         status: "carried",
         blockId: segment.blockId,
@@ -306,6 +314,7 @@ function reanchorSegment(
         offset: hit.start,
         length: hit.end - hit.start,
         method: hit.method,
+        confidence: hintScore,
       };
     }
   }
@@ -319,7 +328,8 @@ function reanchorSegment(
     if (block.blockId === segment.blockId && hintBlockText !== null) continue; // already tried as the hint.
     const hit = locateInBlock(block.text, segment.textSnippet, segment.offset);
     if (!hit) continue;
-    if (segmentScore(block.text, hit.start, hit.end, segment.textSnippet) < threshold) continue;
+    const score = segmentScore(block.text, hit.start, hit.end, segment.textSnippet);
+    if (score < threshold) continue;
     // C-003/AS-003: a whole-doc match must agree with the stored prefix/suffix context — this is
     // what rejects the coincidental prose mention of a deleted table cell's word.
     if (!contextMatches(block.text, hit.start, hit.end, segment.prefix, segment.suffix)) continue;
@@ -333,6 +343,7 @@ function reanchorSegment(
         offset: hit.start,
         length: hit.end - hit.start,
         method: hit.method,
+        confidence: score,
       };
       if (rank === 0) break; // an exact whole-doc hit can't be beaten.
     }
@@ -368,10 +379,12 @@ export function reanchorAnnotation(
   if (anchor.segments && anchor.segments.length > 0) {
     const carriedSegments: AnchorSegment[] = [];
     let worst: ReanchorMethod = "exact";
+    let minConfidence = 1;
     for (const seg of anchor.segments) {
       const r = reanchorSegment(injected, seg, threshold);
       if (r === null) return { status: "orphaned" }; // any segment lost → whole detaches (C-006).
       if (methodRank[r.method] > methodRank[worst]) worst = r.method;
+      if (r.confidence < minConfidence) minConfidence = r.confidence;
       carriedSegments.push({
         blockId: r.blockId,
         textSnippet: r.textSnippet,
@@ -387,6 +400,7 @@ export function reanchorAnnotation(
     return {
       status: "carried",
       method: worst,
+      confidence: minConfidence,
       anchor: {
         ...anchor,
         blockId: first.blockId,
@@ -415,6 +429,7 @@ export function reanchorAnnotation(
   return {
     status: "carried",
     method: r.method,
+    confidence: r.confidence,
     anchor: {
       ...anchor,
       blockId: r.blockId,
@@ -442,6 +457,9 @@ export interface ReanchorLedgerEntry {
   anchor?: Anchor;
   /** The winning ladder tier (C-002) when carried — the seam the S-003 resolution row records. */
   method?: ReanchorMethod;
+  /** The matcher's similarity score [0,1] when carried (annotation-reanchor:S-003 / C-005). The
+   *  anchor_resolution row persists this alongside method + the resolved span; absent when orphaned. */
+  confidence?: number;
 }
 
 export interface CarriedAnnotation {
@@ -515,7 +533,14 @@ export function reanchorForVersion(
       const result = reanchorAnnotation(ann.anchor, injected, opts);
       entry =
         result.status === "carried"
-          ? { annotationId: ann.id, versionId, status: "carried", anchor: result.anchor, method: result.method }
+          ? {
+              annotationId: ann.id,
+              versionId,
+              status: "carried",
+              anchor: result.anchor,
+              method: result.method,
+              confidence: result.confidence,
+            }
           : { annotationId: ann.id, versionId, status: "orphaned" };
       seen.set(key, entry);
       ledger.push(entry);
