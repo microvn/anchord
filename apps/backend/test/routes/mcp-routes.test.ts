@@ -268,18 +268,29 @@ describe("POST /mcp transport — MCP protocol (C-005/AS-023)", () => {
     expect(over.error.code).toBe(-32003);
   });
 
-  test("C-005: with an allowlist, an ALLOWED Origin passes; ABSENT/null/foreign are rejected (403)", async () => {
+  test("C-005: with an allowlist, an ALLOWED Origin passes", async () => {
     const app = appWithTransport({ allowedOrigins: ["https://anchord.example"] });
     const ok = await app.handle(
       mcpReq(initRpc(1), { authorization: "Bearer anch_pat_valid", origin: "https://anchord.example" }),
     );
     expect(ok.status).toBe(200);
     expect((await parseMcp(ok)).error).toBeUndefined();
+  });
 
-    for (const origin of [undefined, "null", "https://evil.example"]) {
-      const headers: Record<string, string> = { authorization: "Bearer anch_pat_valid" };
-      if (origin) headers.origin = origin;
-      const res = await app.handle(mcpReq(initRpc(1), headers));
+  test("AS-030: a request with NO Origin header is allowed (CLI MCP clients send none)", async () => {
+    const app = appWithTransport({ allowedOrigins: ["https://anchord.example"] });
+    // No `origin` key → absent header, exactly what claude mcp / Cursor / Codex send.
+    const res = await app.handle(mcpReq(initRpc(1), { authorization: "Bearer anch_pat_valid" }));
+    expect(res.status).toBe(200);
+    expect((await parseMcp(res)).error).toBeUndefined();
+  });
+
+  test("AS-031: a PRESENT but non-allowlisted Origin (incl. literal `null`) is rejected (403)", async () => {
+    const app = appWithTransport({ allowedOrigins: ["https://anchord.example"] });
+    for (const origin of ["null", "https://evil.example"]) {
+      const res = await app.handle(
+        mcpReq(initRpc(1), { authorization: "Bearer anch_pat_valid", origin }),
+      );
       expect(res.status).toBe(403);
     }
   });

@@ -65,7 +65,12 @@ function rawJson(body: unknown, status = 200): Response {
  */
 export function originAllowed(origin: string | null, allowed: string[]): boolean {
   if (allowed.length === 0) return true; // no allowlist configured → checking off
-  if (!origin || origin === "null") return false; // DNS-rebinding guard
+  // C-005/AS-030: an ABSENT Origin header is ALLOWED — non-browser CLI MCP clients (claude mcp,
+  // Cursor, Codex) send none, and DNS-rebinding only threatens browsers (which always send one).
+  if (origin === null) return true;
+  // C-005/AS-031: a PRESENT Origin must be in the allowlist; a literal `null` Origin is treated
+  // as present-and-disallowed (the browser DNS-rebinding guard).
+  if (origin === "null") return false;
   return allowed.includes(origin);
 }
 
