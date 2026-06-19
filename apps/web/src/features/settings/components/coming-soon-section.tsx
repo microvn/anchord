@@ -18,19 +18,16 @@ export function ComingSoonSection({
   return (
     <div
       data-testid="settings-coming-soon"
-      className="rounded-[12px] border border-line bg-elev p-8 text-center"
+      className="flex flex-col items-center gap-2.5 rounded-[12px] border border-line bg-surface px-6 py-11 text-center"
     >
-      <span className="mx-auto mb-3 inline-flex size-11 items-center justify-center rounded-full bg-accent-soft text-accent-ink">
+      {/* .soon-icon — a bordered grey square chip, not a teal pill. */}
+      <span className="inline-flex size-10 items-center justify-center rounded-md border border-line bg-elev text-subtle">
         <Icon name={icon} size={20} />
       </span>
-      <div className="text-[14px] font-semibold text-ink">{title}</div>
-      <div className="mx-auto mt-1.5 max-w-[42ch] text-[12.5px] leading-relaxed text-subtle">
-        {sub}
-      </div>
+      <div className="text-[15px] font-semibold text-ink">{title}</div>
+      <div className="max-w-[340px] text-[12.5px] leading-relaxed text-muted">{sub}</div>
       {owner && (
-        <div className="mt-3 font-mono text-[10.5px] uppercase tracking-wide text-faint">
-          {owner}
-        </div>
+        <div className="mt-1 font-mono text-[10.5px] tracking-wide text-subtle">{owner}</div>
       )}
     </div>
   );

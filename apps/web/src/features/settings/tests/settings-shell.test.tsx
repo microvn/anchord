@@ -2,6 +2,7 @@ import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 // account-settings S-001 — the Settings shell + section registry + nav + section routing.
 //
@@ -26,6 +27,14 @@ mock.module("@/lib/api/auth-client", () => ({
   useSession: () => ({ data: session, isPending: false }),
 }));
 
+// C-001 renders the REAL <AppRoutes/> at /settings, which now mounts the AppShell → the connected
+// WorkspaceSidebar → its data hooks (useBootstrap + useWorkspaceDocs). We deliberately do NOT
+// mock those hook modules — bun's mock.module is process-wide and an inert stub leaks into every
+// sibling suite that loads after this file. Instead C-001 wraps the render in a real
+// QueryClientProvider: the hooks become well-formed idle/pending queries (no "No QueryClient set"
+// throw), and the WorkspaceSidebar reads them defensively (optional chaining + empty fallbacks),
+// so the chrome renders. Any background fetch failing (ECONNREFUSED in the test env) is harmless —
+// the assertions resolve from the synchronous render, not from query data.
 const { AppRoutes } = await import("@/app");
 const { SettingsPage } = await import("@/features/settings/components/settings-page");
 const { UserMenu } = await import("@/app/user-menu");
@@ -107,15 +116,25 @@ describe("account-settings S-001 — settings shell", () => {
     expect(screen.getByTestId("settings-section-body")).not.toBeEmptyDOMElement();
   });
 
-  it("C-001: /settings is account-level and resolves under AuthGuard, NOT under /w/:workspaceId", () => {
-    // The real route table wires /settings as a sibling of /w/:workspaceId inside the guard.
+  it("C-001: /settings is account-level and resolves under AuthGuard inside the app shell (sidebar + header retained)", async () => {
+    // The real route table wires /settings as a sibling of /w/:workspaceId inside the guard, now
+    // mounted INSIDE <AppShell sidebarSlot={<WorkspaceSidebar/>}> so the app chrome is retained.
+    // AppRoutes mounts hooks that need a QueryClient — provide a fresh one (retries off), mirroring
+    // the app's own provider (src/app/query-client.ts).
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
-      <MemoryRouter initialEntries={["/settings"]}>
-        <AppRoutes />
-      </MemoryRouter>,
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/settings"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
     // Signed in (mock session present) → the settings shell renders, not a workspace shell.
     expect(screen.getByTestId("settings-section-title")).toHaveTextContent("Account");
+    // …and it renders WITHIN the app chrome (regression guard: settings must not render bare —
+    // the AppShell content region + the connected sidebar are present).
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
+    expect(screen.getByTestId("app-sidebar")).toBeInTheDocument();
   });
 
   it("C-002: sections are deep-linkable by slug; an unknown slug resolves to Account, never null", () => {

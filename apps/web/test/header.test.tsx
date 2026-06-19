@@ -155,6 +155,15 @@ describe("web-core S-005 — header breadcrumb (C-008)", () => {
     // Now "Settings" is a link to /settings; "Appearance" is the active last crumb.
     expect(secc[1].getAttribute("href")).toBe("/settings");
     expect(secc[2].closest("a")).toBeNull();
+
+    cleanup();
+    // The explicit /settings/account route must NOT duplicate the static "Account" root as a
+    // section leaf — it reads identically to /settings ("Account › Settings"), Settings active.
+    const acct = within(await renderAndFindBreadcrumb("/settings/account"));
+    const acctc = acct.getAllByTestId(/^crumb-/);
+    expect(acctc.map((c) => c.textContent)).toEqual(["Account", "Settings"]);
+    expect(acctc[1].closest("a")).toBeNull();
+    expect(acctc[1].className).toContain("text-ink");
   });
 });
 

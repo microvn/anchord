@@ -62,8 +62,12 @@ export function deriveCrumbs(
   if (pathname === "/settings" || pathname.startsWith("/settings/")) {
     const crumbs: Crumb[] = [{ id: "account", label: "Account" }]; // static root, never a link
     const section = pathname.match(/^\/settings\/([^/]+)/)?.[1];
-    crumbs.push({ id: "settings", label: "Settings", to: section ? "/settings" : undefined });
-    if (section) crumbs.push({ id: `settings-${section}`, label: capitalizeFirst(section) });
+    // The Account section's leaf would duplicate the static "Account" root, so the section leaf is
+    // appended for every section EXCEPT account → /settings and /settings/account both read
+    // "Account › Settings". When the leaf is suppressed, "Settings" stays the active last crumb.
+    const leaf = section && section !== "account" ? section : undefined;
+    crumbs.push({ id: "settings", label: "Settings", to: leaf ? "/settings" : undefined });
+    if (leaf) crumbs.push({ id: `settings-${leaf}`, label: capitalizeFirst(leaf) });
     return crumbs;
   }
 

@@ -60,9 +60,14 @@ export function AppRoutes() {
             /w/:workspaceId, NOT workspace-scoped — and lives inside this AuthGuard block, so a
             signed-out visitor to /settings is redirected to sign-in (AS-003). Sections are
             deep-linkable by slug via /settings/:section; an unknown slug falls back to Account
-            inside SettingsPage (C-002 / AS-004). */}
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/settings/:section" element={<SettingsPage />} />
+            inside SettingsPage (C-002 / AS-004). It renders INSIDE the AppShell so the app chrome
+            (workspace sidebar + header) is retained — there is no :workspaceId in the path and no
+            WorkspaceRouteGuard; WorkspaceSidebar falls back to the session's active workspace and
+            AppHeader shows the Account › Settings crumb. */}
+        <Route element={<AppShell sidebarSlot={<WorkspaceSidebar />} />}>
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings/:section" element={<SettingsPage />} />
+        </Route>
 
         {/* doc-access-routing S-003: the old workspace-scoped viewer route is retired — the viewer
             is now the public slug-only `/d/:slug` above. Keep this as a thin redirect so any stale
