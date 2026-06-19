@@ -31,6 +31,7 @@ import { baselineTools } from "./mcp/server";
 import { createPublishToolsForDb } from "./mcp/tools/publish-tools-wiring";
 import { createPullToolsForDb } from "./mcp/tools/pull-tools-wiring";
 import { createReadToolsForDb } from "./mcp/tools/read-tools-wiring";
+import { createWritebackToolsForDb } from "./mcp/tools/writeback-tools-wiring";
 import { createSearchRepo } from "./search/search-repo";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
@@ -429,6 +430,14 @@ const app = createApp({
         resolveAccess: sharedResolveAccess,
         workspaceOfDoc: (docId: string) => wsAccess.workspaceOfDoc(docId),
         search: { repo: createSearchRepo(db) },
+      }),
+      // S-005: the write-back tools (anchord_reply_comment / anchord_resolve_comment) over the
+      // annotation-core reply + resolve services. resolveAccess is the SAME shared per-doc gate
+      // (commenter+ to reply/resolve); the services re-authorize on the resolved role + apply
+      // their proposal-owner-only / deleted-terminal guards unchanged.
+      ...createWritebackToolsForDb({
+        db,
+        resolveAccess: sharedResolveAccess,
       }),
     },
     allowedOrigins: [`http://localhost:${cfg.PORT}`],
