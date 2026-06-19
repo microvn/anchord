@@ -25,7 +25,7 @@ function Checkbox({ checked }: { checked: boolean }) {
     <span
       aria-hidden
       className={[
-        "grid size-[15px] flex-none place-items-center rounded-[4px] border transition-colors",
+        "grid size-4 flex-none place-items-center rounded-[4px] border transition-colors",
         checked ? "border-accent bg-accent text-[var(--paper)]" : "border-subtle bg-transparent",
       ].join(" ")}
     >
@@ -178,7 +178,7 @@ export function DocFilterPopover({ filter, onClose }: { filter: DocFilterState; 
             >
               <span
                 aria-hidden
-                className={`grid size-[15px] flex-none place-items-center rounded-full border ${isActive ? "border-accent" : "border-subtle"}`}
+                className={`grid size-4 flex-none place-items-center rounded-full border ${isActive ? "border-accent" : "border-subtle"}`}
               >
                 {isActive && <span className="size-2 rounded-full bg-accent" />}
               </span>
