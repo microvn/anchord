@@ -57,11 +57,16 @@ export function DocFilterBar({ browse, showing }: { browse: DocBrowse; showing: 
         >
           <Icon name="settings" size={14} />
           Filter
-          {filter.active && (
-            <span data-testid="doc-filter-active-dot" className="size-1.5 rounded-full bg-accent" />
+          {filter.active && filter.narrowedCount > 0 && (
+            <span
+              data-testid="doc-filter-badge"
+              className="grid min-w-[16px] place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold text-[var(--paper)]"
+            >
+              {filter.narrowedCount}
+            </span>
           )}
         </button>
-        {open && <DocFilterPopover filter={filter} />}
+        {open && <DocFilterPopover filter={filter} onClose={() => setOpen(false)} />}
       </div>
 
       <span className="text-[13px] tabular-nums text-subtle" data-testid="doc-filter-showing">

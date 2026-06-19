@@ -177,12 +177,12 @@ describe("workspace-project-browse S-002 — faceted filter on All-docs", () => 
     await userEvent.click(await screen.findByTestId("facet-format-markdown"));
     expect(screen.getByTestId("doc-filter-showing")).toHaveTextContent("showing 1 of 3");
     // The Filter control reads active while narrowed.
-    expect(screen.getByTestId("doc-filter-active-dot")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-filter-badge")).toBeInTheDocument();
 
     await userEvent.click(screen.getByTestId("doc-filter-reset"));
     await waitFor(() => expect(screen.getByTestId("doc-card-spec")).toBeInTheDocument());
     expect(screen.getByTestId("doc-filter-showing")).toHaveTextContent("3 docs");
-    expect(screen.queryByTestId("doc-filter-active-dot")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("doc-filter-badge")).not.toBeInTheDocument();
   });
 
   it("a filter that matches nothing shows NoResultsState (distinct from empty)", async () => {

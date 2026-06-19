@@ -43,9 +43,15 @@ export interface DocFilterState {
     updated: Record<UpdatedWindow, number>;
   };
   active: boolean;
+  /** How many facet GROUPS are narrowed (not fully-selected / not "Any time") — the bar badge. */
+  narrowedCount: number;
   toggleStatus: (f: StatusFacet) => void;
   toggleFormat: (f: FormatFacet) => void;
   toggleAccess: (f: AccessFacet) => void;
+  /** Per-group "All" — re-select every value in that axis. */
+  allStatus: () => void;
+  allFormat: () => void;
+  allAccess: () => void;
   setUpdated: (w: UpdatedWindow) => void;
   reset: () => void;
 }
@@ -99,9 +105,17 @@ export function useDocBrowse(docs: DocRow[], now: number = Date.now()): DocBrows
       updated,
       counts,
       active: isFilterActive(status, format, access, updated),
+      narrowedCount:
+        (status.size < ALL_STATUS.size ? 1 : 0) +
+        (format.size < ALL_FORMAT.size ? 1 : 0) +
+        (access.size < ALL_ACCESS.size ? 1 : 0) +
+        (updated !== "any" ? 1 : 0),
       toggleStatus: (f) => setStatus((s) => toggle(s, f)),
       toggleFormat: (f) => setFormat((s) => toggle(s, f)),
       toggleAccess: (f) => setAccess((s) => toggle(s, f)),
+      allStatus: () => setStatus(ALL_STATUS),
+      allFormat: () => setFormat(ALL_FORMAT),
+      allAccess: () => setAccess(ALL_ACCESS),
       setUpdated,
       reset: () => {
         setStatus(ALL_STATUS);
