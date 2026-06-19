@@ -30,6 +30,9 @@ function rowToProject(row: typeof projects.$inferSelect): ProjectRow {
 export function createProjectRepo(db: DB): ProjectRepo {
   return {
     async insert(input): Promise<ProjectRow> {
+      // onConflictDoNothing covers the ONE unique index on projects — the partial
+      // `projects_default_uq` (C-011). A non-default insert never conflicts; a concurrent
+      // first-create of a default project does, and the loser gets an empty `returning()`.
       const [row] = await db
         .insert(projects)
         .values({
@@ -38,8 +41,24 @@ export function createProjectRepo(db: DB): ProjectRepo {
           ownerId: input.ownerId,
           isDefault: input.isDefault,
         })
+        .onConflictDoNothing()
         .returning();
-      return rowToProject(row!);
+      if (row) return rowToProject(row);
+      // Lost the default-project race (AS-027): the winner already inserted the one default
+      // for this (workspace, owner). Read it back so both callers converge on the same project.
+      const [winner] = await db
+        .select()
+        .from(projects)
+        .where(
+          and(
+            eq(projects.workspaceId, input.workspaceId),
+            eq(projects.ownerId, input.ownerId!),
+            eq(projects.isDefault, true),
+          ),
+        )
+        .limit(1);
+      if (winner) return rowToProject(winner);
+      throw new Error("project insert conflicted but no default project found to read back");
     },
 
     async findById(workspaceId, projectId): Promise<ProjectRow | null> {

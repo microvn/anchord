@@ -81,8 +81,17 @@ export const projects = pgTable(
   },
   (t) => [
     index("projects_workspace_idx").on(t.workspaceId),
-    // Find a user's default project (C-009) without a Postgres-only partial index.
+    // Find a user's default project (C-009): a plain composite index for the lookup.
     index("projects_workspace_owner_idx").on(t.workspaceId, t.ownerId),
+    // Exactly one default project per (workspace, owner) — DB-enforced (mcp-roundtrip C-011 /
+    // workspace-project C-009). This is the at-most-one half (ensureDefaultProject supplies the
+    // at-least-one half); it makes a concurrent first-create race-proof. The `owner_id IS NOT
+    // NULL` guard is required because NULLs are distinct in a unique index and a default project
+    // always has an owner. A partial UNIQUE index is PORTABLE — SQLite has supported it since
+    // 3.8.0 — so it does not violate the CLAUDE.md "avoid Postgres-only features" rule.
+    uniqueIndex("projects_default_uq")
+      .on(t.workspaceId, t.ownerId)
+      .where(sql`${t.isDefault} = true AND ${t.ownerId} IS NOT NULL`),
   ],
 );
 

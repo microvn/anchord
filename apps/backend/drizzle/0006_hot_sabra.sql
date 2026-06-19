@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "projects_default_uq" ON "projects" USING btree ("workspace_id","owner_id") WHERE "projects"."is_default" = true AND "projects"."owner_id" IS NOT NULL;

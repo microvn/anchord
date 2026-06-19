@@ -43,6 +43,13 @@
       "when": 1781840038122,
       "tag": "0005_flawless_champions",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781849222601,
+      "tag": "0006_hot_sabra",
+      "breakpoints": true
     }
   ]
 }
