@@ -2,6 +2,7 @@ import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import type { TokenListItem, CreatedToken, CreateTokenInput } from "@/features/settings/types/tokens";
 
 // mcp-roundtrip S-001 — the Developer settings UI (the FE half of AS-020/AS-021). The token data
@@ -66,18 +67,20 @@ mock.module("@/features/settings/hooks/use-tokens", () => ({
   useRevokeToken: () => ({ mutate: revokeMutate, isPending: false }),
 }));
 
-mock.module("@/features/workspaces/hooks/use-bootstrap", () => ({
-  useBootstrap: () => ({
-    data: {
-      userId: "u-1",
-      activeWorkspaceId: "ws-acme",
-      workspaces: [
-        { id: "ws-acme", name: "acme", slug: "acme", role: "admin", adminName: null },
-        { id: "ws-field", name: "field io", slug: "field-io", role: "member", adminName: "Sam" },
-      ],
-    },
-  }),
-}));
+// The workspace list drives the create-token workspace picker. We DON'T `mock.module` the
+// `use-bootstrap` hook: bun's mock.module is global+persistent, so a hook stub here leaks this
+// file's ws-acme bootstrap into the real-useBootstrap workspaces-ui tests AND (by replacing the
+// module) drops its other exports, breaking any importer of `unwrapEnvelope`. Instead we seed the
+// react-query cache with the bootstrap payload (renderSection, below) so the REAL `useBootstrap`
+// returns it synchronously — no global stub, nothing to leak.
+const BOOTSTRAP = {
+  userId: "u-1",
+  activeWorkspaceId: "ws-acme",
+  workspaces: [
+    { id: "ws-acme", name: "acme", slug: "acme", role: "admin", adminName: null },
+    { id: "ws-field", name: "field io", slug: "field-io", role: "member", adminName: "Sam" },
+  ],
+};
 
 const toastSuccess = mock(() => {});
 const toastError = mock(() => {});
@@ -99,7 +102,10 @@ beforeEach(() => {
 });
 
 function renderSection() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // staleTime Infinity + a pre-seeded cache → useBootstrap reads the bootstrap synchronously and
+  // never hits the (unmocked) network, so the picker has its workspaces on first render.
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  qc.setQueryData(queryKeys.bootstrap(), BOOTSTRAP);
   return render(
     <QueryClientProvider client={qc}>
       <DeveloperSection />
