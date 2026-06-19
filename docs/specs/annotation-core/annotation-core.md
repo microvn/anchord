@@ -19,7 +19,9 @@ See `## Linked Fields`._
 ## Data Model
 
 - **annotations** (anchored to the **doc**, not to a version): `id`, `doc_id`, `type`
-  (range | multi_range | block | doc | suggestion), `anchor` (jsonb: `block_id`, `text_snippet`,
+  (range | multi_range | block | doc | suggestion — the STORED column; `suggestion` is SERVER-DERIVED
+  from a `suggestion` payload at create, NOT a value the create REQUEST sends; the request `type` is the
+  anchor shape only — see API + Clarifications 2026-06-20), `anchor` (jsonb: `block_id`, `text_snippet`,
   `offset`, `length`, `segments[]`), `is_orphaned` (bool), `status` (unresolved |
   resolved), `suggestion` (jsonb, nullable — `{kind: replace|delete, from, to?, against_version}`),
   `suggestion_status` (nullable — pending | accepted | rejected | stale; both `suggestion` and
@@ -247,10 +249,12 @@ it's a suggestion-type annotation that does not edit the doc content itself.
 
 AS-014: Create a replace suggestion
 - **Given:** the reviewer selects a text range
-- **When:** they choose "suggest replace" and enter the replacement content
-- **Then:** a suggestion-type annotation is created (replace, from→to) with the default status;
-  the doc content does NOT change
-- **Data:** replace "24h" → "48h"
+- **When:** they choose "suggest replace" and enter the replacement content, sending the create with an
+  ANCHOR-shaped `type` (range/multi_range — NOT `type:"suggestion"`) plus a `suggestion` payload
+- **Then:** a suggestion-type annotation is created (the server DERIVES the stored type=suggestion from
+  the payload; replace, from→to) with the default status; the doc content does NOT change. A create that
+  sends `type:"suggestion"` as the request type is refused (it is not a valid anchor shape).
+- **Data:** replace "24h" → "48h"; request `type` = range + `suggestion: { from, to, againstVersion }`
 
 AS-015: Accept/reject only changes status, doesn't edit content itself
 - **Given:** a pending suggestion
@@ -518,7 +522,7 @@ by session role (C-009 here = api-core C-005); a forged client role/postMessage 
 
 | Method · Path | Serves | Auth | Request | Success | Errors |
 |---|---|---|---|---|---|
-| `POST /api/w/:workspaceId/docs/:slug/annotations` | S-001 (AS-001/002/003), S-002 (AS-005/006), S-009 (AS-027/028/029 labeled), S-006 (AS-014 suggestion create) | session/guest with comment role | `{ type, anchor, label?, comment?{ body, guestName?, guestEmail? }, suggestion?{ from, to?, againstVersion } }` (Zod; text/image-region; `label` validated ∈ preset set, C-015; `label`+`suggestion` mutually exclusive) | 201 `{ annotationId, commentId? }` — annotation + initial comment persisted in ONE atomic write (C-018) | 400 VALIDATION_ERROR (empty selection AS-004; unknown label AS-028; label+suggestion AS-029), 403 FORBIDDEN (viewer, AS-020 forged role), 404 (no-access doc, AS-021/C-006) |
+| `POST /api/w/:workspaceId/docs/:slug/annotations` | S-001 (AS-001/002/003), S-002 (AS-005/006), S-009 (AS-027/028/029 labeled), S-006 (AS-014 suggestion create) | session/guest with comment role | `{ type?, anchor, label?, comment?{ body, guestName?, guestEmail? }, suggestion?{ from, to?, againstVersion } }` — request `type` is the ANCHOR SHAPE ∈ {range, multi_range, block, doc} (optional, defaults to range); a redline/suggestion is created by carrying a `suggestion` payload, NOT by sending `type:"suggestion"` (the server DERIVES the stored type=suggestion). (Zod; text/image-region; `label` validated ∈ preset set, C-015; `label`+`suggestion` mutually exclusive) | 201 `{ annotationId, commentId? }` — annotation + initial comment persisted in ONE atomic write (C-018) | 400 VALIDATION_ERROR (empty selection AS-004; unknown label AS-028; label+suggestion AS-029; `type:"suggestion"` sent as a request type — not an anchor shape), 403 FORBIDDEN (viewer, AS-020 forged role), 404 (no-access doc, AS-021/C-006) |
 | `GET /api/w/:workspaceId/docs/:slug/annotations` | S-001 (AS-021 read-authz), S-009 (AS-027 serves `label`), S-006 (AS-030 serves suggestion payload + `suggestion_status`) | session (viewer+) | pagination query | 200 `{ items, pagination }` (each item carries `label` when set; and the `suggestion` payload + `suggestion_status` when `type`=suggestion) | 404 (no-access → indistinguishable, C-006) |
 | `POST /api/w/:workspaceId/annotations/:id/comments` | S-003 (AS-008 reply), S-007 (AS-016/017/019 guest) — a REPLY to an ALREADY-EXISTING annotation (the first comment rides the create endpoint, C-018; this path is also `mcp-roundtrip`'s reply tool) | session OR guest (name required) | `{ body, parentId?, guestName?, guestEmail? }` (Zod; body+name sanitized C-008) | 201 `{ commentId }` | 400 VALIDATION_ERROR (empty body/name), 403 FORBIDDEN |
 | `PATCH /api/w/:workspaceId/annotations/:id/resolution` | S-004 (AS-009/010), S-006 (AS-026 decided-suggestion reopen) | session (commenter+; OWNER-only when reopening a DECIDED suggestion, C-016) | `{ resolved }` (Zod) | 200 `{ status }` (reopening a decided suggestion also resets `suggestion_status` → pending) | 403 FORBIDDEN (viewer; non-owner reopening a decided suggestion, AS-026) |
@@ -642,6 +646,20 @@ Backend additions for the annotation type taxonomy (`annotation-core-ui-types-mo
   resolution handler gains this owner-gated reset for a decided suggestion. Distinct from ordinary
   resolve/reopen (C-005, commenter+).
 
+## Clarifications — 2026-06-20
+
+- **Create-annotation request `type` is the ANCHOR SHAPE, distinct from the stored `type` column.** The
+  create REQUEST `type` ∈ {range, multi_range, block, doc} (optional, defaults to range) — it describes
+  the selection shape. A redline / suggestion is conveyed by carrying a `suggestion` payload, and the
+  server DERIVES the stored `annotations.type = "suggestion"` from that payload. Sending
+  `type:"suggestion"` in the request is refused (it is not a valid anchor shape). This reconciles a
+  drift where the FE sent `type:"suggestion"` and the server's create schema (anchor shapes only) refused
+  it with a validation error, so no redline could be created (fixed 2026-06-20, commit 503a6d8). The
+  stored-column enum keeps `suggestion` — that part was always correct. Drift class = the earlier
+  sharing-spec-drift: the FE test mocked the API client, so the request payload-shape mismatch with the
+  real server schema went uncaught; the FE client `type` is now a closed union so a future
+  `type:"suggestion"` is a compile error.
+
 ## Spec Sizing Notes
 
 Stories=9 (target 7, within G7 overage ≤10). AS=30 (target 20, AT the hard cap ≤30).
@@ -678,4 +696,5 @@ AS is now AT the hard cap of 30 — any further AS forces a phase/scope-by-layer
 | 2026-06-14 | Major: + S-009 (labeled annotation Like/Label, AS-027/028/029) + AS-026 (decided-suggestion reopen → pending, owner-only) + C-015 (label validation + label/suggestion mutual-exclusion) + C-016 (decided-reopen owner-only reset); Data Model += `label`/`suggestion`/`suggestion_status` (vá drift, + DEFAULT_LABEL_PRESETS constant); API create += `label?` / GET serves `label` / resolution owner-only on decided reopen; Linked Fields pin label + delete-kind + decided-reopen (producer for annotation-core-ui-types-modes). Snapshot 2026-06-14-4.md | annotation-core-ui-types-modes:GAP-001 |
 | 2026-06-19 | Major (snapshot 2026-06-19.md): + `updated_at` (annotations + comments, Data Model) + C-017 (bumped at every mutation site incl. re-anchor carried/detached + reply→parent; `(updated_at, id)` changed-since query) — producer for mcp-roundtrip:AS-008, resolves mcp:GAP-006; in-spec behavioral AS deferred at the 30-AS cap → GAP-006. C-012 wording de-staled (re-anchor S-005 IS built/wired, runs off-publish-path with the ledger + >25% alert). Linked Fields += updated_at pin. No AS added (cap held at 30). | mcp-roundtrip /mf-challenge GAP-006 |
 | 2026-06-19 | Major (snapshot 2026-06-19-2.md): +C-018 atomic create-with-comment — annotation + first comment persist in ONE transaction, partial failure persists neither (no orphan); create endpoint accepts optional `comment`+`suggestion` (one atomic call), subsuming the standalone suggestion-create; `/comments` = replies to existing annotations only (the MCP reply path). AS-001 Then strengthened. No new AS (at 30-cap). Fixes the orphan-annotation bug (FE created annotation + comment in 2 calls; comment failure left an orphan). | -- |
+| 2026-06-20 | Minor (no snapshot — no M1-M6): clarified the create-annotation REQUEST `type` = anchor shape ∈ {range, multi_range, block, doc} (optional, defaults to range), distinct from the stored `type` column (`suggestion` is server-derived from a `suggestion` payload, never a sent request type). Updated the API create row + Data Model `type` note + AS-014 wording (P1) + added Clarifications 2026-06-20. Reconciles the redline-create drift (FE sent `type:"suggestion"` → server 400; fixed commit 503a6d8). No new AS/constraint (held at 30-AS cap). | /mf-fix 503a6d8 |
 | 2026-06-19 | Major (M6, snapshot 2026-06-19-3.md): the re-anchor matcher (S-005) is EXTRACTED + deepened into the new `annotation-reanchor` sub-spec (S1 model — block_id demoted to a hint, whole-doc text fallback, W3C prefix/suffix context, 0.8 fuzzy threshold, immutable per-(annotation,version) `anchor_resolution` ledger). C-001/C-002 gain delegation pointers (block_id-as-hint now REALIZED via whole-doc fallback; ladder owned by the sub-spec); S-005 description notes "lost block" = text-gone-anywhere, not block-id-changed (fixes the row-delete cascade dogfooded 2026-06-19). GAP-001 resolved → annotation-reanchor C-002/GAP-002 (threshold 0.8, empirical tuning deferred). No AS added to this spec (held at 30-cap; new AS live in the sub-spec). Driven by the cascade investigation + Hypothes.is/W3C research + Plannotator source read + principal-eng review. | annotation-reanchor |

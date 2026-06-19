@@ -1,7 +1,14 @@
+# Snapshot: annotation-reanchor
+**Date:** 2026-06-20
+**Ref:** /mf-build + /mf-fix spec signals (render-HTML invariant + ladder refinements)
+**Reason:** M6 — new Constraint (re-anchor operates on rendered HTML) + new AS (markdown carry); C-002/C-003 refined.
+
+---
+
 # Spec: annotation-reanchor
 
 **Created:** 2026-06-19
-**Last updated:** 2026-06-20
+**Last updated:** 2026-06-19
 **Status:** Draft
 **Snapshot limit:** 5
 
@@ -101,12 +108,6 @@ AS-006: A change below the match threshold detaches, never force-matches
 - **Then:** the annotation is marked detached and kept in the detached list; it is NOT force-anchored onto the closest-but-below-threshold text
 - **Data:** a wholesale reword of the anchored sentence (see GAP-001 — the common LLM-regen case)
 
-AS-011: A markdown doc's unchanged-text annotation carries across a new version (re-anchor on rendered HTML)
-- **Given:** a markdown-kind doc with an annotation anchored to its rendered content; the author publishes a new version whose content is byte-identical to the previous one
-- **When:** the new version is published and re-anchor runs
-- **Then:** the annotation carries (it is NOT detached) — the matcher re-anchors against the version's RENDERED HTML, so the rendered block-ids exist and the text is found; before C-008 the matcher saw raw markdown (zero blocks) and detached every annotation here
-- **Data:** a markdown doc (the common kind), e.g. a `# Heading`; republish the same source unchanged
-
 ### S-002: Disambiguate a duplicate quote in the whole-doc fallback (P1)
 
 **Description:** When the text-search fallback finds the annotation's quote in more than one
@@ -192,17 +193,10 @@ AS-010: A regenerated doc detaches its reworded annotations into the detached li
   → whitespace-normalized → fuzzy; (2) whole-doc flat text — exact → nearest-to-offset → normalized
   → fuzzy; (3) none → detached. The fuzzy tier uses normalized Levenshtein similarity at a **0.8**
   threshold (raised from 0.7: precision over recall — a wrong carry is worse than an honest detach).
-  The fuzzy tier also scores the WHOLE block text against the snippet (not only equal-length windows),
-  so an in-place reword that CHANGES the snippet's length ("24h" → "24 hours") still clears the bar and
-  the carried span follows the new block text — this same shared ladder backs the FE highlighter, so the
-  behaviour is identical in-app and at re-anchor. Resolves `annotation-core:GAP-001`. (AS-001, AS-005, AS-006)
+  Resolves `annotation-core:GAP-001`. (AS-001, AS-005, AS-006)
 - C-003: Precision over recall — the matcher NEVER force-anchors below threshold and NEVER
   mis-anchors. A duplicate quote in the whole-doc fallback is disambiguated by `prefix`/`suffix`
-  context plus nearest-`offset`, not first-match. Candidate ranking also prefers the **most specific
-  (innermost / smallest) block** that contains the match: a nested PARENT container (a `<table>`/`<tr>`
-  whose concatenated text spans its cells) must never win over the actual `<td>` cell that holds the
-  snippet, so a cell anchor re-anchors to its cell, not the surrounding container. When nothing clears
-  the bar → detach. (AS-003, AS-006, AS-007)
+  context plus nearest-`offset`, not first-match. When nothing clears the bar → detach. (AS-003, AS-006, AS-007)
 - C-004: `prefix`/`suffix` (≤32 chars each) are captured at selection time in the shared anchor
   module and stored in the `anchor` jsonb. An anchor lacking them degrades to `text_snippet`+`offset`
   matching (no worse than today). (AS-003, AS-007)
@@ -214,15 +208,6 @@ AS-010: A regenerated doc detaches its reworded annotations into the detached li
   `annotation-core:AS-018`; this ladder is what each segment runs. (cross-ref `annotation-core:AS-018`)
 - C-007: A detached annotation is kept in the detached list (`annotation-core:S-008`/C-013) — never
   silently dropped — and can be re-attached or dismissed. (AS-003, AS-006, AS-010)
-- C-008: Re-anchor AND anchor-placement validation (the re-attach + create-anchor "does this range
-  place against the current version?" check) operate on the version's **rendered HTML**, never the raw
-  stored content. A markdown doc's stored content is markdown source; the positional `block_id`s the
-  ladder needs (`block-h1-1`, `block-td-7`, …) are injected at RENDER time, so they do not exist in the
-  source. The render step is the SAME one the viewer uses (markdown → rendered HTML; an html doc passes
-  through unchanged; image is N/A). Without it the ladder sees zero blocks and EVERY annotation detaches
-  on every new version — even when the text is byte-identical — and re-attach is refused on markdown
-  docs. The doc `kind` is carried into the re-anchor input (required, so a caller cannot forget to
-  render). (AS-011) — scope: S-001 (publish/new-version), `annotation-core:S-008` (re-attach), `annotation-core:S-001` (create-anchor validation).
 
 ## Linked Fields
 
@@ -295,4 +280,3 @@ AS-010: A regenerated doc detaches its reworded annotations into the detached li
 | Date | Change | Ref |
 |------|--------|-----|
 | 2026-06-19 | Initial creation (Mode A) — extracted + deepened from `annotation-core:S-005`. The "S1" content-anchored re-anchor model: block_id demoted to a hint, whole-doc text fallback, W3C prefix/suffix context, 0.8 fuzzy threshold (resolves annotation-core:GAP-001), immutable per-(annotation,version) `anchor_resolution` ledger (persists annotation-core:C-012). Kills the row-delete cascade (dogfooded 2026-06-19). Validated vs Hypothes.is/W3C + Plannotator source + principal-eng review. Stages 0/2/3 (structural-diff, semantic, agent-patch) deferred to v0.5; full-rewrite limitation recorded GAP-001. | annotation-core:S-005 |
-| 2026-06-20 | Major (M6, snapshot 2026-06-20-reanchor-render-html.md): + C-008 (re-anchor AND re-attach/create-anchor validation operate on the version's RENDERED HTML; markdown is rendered first because positional block-ids are injected at render time; doc `kind` carried into the re-anchor input, required) + AS-011 (a markdown doc's unchanged-text annotation carries across a new version). Refined C-002 (fuzzy tier also scores whole-block-vs-snippet so a length-changing reword still carries; shared with the FE highlighter) + C-003 (candidate ranking prefers the innermost/most-specific block — a cell, not its parent table/row). Captures the /mf-fix render-markdown signal (commit 9225044, live-verified: publish markdown v2 unchanged → carries; re-attach markdown → succeeds) + the /mf-build S-001/S-002 ladder refinements. | /mf-fix 9225044 + /mf-build S-001/S-002 |
