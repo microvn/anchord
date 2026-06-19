@@ -28,22 +28,29 @@
 // integration / ops [→MANUAL] — see the integration note; not built here.
 
 import { Window } from "happy-dom";
-import { extractText } from "@anchord/anchor";
+import { extractText, locateRange } from "@anchord/anchor";
 import { injectBlockIds } from "./block-id";
 import type { Anchor, AnchorSegment } from "./annotation";
 
 /**
- * GAP-001 (fuzzy threshold) is OPEN — tuning deferred. We use normalized Levenshtein
- * similarity (1 - dist/maxLen) and carry a fuzzy match only at or above this bound.
- * 0.7 keeps small edits ("24h" → "48 hours") together while rejecting unrelated text;
- * picked as a working default, not yet empirically tuned (see GAP-001).
+ * annotation-reanchor:C-002 — fuzzy tier threshold, RAISED 0.7 → 0.8 (precision over recall: a
+ * wrong carry is worse than an honest detach; resolves annotation-core:GAP-001). Normalized
+ * Levenshtein similarity (1 - dist/maxLen); carry a fuzzy match only at or above this bound.
+ * Mirrors `packages/anchor/src/locate.ts` FUZZY_THRESHOLD — the SAME shared ladder, one constant.
+ * Still a working default, not yet empirically tuned (annotation-reanchor:GAP-002).
  */
-export const FUZZY_SIMILARITY_THRESHOLD = 0.7;
+export const FUZZY_SIMILARITY_THRESHOLD = 0.8;
+
+/** Chars of stored prefix/suffix context that must agree for a WHOLE-DOC match (C-003/AS-003). */
+const CONTEXT_MATCH_CAP = 32;
 
 /** A re-anchored annotation (its anchor updated to the new content positions). */
 export interface ReanchorCarried {
   status: "carried";
   anchor: Anchor;
+  /** Which ladder tier won (C-002) — recorded for the S-003 resolution ledger + AS assertions.
+   *  For a multi_range, this is the LOWEST-confidence tier across its segments (the weakest link). */
+  method: ReanchorMethod;
 }
 
 /** An annotation that no block/snippet in the new content could match. */
@@ -101,6 +108,41 @@ export function extractBlockText(html: string, blockId: string): string | null {
   }
 }
 
+/**
+ * Enumerate EVERY addressable block in the (block-id-injected) HTML as `{blockId, text}`, in
+ * document order, each block's text pulled through the SAME shared `extractText` walk as
+ * `extractBlockText` (C-011 — ONE extractor). This is the substrate of the C-001 whole-doc
+ * fallback: when the stored `block_id` hint misses (block gone, or text shifted to a different,
+ * renumbered block — the cascade bug), the matcher locates the snippet over ALL of these blocks,
+ * not just the hinted one. Never throws — a parse failure degrades to `[]`.
+ */
+export function extractAllBlocks(html: string): { blockId: string; text: string }[] {
+  let win: Window | null = null;
+  try {
+    win = new Window();
+    win.document.body.innerHTML = html;
+    const out: { blockId: string; text: string }[] = [];
+    // Match either block-id form injectBlockIds emits.
+    const els = win.document.querySelectorAll("[data-block-id], [id^='block-']");
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i] as unknown as Element;
+      const blockId = el.getAttribute("data-block-id") ?? el.getAttribute("id");
+      if (!blockId) continue;
+      const text = extractText(el as unknown as Parameters<typeof extractText>[0]);
+      out.push({ blockId, text });
+    }
+    return out;
+  } catch {
+    return [];
+  } finally {
+    try {
+      win?.happyDOM?.close?.();
+    } catch {
+      /* best-effort teardown */
+    }
+  }
+}
+
 // --- fuzzy similarity (small, dependency-free Levenshtein) ---
 
 /** Levenshtein edit distance between two strings (iterative, O(len*len) space-light). */
@@ -130,38 +172,11 @@ export function similarity(a: string, b: string): number {
   return maxLen === 0 ? 1 : 1 - dist / maxLen;
 }
 
-/**
- * Find the best fuzzy position of `snippet` within `blockText`: slide a window of the
- * snippet's length across the block and keep the highest-similarity offset. Returns the
- * best offset + its similarity. (Window length is clamped to the block length so a
- * snippet longer than the block still gets compared against the whole block.)
- */
-function bestFuzzyMatch(
-  blockText: string,
-  snippet: string,
-): { offset: number; score: number } {
-  if (blockText.length === 0) {
-    return { offset: 0, score: similarity(blockText, snippet) };
-  }
-  const win = Math.min(snippet.length, blockText.length);
-  let best = { offset: 0, score: -1 };
-  // Compare full-block too (handles length growth like "24h" → "48 hours").
-  const candidates = new Set<number>();
-  for (let i = 0; i + win <= blockText.length; i++) candidates.add(i);
-  candidates.add(0); // ensure at least one window for tiny blocks
-  for (const i of candidates) {
-    const score = similarity(blockText.slice(i, i + win), snippet);
-    if (score > best.score) best = { offset: i, score };
-  }
-  // Also score the whole-block-vs-snippet (captures a length change in one block).
-  const whole = similarity(blockText, snippet);
-  if (whole > best.score) {
-    best = { offset: blockText.indexOf(snippet) >= 0 ? blockText.indexOf(snippet) : 0, score: whole };
-  }
-  return best;
-}
 
 // --- single-segment re-anchor ---
+
+/** Which ladder tier won — recorded for the resolution ledger (S-003) + AS assertions. */
+export type ReanchorMethod = "exact" | "nearest" | "normalized" | "fuzzy";
 
 interface SegmentReanchor {
   status: "carried";
@@ -169,50 +184,167 @@ interface SegmentReanchor {
   textSnippet: string;
   offset: number;
   length: number;
+  method: ReanchorMethod;
+}
+
+interface SegmentToReanchor {
+  blockId: string;
+  textSnippet: string;
+  offset: number;
+  length: number;
+  prefix?: string;
+  suffix?: string;
 }
 
 /**
- * Re-anchor one (block_id, text_snippet, offset, length) segment onto `newContentHtml`
- * (already block-id-injected by the caller). Returns the updated segment when carried,
- * or null when the segment orphans (block gone, or fuzzy below threshold).
+ * Whether the stored prefix/suffix context (C-004) agrees with the block context surrounding a
+ * candidate whole-doc match at [start,end). The guard that stops a whole-doc match from carrying
+ * onto a COINCIDENTAL same-text mention in unrelated context (AS-003 — "transaction_id" in a prose
+ * paragraph after the table cell was deleted). We compare the tail of the stored `prefix` against
+ * the text immediately before the match, and the head of the stored `suffix` against the text
+ * immediately after — both must agree (suffix-of-prefix / prefix-of-suffix so a CONTEXT_CAP cap
+ * difference doesn't cause a false miss).
+ *
+ * DEGRADE (C-004): an anchor lacking BOTH prefix and suffix (an old anchor) returns true — it has
+ * no context to check, so it degrades to text_snippet+offset matching, no worse than before.
+ */
+function contextMatches(
+  blockText: string,
+  start: number,
+  end: number,
+  prefix: string | undefined,
+  suffix: string | undefined,
+): boolean {
+  // C-004 DEGRADE: BOTH context fields ABSENT (undefined — an old anchor) → no context to check, so
+  // it degrades to text_snippet+offset matching (no worse than before). A PRESENT-but-EMPTY string
+  // is NOT the degrade case: it means the selection genuinely touched the block boundary (nothing
+  // before/after in the original block), which is itself context that a mid-prose mention violates.
+  if (prefix === undefined && suffix === undefined) return true;
+
+  if (prefix !== undefined) {
+    const actualBefore = blockText.slice(Math.max(0, start - CONTEXT_MATCH_CAP), start);
+    if (prefix.length === 0) {
+      // Stored context was the block START — the candidate must also sit at its block start.
+      if (actualBefore.length > 0) return false;
+    } else {
+      // Require the OVERLAPPING tail to agree (a shorter actual context still matches a longer stored).
+      const n = Math.min(prefix.length, actualBefore.length);
+      if (n === 0) return false; // stored a prefix but the candidate sits at block start → mismatch.
+      if (prefix.slice(prefix.length - n) !== actualBefore.slice(actualBefore.length - n)) return false;
+    }
+  }
+  if (suffix !== undefined) {
+    const actualAfter = blockText.slice(end, end + CONTEXT_MATCH_CAP);
+    if (suffix.length === 0) {
+      // Stored context was the block END — the candidate must also sit at its block end.
+      if (actualAfter.length > 0) return false;
+    } else {
+      const n = Math.min(suffix.length, actualAfter.length);
+      if (n === 0) return false; // stored a suffix but the candidate sits at block end → mismatch.
+      if (suffix.slice(0, n) !== actualAfter.slice(0, n)) return false;
+    }
+  }
+  return true;
+}
+
+/** Run the shared locate ladder within one block, reporting which tier hit. Mirrors the
+ *  `packages/anchor/src/locate.ts` ladder (exact → nearest → normalized → fuzzy) and labels the
+ *  winning method by re-deriving it from the located range (C-002, ONE shared matcher). */
+function locateInBlock(
+  blockText: string,
+  snippet: string,
+  offset: number,
+): { start: number; end: number; method: ReanchorMethod } | null {
+  const range = locateRange(blockText, snippet, offset);
+  if (!range) return null;
+  const hit = blockText.slice(range.start, range.end);
+  let method: ReanchorMethod;
+  if (hit === snippet) {
+    // Exact text. Distinguish exact-at-offset from a nearest-occurrence carry.
+    method = range.start === offset ? "exact" : "nearest";
+  } else if (normalize(hit) === normalize(snippet)) {
+    method = "normalized";
+  } else {
+    method = "fuzzy";
+  }
+  return { start: range.start, end: range.end, method };
+}
+
+/** Whitespace-collapse used only to LABEL the normalized tier (the locate ladder owns the match). */
+function normalize(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Re-anchor one segment onto `injected` (already block-id-injected HTML) via the C-002 ladder:
+ *
+ *   1. HINTED block (the stored `block_id`) — exact → nearest → normalized → fuzzy.
+ *      block_id is a HINT, not a gate (C-001): a miss here does NOT orphan; it falls through.
+ *   2. WHOLE-DOC fallback — run the SAME locate ladder over EVERY block; among the blocks where
+ *      the snippet locates, ACCEPT only those whose surrounding context matches the stored
+ *      prefix/suffix (C-003/AS-003 — reject a coincidental same-text mention). Carry the best
+ *      (lowest-tier, then context-confirmed) candidate. This is what kills the cascade bug
+ *      (AS-002) and carries a moved block (AS-004): the durable key is the text, not the position.
+ *   3. none → null (orphan, AS-003/AS-006).
+ *
+ * Returns the updated segment + winning method when carried, null when it orphans.
  */
 function reanchorSegment(
   injected: string,
-  segment: { blockId: string; textSnippet: string; offset: number; length: number },
+  segment: SegmentToReanchor,
   threshold: number,
 ): SegmentReanchor | null {
-  const blockText = extractBlockText(injected, segment.blockId);
-  if (blockText === null) return null; // AS-013: block fully deleted → orphan.
-
-  // AS-011: exact snippet present → carry, recompute offset in the new block text.
-  const exactAt = blockText.indexOf(segment.textSnippet);
-  if (exactAt !== -1) {
-    return {
-      status: "carried",
-      blockId: segment.blockId,
-      textSnippet: segment.textSnippet,
-      offset: exactAt,
-      length: segment.textSnippet.length,
-    };
+  // --- Tier 1: hinted block (C-001 hint path) ---
+  const hintBlockText = extractBlockText(injected, segment.blockId);
+  if (hintBlockText !== null) {
+    const hit = locateInBlock(hintBlockText, segment.textSnippet, segment.offset);
+    if (hit && segmentScore(hintBlockText, hit.start, hit.end, segment.textSnippet) >= threshold) {
+      return {
+        status: "carried",
+        blockId: segment.blockId,
+        textSnippet: hintBlockText.slice(hit.start, hit.end),
+        offset: hit.start,
+        length: hit.end - hit.start,
+        method: hit.method,
+      };
+    }
   }
 
-  // AS-012: snippet changed slightly but block still exists → fuzzy match within block.
-  const { offset, score } = bestFuzzyMatch(blockText, segment.textSnippet);
-  if (score >= threshold) {
-    // Carry at the best position; snippet/length follow the NEW block text window so
-    // the carried anchor points at real content in the new version.
-    const win = Math.min(segment.textSnippet.length, Math.max(blockText.length - offset, 0));
-    const carriedSnippet = blockText.slice(offset, offset + win) || blockText;
-    return {
-      status: "carried",
-      blockId: segment.blockId,
-      textSnippet: carriedSnippet,
-      offset,
-      length: carriedSnippet.length,
-    };
+  // --- Tier 2: whole-doc fallback (C-001 hint MISS → search ALL blocks) ---
+  const blocks = extractAllBlocks(injected);
+  const methodRank: Record<ReanchorMethod, number> = { exact: 0, nearest: 1, normalized: 2, fuzzy: 3 };
+  let best: SegmentReanchor | null = null;
+  let bestRank = Infinity;
+  for (const block of blocks) {
+    if (block.blockId === segment.blockId && hintBlockText !== null) continue; // already tried as the hint.
+    const hit = locateInBlock(block.text, segment.textSnippet, segment.offset);
+    if (!hit) continue;
+    if (segmentScore(block.text, hit.start, hit.end, segment.textSnippet) < threshold) continue;
+    // C-003/AS-003: a whole-doc match must agree with the stored prefix/suffix context — this is
+    // what rejects the coincidental prose mention of a deleted table cell's word.
+    if (!contextMatches(block.text, hit.start, hit.end, segment.prefix, segment.suffix)) continue;
+    const rank = methodRank[hit.method];
+    if (rank < bestRank) {
+      bestRank = rank;
+      best = {
+        status: "carried",
+        blockId: block.blockId,
+        textSnippet: block.text.slice(hit.start, hit.end),
+        offset: hit.start,
+        length: hit.end - hit.start,
+        method: hit.method,
+      };
+      if (rank === 0) break; // an exact whole-doc hit can't be beaten.
+    }
   }
+  return best; // null → orphan (AS-003/AS-006).
+}
 
-  return null; // fuzzy below threshold → orphan.
+/** Similarity of a located window against the stored snippet — the precision gate shared by both
+ *  tiers so a below-threshold "located" range never carries (C-002/C-003). Exact/normalized hits
+ *  score 1; a fuzzy hit scores its real similarity. */
+function segmentScore(blockText: string, start: number, end: number, snippet: string): number {
+  return similarity(blockText.slice(start, end), snippet);
 }
 
 /**
@@ -230,23 +362,31 @@ export function reanchorAnnotation(
   const threshold = opts.fuzzyThreshold ?? FUZZY_SIMILARITY_THRESHOLD;
   const injected = injectBlockIds(newContentHtml);
 
-  // multi_range: all-or-nothing across segments (AS-018).
+  const methodRank: Record<ReanchorMethod, number> = { exact: 0, nearest: 1, normalized: 2, fuzzy: 3 };
+
+  // multi_range: all-or-nothing across segments (C-006/AS-018).
   if (anchor.segments && anchor.segments.length > 0) {
     const carriedSegments: AnchorSegment[] = [];
+    let worst: ReanchorMethod = "exact";
     for (const seg of anchor.segments) {
       const r = reanchorSegment(injected, seg, threshold);
-      if (r === null) return { status: "orphaned" }; // any segment lost → whole detaches.
+      if (r === null) return { status: "orphaned" }; // any segment lost → whole detaches (C-006).
+      if (methodRank[r.method] > methodRank[worst]) worst = r.method;
       carriedSegments.push({
         blockId: r.blockId,
         textSnippet: r.textSnippet,
         offset: r.offset,
         length: r.length,
+        // C-004: preserve the stored context on the carried segment for the next re-anchor.
+        ...(seg.prefix != null ? { prefix: seg.prefix } : {}),
+        ...(seg.suffix != null ? { suffix: seg.suffix } : {}),
       });
     }
     // Primary anchor fields track the first segment for a carried multi_range.
     const first = carriedSegments[0];
     return {
       status: "carried",
+      method: worst,
       anchor: {
         ...anchor,
         blockId: first.blockId,
@@ -266,12 +406,15 @@ export function reanchorAnnotation(
       textSnippet: anchor.textSnippet,
       offset: anchor.offset,
       length: anchor.length,
+      prefix: anchor.prefix,
+      suffix: anchor.suffix,
     },
     threshold,
   );
   if (r === null) return { status: "orphaned" };
   return {
     status: "carried",
+    method: r.method,
     anchor: {
       ...anchor,
       blockId: r.blockId,
@@ -297,6 +440,8 @@ export interface ReanchorLedgerEntry {
   status: "carried" | "orphaned";
   /** The re-anchored anchor when carried; absent when orphaned. */
   anchor?: Anchor;
+  /** The winning ladder tier (C-002) when carried — the seam the S-003 resolution row records. */
+  method?: ReanchorMethod;
 }
 
 export interface CarriedAnnotation {
@@ -370,7 +515,7 @@ export function reanchorForVersion(
       const result = reanchorAnnotation(ann.anchor, injected, opts);
       entry =
         result.status === "carried"
-          ? { annotationId: ann.id, versionId, status: "carried", anchor: result.anchor }
+          ? { annotationId: ann.id, versionId, status: "carried", anchor: result.anchor, method: result.method }
           : { annotationId: ann.id, versionId, status: "orphaned" };
       seen.set(key, entry);
       ledger.push(entry);

@@ -48,6 +48,32 @@ test("AS-004: selection inside a plain id=\"block-p-1\" block → {blockId,textS
   expect(anchor!.length).toBe(7);
 });
 
+test("C-004: selectionToAnchor captures prefix/suffix context (≤32 chars) at selection time", () => {
+  // annotation-reanchor:C-004 — the selection "expires" sits at [8,15) of "Payment expires after 24h".
+  const { doc, win } = dom('<p id="block-p-1">Payment expires after 24h</p>');
+  const sel = selectChars(win, doc, "p", 8, 15);
+  const anchor = selectionToAnchor(sel, doc)!;
+  expect(anchor.textSnippet).toBe("expires");
+  // prefix = up to 32 chars BEFORE the selection; suffix = up to 32 chars AFTER.
+  expect(anchor.prefix).toBe("Payment ");
+  expect(anchor.suffix).toBe(" after 24h");
+  // The primary segment carries the same context.
+  expect(anchor.segments![0].prefix).toBe("Payment ");
+  expect(anchor.segments![0].suffix).toBe(" after 24h");
+  // Cap: each side is at most 32 chars.
+  expect(anchor.prefix!.length).toBeLessThanOrEqual(32);
+  expect(anchor.suffix!.length).toBeLessThanOrEqual(32);
+});
+
+test("C-004: a selection at the block START captures an empty prefix (boundary context, not absent)", () => {
+  const { doc, win } = dom('<p id="block-p-1">Payment expires after 24h</p>');
+  const sel = selectChars(win, doc, "p", 0, 7); // "Payment" at the very start
+  const anchor = selectionToAnchor(sel, doc)!;
+  expect(anchor.textSnippet).toBe("Payment");
+  expect(anchor.prefix).toBe(""); // present-but-empty: nothing precedes it in the block
+  expect(anchor.suffix).toBe(" expires after 24h");
+});
+
 test("AS-004: data-block-id form resolves the same way (data-block-id wins)", () => {
   const { doc, win } = dom('<p data-block-id="block-p-1" id="authors-own">Payment expires after 24h</p>');
   const sel = selectChars(win, doc, "p", 0, 7);

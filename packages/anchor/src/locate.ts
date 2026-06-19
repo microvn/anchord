@@ -15,7 +15,9 @@
 //      forced bogus match.
 //   5. zero → null (couldn't place, GAP-005).
 
-const FUZZY_THRESHOLD = 0.7;
+// annotation-reanchor:C-002 — fuzzy tier threshold RAISED 0.7 → 0.8 (precision over recall: a
+// wrong carry is worse than an honest detach). Mirrors reanchor.ts FUZZY_SIMILARITY_THRESHOLD.
+const FUZZY_THRESHOLD = 0.8;
 
 /**
  * Locate the [start,end) char range of `snippet` within `blockText`, in the C-008 ladder. Returns
@@ -125,6 +127,7 @@ export function fuzzyLocate(
   const len = snippet.length;
   if (len === 0 || text.length === 0) return null;
   let best = -1;
+  let bestEnd = -1;
   let bestScore = 0;
   const last = Math.max(0, text.length - len);
   for (let i = 0; i <= last; i++) {
@@ -133,10 +136,21 @@ export function fuzzyLocate(
     if (score > bestScore) {
       bestScore = score;
       best = i;
+      bestEnd = i + len;
     }
   }
+  // Also score the WHOLE text vs the snippet: a same-length window can't capture an in-place LENGTH
+  // change (e.g. "24h" → "24 hours" lengthens the block), so without this a small reword in a short
+  // block would never clear the bar. When the whole-text comparison wins, the carry covers the whole
+  // block (the reworded content lives across the new length). (annotation-reanchor:AS-005)
+  const wholeScore = similarity(text, snippet);
+  if (wholeScore > bestScore) {
+    bestScore = wholeScore;
+    best = 0;
+    bestEnd = text.length;
+  }
   if (best < 0 || bestScore < threshold) return null;
-  return { start: best, end: best + len };
+  return { start: best, end: bestEnd };
 }
 
 /** Normalized Levenshtein similarity in [0,1] (1 = identical). */

@@ -12,7 +12,7 @@ export type {
   UnwrapNodeLike,
   UnwrapDocumentLike,
 } from "./types";
-export { SNIPPET_CAP, BLOCK_SELECTOR, ELEMENT_NODE, TEXT_NODE } from "./types";
+export { SNIPPET_CAP, CONTEXT_CAP, BLOCK_SELECTOR, ELEMENT_NODE, TEXT_NODE } from "./types";
 export { locateRange, nearestOccurrence, normalizeWithMap, fuzzyLocate, similarity, levenshtein } from "./locate";
 export {
   selectionToAnchor,

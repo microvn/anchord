@@ -16,6 +16,7 @@ import {
   ELEMENT_NODE,
   TEXT_NODE,
   SNIPPET_CAP,
+  CONTEXT_CAP,
 } from "./types";
 import { locateRange } from "./locate";
 
@@ -196,7 +197,19 @@ export function selectionToAnchor(selection: SelectionLike | null, doc: Document
     const textSnippet = blockText.slice(lo, hi).slice(0, SNIPPET_CAP);
     if (textSnippet.trim().length === 0) return null;
     const blockId = blockIdOf(startBlock)!;
-    return { blockId, textSnippet, offset: lo, length: textSnippet.length, segments: [{ blockId, offset: lo, length: textSnippet.length, textSnippet }] };
+    // C-004: capture ≤CONTEXT_CAP chars of block text on each side of the selection (W3C
+    // TextQuoteSelector). The selection slice is [lo, lo+length) in the block text.
+    const prefix = blockText.slice(Math.max(0, lo - CONTEXT_CAP), lo);
+    const suffix = blockText.slice(lo + textSnippet.length, lo + textSnippet.length + CONTEXT_CAP);
+    return {
+      blockId,
+      textSnippet,
+      offset: lo,
+      length: textSnippet.length,
+      prefix,
+      suffix,
+      segments: [{ blockId, offset: lo, length: textSnippet.length, textSnippet, prefix, suffix }],
+    };
   }
 
   // Cross-block: one segment per intersected LEAF block — start partial, full middles, end partial.
@@ -214,11 +227,22 @@ export function selectionToAnchor(selection: SelectionLike | null, doc: Document
       slice = blockText.slice(0, end);
     }
     const textSnippet = slice.slice(0, SNIPPET_CAP);
-    return { blockId, offset, length: textSnippet.length, textSnippet };
+    // C-004: per-segment context from its own block text, around this segment's span.
+    const prefix = blockText.slice(Math.max(0, offset - CONTEXT_CAP), offset);
+    const suffix = blockText.slice(offset + textSnippet.length, offset + textSnippet.length + CONTEXT_CAP);
+    return { blockId, offset, length: textSnippet.length, textSnippet, prefix, suffix };
   });
 
   const first = segments[0]!;
-  return { blockId: first.blockId, textSnippet: first.textSnippet, offset: first.offset, length: first.length, segments };
+  return {
+    blockId: first.blockId,
+    textSnippet: first.textSnippet,
+    offset: first.offset,
+    length: first.length,
+    prefix: first.prefix,
+    suffix: first.suffix,
+    segments,
+  };
 }
 
 function cssEscape(id: string): string {

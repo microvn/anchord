@@ -26,6 +26,15 @@ export interface AnchorSegment {
   textSnippet: string;
   offset: number;
   length: number;
+  /**
+   * annotation-reanchor:C-004 — W3C TextQuoteSelector context: ≤32 chars of block text
+   * immediately before (`prefix`) / after (`suffix`) the selection, captured at create.
+   * Used by the whole-doc re-anchor fallback to reject a coincidental same-text mention
+   * in different context (AS-003). Optional — an old anchor lacking them degrades to
+   * text_snippet+offset matching.
+   */
+  prefix?: string;
+  suffix?: string;
 }
 
 /**
@@ -38,6 +47,12 @@ export interface Anchor {
   textSnippet: string;
   offset: number;
   length: number;
+  /**
+   * annotation-reanchor:C-004 — W3C TextQuoteSelector context for the PRIMARY segment (≤32 chars
+   * each). Optional; absent on an old anchor (degrades to text_snippet+offset matching).
+   */
+  prefix?: string;
+  suffix?: string;
   /** Present only for multi_range; a single range omits it. */
   segments?: AnchorSegment[];
   /**

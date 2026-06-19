@@ -12,6 +12,15 @@ export interface AnchorSegment {
   textSnippet: string;
   offset: number;
   length: number;
+  /**
+   * W3C TextQuoteSelector context (annotation-reanchor:C-004): up to `CONTEXT_CAP` chars of the
+   * block text IMMEDIATELY BEFORE the selection (`prefix`) and AFTER it (`suffix`), captured at
+   * selection time and stored verbatim. Used by the whole-doc re-anchor fallback to reject a
+   * coincidental same-text mention whose surrounding context differs (AS-003). OPTIONAL — an
+   * anchor lacking them degrades to text_snippet+offset matching (no worse than before).
+   */
+  prefix?: string;
+  suffix?: string;
 }
 
 /**
@@ -24,6 +33,12 @@ export interface Anchor {
   textSnippet: string;
   offset: number;
   length: number;
+  /**
+   * W3C TextQuoteSelector context (annotation-reanchor:C-004) for the PRIMARY segment — see
+   * AnchorSegment. OPTIONAL; absent on an old anchor (degrades to text_snippet+offset).
+   */
+  prefix?: string;
+  suffix?: string;
   /** Present only for a multi_range (cross-block) selection; a single range omits it. */
   segments?: AnchorSegment[];
 }
@@ -81,6 +96,9 @@ export const TEXT_NODE = 3;
 
 /** Max chars stored in text_snippet — keeps the anchor jsonb bounded. */
 export const SNIPPET_CAP = 400;
+
+/** Max chars of prefix/suffix context stored per segment (annotation-reanchor:C-004). */
+export const CONTEXT_CAP = 32;
 
 /** CSS selector matching either block-id attribute form (plain `id="block-…"` OR `data-block-id`). */
 export const BLOCK_SELECTOR = '[data-block-id], [id^="block-"]';
