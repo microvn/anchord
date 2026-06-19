@@ -16,6 +16,12 @@ import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
 import { docMoveRoutes, type DocMoveRoutesDeps } from "./routes/doc-move";
 import { inviteRoutes, type InviteRoutesDeps } from "./routes/invite";
 import { authProvidersRoutes, type AuthProvidersRoutesDeps } from "./routes/auth-providers";
+import {
+  mcpTransportRoutes,
+  mcpTokenRoutes,
+  type McpTransportDeps,
+  type McpTokenRoutesDeps,
+} from "./routes/mcp";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
@@ -172,6 +178,19 @@ export type AppDeps = {
    * it unmounted.
    */
   authProviders?: AuthProvidersRoutesDeps;
+  /**
+   * mcp-roundtrip S-001: the agent MCP transport at POST /mcp. Mounted on a BARE Elysia with
+   * NO apiEnvelope, so responses are raw JSON-RPC, not enveloped (C-005/AS-023). Origin is
+   * validated against the allowlist; the bearer is redacted from logs (C-014); the token is
+   * re-validated on EVERY request (C-001/AS-022). Omit to leave /mcp unmounted.
+   */
+  mcp?: McpTransportDeps;
+  /**
+   * mcp-roundtrip S-001: the Developer-settings PAT web surface (enveloped, session-gated) —
+   * GET/POST/DELETE /api/me/tokens (list/create/revoke; plaintext shown once — AS-020/AS-021).
+   * Distinct from the `mcp` transport. Omit to leave the token-management routes unmounted.
+   */
+  mcpTokens?: McpTokenRoutesDeps;
 };
 
 /**
@@ -309,6 +328,20 @@ export function createApp(deps: AppDeps) {
   // those buttons; no creds leak.
   if (deps.authProviders) {
     app.use(authProvidersRoutes(deps.authProviders));
+  }
+
+  // /api/me/tokens — mcp-roundtrip S-001 PAT management (Developer settings). Self-enveloped +
+  // session-gated, mounted outside /api/auth/*. List/create/revoke the caller's tokens.
+  if (deps.mcpTokens) {
+    app.use(mcpTokenRoutes(deps.mcpTokens));
+  }
+
+  // /mcp — mcp-roundtrip S-001 agent transport. A BARE Elysia (NO apiEnvelope), so responses
+  // stay raw JSON-RPC (C-005/AS-023). MUST be mounted outside any enveloped group — the
+  // envelope is opt-in via apiEnvelope(), which this route never calls, and the enveloped
+  // groups above each scope their onAfterHandle to their own sub-app, so none reaches here.
+  if (deps.mcp) {
+    app.use(mcpTransportRoutes(deps.mcp));
   }
 
   // Resolve the caller for the access-gated content route: the better-auth session

@@ -25,6 +25,8 @@ import {
 import { runReanchorForNewVersion } from "./annotation/reanchor-job";
 import { createIsActiveMemberName } from "./routes/annotations";
 import { createCommentRateLimiter } from "./annotation/comment-rate-limit";
+import { createApiTokenRepo } from "./mcp/token-repo";
+import { McpRateLimiter } from "./mcp/rate-limit";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -92,6 +94,13 @@ const isWorkspaceAdminForDoc = async (docId: string, userId: string): Promise<bo
 // path workspace), so it does not need to re-resolve the doc's workspace.
 const isWorkspaceAdmin = (workspaceId: string, userId: string) =>
   wsAccess.isWorkspaceAdminFor(workspaceId, userId);
+
+// mcp-roundtrip S-001: the shared PAT repo (HMAC-SHA256 keyed by APP_SECRET — C-008) + the
+// in-process per-token rate limiter (C-007). Both the /mcp transport and the Developer-settings
+// token surface read the SAME api_tokens table; the rate limiter is process-global so a token's
+// budget is enforced across all its concurrent requests.
+const apiTokenRepo = createApiTokenRepo(db, cfg.APP_SECRET);
+const mcpRateLimiter = new McpRateLimiter();
 
 // doc-access-routing S-001: the OLD permissive `sharedAccessDeps` stubs
 // (`isInvited: () => true, isWorkspaceMember: () => true`) are GONE from every
@@ -354,6 +363,23 @@ const app = createApp({
   // ENV creds are present. Same gating output (cfg.oauth) the socialProviders block above
   // uses — one source of truth for "enabled".
   authProviders: { oauth: cfg.oauth },
+  // mcp-roundtrip S-001: the Developer-settings PAT surface + the agent /mcp transport.
+  // Both share ONE api_tokens repo (HMAC-SHA256 keyed by APP_SECRET — C-008). The transport's
+  // Origin allowlist is the backend's own base-URL origin (C-005, DNS-rebinding guard); the
+  // token is re-validated on every JSON-RPC request inside the transport (C-001).
+  mcpTokens: {
+    db,
+    secret: cfg.APP_SECRET,
+    resolveSession,
+    isWorkspaceMember: (workspaceId: string, userId: string) =>
+      wsAccess.isWorkspaceMember(workspaceId, userId),
+  },
+  mcp: {
+    tokens: apiTokenRepo,
+    rateLimiter: mcpRateLimiter,
+    // S-001 ships the baseline `ping` tool; S-002..S-006 register the domain tools here.
+    allowedOrigins: [`http://localhost:${cfg.PORT}`],
+  },
 }).listen(cfg.PORT);
 
 console.log(`anchord on http://localhost:${cfg.PORT} (${cfg.NODE_ENV})`);

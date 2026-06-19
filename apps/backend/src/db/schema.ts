@@ -446,6 +446,50 @@ export const workspaceInvitations = pgTable(
   ],
 );
 
+// ── api_tokens (mcp-roundtrip S-001) ───────────────────────────────────────
+// A personal access token (PAT) authenticates an agent on the /mcp endpoint AS the
+// owning user, bound to ONE workspace and a scope set (C-001/C-008). The plaintext
+// token (prefix `anch_pat_`) is shown ONCE at creation and never stored in clear:
+// only the HMAC-SHA256(APP_SECRET, token) hash is persisted (peppered — a stolen DB
+// alone can't validate guesses — and INDEXED for O(1) lookup on every JSON-RPC
+// request; NOT argon2/bcrypt, which can't be indexed). See src/mcp/token.ts.
+//
+// `scopes` is the granted scope set, stored as jsonb (the declared exception) — a
+// subset of the 6 scopes docs:read/write, annotations:read/write, projects:read/write.
+// `revoked_at`/`expires_at` are nullable; an ACTIVE token is revoked_at IS NULL AND
+// (expires_at IS NULL OR expires_at > now). `last_used_at` is bumped throttled
+// (~once/min/token — C-008) so read-only calls stay cheap.
+//
+// Portable on purpose (no Postgres-only features) so a future SQLite build stays open;
+// the per-user active-token cap (C-007) is an application-layer count-in-tx guard, not
+// a partial-unique DB trick.
+export const apiTokens = pgTable(
+  "api_tokens",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    // HMAC-SHA256(APP_SECRET, plaintext) base64url — unique + indexed for O(1) lookup.
+    tokenHash: text("token_hash").notNull().unique(),
+    name: text("name").notNull(),
+    // jsonb (declared exception): the granted scope set, e.g. ["docs:read","docs:write"].
+    scopes: jsonb("scopes").notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("api_tokens_user_idx").on(t.userId),
+    // O(1) hash lookup on every MCP request (C-008).
+    index("api_tokens_hash_idx").on(t.tokenHash),
+  ],
+);
+
 // ── better-auth tables (auth S-001) ────────────────────────────────────────
 // Hand-added to match better-auth's expected schema (getAuthTables(options)):
 // user / session / account / verification. better-auth maps its model fields to
