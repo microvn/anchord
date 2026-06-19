@@ -340,7 +340,11 @@ describe("Redline create flow (S-002, through ViewerScreen)", () => {
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
     const [slugArg, body] = createAnnotation.mock.calls[0]!;
     expect(slugArg).toBe("my-doc");
-    expect(body.type).toBe("suggestion");
+    // Regression: the FE sent `type:"suggestion"` in the create REQUEST, which the server
+    // createAnnotationSchema rejects (enum range|multi_range|block|doc) → 400, so no redline could
+    // be created. The request `type` is the ANCHOR shape; the server DERIVES type="suggestion" from
+    // the `suggestion` payload. So the body must carry a server-valid type (or omit it), never "suggestion".
+    expect(["range", "multi_range", "block", "doc", undefined]).toContain(body.type);
     expect(body.suggestion.from).toBe("Implementation Plan: Real-time Collaboration");
     expect((body.suggestion as { to?: unknown }).to).toBeUndefined(); // delete-kind → no `to`
     expect(body.suggestion.againstVersion).toBe(4);

@@ -498,7 +498,10 @@ export function useCompose(
         // persist together (the standalone workspace-scoped suggestion route is subsumed). Omit `to`
         // → the server records kind=delete; the root body rides `comment` (no second addComment).
         const created = await createAnnotation(slug, {
-          type: "suggestion",
+          // The request `type` is the ANCHOR shape — the server DERIVES type="suggestion" from the
+          // `suggestion` payload (createAnnotationSchema rejects type:"suggestion"). A single-segment
+          // selection is a range; a cross-block one is multi_range.
+          type: anchor.segments && anchor.segments.length > 1 ? "multi_range" : "range",
           anchor: {
             blockId: anchor.blockId,
             textSnippet: anchor.textSnippet,

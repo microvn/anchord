@@ -398,8 +398,9 @@ describe("Create boundary — server-authorized writes on every type (S-005)", (
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
     const [, body] = createAnnotation.mock.calls[0]!;
     const sent = body as { type?: string; suggestion?: { from?: unknown; to?: unknown }; label?: unknown };
-    // Carries the suggestion span …
-    expect(sent.type).toBe("suggestion");
+    // Regression: the request `type` is the ANCHOR shape, never "suggestion" (the server rejects that
+    // and DERIVES type=suggestion from the payload). Sending "suggestion" 400'd → no redline created.
+    expect(["range", "multi_range", "block", "doc", undefined]).toContain(sent.type);
     expect(sent.suggestion?.from).toBe("Implementation Plan: Real-time Collaboration");
     expect(sent.suggestion?.to).toBeUndefined(); // delete-kind → no `to`
     // … and NO label (mutually exclusive — the redline path is label-free).

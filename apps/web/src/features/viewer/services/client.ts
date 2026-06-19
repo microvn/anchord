@@ -198,7 +198,10 @@ export interface CreateSuggestionPayload {
 }
 
 export interface CreateAnnotationBody {
-  type: string;
+  /** The ANCHOR shape — must be a value the server `createAnnotationSchema` accepts. A suggestion is
+   *  NOT a sent type: carry the `suggestion` payload and the server derives type="suggestion".
+   *  Sending "suggestion" here is a 400 (this union makes that a compile error). */
+  type?: "range" | "multi_range" | "block" | "doc";
   anchor: CreateAnchor;
   /** S-003/S-004 (C-003 / challenge #9): the ONE labeled-create path. A Like rides this same
    *  doc-scoped create as a plain comment annotation, just carrying `label="looks-good"`; a Label
