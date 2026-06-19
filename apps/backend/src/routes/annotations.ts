@@ -60,6 +60,7 @@ import {
   type DismissReattachRepo,
 } from "../annotation/dismiss-reattach";
 import { reanchorAnnotation } from "../annotation/reanchor";
+import { renderForAnchoring } from "../render/markdown";
 import { createSuggestion, decideSuggestion, type SuggestionRepo } from "../annotation/suggestion";
 import {
   createAnnotationRepo,
@@ -100,7 +101,9 @@ export interface AnnotationLookupRepo {
   findSuggestionDoc(
     suggestionId: string,
   ): Promise<{ docId: string; generalAccess: GeneralAccessLevel; authorId: string | null; deletedAt?: Date | null } | null>;
-  /** Current (highest) version content HTML for a doc — for the C-011 stale check. */
+  /** Current (highest) version content as RENDERED HTML for a doc — for the C-011 stale check
+   *  and reattach/anchor validation. Markdown docs are rendered to HTML here (renderForAnchoring)
+   *  so block-ids exist before the matcher runs; html docs pass through unchanged. */
   getCurrentVersionContent(docId: string): Promise<string | null>;
 }
 
@@ -146,12 +149,16 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
     },
     async getCurrentVersionContent(docId) {
       const [row] = await db
-        .select({ content: docVersions.content })
+        .select({ content: docVersions.content, kind: docsTable.kind })
         .from(docVersions)
+        .innerJoin(docsTable, eq(docsTable.id, docVersions.docId))
         .where(eq(docVersions.docId, docId))
         .orderBy(desc(docVersions.version))
         .limit(1);
-      return row?.content ?? null;
+      if (!row) return null;
+      // Render markdown→HTML so the matcher sees block-ids (markdown source has none); html
+      // passes through unchanged. Without this, reattach/anchor validation 400s on markdown docs.
+      return renderForAnchoring(row.content, row.kind);
     },
   };
 }

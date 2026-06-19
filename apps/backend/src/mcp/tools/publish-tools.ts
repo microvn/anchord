@@ -153,7 +153,14 @@ export interface UpdateDocumentPorts {
    * committed; re-anchor runs async, failure leaves annotations in their PREVIOUS state
    * and is retried — AS-028). Skipped for a doc's first extra version is the caller's call.
    */
-  fireReanchor?(input: { docId: string; version: number; newContentHtml: string }): void;
+  fireReanchor?(input: {
+    docId: string;
+    version: number;
+    /** RAW version content (markdown source or HTML); the job renders it before re-anchoring. */
+    content: string;
+    /** Doc kind — drives renderForAnchoring inside the job (markdown→HTML before the matcher). */
+    kind: "html" | "markdown" | "image";
+  }): void;
 }
 
 /**
@@ -201,7 +208,8 @@ export function updateDocumentHandler(
     // PREVIOUS state and is retried; it never gates this success. Skip a doc's FIRST
     // version (no prior content to re-anchor) — mirrors routes/versions.ts fireReanchor.
     if (ports.fireReanchor && previousVersion !== null) {
-      ports.fireReanchor({ docId, version, newContentHtml: content });
+      // Pass RAW content + the doc's kind — the job renders markdown→HTML before the matcher.
+      ports.fireReanchor({ docId, version, content, kind: doc.kind });
     }
 
     return { docId, version, previousVersion };

@@ -246,7 +246,7 @@ const app = createApp({
     // detach (never dropped). Fired off the publish path (the route doesn't await it). The
     // ledger keys (annotation_id, version_id) so a re-run is idempotent; a >25%-detached
     // run logs an alert.
-    reanchorOnNewVersion: async ({ docId, version, newContentHtml }) => {
+    reanchorOnNewVersion: async ({ docId, version, content, kind }) => {
       const versionId = `${docId}:${version}`;
       const ledger = createAnchorResolutionRepo(db);
       await runReanchorForNewVersion(
@@ -263,7 +263,7 @@ const app = createApp({
             }
           },
         },
-        { docId, versionId, newContentHtml },
+        { docId, versionId, content, kind },
       );
     },
   },
@@ -394,7 +394,7 @@ const app = createApp({
       ...createPublishToolsForDb({
         db,
         resolveAccess: sharedResolveAccess,
-        reanchorOnNewVersion: async ({ docId, version, newContentHtml }) => {
+        reanchorOnNewVersion: async ({ docId, version, content, kind }) => {
           const versionId = `${docId}:${version}`;
           await runReanchorForNewVersion(
             {
@@ -410,7 +410,7 @@ const app = createApp({
                 }
               },
             },
-            { docId, versionId, newContentHtml },
+            { docId, versionId, content, kind },
           );
         },
       }),

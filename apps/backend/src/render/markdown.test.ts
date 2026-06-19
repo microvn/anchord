@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { renderMarkdown } from "./markdown";
+import { renderMarkdown, renderForAnchoring } from "./markdown";
 
 test("AS-009: renderMarkdown renders headings, lists and paragraphs to styled HTML", () => {
   const html = renderMarkdown("# Release Notes\n\n- one\n- two\n\nA paragraph.");
@@ -35,4 +35,24 @@ test("AS-010 / C-002: renderMarkdown never emits an executable javascript: link"
 
 test("AS-009: empty markdown renders to empty (no crash)", () => {
   expect(renderMarkdown("")).toBe("");
+});
+
+// renderForAnchoring: the ONE chokepoint that decides whether stored content must be rendered
+// to HTML before the re-anchor matcher. block-ids only exist post-render, so markdown MUST be
+// rendered; html/image pass through unchanged. Owns the decision so callers can't get it wrong.
+test("renderForAnchoring(markdown) renders to HTML (block elements like <h1>/<td> exist post-render)", () => {
+  const html = renderForAnchoring("# Title\n\n| a |\n|---|\n| cell |", "markdown");
+  expect(html).toContain("<h1");
+  expect(html).toContain("<td");
+  expect(html).toContain("Title");
+});
+
+test("renderForAnchoring(html) passes content through UNCHANGED", () => {
+  const input = "<h1>Already HTML</h1><p>body</p>";
+  expect(renderForAnchoring(input, "html")).toBe(input);
+});
+
+test("renderForAnchoring(image) passes content through unchanged", () => {
+  const input = "https://example.com/img.png";
+  expect(renderForAnchoring(input, "image")).toBe(input);
 });

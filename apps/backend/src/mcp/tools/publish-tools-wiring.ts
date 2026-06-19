@@ -68,7 +68,10 @@ export function createMcpUpdateDocumentPorts(deps: {
   reanchorOnNewVersion?: (input: {
     docId: string;
     version: number;
-    newContentHtml: string;
+    /** RAW version content (markdown source or HTML); the job renders it before re-anchoring. */
+    content: string;
+    /** Doc kind — drives renderForAnchoring inside the job (markdown→HTML before the matcher). */
+    kind: "html" | "markdown" | "image";
   }) => Promise<unknown> | unknown;
 }): UpdateDocumentPorts {
   return {
@@ -119,7 +122,10 @@ export function createPublishToolsForDb(deps: {
   reanchorOnNewVersion?: (input: {
     docId: string;
     version: number;
-    newContentHtml: string;
+    /** RAW version content (markdown source or HTML); the job renders it before re-anchoring. */
+    content: string;
+    /** Doc kind — drives renderForAnchoring inside the job (markdown→HTML before the matcher). */
+    kind: "html" | "markdown" | "image";
   }) => Promise<unknown> | unknown;
 }): Record<string, ToolDef> {
   return publishTools({

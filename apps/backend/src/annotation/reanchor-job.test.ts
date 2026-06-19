@@ -72,7 +72,7 @@ test("C-012: carried annotations get applyCarried(new anchor) + detached get mar
 
   const summary = await runReanchorForNewVersion(
     { annotations: r, apply: apply.repo, ledger: led.repo },
-    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
   );
 
   // a1 carried with a recomputed anchor; a2 detached (never lost).
@@ -93,7 +93,7 @@ test("C-012: re-run for the same versionId is idempotent — no duplicate ledger
   ]);
   const apply = applyRepo();
   const led = ledger();
-  const input = { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) };
+  const input = { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" as const };
 
   const first = await runReanchorForNewVersion({ annotations: r, apply: apply.repo, ledger: led.repo }, input);
   const second = await runReanchorForNewVersion({ annotations: r, apply: apply.repo, ledger: led.repo }, input);
@@ -115,7 +115,7 @@ test("C-012: detached rate over the threshold raises the alert; under does not",
   ]);
   const hi = await runReanchorForNewVersion(
     { annotations: high, apply: applyRepo().repo, ledger: ledger().repo },
-    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
   );
   expect(hi.detachedRate).toBeGreaterThan(DETACHED_ALERT_THRESHOLD);
   expect(hi.alert).toBe(true);
@@ -129,7 +129,7 @@ test("C-012: detached rate over the threshold raises the alert; under does not",
   ]);
   const lo = await runReanchorForNewVersion(
     { annotations: low, apply: applyRepo().repo, ledger: ledger().repo },
-    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
   );
   expect(lo.detachedRate).toBeCloseTo(0.25, 5);
   expect(lo.alert).toBe(false);
@@ -144,7 +144,7 @@ test("C-012: the per-publish summary is reported via onSummary", async () => {
       ledger: ledger().repo,
       onSummary: (s) => seen.push(s),
     },
-    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
   );
   expect(seen).toHaveLength(1);
   expect(seen[0]?.versionId).toBe("doc_1:2");
@@ -162,7 +162,7 @@ test("C-012: suggestion-type annotations are excluded from re-anchor (separate C
       apply: apply.repo,
       ledger: ledger().repo,
     },
-    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
   );
   // Only the range annotation is considered; the suggestion is untouched.
   expect(summary.total).toBe(1);
@@ -188,7 +188,7 @@ test("AS-014: a SOFT-DELETED annotation is excluded from re-anchor AND from the 
       apply: apply.repo,
       ledger: led.repo,
     },
-    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
   );
   // Only the live annotation is considered; the deleted one is never carried/detached/ledgered.
   expect(summary.total).toBe(1);
@@ -201,12 +201,36 @@ test("AS-014: a SOFT-DELETED annotation is excluded from re-anchor AND from the 
   expect(led.persisted.map((e) => e.annotationId)).toEqual(["a1"]); // no ledger row for the deleted one.
 });
 
+// Regression: re-anchor fed raw markdown — reanchor-job.ts orphaned every annotation on markdown docs
+test("regression: a markdown doc's new version carries an unchanged-text annotation (render before re-anchor)", async () => {
+  // A MARKDOWN doc's stored content is markdown SOURCE. block-ids (block-h1-1, …) only exist
+  // after markdown→HTML render + injectBlockIds. If the job re-anchors against the RAW markdown,
+  // extractAllBlocks finds no blocks → every annotation orphans, even byte-identical text. The
+  // fix renders markdown→HTML inside the job before the matcher. Here the new version's content
+  // is IDENTICAL markdown, so the heading annotation must be CARRIED (applyCarried), not detached.
+  const content = "# Hello Heading\n\nbody paragraph.";
+  // Anchor as computed against the RENDERED html: <h1 id="block-h1-1">Hello Heading</h1>.
+  const anchor: Anchor = { blockId: "block-h1-1", textSnippet: "Hello Heading", offset: 0, length: 13 };
+  const apply = applyRepo();
+  const led = ledger();
+  const summary = await runReanchorForNewVersion(
+    { annotations: reader([{ id: "a1", anchor }]), apply: apply.repo, ledger: led.repo },
+    { docId: "doc_md", versionId: "doc_md:2", content, kind: "markdown" },
+  );
+  // Unchanged text → carried onto block-h1-1, NOT orphaned.
+  expect(apply.detached).toEqual([]);
+  expect(apply.carried.map((c) => c.id)).toEqual(["a1"]);
+  expect(apply.carried[0]?.anchor.blockId).toBe("block-h1-1");
+  expect(summary.carried).toBe(1);
+  expect(summary.detached).toBe(0);
+});
+
 test("C-012: edge — a doc with zero annotations does no work and never alerts", async () => {
   const apply = applyRepo();
   const led = ledger();
   const summary = await runReanchorForNewVersion(
     { annotations: reader([]), apply: apply.repo, ledger: led.repo },
-    { docId: "doc_1", versionId: "doc_1:2", newContentHtml: doc(SEVEN) },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
   );
   expect(summary).toMatchObject({ total: 0, carried: 0, detached: 0, detachedRate: 0, alert: false });
   expect(apply.carried).toEqual([]);

@@ -162,7 +162,10 @@ export interface VersionsRoutesDeps {
   reanchorOnNewVersion?: (input: {
     docId: string;
     version: number;
-    newContentHtml: string;
+    /** RAW version content (markdown source or HTML); the job renders it before re-anchoring. */
+    content: string;
+    /** Doc kind — drives renderForAnchoring inside the job (markdown→HTML before the matcher). */
+    kind: "html" | "markdown" | "image";
   }) => Promise<unknown> | unknown;
 }
 
@@ -231,10 +234,11 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
     docId: string,
     version: number,
     previousVersion: number | null,
-    newContentHtml: string,
+    content: string,
+    kind: "html" | "markdown" | "image",
   ): void {
     if (!deps.reanchorOnNewVersion || previousVersion === null) return;
-    void Promise.resolve(deps.reanchorOnNewVersion({ docId, version, newContentHtml })).catch(
+    void Promise.resolve(deps.reanchorOnNewVersion({ docId, version, content, kind })).catch(
       () => {
         // Swallowed by design (C-012): re-anchor is best-effort and must not surface into the
         // request. The concrete impl logs / alerts on its own (the >25%-detached summary).
@@ -346,7 +350,8 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
             );
             set.status = 201;
             // C-012: re-anchor the doc's annotations onto the new content (fire-and-forget).
-            fireReanchor(doc.id, result.version, result.previousVersion, content);
+            // Pass RAW content + kind — the job renders markdown→HTML before the matcher.
+            fireReanchor(doc.id, result.version, result.previousVersion, content, doc.kind);
             return { version: result.version, previousVersion: result.previousVersion };
           }),
       )
@@ -403,7 +408,7 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
           // version → re-anchor annotations against THAT content (fire-and-forget). Read the
           // restored content back (cheap) so the route stays decoupled from version.ts.
           const restored = await lookupRepo.getVersionContent(doc.id, target);
-          fireReanchor(doc.id, result.version, result.previousVersion, restored?.content ?? "");
+          fireReanchor(doc.id, result.version, result.previousVersion, restored?.content ?? "", doc.kind);
           return { version: result.version, previousVersion: result.previousVersion };
         },
       )

@@ -103,7 +103,8 @@ function buildApp(opts: {
   reanchorOnNewVersion?: (input: {
     docId: string;
     version: number;
-    newContentHtml: string;
+    content: string;
+    kind: "html" | "markdown" | "image";
   }) => Promise<unknown> | unknown;
 }) {
   const vr = opts.versionRepo ?? fakeVersionRepo();
@@ -436,16 +437,16 @@ describe("GET /api/docs/:slug/diff?from=&to= (AS-006/007/008)", () => {
 // it never gates the 201 and its failure can't break a successful publish. (The job's
 // apply/idempotency/summary behaviour is unit-tested in src/annotation/reanchor-job.test.ts.)
 describe("re-anchor trigger on version create (C-012)", () => {
-  test("C-012: appending a version over an existing one fires re-anchor with {docId, version, newContentHtml}", async () => {
+  test("C-012: appending a version over an existing one fires re-anchor with {docId, version, content, kind}", async () => {
     const vr = fakeVersionRepo([{ version: 1, content: "v1", contentHash: "h1" }]);
-    const calls: { docId: string; version: number; newContentHtml: string }[] = [];
+    const calls: { docId: string; version: number; content: string; kind: string }[] = [];
     const app = buildApp({ versionRepo: vr, reanchorOnNewVersion: (input) => { calls.push(input); } });
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/versions", { method: "POST", body: JSON.stringify({ content: "v2 body" }) }),
     );
     expect(res.status).toBe(201);
     // Fired exactly once, with the resolved doc id, the new version number, and the new content.
-    expect(calls).toEqual([{ docId: "doc_1", version: 2, newContentHtml: "v2 body" }]);
+    expect(calls).toEqual([{ docId: "doc_1", version: 2, content: "v2 body", kind: "markdown" }]);
   });
 
   test("C-012: the FIRST version (no previous) does NOT fire re-anchor — nothing to re-anchor", async () => {
@@ -479,13 +480,13 @@ describe("re-anchor trigger on version create (C-012)", () => {
       { version: 1, content: "restore me", contentHash: "h1" },
       { version: 2, content: "current", contentHash: "h2" },
     ]);
-    const calls: { docId: string; version: number; newContentHtml: string }[] = [];
+    const calls: { docId: string; version: number; content: string; kind: string }[] = [];
     const app = buildApp({ versionRepo: vr, reanchorOnNewVersion: (input) => { calls.push(input); } });
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/versions/1/restore", { method: "POST" }),
     );
     expect(res.status).toBe(201);
     // Restore append-copies v1's content as v3 → re-anchor runs against that content.
-    expect(calls).toEqual([{ docId: "doc_1", version: 3, newContentHtml: "restore me" }]);
+    expect(calls).toEqual([{ docId: "doc_1", version: 3, content: "restore me", kind: "markdown" }]);
   });
 });

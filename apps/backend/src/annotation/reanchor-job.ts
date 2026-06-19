@@ -20,6 +20,7 @@ import {
   type ReanchorLedgerEntry,
 } from "./reanchor";
 import type { Anchor } from "./annotation";
+import { renderForAnchoring } from "../render/markdown";
 
 /** C-012 example threshold: alert when MORE than 25% of a doc's annotations detach. */
 export const DETACHED_ALERT_THRESHOLD = 0.25;
@@ -69,8 +70,14 @@ export interface ReanchorJobInput {
   docId: string;
   /** Stable idempotency key for the new version (e.g. `${docId}:${versionNumber}`). */
   versionId: string;
-  /** The new version's content (pre-block-id-injection; the matcher injects it). */
-  newContentHtml: string;
+  /**
+   * The new version's RAW content (markdown source or HTML). The job renders it to HTML
+   * (renderForAnchoring) before the matcher — block-ids only exist post-render, so a
+   * markdown doc MUST be rendered here or every annotation orphans (see renderForAnchoring).
+   */
+  content: string;
+  /** The doc's kind. REQUIRED so callers are type-forced to pass it (prevents the raw-markdown regression). */
+  kind: "html" | "markdown" | "image";
 }
 
 /** The per-publish run summary (C-012): counts + the detached-rate alert. */
@@ -109,8 +116,13 @@ export async function runReanchorForNewVersion(
   // C-012: preload persisted outcomes so a re-run for the same version is a no-op.
   await deps.ledger.loadEntries?.(input.versionId);
 
+  // Render markdown→HTML BEFORE the matcher: block-ids only exist post-render, so a markdown
+  // doc must be rendered here or extractAllBlocks finds nothing and every annotation orphans.
+  // html/image pass through unchanged (renderForAnchoring owns the decision).
+  const newContentHtml = renderForAnchoring(input.content, input.kind);
+
   const { carried, detached, ledger } = reanchorForVersion(
-    { annotations: toReanchor, newContentHtml: input.newContentHtml, versionId: input.versionId },
+    { annotations: toReanchor, newContentHtml, versionId: input.versionId },
     deps.ledger,
   );
 

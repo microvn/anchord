@@ -97,7 +97,7 @@ function fakeUpdate(opts: {
   roles: Record<string, Role | null>; // keyed `${docId}:${userId}`
 }) {
   const store = opts.docs;
-  const reanchorFired: { docId: string; version: number; newContentHtml: string }[] = [];
+  const reanchorFired: { docId: string; version: number; content: string; kind: "html" | "markdown" | "image" }[] = [];
   // a single in-flight gate per doc id to simulate the advisory lock (AS-026).
   const locks = new Map<string, Promise<void>>();
 
@@ -239,7 +239,7 @@ describe("AS-004: anchord_update_document appends a new version + fires re-ancho
     const res = await tool({ docId: "doc_a", content: "<h1>v4</h1>" }, ctx());
     expect(res).toEqual({ docId: "doc_a", version: 4, previousVersion: 3 });
     // re-anchor fired (annotation-core seam) with the new content (AS-004/C-012).
-    expect(fk.reanchorFired).toEqual([{ docId: "doc_a", version: 4, newContentHtml: "<h1>v4</h1>" }]);
+    expect(fk.reanchorFired).toEqual([{ docId: "doc_a", version: 4, content: "<h1>v4</h1>", kind: "html" }]);
   });
 
   test("AS-004: re-anchor is NOT fired for a doc's first extra version path is N/A — fired only when previousVersion != null", async () => {

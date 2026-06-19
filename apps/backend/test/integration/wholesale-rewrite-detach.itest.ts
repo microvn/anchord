@@ -85,7 +85,7 @@ async function runJob(h: MigratedDb, docId: string, vId: string, newContentHtml:
       apply: createReanchorApplyRepo(h.db),
       ledger: createAnchorResolutionRepo(h.db),
     },
-    { docId, versionId: vId, newContentHtml },
+    { docId, versionId: vId, content: newContentHtml, kind: "html" },
   );
 }
 
