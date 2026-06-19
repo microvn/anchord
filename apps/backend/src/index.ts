@@ -30,6 +30,8 @@ import { McpRateLimiter } from "./mcp/rate-limit";
 import { baselineTools } from "./mcp/server";
 import { createPublishToolsForDb } from "./mcp/tools/publish-tools-wiring";
 import { createPullToolsForDb } from "./mcp/tools/pull-tools-wiring";
+import { createReadToolsForDb } from "./mcp/tools/read-tools-wiring";
+import { createSearchRepo } from "./search/search-repo";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -415,6 +417,18 @@ const app = createApp({
       ...createPullToolsForDb({
         db,
         resolveAccess: sharedResolveAccess,
+      }),
+      // S-003: the read tools (anchord_list_documents / anchord_read_document /
+      // anchord_search_documents) over the workspace-wide accessible-docs read + search. Every
+      // membership/browse check is parameterized by the TOKEN's workspace_id (C-013/AS-029):
+      // list/search take ctx.workspaceId into their workspace-scoped reads; read re-checks the
+      // doc's OWN workspace (wsAccess.workspaceOfDoc) against the token's. resolveAccess is the
+      // SAME shared per-doc gate; search reuses the existing FTS repo (access-filtered in SQL).
+      ...createReadToolsForDb({
+        db,
+        resolveAccess: sharedResolveAccess,
+        workspaceOfDoc: (docId: string) => wsAccess.workspaceOfDoc(docId),
+        search: { repo: createSearchRepo(db) },
       }),
     },
     allowedOrigins: [`http://localhost:${cfg.PORT}`],
