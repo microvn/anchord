@@ -68,6 +68,80 @@ export interface PulledAnnotation {
 export interface PullAnnotationsResult {
   docId: string;
   annotations: PulledAnnotation[];
+  /**
+   * The new monotonic watermark (annotation-core C-017 / AS-008): the MAX (updated_at, id)
+   * of the returned set, opaque-encoded. The agent keeps this and passes it back on the next
+   * pull to get ONLY rows that changed since. When nothing changed, the input cursor is
+   * echoed unchanged (the watermark never goes backwards). NULL only on the very first pull
+   * of an empty doc (no rows, no prior cursor).
+   */
+  cursor: string | null;
+}
+
+// ── cursor: an opaque (updated_at, snowflake id) watermark (C-017 / AS-008) ──
+//
+// The cursor is NOT a page offset — it is a monotonic position in the (updated_at, id)
+// ordering. Two rows sharing an updated_at are disambiguated by the snowflake id, so a
+// watermark never skips nor repeats a row at the same timestamp. Encoded opaquely (the agent
+// must treat it as a token, not parse it): `${updatedAtMillis}.${id}`, base64url-wrapped.
+
+/** A decoded cursor: the lexicographic (updated_at, id) watermark. */
+export interface PullCursor {
+  /** updated_at as epoch millis (the DB column is a timestamptz). */
+  updatedAt: number;
+  /** the snowflake id — the tie-break when two rows share updated_at. */
+  id: string;
+}
+
+/** Encode a watermark into the opaque cursor token an agent round-trips. */
+export function encodeCursor(c: PullCursor): string {
+  return Buffer.from(`${c.updatedAt}.${c.id}`, "utf8").toString("base64url");
+}
+
+/**
+ * Decode an opaque cursor token. Returns null on any malformed input (a bad cursor reads as
+ * "no cursor" → a full pull, never a thrown error that would abort the agent's round-trip).
+ */
+export function decodeCursor(raw: unknown): PullCursor | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  let decoded: string;
+  try {
+    decoded = Buffer.from(raw, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+  const dot = decoded.indexOf(".");
+  if (dot <= 0 || dot === decoded.length - 1) return null;
+  const updatedAt = Number(decoded.slice(0, dot));
+  const id = decoded.slice(dot + 1);
+  if (!Number.isFinite(updatedAt) || id.length === 0) return null;
+  return { updatedAt, id };
+}
+
+/**
+ * Strictly-greater lexicographic compare on (updated_at, id) — the SAME predicate the SQL
+ * changed-since query encodes (`updated_at > c.updatedAt OR (updated_at = c.updatedAt AND id >
+ * c.id)`). Exposed so the in-memory fake port and the cursor-advance logic share one rule.
+ */
+export function isAfterCursor(row: { updatedAt: number; id: string }, c: PullCursor): boolean {
+  if (row.updatedAt > c.updatedAt) return true;
+  if (row.updatedAt < c.updatedAt) return false;
+  return row.id > c.id;
+}
+
+/**
+ * The next watermark to return (AS-008): the MAX (updated_at, id) over the returned rows. If
+ * no rows were returned (nothing changed since the cursor), echo the input cursor — the
+ * watermark must never go backwards. Returns null only when there is neither a row nor a
+ * prior cursor (the first pull of an empty doc).
+ */
+function nextCursor(rows: { id: string; updatedAt: number }[], input: PullCursor | null): string | null {
+  let max: PullCursor | null = input;
+  for (const r of rows) {
+    const row = { updatedAt: r.updatedAt, id: r.id };
+    if (max === null || isAfterCursor(row, max)) max = row;
+  }
+  return max === null ? null : encodeCursor(max);
 }
 
 // ── ports (injectable seams over annotation-core + sharing) ─────────────────
@@ -88,6 +162,13 @@ export interface PullAnnotationRow {
   deleted: boolean;
   suggestion: SuggestionPayload | null;
   suggestionStatus: SuggestionStatus | null;
+  /**
+   * The mutation watermark (C-017), epoch millis — set at create, bumped on every mutation
+   * AND when a comment/reply is added to this annotation. Feeds the returned cursor + the
+   * changed-since filter. NOT surfaced in the agent-facing PulledAnnotation; it is the
+   * cursor machinery, not annotation content.
+   */
+  updatedAt: number;
 }
 
 /** A pulled comment row, tagged with its annotation so the tool groups threads. */
@@ -105,10 +186,12 @@ export interface PullPorts {
   /** Resolve the token-owner's effective role on the doc (resolveAccess) — null when none grants one. */
   resolveRole(docId: string, userId: string): Promise<Role | null>;
   /**
-   * Every annotation on the doc (INCLUDING soft-deleted + dismissed — AS-007), newest first.
-   * NULL/missing doc → []; authorization is gated by resolveRole BEFORE this is called.
+   * Annotations on the doc (INCLUDING soft-deleted + dismissed — AS-007). When `cursor` is
+   * given (AS-008), ONLY rows whose (updated_at, id) is strictly greater are returned, ordered
+   * by (updated_at, id) ascending (the changed-since query); when omitted, the full set newest
+   * first. NULL/missing doc → []; authorization is gated by resolveRole BEFORE this is called.
    */
-  listAllByDoc(docId: string): Promise<PullAnnotationRow[]>;
+  listAllByDoc(docId: string, cursor?: PullCursor | null): Promise<PullAnnotationRow[]>;
   /** Every comment on the doc's annotations (incl. on deleted/dismissed ones), creation order. */
   listAllCommentsByDoc(docId: string): Promise<PullCommentRow[]>;
 }
@@ -168,8 +251,12 @@ export function pullAnnotationsHandler(
     const docId = requireDocId(params);
     await authorizeRead(ports, docId, ctx.userId); // AS-010.T1: reject a doc the owner can't see.
 
+    // AS-008: an opaque (updated_at, id) watermark, if the agent kept one from a prior pull.
+    // A malformed cursor decodes to null → a full pull (never an error that aborts the agent).
+    const cursor = decodeCursor(params.cursor);
+
     const [rows, commentRows] = await Promise.all([
-      ports.listAllByDoc(docId),
+      ports.listAllByDoc(docId, cursor), // changed-since filter when cursor present (AS-008)
       ports.listAllCommentsByDoc(docId),
     ]);
     const threads = groupComments(commentRows);
@@ -193,7 +280,12 @@ export function pullAnnotationsHandler(
       comments: threads.get(r.id) ?? [],
     }));
 
-    return { docId, annotations };
+    // AS-008: the next watermark = the MAX (updated_at, id) of the returned set. When the set
+    // is empty (nothing changed since the cursor) the input cursor is echoed unchanged — the
+    // watermark never goes backwards, and a no-change pull is a clean no-op for the agent.
+    const cursorOut = nextCursor(rows, cursor);
+
+    return { docId, annotations, cursor: cursorOut };
   };
 }
 

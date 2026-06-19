@@ -284,8 +284,23 @@ export const annotations = pgTable(
     // ownership action (own/owner). Additive nullable column, no backfill.
     dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
     createdAt: createdAt(),
+    // updated_at (annotation-core C-017 / mcp-roundtrip AS-008): the monotonic mutation
+    // watermark. Set at create (defaultNow → equals created_at) and bumped on EVERY
+    // subsequent mutation — resolve/reopen, dismiss, orphan/unorphan, suggestion-decide,
+    // re-anchor (carried AND detached), AND when a comment/reply is added to this annotation
+    // (the parent bump, so a reply surfaces in the annotation's changed-since query). The
+    // repo bumps it EXPLICITLY (not $onUpdate) so the parent-bump-on-reply path can set it
+    // without an annotations.set on the same row. A (updated_at, id) pair is the cursor the
+    // MCP pull tool returns — a monotonic watermark, never a page offset. NOT NULL, so the
+    // lexicographic changed-since compare never has to handle a null.
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("annotations_doc_idx").on(t.docId)],
+  (t) => [
+    index("annotations_doc_idx").on(t.docId),
+    // C-017 / AS-008: backs the changed-since query (doc + (updated_at, id) > watermark,
+    // ordered by (updated_at, id)) — the cursor scan stays index-ordered, no full sort.
+    index("annotations_doc_updated_idx").on(t.docId, t.updatedAt, t.id),
+  ],
 );
 
 // ── reanchor_ledger (annotation-core S-005, C-012) ─────────────────────────
@@ -333,6 +348,12 @@ export const comments = pgTable(
     guestEmail: text("guest_email"),
     body: text("body").notNull(),
     createdAt: createdAt(),
+    // updated_at (annotation-core C-017): mutation watermark on the comment row itself.
+    // v0 comments are append-only (no edit path), so this equals created_at in practice —
+    // it exists for parity with annotations and so a future comment-edit bumps it. The
+    // changed-since pull keys on the ANNOTATION's updated_at (a new/edited comment bumps its
+    // PARENT annotation in the repo), so a reply surfaces via the annotation, not this column.
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("comments_annotation_idx").on(t.annotationId)],
 );

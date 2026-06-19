@@ -11,7 +11,7 @@
 // This module is THIN glue; the testable logic is in pull-tools.ts. Kept separate so the
 // unit suite never needs a DB.
 
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gt, or } from "drizzle-orm";
 import { annotations, comments, user } from "../../db/schema";
 import type { DB } from "../../db/client";
 import type { Anchor } from "../../annotation/annotation";
@@ -21,6 +21,7 @@ import type { AccessResult } from "../../sharing/resolve-access";
 import type { Role } from "../../sharing/roles";
 import {
   pullTools,
+  type PullCursor,
   type PullPorts,
   type PullAnnotationRow,
   type PullCommentRow,
@@ -46,23 +47,47 @@ export function createMcpPullPorts(deps: {
       return role;
     },
 
-    async listAllByDoc(docId: string): Promise<PullAnnotationRow[]> {
-      const rows = await db
-        .select({
-          id: annotations.id,
-          type: annotations.type,
-          anchor: annotations.anchor,
-          status: annotations.status,
-          isOrphaned: annotations.isOrphaned,
-          suggestion: annotations.suggestion,
-          suggestionStatus: annotations.suggestionStatus,
-          deletedAt: annotations.deletedAt,
-          dismissedAt: annotations.dismissedAt,
-        })
-        .from(annotations)
-        // AS-007: NO deleted/dismissed filter — pull surfaces every annotation's status.
-        .where(eq(annotations.docId, docId))
-        .orderBy(desc(annotations.createdAt));
+    async listAllByDoc(docId: string, cursor?: PullCursor | null): Promise<PullAnnotationRow[]> {
+      const cols = {
+        id: annotations.id,
+        type: annotations.type,
+        anchor: annotations.anchor,
+        status: annotations.status,
+        isOrphaned: annotations.isOrphaned,
+        suggestion: annotations.suggestion,
+        suggestionStatus: annotations.suggestionStatus,
+        deletedAt: annotations.deletedAt,
+        dismissedAt: annotations.dismissedAt,
+        updatedAt: annotations.updatedAt,
+      };
+      // AS-007: NO deleted/dismissed filter — pull surfaces every annotation's status.
+      // AS-008 / C-017: with a cursor, return ONLY rows whose (updated_at, id) is strictly
+      // greater, ordered by (updated_at, id) ASC — the changed-since query. The lexicographic
+      // predicate is `updated_at > c.updatedAt OR (updated_at = c.updatedAt AND id > c.id)`;
+      // the (doc_id, updated_at, id) index serves it ordered. Without a cursor, the full set
+      // newest-first (the original AS-007 behavior, unchanged).
+      const rows = cursor
+        ? await db
+            .select(cols)
+            .from(annotations)
+            .where(
+              and(
+                eq(annotations.docId, docId),
+                or(
+                  gt(annotations.updatedAt, new Date(cursor.updatedAt)),
+                  and(
+                    eq(annotations.updatedAt, new Date(cursor.updatedAt)),
+                    gt(annotations.id, cursor.id),
+                  ),
+                ),
+              ),
+            )
+            .orderBy(asc(annotations.updatedAt), asc(annotations.id))
+        : await db
+            .select(cols)
+            .from(annotations)
+            .where(eq(annotations.docId, docId))
+            .orderBy(desc(annotations.createdAt));
       return rows.map((r) => ({
         id: r.id,
         type: r.type,
@@ -73,6 +98,7 @@ export function createMcpPullPorts(deps: {
         deleted: r.deletedAt != null,
         suggestion: (r.suggestion as SuggestionPayload | null) ?? null,
         suggestionStatus: (r.suggestionStatus as SuggestionStatus | null) ?? null,
+        updatedAt: r.updatedAt.getTime(),
       }));
     },
 

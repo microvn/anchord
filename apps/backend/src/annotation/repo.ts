@@ -169,17 +169,25 @@ export function createCommentRepo(db: DB): CommentRepo {
     },
 
     async insertComment(input): Promise<{ id: string }> {
-      const [row] = await db
-        .insert(comments)
-        .values({
-          annotationId: input.annotationId,
-          parentId: input.parentId, // C-004: already flattened to the root by addReply.
-          authorId: input.authorId,
-          guestName: input.guestName,
-          body: input.body,
-        })
-        .returning({ id: comments.id });
-      return { id: row.id };
+      // C-017: a comment/reply bumps its PARENT annotation's updated_at (in the same tx) so a
+      // reply on an OLD annotation surfaces in that annotation's changed-since pull (AS-008).
+      return db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(comments)
+          .values({
+            annotationId: input.annotationId,
+            parentId: input.parentId, // C-004: already flattened to the root by addReply.
+            authorId: input.authorId,
+            guestName: input.guestName,
+            body: input.body,
+          })
+          .returning({ id: comments.id });
+        await tx
+          .update(annotations)
+          .set({ updatedAt: new Date() })
+          .where(eq(annotations.id, input.annotationId));
+        return { id: row.id };
+      });
     },
   };
 }
@@ -198,18 +206,26 @@ export function createGuestCommentRepo(db: DB): GuestCommentRepo {
     },
 
     async insertComment(input: NewGuestComment): Promise<{ id: string }> {
-      const [row] = await db
-        .insert(comments)
-        .values({
-          annotationId: input.annotationId,
-          parentId: input.parentId, // null — a guest comment is top-level.
-          authorId: input.authorId, // AS-017: NULL, no account.
-          guestName: input.guestName,
-          guestEmail: input.guestEmail ?? null, // AS-017: optional email when supplied.
-          body: input.body,
-        })
-        .returning({ id: comments.id });
-      return { id: row.id };
+      // C-017: a guest comment ALSO bumps its parent annotation's updated_at (same tx) so a
+      // guest reply on an old annotation surfaces in the changed-since pull (AS-008).
+      return db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(comments)
+          .values({
+            annotationId: input.annotationId,
+            parentId: input.parentId, // null — a guest comment is top-level.
+            authorId: input.authorId, // AS-017: NULL, no account.
+            guestName: input.guestName,
+            guestEmail: input.guestEmail ?? null, // AS-017: optional email when supplied.
+            body: input.body,
+          })
+          .returning({ id: comments.id });
+        await tx
+          .update(annotations)
+          .set({ updatedAt: new Date() })
+          .where(eq(annotations.id, input.annotationId));
+        return { id: row.id };
+      });
     },
   };
 }
@@ -221,13 +237,18 @@ export function createResolutionRepo(db: DB): ResolutionRepo {
   return {
     async setAnnotationStatus(annotationId: string, status: AnnotationStatus): Promise<void> {
       // AS-009: idempotent — re-setting the same status is a harmless write.
-      await db.update(annotations).set({ status }).where(eq(annotations.id, annotationId));
+      // C-017: resolve/reopen bumps updated_at so it surfaces in a changed-since pull.
+      await db
+        .update(annotations)
+        .set({ status, updatedAt: new Date() })
+        .where(eq(annotations.id, annotationId));
     },
     async resetSuggestionStatusToPending(annotationId: string): Promise<void> {
       // AS-026/C-016: owner reopen of a decided suggestion clears the decision.
+      // C-017: a suggestion-decision reset is a mutation — bump updated_at.
       await db
         .update(annotations)
-        .set({ suggestionStatus: "pending" })
+        .set({ suggestionStatus: "pending", updatedAt: new Date() })
         .where(eq(annotations.id, annotationId));
     },
   };
@@ -244,11 +265,19 @@ export function createDeleteRepo(db: DB): DeleteRepo & RestoreRepo {
   return {
     async setDeletedAt(annotationId: string): Promise<void> {
       // S-004/C-006: soft-delete — set the tombstone; the row is kept (S-005 excludes/restores).
-      await db.update(annotations).set({ deletedAt: new Date() }).where(eq(annotations.id, annotationId));
+      // C-017: delete is a mutation — bump updated_at so a pull sees the new deleted status.
+      await db
+        .update(annotations)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(eq(annotations.id, annotationId));
     },
     async clearDeletedAt(annotationId: string): Promise<void> {
       // S-005/C-007: restore — clear the tombstone so the annotation returns to the active list.
-      await db.update(annotations).set({ deletedAt: null }).where(eq(annotations.id, annotationId));
+      // C-017: restore is a mutation — bump updated_at.
+      await db
+        .update(annotations)
+        .set({ deletedAt: null, updatedAt: new Date() })
+        .where(eq(annotations.id, annotationId));
     },
   };
 }
@@ -307,7 +336,11 @@ export function createSuggestionRepo(db: DB): SuggestionRepo {
 
     async setSuggestionStatus(id: string, status: SuggestionStatus): Promise<void> {
       // C-003: only the suggestion's own status — content is never touched.
-      await db.update(annotations).set({ suggestionStatus: status }).where(eq(annotations.id, id));
+      // C-017: suggestion-decide (accept/reject/stale) bumps updated_at for changed-since.
+      await db
+        .update(annotations)
+        .set({ suggestionStatus: status, updatedAt: new Date() })
+        .where(eq(annotations.id, id));
     },
   };
 }
@@ -397,15 +430,18 @@ export function createReanchorLedgerRepo(db: DB): DrizzleReanchorLedgerRepo {
 export function createReanchorApplyRepo(db: DB): ReanchorApplyRepo {
   return {
     async applyCarried(annotationId: string, anchor: Anchor): Promise<void> {
+      // C-017: re-anchor (carried onto a new version) is a mutation — bump updated_at.
       await db
         .update(annotations)
-        .set({ anchor, isOrphaned: false })
+        .set({ anchor, isOrphaned: false, updatedAt: new Date() })
         .where(eq(annotations.id, annotationId));
     },
     async markDetached(annotationId: string): Promise<void> {
+      // C-017: re-anchor that DETACHED (>25% drift, lost block/snippet) is a mutation too —
+      // an agent must see the annotation went orphaned in a changed-since pull. Easy to miss.
       await db
         .update(annotations)
-        .set({ isOrphaned: true })
+        .set({ isOrphaned: true, updatedAt: new Date() })
         .where(eq(annotations.id, annotationId));
     },
   };
@@ -424,11 +460,19 @@ export function createDismissReattachRepo(db: DB): DismissReattachRepo {
   return {
     async dismiss(annotationId: string): Promise<void> {
       // AS-023: soft-dismiss — set the marker; the row is kept (excluded from the active list).
-      await db.update(annotations).set({ dismissedAt: new Date() }).where(eq(annotations.id, annotationId));
+      // C-017: dismiss is a mutation — bump updated_at.
+      await db
+        .update(annotations)
+        .set({ dismissedAt: new Date(), updatedAt: new Date() })
+        .where(eq(annotations.id, annotationId));
     },
     async reattach(annotationId: string, anchor: Anchor): Promise<void> {
       // AS-024: clear is_orphaned + set the fresh anchor → returns as an anchored annotation.
-      await db.update(annotations).set({ isOrphaned: false, anchor }).where(eq(annotations.id, annotationId));
+      // C-017: unorphan/relocate is a mutation — bump updated_at.
+      await db
+        .update(annotations)
+        .set({ isOrphaned: false, anchor, updatedAt: new Date() })
+        .where(eq(annotations.id, annotationId));
     },
   };
 }

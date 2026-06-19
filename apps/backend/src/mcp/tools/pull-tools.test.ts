@@ -11,6 +11,9 @@ import {
   pullAnnotationsHandler,
   listCommentsHandler,
   pullTools,
+  decodeCursor,
+  isAfterCursor,
+  type PullCursor,
   type PullPorts,
   type PullAnnotationRow,
   type PullCommentRow,
@@ -59,8 +62,13 @@ function fakePull(opts: {
       roleCalls.push(docId);
       return roles[docId] ?? null;
     },
-    async listAllByDoc(docId) {
-      return annotations[docId] ?? [];
+    async listAllByDoc(docId, cursor?: PullCursor | null) {
+      const all = annotations[docId] ?? [];
+      if (!cursor) return all;
+      // Mirror the SQL changed-since query: strictly-greater (updated_at, id), ordered ASC.
+      return all
+        .filter((r) => isAfterCursor({ updatedAt: r.updatedAt, id: r.id }, cursor))
+        .sort((a, b) => (a.updatedAt - b.updatedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     },
     async listAllCommentsByDoc(docId) {
       return comments[docId] ?? [];
@@ -94,6 +102,7 @@ function richDoc(): { annotations: PullAnnotationRow[]; comments: PullCommentRow
       deleted: false,
       suggestion: null,
       suggestionStatus: null,
+      updatedAt: 1000,
     },
     {
       id: "a_sugg",
@@ -105,6 +114,7 @@ function richDoc(): { annotations: PullAnnotationRow[]; comments: PullCommentRow
       deleted: false,
       suggestion: { kind: "replace", from: "24h", to: "48h", againstVersion: 1 },
       suggestionStatus: "pending",
+      updatedAt: 2000,
     },
     {
       id: "a_orphan",
@@ -116,6 +126,7 @@ function richDoc(): { annotations: PullAnnotationRow[]; comments: PullCommentRow
       deleted: false,
       suggestion: null,
       suggestionStatus: null,
+      updatedAt: 3000,
     },
     {
       id: "a_multi",
@@ -136,6 +147,7 @@ function richDoc(): { annotations: PullAnnotationRow[]; comments: PullCommentRow
       deleted: false,
       suggestion: null,
       suggestionStatus: null,
+      updatedAt: 4000,
     },
   ];
   const comments: PullCommentRow[] = [
@@ -267,7 +279,7 @@ describe("AS-010: pull authorizes per-doc by the owner; revoke rejects", () => {
     // Owner has rights on A, none on B.
     const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_b: [{
       id: "x", type: "range", anchor: { blockId: "b", textSnippet: "secret", offset: 0, length: 6 },
-      status: "unresolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null,
+      status: "unresolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null, updatedAt: 1000,
     }] }, comments: { doc_b: [{ id: "c", annotationId: "x", parentId: null, body: "leak me", createdAt: "2026-06-19T00:00:00.000Z" }] } });
     const tool = pullAnnotationsHandler(fk.ports);
     await expect(tool({ docId: "doc_b" }, ctx())).rejects.toThrow(McpToolError);
@@ -300,22 +312,96 @@ describe("AS-010: pull authorizes per-doc by the owner; revoke rejects", () => {
 
 // ── AS-008: incremental "changed-since" pull (cursor) ────────────────────────
 //
-// BLOCKED on a real upstream dependency. AS-008 needs a monotonic (updated_at, snowflake id)
-// watermark — annotation-core:C-017 specs an `updated_at` column bumped at EVERY mutation
-// (resolve/reopen/dismiss/orphan/suggestion-decide, re-anchor, reply) plus a (updated_at, id)
-// changed-since query. That column + query are NOT in the built model: db/schema.ts
-// `annotations` and `comments` carry only `created_at` (+ deleted_at/dismissed_at markers),
-// no `updated_at`, and there is no changed-since/cursor read in src/annotation/. Building a
-// cursor on created_at alone would SILENTLY MISS changed-but-not-created rows
-// (resolve/reanchor/reply on an old annotation) — exactly the AS-008 guarantee. Faking it
-// would ship a cursor that drops feedback, the worst outcome for a round-trip tool.
-// → Reported as Spec signal S1 (upstream gap). This test PINS the block so the coverage gate
-//   sees AS-008 and the contract is documented, not silently skipped.
-describe("AS-008: incremental changed-since pull (cursor)", () => {
-  test("AS-008: BLOCKED — annotation-core:C-017 updated_at + (updated_at,id) changed-since query is not built; cursor cannot be honest on created_at alone", () => {
-    // The upstream invariant the cursor needs does not exist yet. Asserting the gap explicitly
-    // so this does not read as an accidental omission (see the block comment above + report S1).
-    const schemaHasUpdatedAtOnAnnotations = false; // verified: db/schema.ts annotations has no updated_at
-    expect(schemaHasUpdatedAtOnAnnotations).toBe(false);
+// The agent kept the watermark cursor from an earlier pull (a monotonic (updated_at, id)
+// position). On the next pull WITH that cursor it must get ONLY rows whose (updated_at, id)
+// is strictly greater — INCLUDING ones that *changed* (resolve/dismiss/etc.), not only newly
+// created — with NO repeats of already-handled rows, plus the new watermark for the next pull.
+// Producer dependency annotation-core:C-017 (updated_at + (updated_at,id) changed-since query)
+// is now built; the same-timestamp tie-break on real Postgres is proven in
+// test/integration/changed-since.itest.ts (the in-memory fake here can't honestly prove the
+// DB lexicographic order, so it is asserted live, not faked).
+describe("AS-008: pull with cursor returns only changed-since rows (incl changed, no repeats)", () => {
+  // The scenario data: a doc the agent pulled earlier (its rows sit at updatedAt 1000..4000),
+  // then 2 NEW comments arrive (bumping their parent annotation past the cursor) + 1 EXISTING
+  // annotation gets RESOLVED (its updated_at bumps to AFTER the cursor — changed, not created).
+  function afterPriorPull(): {
+    annotations: PullAnnotationRow[];
+    comments: PullCommentRow[];
+    cursor: PullCursor;
+  } {
+    // Cursor watermark = the max (updated_at, id) the agent saw on the prior pull: ts 4000.
+    const cursor: PullCursor = { updatedAt: 4000, id: "a_multi" };
+    const annotations: PullAnnotationRow[] = [
+      // Already-handled (<= cursor) — MUST NOT repeat.
+      { id: "a_old_handled", type: "range", anchor: { blockId: "b", textSnippet: "x", offset: 0, length: 1 }, status: "unresolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null, updatedAt: 1000 },
+      // An EXISTING annotation that was since RESOLVED — its updated_at bumped to AFTER the cursor.
+      { id: "a_since_resolved", type: "range", anchor: { blockId: "b", textSnippet: "y", offset: 0, length: 1 }, status: "resolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null, updatedAt: 5000 },
+      // Two annotations that got a NEW comment/reply — parent updated_at bumped past the cursor.
+      { id: "a_new_comment_1", type: "range", anchor: { blockId: "b", textSnippet: "z", offset: 0, length: 1 }, status: "unresolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null, updatedAt: 6000 },
+      { id: "a_new_comment_2", type: "range", anchor: { blockId: "b", textSnippet: "w", offset: 0, length: 1 }, status: "unresolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null, updatedAt: 7000 },
+    ];
+    const comments: PullCommentRow[] = [
+      { id: "c_new_1", annotationId: "a_new_comment_1", parentId: null, authorName: "A", body: "new feedback 1", createdAt: "2026-06-19T01:00:00.000Z" },
+      { id: "c_new_2", annotationId: "a_new_comment_2", parentId: null, authorName: "B", body: "new feedback 2", createdAt: "2026-06-19T01:01:00.000Z" },
+    ];
+    return { annotations, comments, cursor };
+  }
+
+  test("AS-008: a second pull with the prior cursor returns only changed-since rows + advances the cursor", async () => {
+    const { annotations, comments, cursor } = afterPriorPull();
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: { doc_a: comments } });
+    const res = await pullAnnotationsHandler(fk.ports)(
+      { docId: "doc_a", cursor: Buffer.from(`${cursor.updatedAt}.${cursor.id}`, "utf8").toString("base64url") },
+      ctx(),
+    );
+
+    const ids = res.annotations.map((a) => a.id);
+    // already-handled (<= cursor) does NOT repeat
+    expect(ids).not.toContain("a_old_handled");
+    // a CHANGED (since-resolved) annotation surfaces — not only newly-created rows
+    expect(ids).toContain("a_since_resolved");
+    expect(res.annotations.find((a) => a.id === "a_since_resolved")!.status.resolution).toBe("resolved");
+    // the 2 new comments surface via their parent annotation bump
+    expect(ids).toContain("a_new_comment_1");
+    expect(ids).toContain("a_new_comment_2");
+    // exactly the 3 changed-since rows, no more
+    expect(ids.sort()).toEqual(["a_new_comment_1", "a_new_comment_2", "a_since_resolved"]);
+
+    // the returned cursor advances to the new max watermark (ts 7000 / a_new_comment_2)
+    const out = decodeCursor(res.cursor);
+    expect(out).toEqual({ updatedAt: 7000, id: "a_new_comment_2" });
+    // and is strictly after the input cursor — the watermark never goes backwards
+    expect(isAfterCursor({ updatedAt: out!.updatedAt, id: out!.id }, cursor)).toBe(true);
+  });
+
+  test("AS-008: an empty changed-set echoes the input cursor unchanged (a no-op pull)", async () => {
+    // Only an already-handled row exists; nothing changed since the cursor.
+    const annotations: PullAnnotationRow[] = [
+      { id: "a_old_handled", type: "range", anchor: { blockId: "b", textSnippet: "x", offset: 0, length: 1 }, status: "unresolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null, updatedAt: 1000 },
+    ];
+    const cursor: PullCursor = { updatedAt: 4000, id: "a_multi" };
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: {} });
+    const res = await pullAnnotationsHandler(fk.ports)(
+      { docId: "doc_a", cursor: Buffer.from(`${cursor.updatedAt}.${cursor.id}`, "utf8").toString("base64url") },
+      ctx(),
+    );
+    expect(res.annotations).toHaveLength(0);
+    expect(decodeCursor(res.cursor)).toEqual(cursor); // echoed, never backwards
+  });
+
+  test("AS-008: no cursor → a full pull + a fresh max watermark (the prior-pull bootstrap)", async () => {
+    const { annotations, comments } = richDoc();
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: { doc_a: comments } });
+    const res = await pullAnnotationsHandler(fk.ports)({ docId: "doc_a" }, ctx());
+    expect(res.annotations).toHaveLength(4); // every row (AS-007 full pull)
+    // the bootstrap cursor is the max (updated_at, id) of the full set (ts 4000 / a_multi)
+    expect(decodeCursor(res.cursor)).toEqual({ updatedAt: 4000, id: "a_multi" });
+  });
+
+  test("AS-008: a malformed cursor reads as no-cursor (full pull) — never aborts the agent", async () => {
+    const { annotations, comments } = richDoc();
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: { doc_a: comments } });
+    const res = await pullAnnotationsHandler(fk.ports)({ docId: "doc_a", cursor: "not-a-valid-cursor!!!" }, ctx());
+    expect(res.annotations).toHaveLength(4); // degrades to a full pull, no throw
   });
 });
