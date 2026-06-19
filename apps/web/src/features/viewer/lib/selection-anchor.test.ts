@@ -70,6 +70,9 @@ describe("selectionToAnchor — single block (regression)", () => {
       offset: 8,
       length: "expires after 24h".length,
       textSnippet: "expires after 24h",
+      // C-004 (annotation-reanchor): the segment carries ≤32-char prefix/suffix context.
+      prefix: "Payment ",
+      suffix: " unless renewed.",
     });
   });
 });

@@ -450,7 +450,8 @@ describe("selectionToAnchor (S-001 anchor contract)", () => {
     expect(anchor.offset).toBe("Payment ".length); // 8
     expect(anchor.length).toBe("expires after 24h".length);
     expect(anchor.segments).toEqual([
-      { blockId: "block-p-1", offset: 8, length: 17, textSnippet: "expires after 24h" },
+      // C-004 (annotation-reanchor): the segment carries ≤32-char prefix/suffix context.
+      { blockId: "block-p-1", offset: 8, length: 17, textSnippet: "expires after 24h", prefix: "Payment ", suffix: " unless renewed." },
     ]);
   });
 
