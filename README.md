@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="docs/assets/anchord-mark.svg" width="38" align="center" alt="" />&nbsp;Anchord
+# <img src="docs/assets/anchord-mark.svg" width="34" align="middle" alt="" />&nbsp;Anchord
 
 **Self-hosted, own-your-data platform to share and annotate AI-generated docs.**
 _Vaultwarden for AI docs — publish a spec/plan/report as a link, get margin comments back, and let your agent pull the feedback over MCP. Your data never leaves the box._
