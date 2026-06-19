@@ -7,7 +7,7 @@
 // Postgres in test/integration/annotation-repo.itest.ts.
 
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
-import { annotations, anchorResolution, comments, reanchorLedger, user } from "../db/schema";
+import { annotations, anchorResolution, comments, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { Anchor } from "./annotation";
 import type {
@@ -384,82 +384,6 @@ export function createSuggestionRepo(db: DB): SuggestionRepo {
         .update(annotations)
         .set({ suggestionStatus: status, updatedAt: new Date() })
         .where(eq(annotations.id, id));
-    },
-  };
-}
-
-// ── S-005: re-anchor ledger (ReanchorLedgerRepo) ───────────────────────────
-
-/**
- * A ReanchorLedgerRepo whose getEntry reads from the ledger table, plus a persist helper
- * (persistEntry) used by the re-anchor job to record an outcome. C-012 idempotency rides
- * on UNIQUE(annotation_id, version_id): persistEntry uses INSERT … ON CONFLICT DO NOTHING
- * so a re-run for the same pair adds no duplicate row, and getEntry returns the original.
- *
- * NOTE: reanchorForVersion's ReanchorLedgerRepo.getEntry is SYNCHRONOUS (pure-logic
- * port). The DB read is async, so this factory exposes an async loader (loadEntries) the
- * caller awaits up front to build a synchronous, cached getEntry — keeping the pure
- * function pure while still consulting persisted state.
- */
-export interface DrizzleReanchorLedgerRepo extends ReanchorLedgerRepo {
-  /** Persist one outcome idempotently (C-012). Returns false if the pair already existed. */
-  persistEntry(entry: ReanchorLedgerEntry): Promise<boolean>;
-  /** Preload all ledger entries for a version into the in-memory cache getEntry reads. */
-  loadEntries(versionId: string): Promise<void>;
-}
-
-export function createReanchorLedgerRepo(db: DB): DrizzleReanchorLedgerRepo {
-  // Synchronous getEntry (the pure-logic port shape) reads from this cache; loadEntries
-  // fills it from the DB before a run so persisted prior outcomes short-circuit recompute.
-  const cache = new Map<string, ReanchorLedgerEntry>();
-  const key = (annotationId: string, versionId: string) => `${annotationId}::${versionId}`;
-
-  return {
-    getEntry(annotationId: string, versionId: string): ReanchorLedgerEntry | undefined {
-      return cache.get(key(annotationId, versionId));
-    },
-
-    async loadEntries(versionId: string): Promise<void> {
-      const rows = await db
-        .select({
-          annotationId: reanchorLedger.annotationId,
-          versionId: reanchorLedger.versionId,
-          status: reanchorLedger.status,
-          anchor: reanchorLedger.anchor,
-        })
-        .from(reanchorLedger)
-        .where(eq(reanchorLedger.versionId, versionId));
-      for (const r of rows) {
-        const entry: ReanchorLedgerEntry =
-          r.status === "carried"
-            ? {
-                annotationId: r.annotationId,
-                versionId: r.versionId,
-                status: "carried",
-                anchor: r.anchor as Anchor,
-              }
-            : { annotationId: r.annotationId, versionId: r.versionId, status: "orphaned" };
-        cache.set(key(r.annotationId, r.versionId), entry);
-      }
-    },
-
-    async persistEntry(entry: ReanchorLedgerEntry): Promise<boolean> {
-      const inserted = await db
-        .insert(reanchorLedger)
-        .values({
-          annotationId: entry.annotationId,
-          versionId: entry.versionId,
-          status: entry.status,
-          anchor: entry.status === "carried" ? (entry.anchor ?? null) : null,
-        })
-        .onConflictDoNothing({
-          target: [reanchorLedger.annotationId, reanchorLedger.versionId],
-        })
-        .returning({ id: reanchorLedger.id });
-      const didInsert = inserted.length > 0;
-      // Keep the cache consistent with what is now persisted.
-      cache.set(key(entry.annotationId, entry.versionId), entry);
-      return didInsert;
     },
   };
 }

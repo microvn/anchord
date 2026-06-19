@@ -303,35 +303,6 @@ export const annotations = pgTable(
   ],
 );
 
-// ── reanchor_ledger (annotation-core S-005, C-012) ─────────────────────────
-// The idempotency record for re-anchoring annotations onto a new version. One row per
-// (annotation_id, version_id): the outcome (carried|orphaned) + the carried anchor.
-// The UNIQUE(annotation_id, version_id) makes a re-run a no-op — the second attempt to
-// persist the same pair conflicts, so the ledger never double-applies (C-012). Matches
-// ReanchorLedgerEntry in src/annotation/reanchor.ts. version_id is the doc_versions row
-// id; no FK on it for now (re-anchor runs OFF the publish path and a version may be
-// referenced by ledger entries computed before/after — kept loose + portable).
-export const reanchorLedgerStatus = pgEnum("reanchor_ledger_status", ["carried", "orphaned"]);
-
-export const reanchorLedger = pgTable(
-  "reanchor_ledger",
-  {
-    id: id(),
-    annotationId: text("annotation_id")
-      .notNull()
-      .references(() => annotations.id, { onDelete: "cascade" }),
-    versionId: text("version_id").notNull(),
-    status: reanchorLedgerStatus("status").notNull(),
-    // The re-anchored anchor when carried; NULL when orphaned.
-    anchor: jsonb("anchor"),
-    createdAt: createdAt(),
-  },
-  (t) => [
-    // C-012: one outcome per (annotation, version) — the idempotency backstop.
-    uniqueIndex("reanchor_ledger_uq").on(t.annotationId, t.versionId),
-  ],
-);
-
 // ── anchor_resolution (annotation-reanchor S-003, C-005) ───────────────────
 // The IMMUTABLE per-(annotation, version) re-anchor outcome — the deepened persistence of
 // annotation-core:C-012's ledger that the parent left as [→MANUAL]. One row records, for
@@ -352,7 +323,7 @@ export const reanchorLedger = pgTable(
 // Portable on purpose (no DB CHECK): the status/method enums are pgEnums + validated at the app
 // boundary, consistent with how annotations does status / suggestion_status. version_id has no
 // FK (re-anchor runs OFF the publish path; a version may be referenced before/after — kept loose
-// + portable, mirroring reanchor_ledger).
+// + portable).
 export const anchorResolutionStatus = pgEnum("anchor_resolution_status", ["anchored", "orphaned"]);
 export const anchorResolutionMethod = pgEnum("anchor_resolution_method", [
   "blockid",

@@ -3,27 +3,23 @@
 // Postgres. This is the glue the unit suite deferred behind fake repos — here we prove
 // the full lifecycle round-trips through actual rows: create annotation → reply →
 // resolve/reopen → guest comment (with the just-added guest_email column) → suggestion
-// create/decide → re-anchor ledger idempotency (C-012). Mirrors version-repo.itest.ts.
+// create/decide. Mirrors version-repo.itest.ts.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDocRepo } from "../../src/publish/repo";
-import { appendVersion } from "../../src/services/version";
-import { createVersionRepo } from "../../src/services/version-repo";
-import { annotations, comments, docVersions, reanchorLedger, user } from "../../src/db/schema";
+import { annotations, comments, user } from "../../src/db/schema";
 import { buildAnchor, createAnnotation, createAnnotationWithComment, listAnnotations } from "../../src/annotation/annotation";
 import { addReply } from "../../src/annotation/reply";
 import { setResolution } from "../../src/annotation/resolve";
 import { createGuestComment } from "../../src/annotation/guest";
 import { createSuggestion, decideSuggestion } from "../../src/annotation/suggestion";
-import { reanchorForVersion } from "../../src/annotation/reanchor";
 import {
   createAnnotationRepo,
   createCommentRepo,
   createGuestCommentRepo,
   createResolutionRepo,
   createSuggestionRepo,
-  createReanchorLedgerRepo,
   createDeleteRepo,
 } from "../../src/annotation/repo";
 import { withMigratedDb, type MigratedDb } from "./harness";
@@ -46,17 +42,6 @@ async function newDoc(h: MigratedDb, content = "<p>v1 body</p>"): Promise<string
     contentHash: `hash-${slug}`,
   });
   return id;
-}
-
-/** Read the doc_versions row id for a (docId, version) — the ledger keys on it. */
-async function versionId(h: MigratedDb, docId: string, version: number): Promise<string> {
-  const rows = await h.db
-    .select({ id: docVersions.id, version: docVersions.version })
-    .from(docVersions)
-    .where(eq(docVersions.docId, docId));
-  const match = rows.find((r) => r.version === version);
-  if (!match) throw new Error(`no doc_versions row for doc ${docId} v${version}`);
-  return match.id;
 }
 
 describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
@@ -430,73 +415,5 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
       .from(annotations)
       .where(eq(annotations.id, sugId));
     expect(row.suggestionStatus).toBe("stale");
-  });
-
-  test("S-005 / C-012: reanchorForVersion ledger is idempotent — re-run yields identical result, no dup row", async () => {
-    // v1 content with a clearly anchorable block; append a v2 to re-anchor onto.
-    const docId = await newDoc(h, '<p id="b1">the quick brown fox</p>');
-    const annRepo = createAnnotationRepo(h.db);
-    const verRepo = createVersionRepo(h.db);
-
-    // An annotation anchored at v1.
-    const anchor = buildAnchor({ blockId: "b1", text: "quick brown", offset: 4, length: 11 })!;
-    const created = await createAnnotation(
-      { docId, anchor, viewer: { kind: "user", userId: "u1" }, sessionRole: "commenter" },
-      annRepo,
-    );
-    const annId = created.created ? created.id : "";
-
-    // Publish v2 (text essentially preserved → the annotation should carry).
-    const v2Content = '<p id="b1">the quick brown fox jumps</p>';
-    await appendVersion(docId, v2Content, "hash-v2", verRepo);
-    const v2Id = await versionId(h, docId, 2);
-
-    const ledgerRepo = createReanchorLedgerRepo(h.db);
-
-    // --- first run ---
-    await ledgerRepo.loadEntries(v2Id); // empty cache
-    const run1 = reanchorForVersion(
-      { annotations: [{ id: annId, anchor }], newContentHtml: v2Content, versionId: v2Id },
-      ledgerRepo,
-    );
-    // Persist each computed ledger entry (idempotent insert).
-    for (const e of run1.ledger) {
-      const inserted = await ledgerRepo.persistEntry(e);
-      expect(inserted).toBe(true); // first time → a real insert.
-    }
-    expect(run1.ledger.length).toBe(1);
-    expect(run1.carried.length + run1.detached.length).toBe(1);
-
-    // Exactly one ledger row in the DB for this (annotation, version).
-    let dbRows = await h.db
-      .select({ id: reanchorLedger.id, status: reanchorLedger.status })
-      .from(reanchorLedger)
-      .where(eq(reanchorLedger.versionId, v2Id));
-    expect(dbRows.length).toBe(1);
-    const firstStatus = dbRows[0].status;
-
-    // --- second run (re-run for the SAME version) ---
-    const ledgerRepo2 = createReanchorLedgerRepo(h.db);
-    await ledgerRepo2.loadEntries(v2Id); // loads the persisted entry → short-circuits recompute
-    const run2 = reanchorForVersion(
-      { annotations: [{ id: annId, anchor }], newContentHtml: v2Content, versionId: v2Id },
-      ledgerRepo2,
-    );
-    // Identical result.
-    expect(run2.ledger).toEqual(run1.ledger);
-    expect(run2.carried).toEqual(run1.carried);
-    expect(run2.detached).toEqual(run1.detached);
-
-    // Re-persisting must NOT add a duplicate row (unique constraint / ON CONFLICT).
-    for (const e of run2.ledger) {
-      const inserted = await ledgerRepo2.persistEntry(e);
-      expect(inserted).toBe(false); // already there → no second insert.
-    }
-    dbRows = await h.db
-      .select({ id: reanchorLedger.id, status: reanchorLedger.status })
-      .from(reanchorLedger)
-      .where(eq(reanchorLedger.versionId, v2Id));
-    expect(dbRows.length).toBe(1); // C-012: still exactly one row, no double-apply.
-    expect(dbRows[0].status).toBe(firstStatus);
   });
 });

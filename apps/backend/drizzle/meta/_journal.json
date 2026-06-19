@@ -64,6 +64,13 @@
       "when": 1781883684527,
       "tag": "0008_parallel_phalanx",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781884811262,
+      "tag": "0009_careless_warpath",
+      "breakpoints": true
     }
   ]
 }
