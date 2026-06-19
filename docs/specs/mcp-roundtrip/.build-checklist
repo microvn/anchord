@@ -1,0 +1,79 @@
+# mcp-roundtrip build checklist (controller-owned, Auto-Mode)
+
+## S-001 — Authenticate agent with workspace-scoped token (P0, checkpoint)
+[x] AS-001    — token call executes under owner identity, scoped to token's workspace W   | owner: S-001
+[x] AS-002    — revoked/wrong token rejected with clear auth error                        | owner: S-001
+[x] AS-011    — call missing tool's scope rejected with scope error, no doc created        | owner: S-001
+[x] AS-020.T1 — list tokens shows name/workspace/scopes/last-used/expiry + anch_pat_ prefix | owner: S-001
+[x] AS-020.T2 — full token and stored hash never returned                                  | owner: S-001
+[x] AS-021    — revoke marks token revoked, drops from active list                          | owner: S-001
+[x] AS-022    — revoke takes effect mid-session (re-validated every JSON-RPC request)        | owner: S-001
+[x] AS-023    — MCP tool response is raw JSON-RPC, not enveloped                            | owner: S-001
+[x] AS-024    — exceeding per-token rate limit (60/min default) throttled with clear error  | owner: S-001
+[x] AS-025    — minting beyond per-user active-token cap (10 default) refused                | owner: S-001
+[x] C-001     — token re-validated every JSON-RPC request; per-resource gate after scope     | owner: S-001
+[x] C-005     — transport Streamable HTTP at /mcp; Origin allowlist; mounted OUTSIDE envelope | owner: S-001
+[x] C-007     — per-token rate-limit + per-user active-token cap (in-memory v0)              | owner: S-001
+[x] C-008     — token stored HMAC-SHA256(APP_SECRET); anch_pat_ prefix; shown once; metadata-only listing | owner: S-001
+[x] C-009     — each tool requires its matching scope; missing scope rejected                | owner: S-001
+[x] C-014     — Authorization header never logged on /mcp (redacted before access/error log) | owner: S-001
+
+## S-002 — Publish via MCP: create & update (P0, checkpoint)
+[x] AS-003.T1 — create_document creates doc in W with immutable slug + version 1            | owner: S-002
+[x] AS-003.T2 — general_access = restricted (token-owner only)                              | owner: S-002
+[x] AS-003.T3 — placed in owner's default project in W when projectId missing                | owner: S-002
+[x] AS-003.T4 — returns {docId, slug, url}                                                  | owner: S-002
+[x] AS-004    — update_document appends new version (no overwrite) + triggers re-anchor       | owner: S-002
+[x] AS-005    — update nonexistent docId / no editor rights rejected; error suggests create   | owner: S-002
+[x] AS-018    — create_document honors explicit writable projectId                            | owner: S-002
+[x] AS-019    — foreign/invalid projectId rejected, no doc created (no silent fallback)        | owner: S-002
+[x] AS-026    — concurrent update_document → strictly sequential versions N+1, N+2             | owner: S-002
+[x] AS-027    — concurrent first create → exactly one default project, both docs land in it    | owner: S-002
+[x] AS-028    — failed re-anchor leaves annotations in previous state, retried                 | owner: S-002
+[x] C-002     — create=immutable slug+v1+docId; update=append version, editor+ required        | owner: S-002
+[x] C-006     — agent docs default restricted; projectId honored/rejected/default-fallback      | owner: S-002
+[x] C-011     — partial-unique projects_default_uq (migration 0006) + repo.insert conflict-readback; default-project-race.itest.ts AS-027/C-011 (4 live-PG tests); schema comment corrected | owner: S-002
+[x] C-012     — update returns after version commit; re-anchor async, fail→previous-state+retry | owner: S-002
+
+## S-003 — Read via MCP: list / read / search (P1)
+[x] AS-006.T1 — list/read/search return only docs owner has rights to in token's workspace   | owner: S-003
+[x] AS-006.T2 — list/search paginated by page+limit, return {items, pagination}              | owner: S-003
+[x] AS-029    — W1 token never surfaces W2's anyone_in_workspace doc                          | owner: S-003
+[x] C-003     — list/read/search return only docs the token-owner has rights to               | owner: S-003
+[x] C-013     — every membership/browse check parameterized by token's workspace_id            | owner: S-003
+
+## S-004 — Pull annotations & read comments (P0)
+[x] AS-007.T1 — pull returns comment thread + status (unresolved/resolved, is_orphaned, dismissed, deleted) | owner: S-004
+[x] AS-007.T2 — pull returns suggestion {kind, from, to?, againstVersion} + suggestion_status  | owner: S-004
+[x] AS-007.T3 — pull returns anchor {blockId, textSnippet, offset, length?, segments?, region?} incl segments multi_range | owner: S-004
+[x] AS-008    — changed-since pull via (updated_at,id) watermark; annotation-core C-017 built (migration 0007, bump every mutation site + parent-bump on reply); pull-tools.test.ts + changed-since.itest.ts | owner: S-004
+[x] AS-013    — list_comments returns doc's comment threads (flat, one reply level, paginated)  | owner: S-004
+[x] AS-010.T1 — pull(B) rejected when owner lacks rights on B (per-doc authz)                  | owner: S-004
+[x] AS-010.T2 — token stored as hash, no plaintext; revoke rejects subsequent calls            | owner: S-004
+[x] C-004     — pull payload = thread + full status + suggestion + anchor (segments req for multi_range) | owner: S-004
+
+## S-005 — Write back: reply & resolve (P1)
+[x] AS-009    — reply_comment adds reply (flat) + resolve_comment resolves the annotation       | owner: S-005
+
+## S-006 — Manage projects via MCP: list / read / create (P1)
+[x] AS-014    — list_projects returns workspace's active projects (member visibility); other ws never appear | owner: S-006
+[x] AS-015    — create_project creates project in W owned by owner; returns {projectId, name}    | owner: S-006
+[x] AS-016    — create_project without projects:write rejected, no project created              | owner: S-006
+[x] AS-017    — read_project returns project in token's W; foreign projectId rejected not disclosed | owner: S-006
+[x] C-010     — project list/read = workspace-member visibility; create owned by token-owner     | owner: S-006
+
+## Open gaps (visible, not blocking)
+[ ] GAP-003   — agent-side suggestion application deferred to post-v0                            | owner: —
+[ ] GAP-005   — idempotency-KEY retry-dedup deferred to v0.5 (v0 accepts at-least-once)          | owner: —
+[x] GAP-007   — /mcp Authorization redaction = build-time invariant (verified via C-014/code review + logger test) | owner: S-001
+
+## Not in scope (declared)
+[N/A] OAuth 2.1 + Connected Apps consent UI → v0.5
+[N/A] upload_asset / upload_zip / publish_with_assets → v0.5
+[N/A] list_assets → v0.5
+[N/A] project mutate (update/rename/archive/delete/move) + folders → v0.5
+[N/A] set_access / unpublish via MCP → v0.5
+[N/A] unorphan / relocate annotation via MCP → v0.5
+[N/A] moderate / delete_document / reactions via MCP → v0.5+
+[N/A] n8n integration → v2
+[N/A] stdio transport → not doing (in-process streamable HTTP only)

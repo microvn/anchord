@@ -285,25 +285,25 @@ here; the producer change is pinned to `workspace-project` via GAP-004).
 - `parallel_safe:` false
 - `files:` `apps/web/src/features/docs/components/{docs-screen.tsx,projects-screen.tsx,search-screen.tsx}`, a shared `apps/web/src/components/pagination.tsx` (the numbered control), `apps/web/src/features/docs/hooks/use-docs.ts` + `apps/web/src/features/docs/services/client.ts` (pass page/limit, read the `pagination` block; aggregation hooks page through `hasNext`)
 - `autonomous:` true
-- `verify:` open a project with more than one page of accessible docs → it shows the first page (18) with a numbered control and the grid has no trailing empty cell; clicking a later page shows that page's docs; the projects screen and a search returning >20 matches paginate the same way; a list that fits one page shows no control.
-- **Mechanism (C-008):** search paginates SERVER-side (consumes the producer's page summary per page); a project's docs and the projects list paginate CLIENT-side over the complete access-filtered set — there is no per-project / workspace-wide doc endpoint to server-page, so the FE pages through `pagination.hasNext` to assemble the complete set, then slices it client-side. The doc grid slices at page size 18 (a multiple of the grid's column count so a full page fills with no empty cell, since the doc grid has no New-doc tile); the projects list slices at 20 (its New-project tile rounds out the last row).
+- `verify:` open a project with more than 20 accessible docs → it shows the first 20 with a numbered control; clicking a later page shows that page's docs; the projects screen and a search returning >20 matches paginate the same way; a list that fits one page shows no control.
+- **Mechanism (C-008):** search paginates SERVER-side (consumes the producer's page summary per page); a project's docs and the projects list paginate CLIENT-side over the complete access-filtered set — there is no per-project / workspace-wide doc endpoint to server-page, so the FE pages through `pagination.hasNext` to assemble the complete set, then slices it client-side at page size 20.
 
 **Acceptance Scenarios:**
 
-AS-021: A project's doc list shows one full page with numbered navigation
-- **Given:** a project with 45 docs I can access, doc-grid page size 18
+AS-021: A project's doc list shows one page with numbered navigation
+- **Given:** a project with 45 docs I can access, page size 20
 - **When:** I open the project
-- **Then:** the doc list shows the first 18 docs filling the grid with no trailing empty cell, plus a numbered pagination control (Previous/Next plus page numbers) reflecting 3 pages
-- **Data:** 45 accessible docs, page size 18 (3 pages of 18/18/9)
+- **Then:** the doc list shows the first 20 docs and a numbered pagination control (Previous/Next plus page numbers) reflecting 3 pages
+- **Data:** 45 accessible docs, page size 20
 
 AS-022: Navigating to the last page shows its docs and disables Next
-- **Given:** the project doc list open on page 1 of 3 (45 docs, page size 18)
+- **Given:** the project doc list open on page 1 of 3 (45 docs)
 - **When:** I go to page 3
-- **Then:** the list shows docs 37–45 and the Next control is disabled (no page beyond the last)
+- **Then:** the list shows docs 41–45 and the Next control is disabled (no page beyond the last)
 - **Data:** click page 3 of 3
 
 AS-023: A list that fits one page shows no pagination control
-- **Given:** a project with 7 docs I can access, doc-grid page size 18
+- **Given:** a project with 7 docs I can access, page size 20
 - **When:** I open the project
 - **Then:** all 7 docs show and no pagination control is rendered
 - **Data:** 7 accessible docs (≤ one page)
@@ -321,9 +321,9 @@ AS-025: Search results paginate the same way
 - **Data:** 28 accessible matches, page size 20
 
 AS-026: Pagination counts only items the user can access
-- **Given:** a project holding 40 docs of which I can access 22, doc-grid page size 18
+- **Given:** a project holding 40 docs of which I can access 22, page size 20
 - **When:** I open the project
-- **Then:** the pagination reflects 2 pages (based on the 22 accessible docs: 18 + 4), never 40 — docs I cannot access are not counted into the page total
+- **Then:** the pagination reflects 2 pages (based on the 22 accessible docs), never 40 — docs I cannot access are not counted into the page total
 - **Data:** 40 docs, 22 accessible
 
 ## Constraints & Invariants
@@ -345,18 +345,15 @@ AS-026: Pagination counts only items the user can access
   per-doc browse row and the workspace overview tile use this one number; both show annotation
   iconography/label ("Annotations"), never a comment/envelope. (AS-019, AS-020, AS-027)
 - C-007: The three browse lists — a project's docs, the projects list, and search results — are
-  paginated with numbered navigation (Previous/Next + page numbers). Page size is 20 for the projects
-  list and search; the doc grid uses 18 — a multiple of the grid's column count (3-col → 6 rows, 2-col
-  → 9 rows) so a full page fills with NO trailing empty cell (the doc grid, unlike the projects grid,
-  has no New-project-style tile to round out the last row). Access filtering is applied BEFORE
-  pagination, so the page count and totals reflect ONLY items the caller can access (hidden items are
-  never counted into pages). A list that fits within one page shows no pagination control. (AS-021, AS-022, AS-023, AS-024, AS-025, AS-026)
+  paginated at a fixed page size of 20 with numbered navigation (Previous/Next + page numbers). Access
+  filtering is applied BEFORE pagination, so the page count and totals reflect ONLY items the caller can
+  access (hidden items are never counted into pages). A list that fits within one page shows no
+  pagination control. (AS-021, AS-022, AS-023, AS-024, AS-025, AS-026)
 - C-008: Pagination is SERVER-side for search only; a project's docs and the projects list paginate
   CLIENT-side. anchord has no per-project doc endpoint and no workspace-wide doc endpoint, so the
   "project's doc list" browse is a workspace-wide union the FE assembles by paging through
-  `pagination.hasNext` over the complete access-filtered set, then slicing in the client — the doc
-  grid at page size 18 (a column-count multiple so a full page has no empty cell), the projects list
-  at 20 (its New-project tile rounds the last row). Search uses the producer's server-side page summary
+  `pagination.hasNext` over the complete access-filtered set, then slicing at page size 20 in the
+  client; the projects list does the same. Search uses the producer's server-side page summary
   directly. The page total still reflects only accessible items (the complete set is access-filtered
   upstream), so AS-026 holds regardless of where the slice is taken. The aggregation reads (sidebar /
   workspace-home counts, the workspace doc union) likewise page through `hasNext` to keep the COMPLETE
@@ -502,7 +499,6 @@ No bloat — each AS traces to one stated atom.
 | 2026-06-10 | Clarifications resolved: GAP-003 accepted (designed controls); GAP-001 + GAP-002 deferred (S-005/S-006 wait on backend producers); build pass = S-001..S-004 | -- |
 | 2026-06-18 | Browse pagination (Major, M1+M6, snapshot 2026-06-18-ui-pagination): + S-008 (numbered pagination, page size 20, on a project's docs · projects list · search — AS-021..026); + C-007 (page size 20, access-filter before pagination, no control when single page); + GAP-004 (backend producer: the 3 list endpoints must accept page/limit + return a `pagination` envelope — plan in workspace-project.md); Linked Fields += `pagination` envelope (domain key kept, not renamed); + Spec Sizing Notes (8 stories / 26 AS, G7 overage). Source: docs/explore/browse-pagination.md. | -- |
 | 2026-06-18 | GAP-002 resolved (Minor, companion to workspace-project AS-021): the browse-row `generalAccess` producer is now specced (`workspace-project`:S-003/AS-021); Linked Field doc-`generalAccess` ✘→✔; GAP-002 status deferred→resolved. S-006 (AccessIndicator) is now unblocked — build the producer AS, then S-006. | -- |
-| 2026-06-18 | Doc-grid page size 18 to fill the grid (Major, M5, snapshot 2026-06-18-ui-docgrid-pagesize): C-007/C-008 + AS-021/022/023/026 — the doc grid pages at 18 (a multiple of the 3/2 column counts) so a full page leaves NO trailing empty cell; the projects list + search stay at 20 (projects fills via its New-project tile). AS-021 first-18/3-pages, AS-022 last page docs 37–45. FE client-side slice only (`DOCS_PAGE_SIZE`), no backend/AS change on workspace-project. Source: user dogfood — docs grid left an empty cell vs the projects grid's New-project tile. | -- |
 | 2026-06-18 | Dashboard count excludes dismissed (Major, M6, snapshot 2026-06-18-ui-dismissed-count): C-006 — the active-annotation count now excludes BOTH the delete tombstone AND the dismissed tombstone (annotation-core:C-013), so the browse/overview count matches the viewer rail's active read; + AS-027 (a dismissed detached annotation is not counted). Closes the S2 raised by annotation-core:S-008 (commit 5c584be). Build: `workspace/repo.ts` annotationCount += `isNull(dismissedAt)`. | -- |
 | 2026-06-18 | Pagination client/server reconcile (Major, M6, snapshot 2026-06-18-ui-pagination-clientside): + C-008 (search = server-paginated; project docs + projects list = client-side over the complete set, FE pages through `hasNext`; no per-project/workspace doc endpoint; aggregation hooks page through too); S-008 Execution files += `use-docs.ts` + mechanism note, BLOCKED-until removed; GAP-004 → resolved (workspace-project:S-007, commit 7b09362); Linked Field `pagination` re-pinned to the two consumption modes; + Clarifications 2026-06-18. Behaviour (AS-021..026) unchanged. Source: /mf-build S-008 spec signal S3. | -- |
 | 2026-06-17 | Mode C (Major, M1+M6, snapshot 2026-06-17-annotation-count): + S-007 (dashboard counts ACTIVE annotations, not comments — AS-019 per-doc row count+annotation icon, AS-020 workspace overview "Annotations" tile) + C-006. Renamed UI Inventory `CommentCount`→`AnnotationCount`. From dogfood feedback; the count metric (repo commentCount, doc-bits, workspace-home tile) was previously unspecced. | -- |

@@ -1,7 +1,7 @@
 # Spec: workspace-project
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-18
 **Status:** Draft
 
 ## Overview
@@ -17,10 +17,7 @@ via in-app + email.
   branding). Exactly 1 row in v0.
 - **workspace_members**: `workspace_id`, `user_id`, `role` (admin | member).
 - **projects**: `workspace_id`, `name`, `archived_at`.
-- **docs.project_id** (defined in `render-publish`). The browse doc row also serves
-  **docs.general_access** (restricted | anyone_in_workspace | anyone_with_link) so the consumer
-  can show a per-doc access indicator (S-003/AS-021), plus **docs.created_at + docs.updated_at** so
-  the consumer can sort the browse by Created / Updated (S-003/AS-022).
+- **docs.project_id** (defined in `render-publish`).
 - **doc_versions.extracted_text**: plain text extracted from the version's HTML/MD,
   written when each version is published (GAP-003 resolved → publish-time extraction).
   The search index reads the **current** version's `extracted_text`.
@@ -129,18 +126,6 @@ AS-007: Archiving a project hides it from browse
 - **Then:** the project is hidden from browse by default; docs remain accessible via
   direct link; unarchive to show it again
 - **Data:** archived project
-
-AS-021: The browse doc row carries the doc's general access level
-- **Given:** project "Billing" browsable by member X holds doc B (general access "anyone in workspace") and doc C (general access "anyone with link")
-- **When:** member X opens project "Billing"
-- **Then:** each browse doc row carries the doc's general access level — one of restricted / anyone-in-workspace / anyone-with-link — so a consumer can show a per-doc access indicator without a second fetch
-- **Data:** doc B = anyone_in_workspace, doc C = anyone_with_link → each row reports its level
-
-AS-022: The browse doc row carries the doc's created and updated times
-- **Given:** project "Billing" browsable by member X holds docs with distinct creation and last-updated times
-- **When:** member X opens project "Billing"
-- **Then:** each browse doc row carries the doc's created time and last-updated time, so a consumer can sort the browse by Created or by Updated without a second fetch
-- **Data:** doc created 2026-06-01 / updated 2026-06-18, doc created 2026-06-10 / updated 2026-06-12 → each row reports both times
 
 ### S-004: Move or copy a doc between projects (P1)
 
@@ -306,14 +291,6 @@ AS-020: The page total counts only items the caller can access
 - **extracted text of a version** — produced by the publish pipeline (`render-publish`/
   `versioning-diff`). Consumed by S-005 (AS-009) to index FTS. ✘ the text-extraction
   pipeline is not yet pinned in the render-publish spec → GAP-003.
-- **generalAccess on browse rows** — produced HERE by S-003 (AS-021) on the project-docs browse
-  row (persisted on the doc, served on every browse fetch). Consumed by `workspace-project-ui`:S-006
-  (AS-018, the `AccessIndicator` on the doc card). ✔ surface + lifecycle match; resolves
-  `workspace-project-ui`:GAP-002.
-- **createdAt + updatedAt on browse rows** — produced HERE by S-003 (AS-022) on the project-docs
-  browse row (persisted on the doc, served on every browse fetch). Consumed by
-  `workspace-project-browse`:S-003 (the Created + Updated sort orders). ✔ surface + lifecycle match;
-  resolves `workspace-project-browse`:GAP-002.
 - **page summary (current page + total + has-more)** on the doc-browse, projects-list, and search
   reads — produced HERE by S-007 (AS-016..020, C-010) on each list response, alongside the existing
   item collection key. Consumed by `workspace-project-ui`:S-008 (AS-021..026, C-008) in two modes:
@@ -379,18 +356,6 @@ names only. Dark-operator (`DESIGN.md`). Precedence: AS > Tree.
 - **Notify on both channels:** people sent a link rarely open the app → email is needed to close the feedback
   loop. SMTP is already mandatory (auth cluster), so it can always send.
 
-## Spec Sizing Notes
-
-Stories=7 (target 7, at soft target). AS=22 (target 20, 2 over — in G7 overage range ≤30).
-
-The over-target AS are both browse-row field producers on S-003, each one stated atom (a field served
-on the browse row), not bloat:
-- AS-021 — the row carries `general_access` (producer for workspace-project-ui:S-006 AccessIndicator).
-- AS-022 — the row carries `created_at` + `updated_at` (producer for workspace-project-browse:S-003 sort).
-Re-merging either into AS-006 would mix the access-filter behaviour with the field-serving promise.
-
-No bloat — each AS traces to one stated atom.
-
 ## Change Log
 
 | Date | Change | Ref |
@@ -404,6 +369,4 @@ No bloat — each AS traces to one stated atom.
 | 2026-06-08 | GAP-003 resolved → AS-015 + C-006 (publish-time extraction into doc_versions.extracted_text) — Minor | -- |
 | 2026-06-08 | GAP-002 resolved → MVP always-send-per-event (AS-011/C-004); preference+coalescing+digest deferred to TODO.md — Minor | -- |
 | 2026-06-18 | Browse/search pagination producer (Major, M1+M6, snapshot 2026-06-18-be-pagination): + S-007 (doc-browse · projects-list · search return one bounded page + a total/has-more summary, page size 20, pagination AFTER access filter — AS-016..020); + C-010; Linked Fields += page-summary producer ↔ workspace-project-ui:S-008 (resolves workspace-project-ui:GAP-004). Source: docs/explore/browse-pagination.md. | -- |
-| 2026-06-19 | Browse row carries created/updated times (Major, M1-style producer contract, snapshot 2026-06-18-be-row-timestamps): + AS-022 under S-003 (the browse doc row serves `created_at` + `updated_at`); Data Model note; Linked Fields += timestamps producer ↔ workspace-project-browse:S-003 sort, resolving workspace-project-browse:GAP-002. Producer for the doc-browse Updated/Created sort. | -- |
 | 2026-06-18 | Linked Field re-pin (Minor): the page-summary consumer (workspace-project-ui:S-008, C-008) reads it in TWO modes — search per-page (server nav), doc-browse + projects-list via `hasNext` page-through (client-side union, no per-project/workspace doc endpoint). Producer contract unchanged. | -- |
-| 2026-06-18 | Browse row carries general_access (Major, M1-style producer contract, snapshot 2026-06-18-be-browse-access): + AS-021 under S-003 (the browse doc row serves the doc's general access level: restricted / anyone_in_workspace / anyone_with_link); Data Model note; Linked Fields += `generalAccess` producer ↔ workspace-project-ui:S-006 (AS-018), resolving workspace-project-ui:GAP-002. Producer for the deferred FE AccessIndicator (S-006). | -- |

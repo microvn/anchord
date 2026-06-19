@@ -262,12 +262,6 @@ AS-020: The workspace overview tile counts annotations across the workspace
   counts — not a "Comments" total
 - **Data:** docs summing to 12 active annotations
 
-AS-027: A dismissed detached annotation is not counted
-- **Given:** a doc with 3 active annotations, plus 1 detached annotation that has been dismissed (annotation-core:S-008)
-- **When:** I view the doc in the workspace browse grid
-- **Then:** the row's annotation count reads "3" — the dismissed annotation is excluded, exactly as the viewer rail excludes it, so the browse count and the rail count agree
-- **Data:** 3 active + 1 dismissed → row reads 3
-
 ### S-008: Paginate the browse lists (P1)
 
 **Description:** As a user browsing a large workspace, the three lists that grow without bound — the
@@ -283,27 +277,27 @@ here; the producer change is pinned to `workspace-project` via GAP-004).
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
-- `files:` `apps/web/src/features/docs/components/{docs-screen.tsx,projects-screen.tsx,search-screen.tsx}`, a shared `apps/web/src/components/pagination.tsx` (the numbered control), `apps/web/src/features/docs/hooks/use-docs.ts` + `apps/web/src/features/docs/services/client.ts` (pass page/limit, read the `pagination` block; aggregation hooks page through `hasNext`)
+- `files:` `apps/web/src/features/docs/components/{docs-screen.tsx,doc-list.tsx,projects-screen.tsx,search-screen.tsx}`, a shared `apps/web/src/components/pagination.tsx` (the numbered control), `apps/web/src/features/docs/services/client.ts` (pass page/limit, read the `pagination` block)
 - `autonomous:` true
-- `verify:` open a project with more than one page of accessible docs → it shows the first page (18) with a numbered control and the grid has no trailing empty cell; clicking a later page shows that page's docs; the projects screen and a search returning >20 matches paginate the same way; a list that fits one page shows no control.
-- **Mechanism (C-008):** search paginates SERVER-side (consumes the producer's page summary per page); a project's docs and the projects list paginate CLIENT-side over the complete access-filtered set — there is no per-project / workspace-wide doc endpoint to server-page, so the FE pages through `pagination.hasNext` to assemble the complete set, then slices it client-side. The doc grid slices at page size 18 (a multiple of the grid's column count so a full page fills with no empty cell, since the doc grid has no New-doc tile); the projects list slices at 20 (its New-project tile rounds out the last row).
+- `verify:` open a project with more than 20 accessible docs → it shows the first 20 with a numbered control; clicking a later page shows that page's docs; the projects screen and a search returning >20 matches paginate the same way; a list that fits one page shows no control.
+- **BLOCKED until** the backend list endpoints deliver the `pagination` envelope (GAP-004 — producer in `workspace-project.md`); until then the lists fall back to their current unpaginated read.
 
 **Acceptance Scenarios:**
 
-AS-021: A project's doc list shows one full page with numbered navigation
-- **Given:** a project with 45 docs I can access, doc-grid page size 18
+AS-021: A project's doc list shows one page with numbered navigation
+- **Given:** a project with 45 docs I can access, page size 20
 - **When:** I open the project
-- **Then:** the doc list shows the first 18 docs filling the grid with no trailing empty cell, plus a numbered pagination control (Previous/Next plus page numbers) reflecting 3 pages
-- **Data:** 45 accessible docs, page size 18 (3 pages of 18/18/9)
+- **Then:** the doc list shows the first 20 docs and a numbered pagination control (Previous/Next plus page numbers) reflecting 3 pages
+- **Data:** 45 accessible docs, page size 20
 
 AS-022: Navigating to the last page shows its docs and disables Next
-- **Given:** the project doc list open on page 1 of 3 (45 docs, page size 18)
+- **Given:** the project doc list open on page 1 of 3 (45 docs)
 - **When:** I go to page 3
-- **Then:** the list shows docs 37–45 and the Next control is disabled (no page beyond the last)
+- **Then:** the list shows docs 41–45 and the Next control is disabled (no page beyond the last)
 - **Data:** click page 3 of 3
 
 AS-023: A list that fits one page shows no pagination control
-- **Given:** a project with 7 docs I can access, doc-grid page size 18
+- **Given:** a project with 7 docs I can access, page size 20
 - **When:** I open the project
 - **Then:** all 7 docs show and no pagination control is rendered
 - **Data:** 7 accessible docs (≤ one page)
@@ -321,9 +315,9 @@ AS-025: Search results paginate the same way
 - **Data:** 28 accessible matches, page size 20
 
 AS-026: Pagination counts only items the user can access
-- **Given:** a project holding 40 docs of which I can access 22, doc-grid page size 18
+- **Given:** a project holding 40 docs of which I can access 22, page size 20
 - **When:** I open the project
-- **Then:** the pagination reflects 2 pages (based on the 22 accessible docs: 18 + 4), never 40 — docs I cannot access are not counted into the page total
+- **Then:** the pagination reflects 2 pages (based on the 22 accessible docs), never 40 — docs I cannot access are not counted into the page total
 - **Data:** 40 docs, 22 accessible
 
 ## Constraints & Invariants
@@ -338,29 +332,15 @@ AS-026: Pagination counts only items the user can access
   "Mark all read" reduces it; no count is faked when the read endpoint is unavailable. (AS-012, AS-014, AS-015, AS-017)
 - C-005: Every screen uses the DESIGN.md dark-operator system (teal-only accent) and is
   responsive (dialogs/menus reflow on tablet/mobile; tap targets ≥40px). (AS-001, AS-013; responsive/pixel visual is [→MANUAL], inheriting web-core's shell + tokens)
-- C-006: The dashboard's count metric is the doc's ACTIVE annotation count — annotations whose delete
-  tombstone AND dismissed tombstone are BOTH unset (soft-deleted ones AND dismissed detached ones
-  excluded), NOT a comment count. This matches the viewer rail's active read exactly (annotation-core:
-  C-013 — the rail also excludes dismissed), so the dashboard count and the rail count agree. The
-  per-doc browse row and the workspace overview tile use this one number; both show annotation
-  iconography/label ("Annotations"), never a comment/envelope. (AS-019, AS-020, AS-027)
+- C-006: The dashboard's count metric is the doc's ACTIVE annotation count (annotations whose delete
+  tombstone is unset — soft-deleted ones excluded), NOT a comment count. The per-doc browse row and the
+  workspace overview tile use this one number; both show annotation iconography/label ("Annotations"),
+  never a comment/envelope. (AS-019, AS-020)
 - C-007: The three browse lists — a project's docs, the projects list, and search results — are
-  paginated with numbered navigation (Previous/Next + page numbers). Page size is 20 for the projects
-  list and search; the doc grid uses 18 — a multiple of the grid's column count (3-col → 6 rows, 2-col
-  → 9 rows) so a full page fills with NO trailing empty cell (the doc grid, unlike the projects grid,
-  has no New-project-style tile to round out the last row). Access filtering is applied BEFORE
-  pagination, so the page count and totals reflect ONLY items the caller can access (hidden items are
-  never counted into pages). A list that fits within one page shows no pagination control. (AS-021, AS-022, AS-023, AS-024, AS-025, AS-026)
-- C-008: Pagination is SERVER-side for search only; a project's docs and the projects list paginate
-  CLIENT-side. anchord has no per-project doc endpoint and no workspace-wide doc endpoint, so the
-  "project's doc list" browse is a workspace-wide union the FE assembles by paging through
-  `pagination.hasNext` over the complete access-filtered set, then slicing in the client — the doc
-  grid at page size 18 (a column-count multiple so a full page has no empty cell), the projects list
-  at 20 (its New-project tile rounds the last row). Search uses the producer's server-side page summary
-  directly. The page total still reflects only accessible items (the complete set is access-filtered
-  upstream), so AS-026 holds regardless of where the slice is taken. The aggregation reads (sidebar /
-  workspace-home counts, the workspace doc union) likewise page through `hasNext` to keep the COMPLETE
-  set — the producer's default page size of 20 must never silently shrink a count or a full list. (AS-021, AS-026)
+  paginated at a fixed page size of 20 with numbered navigation (Previous/Next + page numbers). Access
+  filtering is applied BEFORE pagination, so the page count and totals reflect ONLY items the caller can
+  access (hidden items are never counted into pages). A list that fits within one page shows no
+  pagination control. (AS-021, AS-022, AS-023, AS-024, AS-025, AS-026)
 
 ## Linked Fields
 
@@ -371,8 +351,8 @@ workspace-project-ui is the **consumer**; `workspace-project` (backend) is the p
 - publish `projectId` — consumed by S-003; produced by the publish endpoint (`render-publish`/`workspace-project`), which already accepts `projectId`. ✔.
 - search `projectId` — consumed by S-004; produced by `workspace-project:AS-010` search endpoint (accepts `projectId`). ✔.
 - notifications list + mark-read — consumed by S-005 on the bell (read on app load + open) and the activity feed. **Producer MISSING** — no `GET /notifications` or mark-read endpoint exists. ✘ → GAP-001.
-- doc `generalAccess` on browse/list rows — consumed by S-006 (AccessIndicator on the browse grid, AS-018), read on the browse fetch (persisted + served on every browse read). Produced by `workspace-project`:S-003 (AS-021) on the project-docs browse row. ✔ surface + lifecycle match (producer specced 2026-06-18; the serving code is the S-003/AS-021 build, then FE S-006 can build).
-- `pagination` envelope `{page, limit, total, totalPages, hasNext, hasPrevious}` on the three list reads — consumed by S-008 alongside the retained domain key (`docs` / `projects` / `results`). Two consumption modes (C-008): SEARCH reads the summary per page (server-side numbered nav); a project's DOCS and the PROJECTS list read `hasNext` to page through to the COMPLETE access-filtered set, then paginate client-side (no per-project / workspace-wide doc endpoint to server-page). Produced by `workspace-project`:S-007 (AS-016..020, C-010) on each list response. ✔ resolved — producer landed (commit 7b09362); the page summary is served on every list read, which satisfies both the per-page (search) and page-through-to-complete (docs/projects + aggregation hooks) consumers.
+- doc `generalAccess` on browse/list rows — consumed by S-006 (AccessIndicator on the browse grid). Produced by the browse/list payload (`workspace-project`/`sharing-permissions`), which does **not** currently include the field. ✘ → GAP-002.
+- `pagination` envelope `{page, limit, total, totalPages, hasNext, hasPrevious}` on the three list reads — consumed by S-008 on each list fetch (project docs, projects, search), read alongside the existing domain key (`docs` / `projects` / `results` — kept, not renamed, to minimise consumer churn). Produced by `workspace-project` (backend) list endpoints, which today return the unpaginated `{docs}` / `{projects}` / `{results}` with NO `pagination` block. ✘ producer not paginated → GAP-004.
 
 ## UI Notes
 
@@ -433,21 +413,20 @@ Build targets `[N]`:
   table is written by `notifyOnReply` but no read endpoint exists. **Deferred:** S-005 is NOT in
   this build pass; add the endpoint to `workspace-project.md` (Mode C) first, then build S-005.
   Source: audit gap-list B.8 ("notifications written but never readable via API").
-- GAP-002 (status: resolved — producer specced 2026-06-18): S-006 (AccessIndicator) needs the doc
-  browse/list payload to include the doc's `general_access`. Resolved at spec level → the producer
-  is now `workspace-project`:S-003 (AS-021): the browse doc row serves `general_access`. Build order:
-  build that producer AS (BE serving the field), then build the FE S-006 AccessIndicator. (S-006 was
-  deferred 2026-06-10 for lack of this producer; it is now unblocked.)
+- GAP-002 (status: deferred — owner: product, decided 2026-06-10): S-006 (AccessIndicator) needs
+  the doc browse/list payload to include the doc's `general_access`. `DocRow` does not currently
+  carry it. **Deferred:** S-006 is NOT in this build pass; add `generalAccess` to the browse
+  payload (`workspace-project`/`sharing-permissions`) first, then build S-006.
   Source: audit gap-list C.9 / FE audit ("DocRow has no access field").
 - GAP-003 (status: resolved — decided 2026-06-10): project rename/archive/delete controls, the
   New-doc project picker, and the search-scope control have no prototype; the designed placements
   (more-menu + dialogs + Select, per UI Notes) are ACCEPTED as the build target. Source: Clarifications.
-- GAP-004 (status: resolved — workspace-project:S-007, commit 7b09362, 2026-06-18): S-008 needs the three list endpoints (a
+- GAP-004 (status: open — owner: backend, IN this pass): S-008 needs the three list endpoints (a
   project's docs `GET …/projects/:id/docs`, the projects list, and search `GET /api/search`) to accept
   `page`/`limit` and return a `pagination` envelope alongside their existing domain key, applying
-  access filtering before pagination. **Resolved 2026-06-18** → `workspace-project`:S-007 (AS-016..020,
-  C-010), commit 7b09362: all three endpoints now serve the page summary. The FE consumes it per-page
-  for search and via `hasNext` page-through for docs/projects (C-008). Source: docs/explore/browse-pagination.md#Impact-on-existing-system.
+  access filtering before pagination. They currently return the full set unpaginated. Add this to
+  `workspace-project.md` (Mode C — reuse the existing `paginate()`/`paginationQuery()` helper), then
+  build S-008. Source: docs/explore/browse-pagination.md#Impact-on-existing-system.
 
 ## Clarifications — 2026-06-10
 
@@ -467,24 +446,9 @@ Build targets `[N]`:
   (GAP-001, GAP-002); they remain specced so they're ready once the backend lands. GAP-003's
   designed controls are accepted.
 
-## Clarifications — 2026-06-18
-
-- **Browse pagination is split client/server (C-008), discovered at build time.** The explore + the
-  original S-008 implied all three lists server-paginate per page. In code, only SEARCH can — it has a
-  real `GET /api/search` endpoint. A project's docs and the projects list have NO per-project /
-  workspace-wide doc endpoint that returns a single server-pageable list; the FE synthesises a
-  workspace-wide union (paging through `pagination.hasNext` to assemble the complete access-filtered
-  set) and paginates it CLIENT-side. The observable behaviour (AS-021..026) is identical either way —
-  page 1 shows 20, the control reflects the total page count, the total counts only accessible items.
-  The aggregation reads (sidebar/home counts, the workspace doc union) page through `hasNext` for the
-  same reason: the producer's default page size of 20 must not silently shrink a count or a full list.
-  This is why the producer's server-side pagination on the docs/projects endpoints (workspace-project:
-  S-007) is a valid, tested contract that this consumer uses only as a page-through source, not for
-  per-page numbered nav.
-
 ## Spec Sizing Notes
 
-Stories=8 (target 7, in G7 overage range ≤10). AS=27 (target 20, in G7 overage range ≤30).
+Stories=8 (target 7, in G7 overage range ≤10). AS=26 (target 20, in G7 overage range ≤30).
 
 G1 splits producing the over-target AS (each AS = one stated atom, no AS gộp):
 - S-008 pagination: 6 AS for 6 atoms — docs-list paginates (AS-021), last-page/Next-disabled edge
@@ -501,8 +465,4 @@ No bloat — each AS traces to one stated atom.
 | 2026-06-10 | Initial creation — FE for workspace-project missing surfaces (move/copy, project mgmt, project picker, search scope, notifications, access indicator) | -- |
 | 2026-06-10 | Clarifications resolved: GAP-003 accepted (designed controls); GAP-001 + GAP-002 deferred (S-005/S-006 wait on backend producers); build pass = S-001..S-004 | -- |
 | 2026-06-18 | Browse pagination (Major, M1+M6, snapshot 2026-06-18-ui-pagination): + S-008 (numbered pagination, page size 20, on a project's docs · projects list · search — AS-021..026); + C-007 (page size 20, access-filter before pagination, no control when single page); + GAP-004 (backend producer: the 3 list endpoints must accept page/limit + return a `pagination` envelope — plan in workspace-project.md); Linked Fields += `pagination` envelope (domain key kept, not renamed); + Spec Sizing Notes (8 stories / 26 AS, G7 overage). Source: docs/explore/browse-pagination.md. | -- |
-| 2026-06-18 | GAP-002 resolved (Minor, companion to workspace-project AS-021): the browse-row `generalAccess` producer is now specced (`workspace-project`:S-003/AS-021); Linked Field doc-`generalAccess` ✘→✔; GAP-002 status deferred→resolved. S-006 (AccessIndicator) is now unblocked — build the producer AS, then S-006. | -- |
-| 2026-06-18 | Doc-grid page size 18 to fill the grid (Major, M5, snapshot 2026-06-18-ui-docgrid-pagesize): C-007/C-008 + AS-021/022/023/026 — the doc grid pages at 18 (a multiple of the 3/2 column counts) so a full page leaves NO trailing empty cell; the projects list + search stay at 20 (projects fills via its New-project tile). AS-021 first-18/3-pages, AS-022 last page docs 37–45. FE client-side slice only (`DOCS_PAGE_SIZE`), no backend/AS change on workspace-project. Source: user dogfood — docs grid left an empty cell vs the projects grid's New-project tile. | -- |
-| 2026-06-18 | Dashboard count excludes dismissed (Major, M6, snapshot 2026-06-18-ui-dismissed-count): C-006 — the active-annotation count now excludes BOTH the delete tombstone AND the dismissed tombstone (annotation-core:C-013), so the browse/overview count matches the viewer rail's active read; + AS-027 (a dismissed detached annotation is not counted). Closes the S2 raised by annotation-core:S-008 (commit 5c584be). Build: `workspace/repo.ts` annotationCount += `isNull(dismissedAt)`. | -- |
-| 2026-06-18 | Pagination client/server reconcile (Major, M6, snapshot 2026-06-18-ui-pagination-clientside): + C-008 (search = server-paginated; project docs + projects list = client-side over the complete set, FE pages through `hasNext`; no per-project/workspace doc endpoint; aggregation hooks page through too); S-008 Execution files += `use-docs.ts` + mechanism note, BLOCKED-until removed; GAP-004 → resolved (workspace-project:S-007, commit 7b09362); Linked Field `pagination` re-pinned to the two consumption modes; + Clarifications 2026-06-18. Behaviour (AS-021..026) unchanged. Source: /mf-build S-008 spec signal S3. | -- |
 | 2026-06-17 | Mode C (Major, M1+M6, snapshot 2026-06-17-annotation-count): + S-007 (dashboard counts ACTIVE annotations, not comments — AS-019 per-doc row count+annotation icon, AS-020 workspace overview "Annotations" tile) + C-006. Renamed UI Inventory `CommentCount`→`AnnotationCount`. From dogfood feedback; the count metric (repo commentCount, doc-bits, workspace-home tile) was previously unspecced. | -- |
