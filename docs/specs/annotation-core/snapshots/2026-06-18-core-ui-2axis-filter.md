@@ -31,9 +31,8 @@ No persistent data — a client. Reads (TanStack Query, keyed by `docSlug`):
 - the **annotations list** for the doc: each `{ id, type, anchor{blockId,textSnippet,offset,length,
   segments[],region?}, status, isOrphaned, suggestion?, suggestionStatus?, comments[] }` and each
   comment `{ id, parentId, authorName|guestName, body, createdAt }`.
-Client state: active TOC section, focused annotation id, rail-visible / drawer-open, theme, the two
-filter facet-sets (which Status facets {Open, Resolved} and which Type facets {Markup, Comment,
-Redline, Label} are selected — all selected by default), filter-popover open/closed.
+Client state: active TOC section, focused annotation id, rail-visible / drawer-open, theme, active
+status-chip filters (which of Open/Resolved/Suggestion are toggled on — all on by default).
 
 ## Prerequisites (backend — build-blockers, not gaps)
 
@@ -273,69 +272,56 @@ AS-014: On a narrow screen the side panes become drawers
 - **Then:** the side panes are not inline; for a Markdown doc both the outline and comments rail become drawers, for an HTML/image doc only the comments rail does (no outline drawer) and content stays full-width; a comment FAB shows the annotation count and opens the rail as a drawer; tapping a highlight opens the rail
 - **Data:** 360px width, a doc with 3 annotations
 
-### S-007: Filter the rail by status and type — two-axis filter (P1)
+### S-007: Summarize + filter the rail by status (P1)
 
-**Description:** As a reader, I open a Filter control on the annotations rail and narrow the list on
-two independent axes — **Status** (Open · Resolved) and **Type** (Markup · Comment · Redline · Label)
-— so I can read, say, only the open redlines or only the labels. The filter dims the non-matching
-highlights in the doc too. The rail header tells me how much is showing of the total.
-**Source:** session design 2026-06-18 (user: "lọc theo type (comment, redline, label...)" + "bổ sung
-thêm 1 bộ lọc … lọc theo 2 trục"); decisions: Filter popover (not inline chips), dynamic facet counts,
-"showing X/N" header. Supersedes the single-axis status chips (the earlier S-007 status-only design).
-Type derives from the SAME mark-hue partition `placeable` already computes — Redline (`type`=suggestion,
-kind=delete), Label (`label` set), Comment (plain), Markup (the teal catch-all, e.g. a replace-suggestion);
-"Suggestion" is no longer a status facet — suggestions fall under the Redline / Markup type facets.
+**Description:** As a reader, the rail header shows the annotation set as status chips — Open,
+Resolved, Suggestion — each an icon with its count, instead of a single total; I toggle a chip
+to focus the rail on (or away from) that group, which also dims the matching highlights in the
+doc, so I can read just the open threads, just the resolved ones, or just the suggestions.
+**Source:** docs/explore/annotation-rail-completeness.md#Feature ("the rail header shows a status
+breakdown as toggleable filter chips … that filter the rail AND dim non-matching marks"); clarify
+2026-06-18 (count covers the complete active set; empty-filter placeholder; focus re-activates a
+toggled-off group). The Suggestion chip filters suggestion-type threads this shell already displays
+(`SuggestBadge`, Data Model `suggestion?`); creating/deciding suggestions stays out of scope (suggest-image).
 
 **Execution:**
 - `depends_on:` S-003
 - `parallel_safe:` false
-- `files:` `apps/web/src/features/viewer/components/annotations-rail.tsx` (Filter control + filtered list + no-match/header), a new `apps/web/src/features/viewer/components/filter-popover.tsx` (the two-axis popover / mobile bottom-sheet), `apps/web/src/features/viewer/components/viewer-screen.tsx` (two facet-sets lifted + mark-dim wiring), the in-text mark path (markdown light-DOM placer + HTML sandbox-bridge placer — the "filtered" flag rides the same channel as resolved/redline/stale)
+- `files:` `apps/web/src/features/viewer/components/annotations-rail.tsx` (chip header + filtered list), `apps/web/src/features/viewer/components/viewer-screen.tsx` (filter state + mark-dim wiring), the in-text mark path (markdown light-DOM placer + the HTML sandbox-bridge placer — the "filtered" flag rides the same channel as the resolved/redline/stale flags)
 - `autonomous:` true
-- `verify:` open a doc with a mix of types/statuses → the Filter popover lists Status (Open/Resolved) + Type (Markup/Comment/Redline/Label) with counts, all selected; deselect every Type but Redline and every Status but Open → the rail shows only open redlines and dims the rest; the header reads "showing N of <total>"; Reset returns to all.
+- `verify:` open a doc with a mix of open/resolved/suggestion annotations → the header shows three chips with counts that sum to the total; toggle one off → its threads leave the rail and its highlights dim in the doc; toggle it back on → both return.
 
 **Acceptance Scenarios:**
 
-AS-022: The Filter popover lists both axes with counts, all selected by default
-- **Given:** a doc with 23 active annotations (Open 20 / Resolved 3; Comment 18 / Markup 2 / Redline 2 / Label 1)
-- **When:** I open the rail's Filter control
-- **Then:** a popover shows two facet groups — Status (Open · Resolved) and Type (Markup · Comment · Redline · Label) — each facet an icon + its count; every facet is selected by default and the rail shows all 23 threads
-- **Data:** 23 active: status 20/3, type 18/2/2/1
+AS-022: The rail header summarizes the set as status chips
+- **Given:** a doc with 20 open, 1 resolved, and 2 suggestion annotations (23 active total)
+- **When:** I open the viewer
+- **Then:** the rail header shows three chips — Open 20 · Resolved 1 · Suggestion 2 — each an icon with its count, all active by default, and the three counts sum to the doc's active total (23)
+- **Data:** 20 open + 1 resolved + 2 suggestion = 23 active
 
-AS-023: Deselecting a Type facet filters the rail and dims those marks
-- **Given:** the Filter popover open with all facets selected
-- **When:** I deselect the Redline type facet
-- **Then:** redline threads leave the rail list and their in-text highlights dim in the doc, while every other type and all statuses stay; the detached section (if any) is unaffected
-- **Data:** deselect Redline (2 of 23)
+AS-023: Toggling a chip off filters the rail and dims those marks
+- **Given:** the viewer open with all three chips active
+- **When:** I toggle the Resolved chip off
+- **Then:** resolved threads leave the rail list and their in-text highlights dim in the doc, while the Open and Suggestion threads and their highlights stay; the detached section (if any) is unaffected
+- **Data:** toggle Resolved off on the 23-annotation doc
 
-AS-024: The two axes combine — a thread shows only when its status AND its type are both selected
-- **Given:** the Filter popover open
-- **When:** I narrow Status to only Open and Type to only Redline
-- **Then:** the rail shows only the open redlines (a resolved redline is hidden, an open comment is hidden) and every non-matching highlight is dimmed
-- **Data:** Status={Open}, Type={Redline} → only open∧redline
+AS-024: Toggling the chip back on restores its threads and marks
+- **Given:** the Resolved chip is toggled off (resolved threads hidden, their marks dimmed)
+- **When:** I toggle the Resolved chip back on
+- **Then:** the resolved threads return to the rail and their highlights return to the resolved (dimmed-as-resolved, not filtered) style
+- **Data:** re-enable Resolved
 
-AS-025: Facet counts are dynamic — they recompute against the other axis's selection
-- **Given:** the doc has 2 redlines, one open and one resolved; the Filter popover open
-- **When:** I narrow Type to only Redline
-- **Then:** the Status facets now read Open 1 · Resolved 1 (scoped to redlines), not the whole-doc Open 20 · Resolved 3
-- **Data:** Type={Redline}; redlines split 1 open / 1 resolved
-
-AS-026: With an axis fully deselected the rail shows a distinct no-match state
+AS-025: With no group selected the rail shows a distinct no-match state
 - **Given:** the viewer open on a doc that HAS annotations
-- **When:** I deselect every facet in the Type axis (so no type is selected)
+- **When:** I toggle all three chips off so no group is selected
 - **Then:** the rail body shows a "no annotations match the filter" state — visibly distinct from the empty-doc "no annotations yet" state — and no highlights are emphasized
-- **Data:** Type={} on the 23-annotation doc
+- **Data:** all chips off on the 23-annotation doc
 
-AS-027: The header shows how much is showing and Reset clears the filter
-- **Given:** a filter is applied so 4 of 23 threads match
-- **When:** I look at the rail header, then choose Reset in the popover
-- **Then:** while narrowed the header reads "showing 4 of 23" and the Filter control reads active; after Reset every facet is selected again, the header returns to the full total (23), and the Filter control reads inactive
-- **Data:** narrowed to 4/23, then Reset
-
-AS-028: Acting on a filtered-out highlight or thread re-activates both its facets
-- **Given:** a filter hides a particular open redline (its highlight dimmed in the doc)
+AS-026: Acting on a highlight or thread in a toggled-off group re-activates it
+- **Given:** the Open chip is toggled off, so an open annotation's highlight is dimmed in the doc
 - **When:** I click that dimmed highlight (or would click its thread)
-- **Then:** both the Open status facet and the Redline type facet re-activate as needed so the annotation matches again, its thread reappears in the rail, and it focuses (scrolled into view + emphasized) — the click is never a dead no-op
-- **Data:** click a filtered-out open redline
+- **Then:** the Open chip re-activates, the annotation's thread reappears in the rail, and it focuses (scrolled into view + emphasized) — the click is never a dead no-op
+- **Data:** click a filtered-out open highlight
 
 ## Constraints & Invariants
 
@@ -367,29 +353,16 @@ AS-028: Acting on a filtered-out highlight or thread re-activates both its facet
   first-page subset. Every active annotation gets a rail thread and (when placeable) an in-text
   highlight, and the rail total equals the dashboard's annotation count for the doc, so the count is
   consistent between the doc list and the viewer. (AS-021)
-- C-009: The rail filters on TWO independent (orthogonal) axes — Status {Open, Resolved} and Type
-  {Markup, Comment, Redline, Label}. Each annotation has exactly one status and exactly one type, so
-  the axes partition the set independently. Type derives from the same mark-hue rule the placer uses:
-  Redline = `type`=suggestion with kind delete; Label = `label` set (any preset); Comment = plain
-  (no label, no suggestion); Markup = the teal catch-all (e.g. a replace-suggestion). "Suggestion" is
-  NOT a status facet (the earlier single-axis design is superseded) — suggestions surface under the
-  Redline / Markup type facets. A thread is SHOWN iff its status facet is selected AND its type facet
-  is selected (OR within an axis, AND across axes); both axes default to all-selected. Toggling a
-  facet OFF hides its group from the rail and dims its in-text highlights; re-selecting restores both.
-  An `isOrphaned`/detached annotation is counted into its status/type facets and still appears in the
-  separate detached section, which renders regardless of filter state (C-004). When ANY axis has no
-  facet selected, the rail shows a no-match state distinct from the empty-doc state. Acting on a
-  filtered-out highlight/thread re-activates whichever of its two facets are off, then focuses it.
-  (AS-022, AS-023, AS-024, AS-026, AS-028)
-- C-010: Facet counts are DYNAMIC — each facet's count is the number of annotations it would match
-  combined with the OTHER axis's current selection, IGNORING its own axis's selection (so toggling
-  within an axis never zeroes that axis's own siblings). A facet that would yield zero shows 0; it is
-  never hidden. (With both axes fully selected the counts equal the whole-doc per-facet totals.) (AS-025)
-- C-011: The filter is presented in a popover opened from the rail's Filter control (a bottom-sheet on
-  tablet/mobile per C-005). Facet toggles apply LIVE (the rail + marks update immediately, no explicit
-  Apply); Reset re-selects every facet. While the selection is narrowed (not all-selected) the rail
-  header reads "showing X of N" and the Filter control reads active; at all-selected it reads inactive
-  and the header shows the full total. (AS-022, AS-027)
+- C-009: The rail header summarizes the active set as three status chips that PARTITION it —
+  Suggestion (`type` = suggestion, any lifecycle), then Open (not a suggestion, unresolved), then
+  Resolved (not a suggestion, resolved) — so the three counts always sum to the active total
+  (detached/`isOrphaned` annotations are counted into their status/type chip; they still also appear
+  in the separate detached section per C-004). Chips are independent multi-toggles, all active by
+  default. Toggling a chip OFF hides its group from the rail thread list and dims its in-text
+  highlights; toggling it back ON restores both. The detached section always renders regardless of
+  chip state (C-004). When no chip is selected the rail shows a no-match state distinct from the
+  empty-doc state. Acting on a highlight/thread whose chip is off re-activates that chip and focuses
+  the thread. (AS-022, AS-023, AS-024, AS-025, AS-026)
 
 ## Linked Fields
 
@@ -433,8 +406,7 @@ CANONICAL on conflict. Precedence: AS / Constraints > prototype > this Tree. Dar
       - `HtmlSandboxFrame` *(kind=html; full-width; iframe `src="/v/:id"` sandbox allow-scripts; highlights via the bridge — commenting spec)*
       - `ImageViewer` *(kind=image; full-width; zoom/pan; `ImageRegionLayer` — suggest-image spec)*
     - `AnnotationsRail`
-      - `RailHeader`: total + "showing X of N" *(when narrowed, C-011)* · `FilterControl` *(active when narrowed)* · empty state · no-match state
-        - `FilterPopover` *(C-011; bottom-sheet on mobile)*: `FacetGroup` Status *(Open · Resolved)* + `FacetGroup` Type *(Markup · Comment · Redline · Label — tool hue + icon)* → `Facet` *(icon + dynamic count + selected state, C-010)* · Reset
+      - `RailHeader`: `StatusChip` ×3 *(Open · Resolved · Suggestion — icon + count, multi-toggle, all on by default; filters the thread list + dims non-matching marks, C-009)* · empty state · no-match state
       - `ThreadCard`: `QuoteRef` · avatar · name · time · body · `ReplyList` *(flat)* · `SuggestBadge`/`ResolvedBadge`
       - `DetachedSection` *(amber; `isOrphaned`; Re-attach/Dismiss actions are commenting/suggest specs)*
       - `Composer` *(the create/reply UI is the commenting spec; this shell renders the slot)*
@@ -520,20 +492,16 @@ Gap-resolution loop (G1–G11) decisions affecting this spec:
 
 ## Spec Sizing Notes
 
-Stories=7 (target 7, at soft target). AS=28 (target 20, in G7 overage range ≤30).
+Stories=7 (target 7, at soft target). AS=26 (target 20, in G7 overage range ≤30).
 
 This is sub-spec 1 of a 3-way by-flow split of annotation-core-ui (forced by the "everything, no
 phasing" scope decision 2026-06-11): viewer+read (this) · commenting · suggest+image. Each sub-spec
-is self-contained. The two-axis rail filter (S-007) stays HERE rather than a sub-spec because it is
-tightly coupled to the rail (S-003) and the mark placer it dims (T5 shared state / T6 context reuse) —
-splitting would duplicate >50% of the rail/mark context.
+is self-contained.
 
 G1 splits producing the over-target AS (each AS = one stated atom, no AS gộp):
-- S-007 two-axis filter: 7 AS for 7 atoms — popover lists both axes + counts (AS-022), Type-facet
-  filter hides+dims (AS-023), AND-across combine (AS-024), dynamic counts (AS-025), axis-empty
-  no-match (AS-026), header "showing X/N" + Reset (AS-027), act-on-filtered-out re-activates both
-  facets (AS-028). Each is a distinct assertion (the two axes, the combine rule, the dynamic-count
-  rule, and the two edges are not variants of one).
+- S-007 status chips: 5 AS for 5 atoms — render-chips (AS-022), toggle-off hides+dims (AS-023),
+  toggle-on restores (AS-024), no-group no-match state (AS-025), act-on-filtered-out re-activates
+  (AS-026). The off/on pair and the no-match/re-activate edges are distinct assertions, not variants.
 
 No bloat — each AS traces to one stated atom.
 
@@ -549,4 +517,3 @@ No bloat — each AS traces to one stated atom.
 | 2026-06-14 | In-pane outline collapse (Major, M4 + new AS, snapshot 2026-06-14-2): AS-018 When disambiguated to the top-bar toggle; + AS-019 (collapse via a chevron beside the outline search inside the pane, top-bar toggle re-expands); UI Notes TocSidebar gains `TocCollapse`; C-006 coverage += AS-019 | -- |
 | 2026-06-17 | Live badge = share state (Major, M5+M6, snapshot 2026-06-17-core-ui-live-badge): AS-012 Given/Then — the Live badge is shown when the doc is SHARED (general access beyond restricted), matching the dashboard list, NOT when merely published; + AS-020 (restricted doc → no Live badge, reads Draft); + C-007. Pins the fix for the list/detail status mismatch (commit 3f75006: viewer-top-bar isLive ← generalAccess, not status). | -- |
 | 2026-06-18 | Rail completeness + status chips (Major, M1+M6, snapshot 2026-06-18-core-ui-rail-chips): S-003 + AS-021 (rail loads the COMPLETE active set; total = dashboard count — pins the 23-vs-20 mismatch on calendar-integration-foundations); + S-007 status chips (AS-022..026: Open·Resolved·Suggestion icon+count, multi-toggle, filter rail + dim marks, no-match state, focus-reactivates); + C-008 (complete-set read), C-009 (chip partition + filter); + GAP-007 (backend/FE: viewer read must deliver the complete set, not page 1; MCP pull-annotations likewise); Data Model client-state += status filters; UI Notes RailHeader = StatusChip×3. Source: docs/explore/annotation-rail-completeness.md + clarify 2026-06-18. | -- |
-| 2026-06-18 | Two-axis rail filter (Major, M4+M6, snapshot 2026-06-18-core-ui-2axis-filter): S-007 reworked from single-axis status chips → a **two-axis Filter popover** — Status {Open, Resolved} × Type {Markup, Comment, Redline, Label}; AS-022..026 rewritten + AS-027 (header "showing X/N" + Reset) + AS-028 (re-activate both facets); C-009 reworked (orthogonal axes, OR-within/AND-across, "Suggestion" dropped from status → Redline/Markup type, Type from the mark-hue partition); + C-010 (dynamic facet counts), + C-011 (popover/bottom-sheet, apply-live, Reset, header signal); Data Model client-state += type facet-set + popover open; UI Notes RailHeader → FilterControl + FilterPopover. Supersedes the just-built single-axis chips (commit a45f087 → rebuild S-007). Source: session design 2026-06-18 ("lọc theo type" + "lọc theo 2 trục"). | -- |
