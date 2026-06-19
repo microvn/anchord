@@ -95,6 +95,7 @@ export function NewDocDialog({
   const [title, setTitle] = useState("");
   const [reject, setReject] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   // Project picker (S-003). The list is the active workspace's projects ONLY (C-003); the picker
   // defaults to the workspace's default project, so publishing without touching it lands there.
@@ -114,6 +115,7 @@ export function NewDocDialog({
     setReject(null);
     setSubmitting(false);
     setProjectId("");
+    setDragging(false);
   }
 
   async function onFilePicked(picked: File) {
@@ -226,7 +228,23 @@ export function NewDocDialog({
                 type="button"
                 data-testid="dropzone"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex w-full flex-col items-center gap-1 rounded-md border-[1.5px] border-dashed border-line bg-elev px-5 py-[30px] text-center transition-colors hover:border-accent hover:bg-accent-soft"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (!dragging) setDragging(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) void onFilePicked(f);
+                }}
+                className={`flex w-full flex-col items-center gap-1 rounded-md border-[1.5px] border-dashed bg-elev px-5 py-[30px] text-center transition-colors hover:border-accent hover:bg-accent-soft ${
+                  dragging ? "border-accent bg-accent-soft" : "border-line"
+                }`}
               >
                 <span className="grid size-10 place-items-center rounded-md text-subtle">
                   <Icon name="upload" size={22} />
@@ -302,7 +320,7 @@ export function NewDocDialog({
           </div>
         )}
 
-        {tab === "mcp" && <NewDocMcpPane workspaceId={workspace.id} />}
+        {tab === "mcp" && <NewDocMcpPane />}
 
         {tab !== "mcp" && (
           <>

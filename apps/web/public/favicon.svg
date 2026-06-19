@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <style>
+    :root { --c: #0b6b73; --b: #b3babc; --m: #8a9296; }
+    @media (prefers-color-scheme: dark) { :root { --c: #37b3bd; --b: #444e52; --m: #677074; } }
+  </style>
+  <rect x="4" y="4" width="27" height="27" rx="6.5" stroke="var(--b)" stroke-width="2.6"/>
+  <rect x="10.5" y="10.5" width="27" height="27" rx="6.5" stroke="var(--m)" stroke-width="2.6"/>
+  <rect x="17" y="17" width="27" height="27" rx="6.5" stroke="var(--c)" stroke-width="2.6"/>
+  <circle cx="24" cy="24" r="4.6" fill="var(--c)"/>
+</svg>

@@ -38,11 +38,16 @@ export function DeveloperSection() {
   const workspaces = bootstrap.data?.workspaces ?? [];
   const tokens = tokensQuery.data?.tokens ?? [];
   const endpoint = `${mcpBaseUrl()}/mcp`;
+  // While a freshly-generated token is still on screen (the once-only reveal), inject the real
+  // bearer so the setup snippet is copy-paste-ready. Once the reveal is dismissed the token is
+  // gone from state, so the snippet reverts to the `anch_pat_…` placeholder — the secret is never
+  // recoverable after Done (C-008 / AS-020.T2).
+  const bearer = generated?.token ?? "anch_pat_…";
 
   const snippets: Record<SnippetId, string> = {
-    claude: `claude mcp add --transport http anchord \\\n  ${endpoint} \\\n  --header "Authorization: Bearer anch_pat_…"`,
-    cursor: `// ~/.cursor/mcp.json\n{\n  "mcpServers": {\n    "anchord": {\n      "url": "${endpoint}",\n      "headers": { "Authorization": "Bearer anch_pat_…" }\n    }\n  }\n}`,
-    codex: `# ~/.codex/config.toml\n[mcp_servers.anchord]\ntransport = "http"\nurl = "${endpoint}"\nheaders = { Authorization = "Bearer anch_pat_…" }`,
+    claude: `claude mcp add --transport http anchord \\\n  ${endpoint} \\\n  --header "Authorization: Bearer ${bearer}"`,
+    cursor: `// ~/.cursor/mcp.json\n{\n  "mcpServers": {\n    "anchord": {\n      "url": "${endpoint}",\n      "headers": { "Authorization": "Bearer ${bearer}" }\n    }\n  }\n}`,
+    codex: `# ~/.codex/config.toml\n[mcp_servers.anchord]\ntransport = "http"\nurl = "${endpoint}"\nheaders = { Authorization = "Bearer ${bearer}" }`,
   };
 
   function handleCreate(input: CreateTokenInput) {
