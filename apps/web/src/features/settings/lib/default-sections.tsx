@@ -2,6 +2,7 @@ import { registerSettingsSection } from "./section-registry";
 import { ComingSoonSection } from "../components/coming-soon-section";
 import { AccountSection } from "../components/account-section";
 import { AppearanceSection } from "../components/appearance-section";
+import { DeveloperSection } from "../components/developer-section";
 
 // account-settings S-001 / C-006: register the sections this shell ships. Two OWNED slots
 // (account, appearance) and three RESERVED slots (developer, notifications, security) that show
@@ -80,20 +81,15 @@ export function registerDefaultSettingsSections(): void {
       />
     ),
   });
+  // mcp-roundtrip S-001 (AS-020/AS-021): the Developer section is OWNED — the mcp-roundtrip
+  // feature registers its real PAT-management surface over the reserved `developer` slug
+  // (overriding the prior coming-soon stub in place, clearing the "Soon" badge).
   registerSettingsSection({
     slug: "developer",
     label: "Developer",
-    icon: "settings",
+    icon: "terminal",
     group: "reserved",
-    soon: true,
-    sub: "API tokens and programmatic access.",
-    render: () => (
-      <ComingSoonSection
-        icon="settings"
-        title="Developer settings coming soon"
-        sub="Create API tokens and connect your agent over MCP. This section is owned by the mcp-roundtrip feature."
-        owner="slot · mcp-roundtrip"
-      />
-    ),
+    sub: "API tokens and programmatic access over MCP.",
+    render: () => <DeveloperSection />,
   });
 }

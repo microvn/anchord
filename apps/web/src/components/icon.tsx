@@ -51,6 +51,7 @@ const ICONS: Record<string, string> = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
   clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="3 7 12 13 21 7"/>',
   alert:
     '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/>',
@@ -94,22 +95,22 @@ export function Icon({
   );
 }
 
-// anchor brandmark — teal glyph (Anchord-Design Brandmark).
+// anchord brandmark — an "anchor point" pinned through stacked layers. The three
+// receding layers are the immutable versions; the teal node on the front layer is
+// the annotation, anchored to the same point across every version. Depth reads via
+// faint → subtle → accent strokes (themed light/dark). See public/favicon.svg.
 export function Brandmark({ size = 22 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox="0 0 48 48"
       fill="none"
-      stroke="var(--accent)"
-      strokeWidth={1.9}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      strokeWidth={2.6}
       aria-hidden="true"
       dangerouslySetInnerHTML={{
         __html:
-          '<circle cx="12" cy="5" r="2.2"/><line x1="12" y1="7.2" x2="12" y2="21"/><line x1="7" y1="11" x2="17" y2="11"/><path d="M4 14a8 8 0 0 0 16 0"/>',
+          '<rect x="4" y="4" width="27" height="27" rx="6.5" stroke="var(--faint)"/><rect x="10.5" y="10.5" width="27" height="27" rx="6.5" stroke="var(--subtle)"/><rect x="17" y="17" width="27" height="27" rx="6.5" stroke="var(--accent)"/><circle cx="24" cy="24" r="4.6" fill="var(--accent)"/>',
       }}
     />
   );
