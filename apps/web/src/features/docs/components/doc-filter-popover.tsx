@@ -202,7 +202,13 @@ export function DocFilterPopover({ filter, onClose }: { filter: DocFilterState; 
       >
         <Icon name="alert" size={14} />
         <span className="min-w-0 flex-1 truncate">Has detached only</span>
-        <span aria-hidden className="h-[16px] w-[28px] flex-none rounded-full border border-line bg-sunken" />
+        {/* A real (off) toggle switch: pill track + knob pinned LEFT (off). Disabled until GAP-001. */}
+        <span
+          aria-hidden
+          className="relative inline-flex h-[16px] w-[28px] flex-none items-center rounded-full border border-line bg-sunken"
+        >
+          <span className="absolute left-[2px] size-[10px] rounded-full bg-subtle" />
+        </span>
       </div>
 
       {/* Footer — Reset + Done */}
