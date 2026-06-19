@@ -2,11 +2,16 @@
 //
 // TWO surfaces, deliberately on opposite sides of the API envelope:
 //
-//  1. `/mcp` (the agent transport) — mounted on a BARE Elysia() with NO apiEnvelope, so its
-//     responses are raw JSON-RPC, not wrapped (C-005/AS-023). Origin is validated against the
-//     allowlist (configured base-URL origin); an absent/`null` Origin is rejected (DNS-rebind,
-//     C-005). The bearer is redacted from any log line (C-014). Token re-validated on EVERY
-//     request inside handleJsonRpc (C-001/AS-022).
+//  1. `/mcp` (the agent transport) — a REAL MCP server over @modelcontextprotocol/sdk's
+//     web-standard Streamable HTTP transport, so the full handshake works (initialize →
+//     tools/list → tools/call) and any compliant MCP client (claude mcp, Cursor) connects.
+//     Mounted on a BARE Elysia() with NO apiEnvelope, so its responses are raw JSON-RPC, not
+//     wrapped (C-005/AS-023). The per-request pipeline (this route, BEFORE the SDK): origin
+//     allowlist + DNS-rebind guard (C-005) → bearer re-validate every request (C-001/AS-022)
+//     → per-token rate limit (C-007/AS-024) → build a fresh McpServer bound to the resolved
+//     identity + connect a single-use transport → handleRequest → coalesced last_used bump
+//     (C-008). The bearer is redacted from any log line (C-014). The per-tool scope gate
+//     (C-009/AS-011) lives in mcp/sdk-server.ts `buildMcpServer`.
 //
 //  2. `/api/me/tokens` (the Developer-settings web surface) — ENVELOPED + session-gated. The
 //     user creates (shown-once plaintext), lists (metadata + prefix only — AS-020), and revokes
@@ -14,24 +19,24 @@
 
 import { Elysia } from "elysia";
 import { z } from "zod";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { apiEnvelope } from "../http/envelope";
 import { requireSession, type SessionResolver } from "../http/auth-gate";
 import { withValidation } from "../http/validate";
 import { ValidationError, ConflictError, NotFoundError } from "../http/errors";
-import {
-  handleJsonRpc,
-  baselineTools,
-  type JsonRpcRequest,
-  type McpServerDeps,
-  type ToolDef,
-  JSONRPC_PARSE_ERROR,
-  JSONRPC_INVALID_REQUEST,
-} from "../mcp/server";
+import { baselineTools, type ToolDef } from "../mcp/server";
+import { buildMcpServer } from "../mcp/sdk-server";
 import { createApiTokenRepo, TokenCapError, type ApiTokenRepo } from "../mcp/token-repo";
-import { TokenScopeError, ALL_SCOPES } from "../mcp/token";
+import { TokenScopeError, ALL_SCOPES, parseBearer } from "../mcp/token";
 import { McpRateLimiter } from "../mcp/rate-limit";
 import { safeMcpLogFields } from "../mcp/log";
 import type { DB } from "../db/client";
+
+// JSON-RPC error codes for the raw (pre-SDK) auth/origin/rate-limit refusals returned from
+// the transport route WITHOUT invoking the SDK (so a bad token never reaches a tool).
+const JSONRPC_INVALID_REQUEST = -32600;
+const MCP_UNAUTHORIZED = -32001;
+const MCP_RATE_LIMITED = -32003;
 
 // ── /mcp transport (raw JSON-RPC, envelope-exempt) ──────────────────────────
 
@@ -68,15 +73,17 @@ export function mcpTransportRoutes(deps: McpTransportDeps) {
   const rateLimiter = deps.rateLimiter ?? new McpRateLimiter();
   const tools = deps.tools ?? baselineTools();
   const allowed = deps.allowedOrigins ?? [];
-  const server: McpServerDeps = { tokens: deps.tokens, rateLimiter, tools };
 
-  // BARE Elysia — NO apiEnvelope, so nothing here is wrapped (AS-023).
-  return new Elysia().post("/mcp", async ({ request }) => {
+  // BARE Elysia — NO apiEnvelope, so nothing here is wrapped (AS-023). `.all` covers MCP's
+  // POST (tool calls) and a GET probe (SSE, which we disable — enableJsonResponse below).
+  return new Elysia().all("/mcp", async ({ request, body: parsedBody }) => {
+    const now = new Date();
     const authHeader = request.headers.get("authorization");
     // C-014: every log on this exempt path redacts the bearer first.
-    const log = safeMcpLogFields("POST", "/mcp", authHeader);
+    const log = safeMcpLogFields(request.method, "/mcp", authHeader);
 
-    // C-005: Origin allowlist + DNS-rebinding guard (absent/null Origin rejected).
+    // C-005: Origin allowlist + DNS-rebinding guard (absent/null Origin rejected). Runs
+    // FIRST, before any auth/SDK work.
     if (!originAllowed(request.headers.get("origin"), allowed)) {
       console.warn("[mcp] rejected request: origin not allowed", log);
       return rawJson(
@@ -85,47 +92,66 @@ export function mcpTransportRoutes(deps: McpTransportDeps) {
       );
     }
 
-    // Parse the JSON-RPC body.
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
+    // C-001/AS-002/AS-022: re-validate the bearer on THIS request (no session cache). A
+    // missing/invalid/revoked/expired token is refused HERE — with a raw JSON-RPC auth error
+    // — WITHOUT ever constructing the SDK server, so a bad token never reaches a tool.
+    const bearer = parseBearer(authHeader);
+    if (!bearer) {
       return rawJson(
-        { jsonrpc: "2.0", id: null, error: { code: JSONRPC_PARSE_ERROR, message: "parse error" } },
+        { jsonrpc: "2.0", id: null, error: { code: MCP_UNAUTHORIZED, message: "missing bearer token" } },
         200,
       );
     }
-    if (
-      typeof body !== "object" ||
-      body === null ||
-      (body as { jsonrpc?: unknown }).jsonrpc !== "2.0" ||
-      typeof (body as { method?: unknown }).method !== "string"
-    ) {
+    const resolved = await deps.tokens.verify(bearer, now);
+    if (!resolved) {
       return rawJson(
-        { jsonrpc: "2.0", id: null, error: { code: JSONRPC_INVALID_REQUEST, message: "invalid request" } },
+        { jsonrpc: "2.0", id: null, error: { code: MCP_UNAUTHORIZED, message: "invalid or revoked token" } },
         200,
       );
     }
 
-    const rpc = body as JsonRpcRequest;
-    const bearer = parseBearerFromHeader(authHeader);
-    const { response, resolved } = await handleJsonRpc(server, bearer, rpc);
-
-    // Coalesced last_used_at bump AFTER dispatch (C-008) — best-effort, never blocks/leaks.
-    if (resolved) {
-      void deps.tokens.touchLastUsed(resolved.id, resolved.lastUsedAt).catch(() => {});
+    // C-007/AS-024: per-token rate limit, counted against the resolved token id, AFTER auth
+    // (an unauthenticated burst never consumes a token's budget).
+    if (!rateLimiter.consume(resolved.id, now).allowed) {
+      return rawJson(
+        { jsonrpc: "2.0", id: null, error: { code: MCP_RATE_LIMITED, message: "rate limit exceeded for this token" } },
+        200,
+      );
     }
-    return rawJson(response, 200);
+
+    // Build a fresh McpServer + transport PER request — the stateless Streamable HTTP
+    // transport is single-use. enableJsonResponse:true → plain application/json JSON-RPC
+    // (no SSE; v0 tools never push server-initiated messages). The server is bound to the
+    // resolved identity, so every tool runs under the token-owner's identity, scoped to the
+    // token's workspace (C-001). The per-tool scope gate (C-009/AS-011) lives in buildMcpServer.
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    const server = buildMcpServer(
+      { userId: resolved.userId, workspaceId: resolved.workspaceId, scopes: resolved.scopes },
+      tools,
+    );
+    await server.connect(transport);
+
+    // Elysia already drained the body stream, so hand the SDK the parsed body via
+    // `parsedBody` (re-reading the Request under Bun.serve would throw). The body arrives as
+    // a parsed object under Bun.serve; tolerate a string (test harness) by parsing it.
+    let body: unknown = parsedBody;
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        body = undefined;
+      }
+    }
+    const response = await transport.handleRequest(request, { parsedBody: body });
+
+    // C-008: coalesced last_used_at bump AFTER the request resolves — best-effort, never
+    // blocks the response or leaks an unhandled rejection.
+    void deps.tokens.touchLastUsed(resolved.id, resolved.lastUsedAt).catch(() => {});
+    return response;
   });
-}
-
-/** Local bearer parse (kept here to avoid importing token.ts into the transport path twice). */
-function parseBearerFromHeader(header: string | null): string | null {
-  if (typeof header !== "string") return null;
-  const m = header.match(/^Bearer[ \t]+(.+)$/i);
-  if (!m) return null;
-  const t = m[1]!.trim();
-  return t.length > 0 ? t : null;
 }
 
 // ── /api/me/tokens — the Developer-settings web surface (enveloped) ─────────

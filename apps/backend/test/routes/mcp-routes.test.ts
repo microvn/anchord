@@ -8,7 +8,8 @@ import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
 import type { ApiTokenRepo, ResolvedToken, TokenListItem } from "../../src/mcp/token-repo";
 import { TokenCapError } from "../../src/mcp/token-repo";
-import { baselineTools } from "../../src/mcp/server";
+import { baselineTools, type ToolDef } from "../../src/mcp/server";
+import { McpRateLimiter } from "../../src/mcp/rate-limit";
 import { TOKEN_PREFIX } from "../../src/mcp/token";
 import type { SessionResolver } from "../../src/http/auth-gate";
 
@@ -23,102 +24,264 @@ function req(method: string, path: string, opts?: { body?: unknown; headers?: Re
   });
 }
 
-// ── POST /mcp transport ─────────────────────────────────────────────────────
+// ── POST /mcp transport — REAL MCP protocol over @modelcontextprotocol/sdk ───
+//
+// These drive the SDK Streamable HTTP transport through createApp + app.handle: the full
+// MCP handshake (initialize → tools/list → tools/call), NOT the old method=tool-name
+// dispatch. The old-protocol pipeline tests live in src/mcp/server.test.ts (handleJsonRpc).
+
+// The Accept header the MCP Streamable HTTP transport requires on every request.
+const MCP_ACCEPT = "application/json, text/event-stream";
+
+const PROTOCOL_VERSION = "2025-06-18";
 
 function transportTokens(scopes: string[] = ["docs:read"]): ApiTokenRepo {
+  let touched = 0;
   return {
     async verify(plaintext: string): Promise<ResolvedToken | null> {
       if (plaintext !== "anch_pat_valid") return null;
       return { id: "t1", userId: "u1", workspaceId: "W", scopes: scopes as any, lastUsedAt: null };
     },
-    async touchLastUsed() {},
+    async touchLastUsed() {
+      touched += 1;
+    },
+    get _touched() {
+      return touched;
+    },
   } as unknown as ApiTokenRepo;
 }
 
-function appWithTransport(allowedOrigins?: string[]) {
+// The 12 anchord_* tools we expect tools/list to advertise — registered as inert ToolDefs
+// (the scope gate + identity threading are proven against the real handlers elsewhere).
+function anchordToolDefs(): Record<string, ToolDef> {
+  const names = [
+    "anchord_create_document",
+    "anchord_update_document",
+    "anchord_list_documents",
+    "anchord_read_document",
+    "anchord_search_documents",
+    "anchord_pull_annotations",
+    "anchord_list_comments",
+    "anchord_reply_comment",
+    "anchord_resolve_comment",
+    "anchord_list_projects",
+    "anchord_read_project",
+    "anchord_create_project",
+  ];
+  const writeScopes: Record<string, any> = {
+    anchord_create_document: "docs:write",
+    anchord_update_document: "docs:write",
+  };
+  const tools: Record<string, ToolDef> = {};
+  for (const n of names) {
+    tools[n] = {
+      requiredScope: writeScopes[n] ?? null,
+      handler: (_p, ctx) => ({ tool: n, workspaceId: ctx.workspaceId }),
+    };
+  }
+  return tools;
+}
+
+function appWithTransport(opts?: {
+  allowedOrigins?: string[];
+  tokens?: ApiTokenRepo;
+  tools?: Record<string, ToolDef>;
+  rateLimiter?: McpRateLimiter;
+}) {
   return createApp({
     dbCheck: async () => {},
-    mcp: { tokens: transportTokens(), tools: baselineTools(), allowedOrigins },
+    mcp: {
+      tokens: opts?.tokens ?? transportTokens(),
+      tools: opts?.tools ?? { ...baselineTools(), ...anchordToolDefs() },
+      allowedOrigins: opts?.allowedOrigins,
+      rateLimiter: opts?.rateLimiter,
+    },
   });
 }
 
-describe("POST /mcp transport (C-005/AS-023)", () => {
-  test("AS-023: an authenticated tool call returns RAW JSON-RPC, not the API envelope", async () => {
+function mcpReq(body: unknown, headers: Record<string, string> = {}) {
+  return new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: MCP_ACCEPT, ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+const initRpc = (id: number | string = 1) => ({
+  jsonrpc: "2.0",
+  id,
+  method: "initialize",
+  params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "test", version: "0" } },
+});
+
+/** Parse a Streamable-HTTP response body — JSON (enableJsonResponse) or an SSE `data:` frame. */
+async function parseMcp(res: Response): Promise<any> {
+  const text = await res.text();
+  const ct = res.headers.get("content-type") ?? "";
+  if (ct.includes("text/event-stream")) {
+    const line = text.split("\n").find((l) => l.startsWith("data:"));
+    return line ? JSON.parse(line.slice(5).trim()) : undefined;
+  }
+  return text ? JSON.parse(text) : undefined;
+}
+
+describe("POST /mcp transport — MCP protocol (C-005/AS-023)", () => {
+  test("initialize returns serverInfo + capabilities (handshake works)", async () => {
     const app = appWithTransport();
-    const res = await app.handle(
-      req("POST", "/mcp", {
-        headers: { authorization: "Bearer anch_pat_valid" },
-        body: { jsonrpc: "2.0", id: 7, method: "ping" },
-      }),
-    );
+    const res = await app.handle(mcpReq(initRpc(1), { authorization: "Bearer anch_pat_valid" }));
     expect(res.status).toBe(200);
-    const json = (await res.json()) as any;
-    // Raw JSON-RPC shape — NOT { ok, data } / { ok:false, error } the envelope wraps.
+    const json = await parseMcp(res);
     expect(json.jsonrpc).toBe("2.0");
-    expect(json.id).toBe(7);
-    expect(json.result).toEqual({ ok: true, userId: "u1", workspaceId: "W", scopes: ["docs:read"] });
+    expect(json.id).toBe(1);
+    expect(json.result.serverInfo.name).toBe("anchord");
+    expect(json.result.capabilities).toBeDefined();
+    // Raw JSON-RPC, never the API envelope (AS-023).
     expect(json).not.toHaveProperty("ok");
     expect(json).not.toHaveProperty("data");
   });
 
-  test("AS-002: a wrong token on /mcp gets a JSON-RPC auth error (still raw, not enveloped)", async () => {
+  test("tools/list returns the 12 anchord_* tools with an inputSchema", async () => {
     const app = appWithTransport();
     const res = await app.handle(
-      req("POST", "/mcp", {
-        headers: { authorization: "Bearer anch_pat_nope" },
-        body: { jsonrpc: "2.0", id: 1, method: "ping" },
-      }),
+      mcpReq({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { authorization: "Bearer anch_pat_valid" }),
     );
-    const json = (await res.json()) as any;
+    const json = await parseMcp(res);
+    const names: string[] = json.result.tools.map((t: any) => t.name);
+    for (const n of [
+      "anchord_create_document",
+      "anchord_update_document",
+      "anchord_list_documents",
+      "anchord_read_document",
+      "anchord_search_documents",
+      "anchord_pull_annotations",
+      "anchord_list_comments",
+      "anchord_reply_comment",
+      "anchord_resolve_comment",
+      "anchord_list_projects",
+      "anchord_read_project",
+      "anchord_create_project",
+    ]) {
+      expect(names).toContain(n);
+    }
+    const createTool = json.result.tools.find((t: any) => t.name === "anchord_create_document");
+    expect(createTool.inputSchema).toBeDefined();
+    expect(createTool.inputSchema.properties).toHaveProperty("content");
+  });
+
+  test("AS-001: a valid docs:* token → tools/call executes under the owner identity, scoped to the token workspace", async () => {
+    const app = appWithTransport();
+    const res = await app.handle(
+      mcpReq(
+        { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "anchord_list_documents", arguments: {} } },
+        { authorization: "Bearer anch_pat_valid" },
+      ),
+    );
+    const json = await parseMcp(res);
+    expect(json.error).toBeUndefined();
+    expect(json.result.isError).toBeFalsy();
+    // The text content block carries the JSON-encoded handler result, run in the token's workspace.
+    const payload = JSON.parse(json.result.content[0].text);
+    expect(payload).toEqual({ tool: "anchord_list_documents", workspaceId: "W" });
+  });
+
+  test("AS-023: a tool-call response is RAW JSON-RPC, not the API envelope", async () => {
+    const app = appWithTransport();
+    const res = await app.handle(
+      mcpReq(
+        { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "anchord_list_documents", arguments: {} } },
+        { authorization: "Bearer anch_pat_valid" },
+      ),
+    );
+    const json = await parseMcp(res);
     expect(json.jsonrpc).toBe("2.0");
-    expect(json.error).toBeDefined();
+    expect(json).not.toHaveProperty("ok");
+    expect(json).not.toHaveProperty("data");
+  });
+
+  test("AS-002: a missing bearer is rejected with a raw JSON-RPC auth error, no SDK invoked", async () => {
+    const app = appWithTransport();
+    const res = await app.handle(mcpReq(initRpc(1))); // no Authorization
+    const json = await parseMcp(res);
+    expect(json.jsonrpc).toBe("2.0");
+    expect(json.error.code).toBe(-32001);
     expect(json).not.toHaveProperty("ok");
   });
 
-  test("C-005: with an allowlist, a request with an ALLOWED Origin passes", async () => {
-    const app = appWithTransport(["https://anchord.example"]);
-    const res = await app.handle(
-      req("POST", "/mcp", {
-        headers: { authorization: "Bearer anch_pat_valid", origin: "https://anchord.example" },
-        body: { jsonrpc: "2.0", id: 1, method: "ping" },
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as any).error).toBeUndefined();
+  test("AS-002: a wrong/unknown token is rejected with the same non-disclosing auth error", async () => {
+    const app = appWithTransport();
+    const res = await app.handle(mcpReq(initRpc(1), { authorization: "Bearer anch_pat_nope" }));
+    const json = await parseMcp(res);
+    expect(json.error.code).toBe(-32001);
+    expect(json.error.message).toBe("invalid or revoked token");
   });
 
-  test("C-005: with an allowlist, an ABSENT Origin is rejected (DNS-rebinding guard)", async () => {
-    const app = appWithTransport(["https://anchord.example"]);
+  test("AS-011/C-009: a read-only token calling anchord_create_document is rejected on scope — NO doc created", async () => {
+    const created: string[] = [];
+    const tools = {
+      anchord_create_document: {
+        requiredScope: "docs:write" as const,
+        handler: () => {
+          created.push("doc");
+          return { docId: "d1" };
+        },
+      },
+    };
+    const app = appWithTransport({ tokens: transportTokens(["docs:read"]), tools });
     const res = await app.handle(
-      req("POST", "/mcp", {
-        headers: { authorization: "Bearer anch_pat_valid" }, // no Origin header
-        body: { jsonrpc: "2.0", id: 1, method: "ping" },
-      }),
+      mcpReq(
+        {
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/call",
+          params: { name: "anchord_create_document", arguments: { content: "x", format: "html" } },
+        },
+        { authorization: "Bearer anch_pat_valid" },
+      ),
     );
-    expect(res.status).toBe(403);
-    expect(((await res.json()) as any).error.message).toContain("origin");
+    const json = await parseMcp(res);
+    // Surfaced as an isError tool result mentioning the missing scope; the handler never ran.
+    expect(json.result.isError).toBe(true);
+    expect(json.result.content[0].text).toContain("docs:write");
+    expect(created).toEqual([]);
   });
 
-  test("C-005: with an allowlist, a literal `null` Origin is rejected (DNS-rebinding guard)", async () => {
-    const app = appWithTransport(["https://anchord.example"]);
-    const res = await app.handle(
-      req("POST", "/mcp", {
-        headers: { authorization: "Bearer anch_pat_valid", origin: "null" },
-        body: { jsonrpc: "2.0", id: 1, method: "ping" },
-      }),
-    );
-    expect(res.status).toBe(403);
+  test("AS-022: revoking mid-session rejects the NEXT request (re-validated every request)", async () => {
+    let revoked = false;
+    const tokens = {
+      async verify(plaintext: string): Promise<ResolvedToken | null> {
+        if (plaintext !== "anch_pat_valid" || revoked) return null;
+        return { id: "t1", userId: "u1", workspaceId: "W", scopes: ["docs:read"] as any, lastUsedAt: null };
+      },
+      async touchLastUsed() {},
+    } as unknown as ApiTokenRepo;
+    const app = appWithTransport({ tokens });
+    expect((await parseMcp(await app.handle(mcpReq(initRpc(1), { authorization: "Bearer anch_pat_valid" })))).error).toBeUndefined();
+    revoked = true;
+    const after = await parseMcp(await app.handle(mcpReq(initRpc(2), { authorization: "Bearer anch_pat_valid" })));
+    expect(after.error.code).toBe(-32001);
   });
 
-  test("C-005: a foreign Origin (not on the allowlist) is rejected", async () => {
-    const app = appWithTransport(["https://anchord.example"]);
-    const res = await app.handle(
-      req("POST", "/mcp", {
-        headers: { authorization: "Bearer anch_pat_valid", origin: "https://evil.example" },
-        body: { jsonrpc: "2.0", id: 1, method: "ping" },
-      }),
+  test("AS-024: a token over its rate limit is throttled with a raw JSON-RPC rate-limit error", async () => {
+    const app = appWithTransport({ rateLimiter: new McpRateLimiter(1, 60) }); // budget 1
+    expect((await parseMcp(await app.handle(mcpReq(initRpc(1), { authorization: "Bearer anch_pat_valid" })))).error).toBeUndefined();
+    const over = await parseMcp(await app.handle(mcpReq(initRpc(2), { authorization: "Bearer anch_pat_valid" })));
+    expect(over.error.code).toBe(-32003);
+  });
+
+  test("C-005: with an allowlist, an ALLOWED Origin passes; ABSENT/null/foreign are rejected (403)", async () => {
+    const app = appWithTransport({ allowedOrigins: ["https://anchord.example"] });
+    const ok = await app.handle(
+      mcpReq(initRpc(1), { authorization: "Bearer anch_pat_valid", origin: "https://anchord.example" }),
     );
-    expect(res.status).toBe(403);
+    expect(ok.status).toBe(200);
+    expect((await parseMcp(ok)).error).toBeUndefined();
+
+    for (const origin of [undefined, "null", "https://evil.example"]) {
+      const headers: Record<string, string> = { authorization: "Bearer anch_pat_valid" };
+      if (origin) headers.origin = origin;
+      const res = await app.handle(mcpReq(initRpc(1), headers));
+      expect(res.status).toBe(403);
+    }
   });
 });
 
