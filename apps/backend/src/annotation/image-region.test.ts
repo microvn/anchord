@@ -23,6 +23,11 @@ function fakeRepo(seed: AnnotationRow[] = []): AnnotationRepo & { inserted: NewA
       inserted.push(input);
       return { id: `ann-${inserted.length}` };
     },
+    async insertAnnotationWithComment(input: NewAnnotation, comment?: unknown) {
+      inserted.push(input);
+      const id = `ann-${inserted.length}`;
+      return { id, ...(comment !== undefined ? { commentId: `c-${inserted.length}` } : {}) };
+    },
     async listByDoc(_docId: string) {
       return seed;
     },

@@ -179,6 +179,24 @@ export interface CreateAnchor {
   segments?: { blockId: string; textSnippet: string; offset: number; length: number }[];
 }
 
+/** C-018: the OPTIONAL first comment carried on the unified create. A member sends only `body`; a
+ *  guest adds its self-entered `guestName` (+ optional `guestEmail`). Body+name are sanitized
+ *  SERVER-side (C-008). Omit for a commentless highlight. */
+export interface CreateCommentPayload {
+  body: string;
+  guestName?: string;
+  guestEmail?: string;
+}
+
+/** S-006 (AS-014) / C-018: the OPTIONAL suggestion payload — `from` is the pinned span; omit `to`
+ *  for a delete-kind redline; `againstVersion` is the current doc version (the stale pin). Carrying
+ *  this makes the created annotation a suggestion (the standalone suggestion-create is subsumed). */
+export interface CreateSuggestionPayload {
+  from: string;
+  to?: string;
+  againstVersion: number;
+}
+
 export interface CreateAnnotationBody {
   type: string;
   anchor: CreateAnchor;
@@ -188,10 +206,19 @@ export interface CreateAnnotationBody {
    *  a forged id (annotation-core AS-028); it is mutually exclusive with a suggestion payload (AS-029).
    *  Omitted for a plain comment. */
   label?: string;
+  /** C-018: the first comment, persisted ATOMICALLY with the annotation in ONE request — there is no
+   *  longer a second addComment call on create (a failed write rolls back server-side, no orphan). */
+  comment?: CreateCommentPayload;
+  /** S-006 (AS-014) / C-018: a redline / replace suggestion rides this SAME create (subsumes the old
+   *  workspace-scoped suggestion route). Mutually exclusive with `label`. */
+  suggestion?: CreateSuggestionPayload;
 }
 
 export interface CreateAnnotationResult {
   annotationId: string;
+  /** C-018: present when the create carried a `comment` — the id of the atomically-persisted first
+   *  comment. Absent for a commentless highlight. */
+  commentId?: string;
 }
 
 export interface AddCommentBody {

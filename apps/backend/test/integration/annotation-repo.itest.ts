@@ -11,7 +11,7 @@ import { createDocRepo } from "../../src/publish/repo";
 import { appendVersion } from "../../src/services/version";
 import { createVersionRepo } from "../../src/services/version-repo";
 import { annotations, comments, docVersions, reanchorLedger, user } from "../../src/db/schema";
-import { buildAnchor, createAnnotation, listAnnotations } from "../../src/annotation/annotation";
+import { buildAnchor, createAnnotation, createAnnotationWithComment, listAnnotations } from "../../src/annotation/annotation";
 import { addReply } from "../../src/annotation/reply";
 import { setResolution } from "../../src/annotation/resolve";
 import { createGuestComment } from "../../src/annotation/guest";
@@ -102,6 +102,81 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
     expect(persisted.type).toBe("range");
     expect(persisted.status).toBe("unresolved");
     expect(persisted.anchor.textSnippet).toBe("v1 body");
+  });
+
+  // ── C-018: atomic create-annotation-with-comment against REAL Postgres ──────
+  // AS-001 strengthened: the annotation row AND its first comment persist in ONE transaction.
+  // The no-orphan claim is a DB-rollback claim — a fake can't prove it, so it MUST run here.
+
+  test("AS-001: insertAnnotationWithComment persists the annotation AND its first comment in ONE transaction (real Postgres)", async () => {
+    const docId = await newDoc(h, '<p id="b1">atomic body text</p>');
+    const annRepo = createAnnotationRepo(h.db);
+    // A real account so the comment's author_id FK is satisfiable.
+    const author = `u-atomic-${docId}`;
+    await h.db.insert(user).values({ id: author, name: "Atomic", email: `${author}@example.com` });
+
+    const anchor = buildAnchor({ blockId: "b1", text: "atomic", offset: 0, length: 6 })!;
+    const created = await createAnnotationWithComment(
+      {
+        docId,
+        anchor,
+        viewer: { kind: "user", userId: author },
+        sessionRole: "commenter",
+        comment: { body: "this is the first comment" },
+        authorId: author,
+      },
+      annRepo,
+    );
+    expect(created.created).toBe(true);
+    const annId = created.created ? created.id : "";
+    const commentId = created.created ? created.commentId : undefined;
+    expect(commentId).toBeString();
+
+    // The annotation row is present...
+    const annRows = await h.db.select({ id: annotations.id }).from(annotations).where(eq(annotations.id, annId));
+    expect(annRows).toHaveLength(1);
+    // ...AND its first comment is present, FK-linked to it (both persisted by the one call).
+    const cmtRows = await h.db
+      .select({ id: comments.id, body: comments.body, authorId: comments.authorId })
+      .from(comments)
+      .where(eq(comments.annotationId, annId));
+    expect(cmtRows).toHaveLength(1);
+    expect(cmtRows[0]!.body).toBe("this is the first comment");
+    expect(cmtRows[0]!.authorId).toBe(author);
+  });
+
+  test("AS-001: when the first-comment insert FAILS, the transaction ROLLS BACK — NO orphan annotation remains (real Postgres)", async () => {
+    const docId = await newDoc(h, '<p id="b1">rollback body text</p>');
+    const annRepo = createAnnotationRepo(h.db);
+
+    // Count annotations on this doc before — must be unchanged after the failed create.
+    const before = await annRepo.listByDoc(docId);
+
+    const anchor = buildAnchor({ blockId: "b1", text: "rollback", offset: 0, length: 8 })!;
+    // Drive the REPO directly so we can hand it a comment whose author_id references a user that
+    // does NOT exist → the comment INSERT violates the FK and throws INSIDE the transaction, AFTER
+    // the annotation insert. If the write were two separate statements (the bug), the annotation
+    // would survive as an orphan. With one transaction it must roll back.
+    let threw = false;
+    try {
+      await annRepo.insertAnnotationWithComment(
+        { docId, type: "range", anchor, label: null, authorId: null, suggestion: null, suggestionStatus: null },
+        { body: "doomed comment", authorId: "user-that-does-not-exist", guestName: null },
+      );
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+
+    // The whole tx rolled back: no NEW annotation row exists on this doc (no orphan), and no
+    // dangling comment was committed either.
+    const after = await annRepo.listByDoc(docId);
+    expect(after).toHaveLength(before.length);
+    const allCmts = await h.db
+      .select({ id: comments.id })
+      .from(comments)
+      .where(eq(comments.body, "doomed comment"));
+    expect(allCmts).toHaveLength(0);
   });
 
   test("#4 (2026-06-12): listAnnotations returns annotations NEWEST-FIRST (top of the rail)", async () => {

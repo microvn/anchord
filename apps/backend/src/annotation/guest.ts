@@ -39,7 +39,7 @@ export function assignAnonName(picker?: AnimalPicker): string {
  * so nothing executable survives. We store this sanitized form (sanitize-on-store for
  * guest content), guaranteeing the thread renders inert no matter the render surface.
  */
-function sanitizeInert(input: string): string {
+export function sanitizeInert(input: string): string {
   return DOMPurify.sanitize(input, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
 }
 
@@ -48,7 +48,7 @@ function sanitizeInert(input: string): string {
  * (charset limit), collapse surrounding whitespace, and truncate to the cap. The order
  * matters — sanitize first so an HTML name can't smuggle a tag past the length cut.
  */
-function cleanGuestName(raw: string): string {
+export function cleanGuestName(raw: string): string {
   const inert = sanitizeInert(raw);
   // Strip ASCII control chars (incl. newlines/tabs) — a display name is one line.
   // eslint-disable-next-line no-control-regex

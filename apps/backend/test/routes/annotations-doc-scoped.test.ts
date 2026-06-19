@@ -52,13 +52,25 @@ const TEXT_ANCHOR = { blockId: "block-p-1", textSnippet: "hello", offset: 0, len
 function fakeAnnotationRepo(seed: AnnotationRow[] = [], commentSeed: (ViewerComment & { annotationId: string })[] = []) {
   const rows = [...seed];
   let n = 0;
-  const calls = { inserts: [] as NewAnnotation[] };
+  let cn = 0;
+  const calls = { inserts: [] as NewAnnotation[], comments: [] as { annotationId: string; authorId: string | null; guestName: string | null; body: string }[] };
   const repo: AnnotationRepo = {
     async insertAnnotation(input) {
       calls.inserts.push(input);
       const id = `ann_${++n}`;
       rows.push({ id, docId: input.docId, type: input.type, anchor: input.anchor, isOrphaned: false, status: "unresolved" });
       return { id };
+    },
+    // C-018: the atomic create-with-comment the doc-addressed route now uses. The fake records the
+    // annotation AND the first comment so a test asserts both persisted via the SAME call (no
+    // separate addComment). The real single-tx rollback is proven in the live-PG integration test.
+    async insertAnnotationWithComment(input, comment) {
+      calls.inserts.push(input);
+      const id = `ann_${++n}`;
+      rows.push({ id, docId: input.docId, type: input.type, anchor: input.anchor, isOrphaned: false, status: "unresolved" });
+      if (comment === undefined) return { id };
+      calls.comments.push({ annotationId: id, authorId: comment.authorId, guestName: comment.guestName, body: comment.body });
+      return { id, commentId: `c_${++cn}` };
     },
     async listByDoc(docId) {
       return rows.filter((r) => r.docId === docId);
@@ -304,6 +316,138 @@ describe("AS-017: a signed-in commenter comments via the doc link (doc-scoped)",
     );
     expect(res.status).toBe(404);
     expect(ar.calls.inserts).toHaveLength(0);
+  });
+});
+
+// ── C-018: atomic create-annotation-with-comment via the doc link (AS-001) ───
+describe("AS-001 / C-018: a commented annotation is ONE atomic create via the doc link", () => {
+  test("AS-001: POST /api/docs/:slug/annotations with a comment → 201 { annotationId, commentId }, BOTH persisted via the annotation repo (no separate addComment)", async () => {
+    const ar = fakeAnnotationRepo();
+    const cr = fakeCommentRepo();
+    const app = buildApp({ resolveSession: member, resolveDocRole: asCommenter, annotationRepo: ar, commentRepo: cr });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "this is wrong" } }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const json = (await res.json()) as any;
+    expect(json.data.annotationId).toBeString();
+    expect(json.data.commentId).toBeString();
+    // The first comment rode the ATOMIC annotation-repo call (C-018) — NOT the standalone comment repo.
+    expect(ar.calls.comments).toHaveLength(1);
+    expect(ar.calls.comments[0]?.body).toBe("this is wrong");
+    expect(ar.calls.comments[0]?.authorId).toBe("u_member");
+    expect(cr.calls.inserts).toHaveLength(0); // no second-call addComment
+  });
+
+  test("AS-001: a commentless create (no comment in body) → 201 { annotationId } only, no commentId", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveSession: member, resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", { method: "POST", body: JSON.stringify({ anchor: TEXT_ANCHOR }) }),
+    );
+    expect(res.status).toBe(201);
+    const json = (await res.json()) as any;
+    expect(json.data.annotationId).toBeString();
+    expect(json.data.commentId).toBeUndefined();
+    expect(ar.calls.comments).toHaveLength(0);
+  });
+
+  test("AS-001: an empty-body comment is refused 400 — no orphan annotation is created", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveSession: member, resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "   " } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(ar.calls.inserts).toHaveLength(0); // refused BEFORE the write — no orphan
+  });
+
+  test("AS-014: a suggestion payload on the create → 201, recorded as a suggestion-type annotation (subsumes the standalone suggestion-create)", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveSession: member, resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "drop this" }, suggestion: { from: "hello", againstVersion: 1 } }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(ar.calls.inserts[0]?.type).toBe("suggestion");
+    expect(ar.calls.inserts[0]?.suggestion).toEqual({ kind: "delete", from: "hello", againstVersion: 1 });
+  });
+
+  test("AS-029: a create carrying both a label and a suggestion → 400, nothing persisted", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveSession: member, resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, label: "looks-good", suggestion: { from: "hello", againstVersion: 1 } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
+
+  test("S-007: a GUEST create-with-comment on a guest-OFF doc → 401, no annotation created", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOff, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "hi", guestName: "Sam" } }),
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
+
+  test("AS-022: a GUEST create-with-comment over the rate limit → 429, no annotation created", async () => {
+    const ar = fakeAnnotationRepo();
+    const overLimit: CommentRateLimiter = async () => ({ allowed: false });
+    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, annotationRepo: ar, rateLimitComment: overLimit });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "spam", guestName: "Sam" } }),
+      }),
+    );
+    expect(res.status).toBe(429);
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
+
+  test("AS-023: a GUEST create-with-comment whose name collides with an active member → 400, no annotation created", async () => {
+    const ar = fakeAnnotationRepo();
+    const collides: IsActiveMemberName = async () => true;
+    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, annotationRepo: ar, isActiveMemberName: collides });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "impostor", guestName: "Real Member" } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
+
+  test("S-007: a GUEST create-with-comment on a guest-ON doc → 201, stored with the guest name + null authorId", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "guest here", guestName: "Sam" } }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(ar.calls.comments[0]?.guestName).toBe("Sam");
+    expect(ar.calls.comments[0]?.authorId).toBeNull(); // AS-002: guest marker server-enforced
   });
 });
 

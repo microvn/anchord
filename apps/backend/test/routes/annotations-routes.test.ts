@@ -53,13 +53,23 @@ function fakeAnnotationRepo(
 ) {
   const rows = [...seed];
   let n = 0;
-  const calls = { inserts: [] as NewAnnotation[] };
+  let cn = 0;
+  const calls = { inserts: [] as NewAnnotation[], comments: [] as { annotationId: string; body: string }[] };
   const repo: AnnotationRepo = {
     async insertAnnotation(input) {
       calls.inserts.push(input);
       const id = `ann_${++n}`;
       rows.push({ id, docId: input.docId, type: input.type, anchor: input.anchor, isOrphaned: false, status: "unresolved" });
       return { id };
+    },
+    // C-018: atomic create-with-comment (the unified create path). Records both for assertion.
+    async insertAnnotationWithComment(input, comment) {
+      calls.inserts.push(input);
+      const id = `ann_${++n}`;
+      rows.push({ id, docId: input.docId, type: input.type, anchor: input.anchor, isOrphaned: false, status: "unresolved" });
+      if (comment === undefined) return { id };
+      calls.comments.push({ annotationId: id, body: comment.body });
+      return { id, commentId: `c_${++cn}` };
     },
     async listByDoc(docId) {
       return rows.filter((r) => r.docId === docId);

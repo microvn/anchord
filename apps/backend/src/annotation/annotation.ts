@@ -7,6 +7,7 @@
 import { can, type Role } from "../sharing/roles";
 import { type Viewer } from "../sharing/access";
 import { isLabelPreset } from "./label-presets";
+import { sanitizeInert, cleanGuestName } from "./guest";
 import type { SuggestionPayload, SuggestionStatus } from "./suggestion";
 
 /**
@@ -140,6 +141,27 @@ export interface NewAnnotation {
    * for a guest. Persisted to annotations.author_id — the durable creator identity.
    */
   authorId?: string | null;
+  /**
+   * C-018 / S-006: a suggestion payload + its initial lifecycle status, present ONLY when the
+   * create carries a suggestion (a redline / replace). Persisted onto the SAME annotations row
+   * (`suggestion` jsonb + `suggestion_status`) — the suggestion-create is now subsumed into the
+   * unified create. Null/absent for an ordinary annotation.
+   */
+  suggestion?: SuggestionPayload | null;
+  suggestionStatus?: SuggestionStatus | null;
+}
+
+/**
+ * C-018: the already-sanitized first comment to persist ATOMICALLY with the annotation in ONE
+ * transaction. `body` is the inert plaintext (sanitized at the service boundary, C-008); a guest
+ * carries a cleaned `guestName` (+ optional `guestEmail`) and a null `authorId`; a member carries
+ * `authorId` and no guest fields. A commentless create (future pure highlight) omits this entirely.
+ */
+export interface NewFirstComment {
+  body: string;
+  authorId: string | null;
+  guestName: string | null;
+  guestEmail?: string | null;
 }
 
 /**
@@ -149,6 +171,16 @@ export interface NewAnnotation {
  */
 export interface AnnotationRepo {
   insertAnnotation(input: NewAnnotation): Promise<{ id: string }>;
+  /**
+   * C-018: persist an annotation AND its first comment in ONE atomic transaction (and bump the
+   * annotation's updated_at). A failure of EITHER insert rolls the whole transaction back — no
+   * orphan annotation with no comment is ever left behind (the bug this fixes). When `comment` is
+   * omitted, this creates the annotation alone (a commentless highlight), returning no commentId.
+   */
+  insertAnnotationWithComment(
+    annotation: NewAnnotation,
+    comment?: NewFirstComment,
+  ): Promise<{ id: string; commentId?: string }>;
   listByDoc(docId: string): Promise<AnnotationRow[]>;
   /**
    * Every comment on the doc's annotations (S-003 read), each tagged with its `annotationId`
@@ -232,6 +264,141 @@ export async function createAnnotation(
     authorId: authorId ?? null,
   });
   return { created: true, id };
+}
+
+/** The first comment the unified create may carry (C-018). A member supplies only `body`; a guest
+ *  supplies `body` + `guestName` (+ optional `guestEmail`). Identity (authorId/null) is decided by
+ *  the service from the session, never the body. Omit `comment` for a commentless highlight. */
+export interface FirstCommentInput {
+  body: string;
+  /** S-007 (AS-017): a guest's self-entered name (+ optional email). Absent for a member. */
+  guestName?: string;
+  guestEmail?: string;
+}
+
+/** S-006 (AS-014): the suggestion payload the unified create may carry, subsuming the standalone
+ *  suggestion-create (C-018). `from` is the pinned span; omit `to` for a delete-kind redline. */
+export interface CreateSuggestionPayloadInput {
+  from: string;
+  to?: string;
+  againstVersion: number;
+}
+
+export interface CreateAnnotationWithCommentInput extends CreateAnnotationInput {
+  /**
+   * C-018: the optional initial comment, persisted ATOMICALLY with the annotation. The body is
+   * sanitized to inert plaintext here (C-008) and a guest name is cleaned/length-capped before the
+   * single transaction. Omit for a commentless highlight (creates the annotation alone).
+   */
+  comment?: FirstCommentInput;
+  /**
+   * S-006 (AS-014) / C-018: the optional suggestion payload — when present the created annotation is
+   * a suggestion-type one (the standalone suggestion-create is subsumed). Mutually exclusive with a
+   * label (AS-029, refused). A creator who can EDIT the doc has their own proposal born `accepted`
+   * (mirrors createSuggestion's auto-accept); a commenter's stays `pending`.
+   */
+  suggestion?: CreateSuggestionPayloadInput;
+}
+
+export type CreateAnnotationWithCommentResult =
+  | { created: true; id: string; commentId?: string }
+  | { created: false; reason: "forbidden" }
+  | { created: false; reason: "invalid_label" }
+  // AS-029: a label and a suggestion are mutually exclusive.
+  | { created: false; reason: "label_and_suggestion" }
+  // A commented create with an empty/whitespace-only body is refused (mirrors addComment).
+  | { created: false; reason: "empty_body" }
+  // A guest comment requires a non-empty name (S-007 / C-007).
+  | { created: false; reason: "empty_name" };
+
+/**
+ * C-018: create an annotation AND its first comment (and/or a suggestion payload) in ONE atomic
+ * write. The annotation row + the comment are inserted in a SINGLE transaction (in the repo); a
+ * failure of either persists NEITHER — no orphan annotation with no comment is ever left behind
+ * (the bug this fixes). The create re-authorizes server-side (C-009), validates the label
+ * (AS-028) and the label↔suggestion exclusion (AS-029), sanitizes the comment body + guest name
+ * (C-008, reusing the guest sanitize logic), and — when a suggestion is present — applies the
+ * same born-accepted-for-editors rule createSuggestion uses.
+ *
+ * A commentless create (future pure highlight) omits `comment` and creates the annotation alone.
+ */
+export async function createAnnotationWithComment(
+  input: CreateAnnotationWithCommentInput,
+  repo: AnnotationRepo,
+): Promise<CreateAnnotationWithCommentResult> {
+  const { docId, anchor, sessionRole, type, label, authorId, comment, suggestion } = input;
+
+  // C-009/AS-020: server re-authorization — only a session role that may comment can create.
+  if (!can(sessionRole, "comment")) {
+    return { created: false, reason: "forbidden" };
+  }
+
+  // AS-029: a label annotation and a suggestion are mutually exclusive.
+  if (label != null && suggestion != null) {
+    return { created: false, reason: "label_and_suggestion" };
+  }
+
+  // AS-028: a label, when present, MUST be a known preset id — a forged id never reaches the repo.
+  if (label != null && !isLabelPreset(label)) {
+    return { created: false, reason: "invalid_label" };
+  }
+
+  // Build the (already-sanitized) first comment, if any. A guest (no authorId) must supply a name;
+  // a member posts body-only. The body is sanitized to inert plaintext at this boundary (C-008).
+  let newComment: NewFirstComment | undefined;
+  if (comment != null) {
+    if (comment.body == null || comment.body.trim().length === 0) {
+      return { created: false, reason: "empty_body" };
+    }
+    const isGuest = authorId == null;
+    let guestName: string | null = null;
+    if (isGuest) {
+      // S-007 / C-008: a guest comment requires a non-empty name; clean it first so an HTML-only
+      // name (which sanitizes to empty) is correctly rejected, not stored blank.
+      const cleaned = cleanGuestName(comment.guestName ?? "");
+      if (cleaned.length === 0) {
+        return { created: false, reason: "empty_name" };
+      }
+      guestName = cleaned;
+    }
+    newComment = {
+      body: sanitizeInert(comment.body), // C-008/AS-019: stored inert.
+      authorId: authorId ?? null,
+      guestName,
+      ...(isGuest && comment.guestEmail != null && comment.guestEmail.trim().length > 0
+        ? { guestEmail: comment.guestEmail.trim() }
+        : {}),
+    };
+  }
+
+  // S-006 (AS-014): a suggestion payload makes this a suggestion-type annotation. The born status
+  // mirrors createSuggestion — an editor's own proposal is born accepted (it matches by
+  // construction at create), a commenter's stays pending awaiting an owner decision.
+  let suggestionPayload: SuggestionPayload | null = null;
+  let suggestionStatus: SuggestionStatus | null = null;
+  let annotationType: AnnotationType = type ?? "range";
+  if (suggestion != null) {
+    annotationType = "suggestion";
+    suggestionPayload =
+      suggestion.to === undefined
+        ? { kind: "delete", from: suggestion.from, againstVersion: suggestion.againstVersion }
+        : { kind: "replace", from: suggestion.from, to: suggestion.to, againstVersion: suggestion.againstVersion };
+    suggestionStatus = can(sessionRole, "edit") ? "accepted" : "pending";
+  }
+
+  const { id, commentId } = await repo.insertAnnotationWithComment(
+    {
+      docId,
+      type: annotationType,
+      anchor, // AS-003: the chosen block_id is stored verbatim.
+      label: label ?? null,
+      authorId: authorId ?? null,
+      suggestion: suggestionPayload,
+      suggestionStatus,
+    },
+    newComment,
+  );
+  return { created: true, id, ...(commentId != null ? { commentId } : {}) };
 }
 
 export interface ListAnnotationsInput {

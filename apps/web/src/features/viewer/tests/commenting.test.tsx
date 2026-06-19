@@ -102,7 +102,8 @@ beforeEach(() => {
     content: MD,
   });
   annoResponse = okRead({ items: [] });
-  createResult = okEnv({ annotationId: "anno-real-1" });
+  // C-018: the create now returns BOTH ids — the annotation + its atomically-persisted first comment.
+  createResult = okEnv({ annotationId: "anno-real-1", commentId: "cmt-real-1" });
   commentResult = okEnv({ commentId: "cmt-real-1" });
 });
 
@@ -196,7 +197,9 @@ describe("Commenting S-001", () => {
     await userEvent.type(within(composer).getByTestId("composer-input"), "Why 24h and not 48h?");
     await userEvent.click(within(composer).getByTestId("composer-send"));
 
-    // AS-001.T1: a block-anchored annotation create with {blockId, textSnippet, offset, length}.
+    // AS-001.T1 (C-018): ONE atomic create call carries BOTH the block-anchored annotation AND its
+    // first comment — there is no second addComment call on create (a failed write rolls back
+    // server-side, no orphan).
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
     // S-003: createAnnotation is now slug-only (slug, body) → the body is the 2nd arg.
     const [, createBody] = createAnnotation.mock.calls[0]!;
@@ -205,13 +208,10 @@ describe("Commenting S-001", () => {
     expect(createBody.anchor.textSnippet).toBe("Payment expires after 24h");
     expect(createBody.anchor.offset).toBe(0);
     expect(createBody.anchor.length).toBe("Payment expires after 24h".length);
-
-    // The comment body posts after the annotation is created (AS-001).
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    // S-003: addComment is now (slug, annotationId, body) → annotationId is the 2nd arg.
-    const commentArgs = addComment.mock.calls[0]!;
-    expect(commentArgs[1]).toBe("anno-real-1"); // the created annotation id
-    expect(commentArgs[2].body).toBe("Why 24h and not 48h?");
+    // C-018: the comment rides the SAME create call.
+    expect(createBody.comment.body).toBe("Why 24h and not 48h?");
+    // C-018: addComment is NEVER called during a create (it stays for replies to existing annotations).
+    expect(addComment).not.toHaveBeenCalled();
 
     // AS-001.T2: EXACTLY ONE highlight marks the selected sentence — the real refetched row's mark,
     // with no leftover optimistic `data-anno=<tempId>` mark double-wrapping the same range.

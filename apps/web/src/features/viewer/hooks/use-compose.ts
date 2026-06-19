@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   createAnnotation,
-  addComment,
-  createRedline,
   type ViewerAnnotation,
 } from "@/features/viewer/services/client";
 import { selectionToAnchor, type SelectionAnchor } from "@/features/viewer/lib/selection-anchor";
@@ -415,10 +413,10 @@ export function useCompose(
   const startRedline = useCallback(() => {
     const anchor = pendingAnchor.current;
     if (!anchor) return;
-    const workspaceId = redlineCtx?.workspaceId;
-    if (!slug || !workspaceId || redlineCtx == null) {
-      // No workspace reachable (anon / project-less doc) → the workspace-scoped suggestion route is
-      // unreachable. Close the popover; don't create a ghost that can never persist.
+    if (!slug || redlineCtx == null) {
+      // No version pin reachable (no doc context) → can't pin `againstVersion`. Close the popover;
+      // don't create a ghost that can never persist. (C-018: the redline now rides the doc-addressed
+      // unified create, so it no longer needs a workspaceId — only the version to pin against.)
       setPopover(null);
       pendingAnchor.current = null;
       return;
@@ -496,7 +494,11 @@ export function useCompose(
 
     void (async () => {
       try {
-        const created = await createRedline(workspaceId, slug, {
+        // C-018: ONE atomic doc-addressed create — the suggestion annotation AND its root comment
+        // persist together (the standalone workspace-scoped suggestion route is subsumed). Omit `to`
+        // → the server records kind=delete; the root body rides `comment` (no second addComment).
+        const created = await createAnnotation(slug, {
+          type: "suggestion",
           anchor: {
             blockId: anchor.blockId,
             textSnippet: anchor.textSnippet,
@@ -504,23 +506,16 @@ export function useCompose(
             length: anchor.length,
             segments: anchor.segments,
           },
-          from: anchor.textSnippet,
-          againstVersion: redlineCtx.version,
+          suggestion: { from: anchor.textSnippet, againstVersion: redlineCtx.version },
+          comment: { body: REDLINE_ROOT_BODY },
         });
         if (created.error || !created.data) {
           rollback();
           return;
         }
-        const suggestionId = peelSuggestionId(created.data);
-        // C-003: attach the root comment so the redline carries an authored thread (the create route
-        // does not auto-create one). A refused comment write also rolls the redline back (no half row).
-        const commented = await addComment(slug, suggestionId, { body: REDLINE_ROOT_BODY });
-        if (commented.error) {
-          rollback();
-          return;
-        }
+        const annotationId = peelId(created.data);
         const real: ViewerAnnotation = {
-          id: suggestionId,
+          id: annotationId,
           ...(author.authorId ? { authorId: author.authorId } : {}),
           type: "suggestion",
           status: "unresolved",
@@ -535,7 +530,7 @@ export function useCompose(
           suggestion: { kind: "delete", from: anchor.textSnippet, againstVersion: redlineCtx.version },
           suggestionStatus: bornStatus,
           comments: [
-            { id: peelCommentId(commented.data), parentId: null, ...author.comment, body: REDLINE_ROOT_BODY, createdAt },
+            { id: peelCommentId(created.data), parentId: null, ...author.comment, body: REDLINE_ROOT_BODY, createdAt },
           ],
         };
         onCreatedAnnotation(real);
@@ -640,6 +635,10 @@ export function useCompose(
 
       void (async () => {
         try {
+          // C-018: ONE atomic request — the annotation AND its first comment are created together
+          // server-side (a failure of either rolls BOTH back, no orphan). There is no longer a
+          // second addComment call to compensate for, so the old create-then-comment rollback
+          // branch is gone — a refused create simply rolls the optimistic thread back.
           const created = await createAnnotation(slug, {
             type: "range",
             anchor: {
@@ -652,27 +651,23 @@ export function useCompose(
             // S-003 (C-003 / #9): a Like rides the SAME doc-scoped create as a comment, carrying the
             // label; the server validates it ∈ the preset set (AS-014 server-side). Omitted for a comment.
             ...(label ? { label } : {}),
+            // C-018: the first comment rides the create. S-005 (AS-010): a guest posts under its
+            // self-entered name + optional email; a member posts body-only (identity = session cookie).
+            comment: {
+              body,
+              ...(guestIdentity
+                ? {
+                    guestName: guestIdentity.guestName,
+                    ...(guestIdentity.guestEmail ? { guestEmail: guestIdentity.guestEmail } : {}),
+                  }
+                : {}),
+            },
           });
           if (created.error || !created.data) {
             rollback();
             return;
           }
           const annotationId = peelId(created.data);
-          const commented = await addComment(slug, annotationId, {
-            body,
-            // S-005 (AS-010): a guest comment posts under its self-entered name + optional email;
-            // a member posts body-only (identity rides the session cookie, no userId in the body).
-            ...(guestIdentity
-              ? {
-                  guestName: guestIdentity.guestName,
-                  ...(guestIdentity.guestEmail ? { guestEmail: guestIdentity.guestEmail } : {}),
-                }
-              : {}),
-          });
-          if (commented.error) {
-            rollback();
-            return;
-          }
           // Success: reconcile WITHOUT a refetch. Build the REAL annotation from the server-returned
           // ids (reusing the optimistic anchor + body + createdAt + attribution) and PREPEND it into
           // the react-query cache (newest-first). Then clear the optimistic temp thread + its
@@ -699,7 +694,7 @@ export function useCompose(
             },
             comments: [
               {
-                id: peelCommentId(commented.data),
+                id: peelCommentId(created.data),
                 parentId: null,
                 ...attribution,
                 body,
@@ -755,20 +750,6 @@ function peelId(data: unknown): string {
     const inner = obj.data;
     if (inner && typeof inner === "object" && typeof (inner as Record<string, unknown>).annotationId === "string") {
       return (inner as Record<string, string>).annotationId;
-    }
-  }
-  return "";
-}
-
-// S-002: envelope-defensive peel for the redline create result (`{ suggestionId }`, possibly
-// wrapped in the success envelope) — same shape-tolerance as peelId.
-function peelSuggestionId(data: unknown): string {
-  if (data && typeof data === "object") {
-    const obj = data as Record<string, unknown>;
-    if (typeof obj.suggestionId === "string") return obj.suggestionId;
-    const inner = obj.data;
-    if (inner && typeof inner === "object" && typeof (inner as Record<string, unknown>).suggestionId === "string") {
-      return (inner as Record<string, string>).suggestionId;
     }
   }
   return "";

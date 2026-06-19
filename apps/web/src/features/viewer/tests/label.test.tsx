@@ -189,7 +189,8 @@ describe("Label create flow (S-004, through ViewerScreen)", () => {
       },
       content: MD,
     });
-    annotationResult = okEnv({ annotationId: "lb-real-1" });
+    // C-018: the unified create returns both ids (annotation + atomic first comment).
+    annotationResult = okEnv({ annotationId: "lb-real-1", commentId: "lb-cmt-1" });
   });
 
   // Reset the shared signed-in session so it doesn't leak into later files (bun mock.module is
@@ -220,7 +221,7 @@ describe("Label create flow (S-004, through ViewerScreen)", () => {
     await userEvent.click(screen.getByTestId("composer-send"));
 
     // AS-012.T1 / C-003.T2: a doc-scoped createAnnotation carrying label="out-of-scope" stored
-    // STRUCTURED (a top-level field, not folded into the comment body — the body rides addComment).
+    // STRUCTURED (a top-level field, not folded into the comment body — the body rides `comment`).
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
     const [slugArg, body] = createAnnotation.mock.calls[0]!;
     expect(slugArg).toBe("my-doc");
@@ -235,10 +236,10 @@ describe("Label create flow (S-004, through ViewerScreen)", () => {
     expect(typeof sent.anchor.offset).toBe("number");
     expect(typeof sent.anchor.length).toBe("number");
 
-    // AS-012.T2 / C-003: a root comment by them is attached, body = the (pre-filled) preset text.
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    expect(addComment.mock.calls[0]![1]).toBe("lb-real-1");
-    expect((addComment.mock.calls[0]![2] as { body: string }).body).toBe("Out of scope");
+    // AS-012.T2 / C-018: the root comment rides the SAME create call (body = the pre-filled preset
+    // text); addComment is NOT used on create (it stays for replies).
+    expect((body as { comment: { body: string } }).comment.body).toBe("Out of scope");
+    expect(addComment).not.toHaveBeenCalled();
 
     // AS-012.T3: the rail card shows the preset label line (icon + "Out of scope").
     const card = (await screen.findAllByTestId("thread-card"))[0]!;
@@ -263,8 +264,9 @@ describe("Label create flow (S-004, through ViewerScreen)", () => {
 
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
     expect((createAnnotation.mock.calls[0]![1] as { label?: string }).label).toBe("out-of-scope");
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    expect((addComment.mock.calls[0]![2] as { body: string }).body).toBe("Belongs in v1, not v0");
+    // C-018: the edited body rides the SAME create call's comment payload.
+    expect((createAnnotation.mock.calls[0]![1] as { comment: { body: string } }).comment.body).toBe("Belongs in v1, not v0");
+    expect(addComment).not.toHaveBeenCalled();
   });
 
   it("AS-014 / C-007: a refused label create (server rejects) rolls back the optimistic mark + row, shows an error, no ghost persisted", async () => {

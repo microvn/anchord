@@ -15,6 +15,7 @@ import type {
   AnnotationRow,
   AnnotationType,
   NewAnnotation,
+  NewFirstComment,
   ViewerComment,
 } from "./annotation";
 import type { CommentRepo, CommentRow } from "./reply";
@@ -45,9 +46,51 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
           anchor: input.anchor, // AS-003: stored verbatim with the chosen block_id.
           label: input.label ?? null, // S-009/AS-027: validated preset id, null if none.
           authorId: input.authorId ?? null, // S-001/C-005: durable creator, null for a guest.
+          suggestion: input.suggestion ?? null, // C-018/S-006: payload when a suggestion-create.
+          suggestionStatus: input.suggestionStatus ?? null,
         })
         .returning({ id: annotations.id });
       return { id: row.id };
+    },
+
+    // C-018: the annotation row + its first comment in ONE transaction (and the updated_at bump
+    // a freshly-commented annotation already carries from its create timestamp). A failure of
+    // EITHER insert rolls the WHOLE transaction back — no orphan annotation with no comment is
+    // ever committed (the bug this fixes). Omit `comment` to create a commentless annotation.
+    async insertAnnotationWithComment(
+      annotation: NewAnnotation,
+      comment?: NewFirstComment,
+    ): Promise<{ id: string; commentId?: string }> {
+      return db.transaction(async (tx) => {
+        const [annRow] = await tx
+          .insert(annotations)
+          .values({
+            docId: annotation.docId,
+            type: annotation.type,
+            anchor: annotation.anchor, // AS-003: stored verbatim with the chosen block_id.
+            label: annotation.label ?? null,
+            authorId: annotation.authorId ?? null,
+            suggestion: annotation.suggestion ?? null,
+            suggestionStatus: annotation.suggestionStatus ?? null,
+          })
+          .returning({ id: annotations.id });
+        if (comment === undefined) return { id: annRow.id };
+        // The first comment is top-level (parentId null). It is inserted in the SAME tx, so if it
+        // fails the annotation insert above is rolled back too (atomicity, C-018). The values are
+        // already sanitized by the service (C-008).
+        const [cRow] = await tx
+          .insert(comments)
+          .values({
+            annotationId: annRow.id,
+            parentId: null,
+            authorId: comment.authorId,
+            guestName: comment.guestName,
+            guestEmail: comment.guestEmail ?? null,
+            body: comment.body,
+          })
+          .returning({ id: comments.id });
+        return { id: annRow.id, commentId: cRow.id };
+      });
     },
 
     async listByDoc(docId: string): Promise<AnnotationRow[]> {

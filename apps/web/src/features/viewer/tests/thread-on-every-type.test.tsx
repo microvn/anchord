@@ -209,7 +209,12 @@ let redlineResult: unknown;
 
 const fetchViewerDoc = mock(async () => docResponse);
 const listAnnotations = mock(async () => okRead({ items: [] }));
-const createAnnotation = mock(async () => annotationResult);
+// C-018: every create type (comment/like/label/redline) now rides the SAME doc-addressed
+// createAnnotation. A redline carries a `suggestion` payload; the mock routes to `redlineResult`
+// when it does, else `annotationResult`. createRedline stays a stub (its route is subsumed).
+const createAnnotation = mock(async (_slug: string, body: { suggestion?: unknown }) =>
+  body?.suggestion != null ? redlineResult : annotationResult,
+);
 const createRedline = mock(async () => redlineResult);
 const addComment = mock(async () => okEnv({ commentId: "cmt-1" }));
 
@@ -295,8 +300,9 @@ describe("Create boundary — server-authorized writes on every type (S-005)", (
     createRedline.mockClear();
     addComment.mockClear();
     toastError.mockClear();
-    annotationResult = okEnv({ annotationId: "a-real-1" });
-    redlineResult = okEnv({ suggestionId: "rl-real-1" });
+    annotationResult = okEnv({ annotationId: "a-real-1", commentId: "a-cmt-1" });
+    // C-018: a redline now returns the annotation id + atomic first-comment id (unified create).
+    redlineResult = okEnv({ annotationId: "rl-real-1", commentId: "rl-cmt-1" });
   });
 
   afterEach(() => {
@@ -376,9 +382,9 @@ describe("Create boundary — server-authorized writes on every type (S-005)", (
   });
 
   it("AS-019: the redline create flow emits the suggestion (`from`) and NO `label`", async () => {
-    // A Redline create rides the workspace-scoped createRedline carrying the suggestion span (`from`,
-    // delete-kind via omitted `to`); it carries NO label. The complementary half of the never-co-emit
-    // guarantee — the redline path is label-free.
+    // C-018: a Redline now rides the SAME doc-addressed createAnnotation, carrying a `suggestion`
+    // payload (`from`, delete-kind via omitted `to`) and NO label. The complementary half of the
+    // never-co-emit guarantee — the redline path is label-free. (createRedline is subsumed.)
     session = { user: { email: "owner@b.co" } };
     docResponse = okEnv({
       doc: { title: "Spec", kind: "markdown", version: 4, status: "live", generalAccess: "restricted", effectiveRole: "owner", workspaceId: "ws-1" },
@@ -389,15 +395,16 @@ describe("Create boundary — server-authorized writes on every type (S-005)", (
     selectPhrase("block-h1", "Implementation Plan: Real-time Collaboration");
     await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-redline"));
 
-    await waitFor(() => expect(createRedline).toHaveBeenCalledTimes(1));
-    const [, , body] = createRedline.mock.calls[0]!;
-    const sent = body as { from?: unknown; to?: unknown; label?: unknown };
+    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
+    const [, body] = createAnnotation.mock.calls[0]!;
+    const sent = body as { type?: string; suggestion?: { from?: unknown; to?: unknown }; label?: unknown };
     // Carries the suggestion span …
-    expect(sent.from).toBe("Implementation Plan: Real-time Collaboration");
-    expect(sent.to).toBeUndefined(); // delete-kind → no `to`
+    expect(sent.type).toBe("suggestion");
+    expect(sent.suggestion?.from).toBe("Implementation Plan: Real-time Collaboration");
+    expect(sent.suggestion?.to).toBeUndefined(); // delete-kind → no `to`
     // … and NO label (mutually exclusive — the redline path is label-free).
     expect(sent.label).toBeUndefined();
-    // The redline create did NOT route through the labeled createAnnotation path.
-    expect(createAnnotation).not.toHaveBeenCalled();
+    // The redline create did NOT route through the subsumed workspace-scoped suggestion path.
+    expect(createRedline).not.toHaveBeenCalled();
   });
 });

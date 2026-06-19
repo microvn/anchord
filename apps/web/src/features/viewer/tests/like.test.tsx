@@ -177,7 +177,8 @@ describe("Like create flow (S-003, through ViewerScreen)", () => {
       },
       content: MD,
     });
-    annotationResult = okEnv({ annotationId: "lk-real-1" });
+    // C-018: the unified create returns both ids (annotation + atomic first comment).
+    annotationResult = okEnv({ annotationId: "lk-real-1", commentId: "lk-cmt-1" });
   });
 
   // Reset the shared signed-in session so it doesn't leak into later files (bun mock.module is
@@ -207,10 +208,10 @@ describe("Like create flow (S-003, through ViewerScreen)", () => {
     expect(slugArg).toBe("my-doc");
     expect((body as { label?: string }).label).toBe("looks-good");
 
-    // AS-010.T2 / C-003: a root comment by them is attached, body = the (pre-filled) "Looks good".
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    expect(addComment.mock.calls[0]![1]).toBe("lk-real-1");
-    expect((addComment.mock.calls[0]![2] as { body: string }).body).toBe("Looks good");
+    // AS-010.T2 / C-018: the root comment rides the SAME create (body = the pre-filled "Looks good");
+    // addComment is NOT used on create (it stays for replies).
+    expect((body as { comment: { body: string } }).comment.body).toBe("Looks good");
+    expect(addComment).not.toHaveBeenCalled();
 
     // AS-010.T3: the rail card shows the 👍 "Looks good" row.
     const card = (await screen.findAllByTestId("thread-card"))[0]!;
@@ -235,8 +236,9 @@ describe("Like create flow (S-003, through ViewerScreen)", () => {
 
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
     expect((createAnnotation.mock.calls[0]![1] as { label?: string }).label).toBe("looks-good");
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    expect((addComment.mock.calls[0]![2] as { body: string }).body).toBe("Great section");
+    // C-018: the edited body rides the SAME create call's comment payload.
+    expect((createAnnotation.mock.calls[0]![1] as { comment: { body: string } }).comment.body).toBe("Great section");
+    expect(addComment).not.toHaveBeenCalled();
   });
 
   it("AS-011 / C-007.T2: a refused Like write rolls back the optimistic highlight + row, shows an error, no ghost", async () => {

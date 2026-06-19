@@ -105,7 +105,8 @@ beforeEach(() => {
     content: { contentUrl: "/v/ver-html-1" },
   });
   annoResponse = okRead({ items: [] });
-  createResult = okEnv({ annotationId: "anno-real-1" });
+  // C-018: the create returns both ids (annotation + atomic first comment).
+  createResult = okEnv({ annotationId: "anno-real-1", commentId: "cmt-real-1" });
   commentResult = okEnv({ commentId: "cmt-real-1" });
 });
 
@@ -474,10 +475,9 @@ describe("Sandbox bridge in ViewerScreen S-002", () => {
     expect(createBody.anchor.blockId).toBe("block-p-3");
     expect(createBody.anchor.textSnippet).toBe(HTML_ANCHOR.textSnippet);
     expect(createBody.anchor.offset).toBe(0);
-
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    // S-003: addComment is now (slug, annotationId, body) → annotationId is the 2nd arg.
-    expect(addComment.mock.calls[0]![1]).toBe("anno-real-1");
+    // C-018: the comment rides the SAME create call (atomic); addComment is NOT used on create.
+    expect(createBody.comment.body).toBe("Why three?");
+    expect(addComment).not.toHaveBeenCalled();
 
     // AS-004.T2: the highlight is relayed DOWN the port (the parent can't draw into the opaque
     // iframe) with the real annotation id + the anchor.

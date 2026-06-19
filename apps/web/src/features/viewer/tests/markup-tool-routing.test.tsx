@@ -162,8 +162,11 @@ describe("Markup tool routing S-006 (C-009)", () => {
     await pickTool("redline");
     selectPhrase("block-p-1", "Real-time Collaboration");
 
-    // Redline fires the workspace-scoped create directly — no popover, no composer.
-    await waitFor(() => expect(createRedline).toHaveBeenCalledTimes(1));
+    // C-018: Redline fires the doc-addressed unified create directly (suggestion payload) — no
+    // popover, no composer, and no separate workspace-scoped suggestion call.
+    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
+    expect((createAnnotation.mock.calls[0]![1] as { suggestion?: unknown }).suggestion).toBeDefined();
+    expect(createRedline).not.toHaveBeenCalled();
     expect(screen.queryByTestId("selection-popover")).toBeNull();
     expect(screen.queryByTestId("inline-composer-popover")).toBeNull();
     // The optimistic red strike is placed on the selected text (kind=redline mark, AS-022/C-002).

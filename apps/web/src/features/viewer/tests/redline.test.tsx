@@ -211,7 +211,10 @@ let redlineResult: unknown;
 
 const fetchViewerDoc = mock(async () => docResponse);
 const listAnnotations = mock(async () => okRead({ items: [] }));
-const createRedline = mock(async () => redlineResult);
+// C-018: a redline now rides the SAME doc-addressed unified create as a comment (the standalone
+// workspace-scoped suggestion route is subsumed). `createAnnotation` is driven by `redlineResult`
+// so the existing refused/ok cases still apply; `addComment` stays for replies and must NOT fire.
+const createAnnotation = mock(async () => redlineResult);
 const addComment = mock(async () => okEnv({ commentId: "rl-cmt-1" }));
 
 function canComment(role: string | undefined) {
@@ -221,10 +224,10 @@ function canComment(role: string | undefined) {
 mock.module("@/features/viewer/services/client", () => ({
   fetchViewerDoc,
   listAnnotations,
-  createAnnotation: mock(async () => okEnv({ annotationId: "a" })),
+  createAnnotation,
   addComment,
   setResolution: mock(async () => okEnv({ status: "resolved" })),
-  createRedline,
+  createRedline: mock(async () => okEnv({ suggestionId: "rl-x" })),
   decideSuggestion: mock(async () => okEnv({ status: "accepted" })),
   deleteAnnotation: mock(async () => okEnv({ deleted: true })),
   restoreAnnotation: mock(async () => okEnv({ restored: true })),
@@ -294,12 +297,12 @@ describe("Redline create flow (S-002, through ViewerScreen)", () => {
   beforeEach(() => {
     fetchViewerDoc.mockClear();
     listAnnotations.mockClear();
-    createRedline.mockClear();
+    createAnnotation.mockClear();
     addComment.mockClear();
     toastError.mockClear();
-    session = { user: { email: "owner@b.co" } }; // signed-in owner → memberWorkspaceId resolves
-    // A signed-in OWNER on a doc carrying a workspaceId (member-only) — the redline create is
-    // workspace-scoped, so the workspaceId must be reachable from the read response.
+    session = { user: { email: "owner@b.co" } }; // signed-in owner → effective owner role resolves
+    // A signed-in OWNER. The redline now rides the doc-addressed unified create (C-018) — the
+    // workspaceId is no longer required for it, but a member doc still carries one.
     docResponse = okEnv({
       doc: {
         title: "Spec",
@@ -312,7 +315,8 @@ describe("Redline create flow (S-002, through ViewerScreen)", () => {
       },
       content: MD,
     });
-    redlineResult = okEnv({ suggestionId: "rl-real-1" });
+    // C-018: the unified create returns the annotation id + the atomic first-comment id.
+    redlineResult = okEnv({ annotationId: "rl-real-1", commentId: "rl-cmt-1" });
   });
 
   // Reset the shared signed-in session so it doesn't leak into later files (bun mock.module is
@@ -330,19 +334,19 @@ describe("Redline create flow (S-002, through ViewerScreen)", () => {
     const popover = await screen.findByTestId("selection-popover");
     await userEvent.click(within(popover).getByTestId("popover-redline"));
 
-    // AS-004.T1: a workspace-scoped delete-kind suggestion create — `to` omitted (→ delete), `from`
-    // = the struck quote, pinned againstVersion = the doc version.
-    await waitFor(() => expect(createRedline).toHaveBeenCalledTimes(1));
-    const [ws, slugArg, body] = createRedline.mock.calls[0]!;
-    expect(ws).toBe("ws-1");
+    // AS-004.T1 (C-018): ONE doc-addressed unified create carries the delete-kind suggestion AND its
+    // root comment — `to` omitted (→ delete), `from` = the struck quote, pinned againstVersion = the
+    // doc version. There is no separate workspace-scoped suggestion call and no second addComment.
+    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
+    const [slugArg, body] = createAnnotation.mock.calls[0]!;
     expect(slugArg).toBe("my-doc");
-    expect(body.from).toBe("Implementation Plan: Real-time Collaboration");
-    expect((body as { to?: unknown }).to).toBeUndefined(); // delete-kind → no `to`
-    expect(body.againstVersion).toBe(4);
-
-    // AS-004.T2: its root comment is attached to the created suggestion.
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    expect(addComment.mock.calls[0]![1]).toBe("rl-real-1");
+    expect(body.type).toBe("suggestion");
+    expect(body.suggestion.from).toBe("Implementation Plan: Real-time Collaboration");
+    expect((body.suggestion as { to?: unknown }).to).toBeUndefined(); // delete-kind → no `to`
+    expect(body.suggestion.againstVersion).toBe(4);
+    // AS-004.T2: its root comment rides the SAME create call (atomic); addComment is NOT used here.
+    expect(body.comment.body).toBeString();
+    expect(addComment).not.toHaveBeenCalled();
 
     // AS-004.T3: the text renders a RED STRIKE (a redline-kind mark), not a teal highlight.
     await waitFor(() => {

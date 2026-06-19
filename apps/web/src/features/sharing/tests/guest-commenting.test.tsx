@@ -92,7 +92,8 @@ beforeEach(() => {
     content: MD,
   });
   annoResponse = okRead({ items: [] });
-  createResult = okEnv({ annotationId: "anno-real-1" });
+  // C-018: the create returns both ids (annotation + atomic first comment).
+  createResult = okEnv({ annotationId: "anno-real-1", commentId: "cmt-real-1" });
   commentResult = okEnv({ commentId: "cmt-real-1" });
 });
 
@@ -167,15 +168,14 @@ describe("Guest commenting S-005", () => {
     await userEvent.type(within(composer).getByTestId("composer-input"), "Why 24h?");
     await userEvent.click(within(composer).getByTestId("composer-send"));
 
-    // The comment write carries the guest name (email optional → undefined/empty), no userId.
-    await waitFor(() => expect(addComment).toHaveBeenCalledTimes(1));
-    // addComment is slug-only now: (slug, annotationId, body) — the body object is arg index 2
-    // (was index 3 under the old workspace-scoped (ws, slug, annotationId, body) signature,
-    // doc-access-routing C-002). Read index 2.
-    const body = addComment.mock.calls[0]![2];
-    expect(body.body).toBe("Why 24h?");
-    expect(body.guestName).toBe("Lan");
-    expect(body.guestEmail ?? "").toBe(""); // optional — not provided
+    // C-018: the guest comment now rides the SAME atomic createAnnotation `comment` payload (no
+    // separate addComment). It carries the guest name (email optional → undefined), no userId.
+    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
+    const comment = (createAnnotation.mock.calls[0]![1] as { comment: { body: string; guestName?: string; guestEmail?: string } }).comment;
+    expect(comment.body).toBe("Why 24h?");
+    expect(comment.guestName).toBe("Lan");
+    expect(comment.guestEmail ?? "").toBe(""); // optional — not provided
+    expect(addComment).not.toHaveBeenCalled();
 
     // It appears in the thread under the guest name.
     const card = (await screen.findAllByTestId("thread-card"))[0]!;

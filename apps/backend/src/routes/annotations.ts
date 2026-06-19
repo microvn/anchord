@@ -43,6 +43,7 @@ import { type AccessResult } from "../sharing/resolve-access";
 import { type Role } from "../sharing/roles";
 import {
   createAnnotation,
+  createAnnotationWithComment,
   listAnnotations,
   type Anchor,
   type AnnotationType,
@@ -306,6 +307,22 @@ const imageAnchorSchema = z.object({
   region: regionSchema,
 });
 
+/** C-018: the optional initial comment carried on the unified create. Body+name are sanitized
+ *  SERVER-side in the service (C-008), not here. A member sends only `body`; a guest adds a name. */
+const firstCommentSchema = z.object({
+  body: z.string(),
+  guestName: z.string().optional(),
+  guestEmail: z.string().optional(),
+});
+
+/** S-006 (AS-014) / C-018: the optional suggestion payload — `from` pinned span, `to` omitted for a
+ *  delete-kind redline, `againstVersion` for the stale pin. Subsumes the standalone suggestion-create. */
+const createSuggestionPayloadSchema = z.object({
+  from: z.string(),
+  to: z.string().optional(),
+  againstVersion: z.number().int().positive(),
+});
+
 const createAnnotationSchema = z
   .object({
     type: z.enum(["range", "multi_range", "block", "doc"]).optional(),
@@ -313,11 +330,13 @@ const createAnnotationSchema = z
     // S-009 / C-015 (AS-027): an optional label-preset id; validated against the preset set
     // SERVER-side in createAnnotation (AS-028), not here, so a foreign id is a clean domain refusal.
     label: z.string().optional(),
-    // S-009 / C-015 (AS-029): a label annotation and a suggestion are MUTUALLY EXCLUSIVE.
-    // Suggestions have their own create endpoint; we DECLARE `suggestion` here only to REFUSE a
-    // body carrying BOTH (the refine below). Without declaring it, strip semantics would silently
-    // drop it and a label+suggestion body would wrongly succeed instead of being refused.
-    suggestion: z.unknown().optional(),
+    // C-018: the optional FIRST comment, persisted ATOMICALLY with the annotation (one tx). A
+    // commentless create (future pure highlight) omits it.
+    comment: firstCommentSchema.optional(),
+    // S-006 / C-018: the optional suggestion payload — creating a suggestion now rides this unified
+    // create (the standalone POST …/suggestions is subsumed). Mutually exclusive with a label
+    // (AS-029, refused below + re-checked in the service).
+    suggestion: createSuggestionPayloadSchema.optional(),
   })
   .refine((b) => !(b.label != null && b.suggestion != null), {
     message: "a label annotation and a suggestion are mutually exclusive",
@@ -469,7 +488,8 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const viewer: Viewer = { kind: "user", userId: actor.userId };
     const doc = await loadVisibleDocBySlug(params.slug, viewer); // 404 if missing/hidden
     const sessionRole = await docRole(doc.id, actor.userId); // server re-auth (AS-020)
-    const result = await createAnnotation(
+    // C-018: annotation + first comment (+ optional suggestion) in ONE atomic write.
+    const result = await createAnnotationWithComment(
       {
         docId: doc.id,
         anchor: toAnchor(body.anchor),
@@ -477,6 +497,8 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         sessionRole,
         type: ("region" in body.anchor ? "block" : body.type ?? "range") as AnnotationType,
         label: body.label, // S-009: validated ∈ preset set in the service (AS-028).
+        comment: body.comment,
+        suggestion: body.suggestion, // S-006 (AS-014): subsumed suggestion-create.
         // S-001/C-005 (AS-001): the durable creator — the session actor (this mount is
         // session-required, so an actor always exists).
         authorId: actor.userId,
@@ -484,12 +506,23 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       annotationRepo,
     );
     if (!result.created) {
-      // S-009/AS-028: an unknown/forged label is a bad request, not a permission failure.
+      // Empty body / missing guest name / unknown label / label+suggestion → bad request (AS-004/028/029).
       if (result.reason === "invalid_label") throw new ValidationError("Unknown label", { field: "label" });
+      if (result.reason === "label_and_suggestion") {
+        throw new ValidationError("a label annotation and a suggestion are mutually exclusive", { field: "label" });
+      }
+      if (result.reason === "empty_body") throw new ValidationError("body must not be empty", { field: "body" });
+      if (result.reason === "empty_name") throw new ValidationError("guestName is required", { field: "guestName" });
       throw new ForbiddenError(); // viewer/forged role → 403 (AS-020)
     }
+    // S-006: the first comment surfaces to participants the same as a reply would (the old two-call
+    // flow's addComment went through the notify path); on a brand-new annotation the only
+    // participant is the creator, whom notifyOnReply excludes, so this is a no-op in practice.
+    if (result.commentId != null) {
+      await dispatchReplyNotify(result.id, actor.userId);
+    }
     set.status = 201;
-    return { annotationId: result.id };
+    return { annotationId: result.id, ...(result.commentId != null ? { commentId: result.commentId } : {}) };
   }
 
   async function listAnnotationsHandler({ params, actor, query }: any) {
@@ -819,7 +852,39 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const access = found ? await deps.resolveAccess(found.id, viewer) : { role: null, canView: false };
     const doc = enforceReadAccess({ doc: found, allowed: found !== null && access.canView }); // 404 if missing/hidden
     const sessionRole = await writeRole(doc.id, viewer, access); // server re-auth (AS-017/AS-020)
-    const result = await createAnnotation(
+
+    // C-018: a GUEST (no session) create carrying a comment must clear the SAME guest guards the
+    // standalone guest-comment path enforced before the comment rode the create — the rate-limit
+    // (C-008/AS-022), the guest-commenting toggle (S-007), and the member-name impersonation guard
+    // (C-009/AS-023). These run BEFORE the atomic write so a refused guard never persists a row.
+    if (!actor && body.comment != null) {
+      // C-008 (AS-022): throttle the anon write surface per IP + per doc BEFORE any work.
+      const limit = await rateLimitComment(`${clientIp(request)}:${doc.id}`);
+      if (!limit.allowed) {
+        throw new RateLimitedError("Too many comments — slow down and try again shortly");
+      }
+      // S-007: guest commenting must be enabled on the doc; else the anon caller is unauthenticated
+      // for this action (mirrors the guest reply path).
+      const { guestCommentingEnabled } = await deps.loadShareConfig(doc.id);
+      if (!guestCommentingEnabled) {
+        throw new UnauthenticatedError("Guest commenting is not enabled; sign in to comment");
+      }
+      // C-009 (AS-023): a guest whose typed name collides with an ACTIVE member's display name on
+      // this doc is rejected, so the guest cannot read AS that member (the guest marker — author_id
+      // null — is already non-spoofable; this stops the NAME spoof). Guest-only (member identity is
+      // the session, never a typed name).
+      const guestName = body.comment.guestName ?? "";
+      if (guestName.trim().length > 0 && (await isActiveMemberName(doc.id, guestName))) {
+        throw new ValidationError("That name belongs to a member of this doc; choose another", {
+          field: "guestName",
+        });
+      }
+    }
+
+    // C-018: annotation + first comment (+ optional suggestion) in ONE atomic write — a comment
+    // failure rolls the annotation back (no orphan). For a guest, authorId is NULL (AS-002: no
+    // durable identity to own-gate against) and the body+name are sanitized in the service (C-008).
+    const result = await createAnnotationWithComment(
       {
         docId: doc.id,
         anchor: toAnchor(body.anchor),
@@ -827,19 +892,32 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         sessionRole,
         type: ("region" in body.anchor ? "block" : body.type ?? "range") as AnnotationType,
         label: body.label, // S-009: validated ∈ preset set in the service (AS-028).
+        comment: body.comment,
+        suggestion: body.suggestion, // S-006 (AS-014): subsumed suggestion-create.
         // S-001/C-005 (AS-001/AS-002): the durable creator — the session actor's id, or NULL
-        // for a guest (no account). That null is exactly the guest case (AS-002): no durable
-        // identity to own-gate against.
+        // for a guest (no account).
         authorId: actor?.userId ?? null,
       },
       annotationRepo,
     );
     if (!result.created) {
       if (result.reason === "invalid_label") throw new ValidationError("Unknown label", { field: "label" });
+      if (result.reason === "label_and_suggestion") {
+        throw new ValidationError("a label annotation and a suggestion are mutually exclusive", { field: "label" });
+      }
+      if (result.reason === "empty_body") throw new ValidationError("body must not be empty", { field: "body" });
+      if (result.reason === "empty_name") throw new ValidationError("guestName is required", { field: "guestName" });
       throw new ForbiddenError(); // viewer/forged role → 403
     }
+    // S-006: a guest's first comment still notifies account-holder participants + owner; the guest
+    // has no account, so replierUserId is null → the guest is excluded automatically. A member's
+    // first comment on a brand-new annotation has no other participants yet, so this is a no-op for
+    // them in practice, but mirrors the reply path for consistency.
+    if (result.commentId != null) {
+      await dispatchReplyNotify(result.id, actor?.userId ?? null);
+    }
     set.status = 201;
-    return { annotationId: result.id };
+    return { annotationId: result.id, ...(result.commentId != null ? { commentId: result.commentId } : {}) };
   }
 
   async function docListAnnotationsHandler({ params, request, query }: any) {

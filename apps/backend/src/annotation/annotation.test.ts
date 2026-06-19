@@ -2,11 +2,13 @@ import { test, expect } from "bun:test";
 import {
   buildAnchor,
   createAnnotation,
+  createAnnotationWithComment,
   listAnnotations,
   type Anchor,
   type AnnotationRepo,
   type AnnotationRow,
   type NewAnnotation,
+  type NewFirstComment,
   type ViewerComment,
 } from "./annotation";
 import type { Viewer } from "../sharing/access";
@@ -19,13 +21,29 @@ import type { Viewer } from "../sharing/access";
 function fakeRepo(
   seed: AnnotationRow[] = [],
   commentSeed: (ViewerComment & { annotationId: string })[] = [],
-): AnnotationRepo & { inserted: NewAnnotation[] } {
+): AnnotationRepo & {
+  inserted: NewAnnotation[];
+  insertedComments: { annotationId: string }[];
+} {
   const inserted: NewAnnotation[] = [];
+  const insertedComments: { annotationId: string }[] = [];
   return {
     inserted,
+    insertedComments,
     async insertAnnotation(input: NewAnnotation) {
       inserted.push(input);
       return { id: `ann-${inserted.length}` };
+    },
+    // C-018: the atomic path the unified create now uses. The fake records BOTH the annotation and
+    // (when present) the first comment so a test can assert they persisted TOGETHER. The real
+    // single-transaction rollback (a comment-insert failure leaving NO annotation) is proven against
+    // a live Postgres in test/integration/annotation-repo.itest.ts — a fake can't prove a DB tx.
+    async insertAnnotationWithComment(input: NewAnnotation, comment?: NewFirstComment) {
+      inserted.push(input);
+      const id = `ann-${inserted.length}`;
+      if (comment === undefined) return { id };
+      insertedComments.push({ annotationId: id });
+      return { id, commentId: `c-${insertedComments.length}` };
     },
     async listByDoc(_docId: string) {
       return seed;
@@ -298,6 +316,11 @@ function roundTripRepo(): AnnotationRepo & { inserted: NewAnnotation[] } {
       });
       return { id };
     },
+    async insertAnnotationWithComment(input: NewAnnotation, _comment?: NewFirstComment) {
+      // C-018: same round-trip persistence (authorId survives), now via the atomic path.
+      const { id } = await this.insertAnnotation(input);
+      return { id, ...(_comment !== undefined ? { commentId: `c-${id}` } : {}) };
+    },
     async listByDoc(docId: string) {
       return store.filter((r) => r.docId === docId);
     },
@@ -396,4 +419,182 @@ test("S-003: list attaches each annotation's comments[] thread (authorName | gue
     { id: "c-root", parentId: null, authorName: "Demo Author", body: "the root comment", createdAt: "2026-01-01T00:00:00.000Z" },
     { id: "c-reply", parentId: "c-root", guestName: "A Guest", body: "a guest reply", createdAt: "2026-01-01T00:01:00.000Z" },
   ]);
+});
+
+// ── C-018: atomic create-annotation-with-comment (the unified create, fixes the orphan bug) ──
+//
+// AS-001 strengthened: a commented annotation is ONE atomic write — the annotation row AND its
+// first comment persist TOGETHER (or neither does). The unit tier asserts the SERVICE shapes the
+// single repo call and returns { id, commentId }; the live-Postgres rollback (a comment-insert
+// failure leaving NO annotation) is test/integration/annotation-repo.itest.ts.
+
+test("AS-001: createAnnotationWithComment persists the annotation AND its first comment in ONE call, returning { id, commentId }", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-7", text: "Payment expires after 24h", offset: 0, length: 26 })!;
+
+  const res = await createAnnotationWithComment(
+    {
+      docId: "doc-1",
+      anchor,
+      viewer: commenter,
+      sessionRole: "commenter",
+      comment: { body: "this is wrong" },
+      authorId: "u-commenter",
+    },
+    repo,
+  );
+
+  expect(res).toEqual({ created: true, id: "ann-1", commentId: "c-1" });
+  // Both persisted via the SAME atomic call (no separate insertAnnotation/addComment).
+  expect(repo.inserted).toHaveLength(1);
+  expect(repo.insertedComments).toEqual([{ annotationId: "ann-1" }]);
+});
+
+test("AS-001: createAnnotationWithComment WITHOUT a comment creates the annotation alone (no commentId, commentless highlight)", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotationWithComment(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "commenter", authorId: "u-commenter" },
+    repo,
+  );
+
+  expect(res).toEqual({ created: true, id: "ann-1" });
+  expect(repo.insertedComments).toHaveLength(0);
+});
+
+test("AS-001: a viewer-role unified create is refused server-side (C-009/AS-020) — nothing persisted", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotationWithComment(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "viewer", comment: { body: "nope" }, authorId: "u-v" },
+    repo,
+  );
+
+  expect(res).toEqual({ created: false, reason: "forbidden" });
+  expect(repo.inserted).toHaveLength(0);
+  expect(repo.insertedComments).toHaveLength(0);
+});
+
+test("AS-001: a unified create with an empty/whitespace-only comment body is refused — no orphan annotation persisted", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotationWithComment(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "commenter", comment: { body: "   " }, authorId: "u-c" },
+    repo,
+  );
+
+  expect(res).toEqual({ created: false, reason: "empty_body" });
+  // The refusal happens BEFORE the atomic write — no annotation row is created (no orphan).
+  expect(repo.inserted).toHaveLength(0);
+});
+
+test("S-007: a GUEST unified create with an HTML-only name (sanitizes to empty) is refused empty_name — nothing persisted", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotationWithComment(
+    // authorId null = guest; an HTML-only name sanitizes to "" → rejected, not stored blank (C-008).
+    { docId: "doc-1", anchor, viewer: anon, sessionRole: "commenter", comment: { body: "hi", guestName: "<b></b>" }, authorId: null },
+    repo,
+  );
+
+  expect(res).toEqual({ created: false, reason: "empty_name" });
+  expect(repo.inserted).toHaveLength(0);
+});
+
+test("S-007: a GUEST unified create stores the cleaned guest name + null authorId with the first comment", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotationWithComment(
+    { docId: "doc-1", anchor, viewer: anon, sessionRole: "commenter", comment: { body: "guest says hi", guestName: "  Sam  " }, authorId: null },
+    repo,
+  );
+
+  expect(res).toEqual({ created: true, id: "ann-1", commentId: "c-1" });
+  expect(repo.inserted[0].authorId).toBeNull(); // AS-002: a guest annotation has no durable creator
+  expect(repo.insertedComments).toHaveLength(1);
+});
+
+test("AS-014: a suggestion payload on the unified create makes a suggestion-type annotation (subsumes the standalone suggestion-create)", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "old title", offset: 0, length: 9 })!;
+
+  // An EDITOR's own proposal is born accepted (mirrors createSuggestion auto-accept).
+  const res = await createAnnotationWithComment(
+    {
+      docId: "doc-1",
+      anchor,
+      viewer: commenter,
+      sessionRole: "editor",
+      comment: { body: "Suggested deletion" },
+      suggestion: { from: "old title", againstVersion: 3 },
+      authorId: "u-editor",
+    },
+    repo,
+  );
+
+  expect(res.created).toBe(true);
+  expect(repo.inserted[0].type).toBe("suggestion");
+  expect(repo.inserted[0].suggestion).toEqual({ kind: "delete", from: "old title", againstVersion: 3 });
+  expect(repo.inserted[0].suggestionStatus).toBe("accepted");
+});
+
+test("AS-014: a commenter's suggestion via the unified create is born pending (awaiting an owner decision)", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "keep this", offset: 0, length: 9 })!;
+
+  const res = await createAnnotationWithComment(
+    {
+      docId: "doc-1",
+      anchor,
+      viewer: commenter,
+      sessionRole: "commenter",
+      comment: { body: "remove" },
+      suggestion: { from: "keep this", to: "drop this", againstVersion: 2 },
+      authorId: "u-c",
+    },
+    repo,
+  );
+
+  expect(res.created).toBe(true);
+  expect(repo.inserted[0].suggestion).toEqual({ kind: "replace", from: "keep this", to: "drop this", againstVersion: 2 });
+  expect(repo.inserted[0].suggestionStatus).toBe("pending");
+});
+
+test("AS-029: a unified create carrying BOTH a label and a suggestion is refused — nothing persisted", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotationWithComment(
+    {
+      docId: "doc-1",
+      anchor,
+      viewer: commenter,
+      sessionRole: "commenter",
+      label: "looks-good",
+      suggestion: { from: "x", againstVersion: 1 },
+      authorId: "u-c",
+    },
+    repo,
+  );
+
+  expect(res).toEqual({ created: false, reason: "label_and_suggestion" });
+  expect(repo.inserted).toHaveLength(0);
+});
+
+test("AS-028: a unified create with an unknown/forged label is refused — nothing persisted", async () => {
+  const repo = fakeRepo();
+  const anchor = buildAnchor({ blockId: "block-p-1", text: "x", offset: 0, length: 1 })!;
+
+  const res = await createAnnotationWithComment(
+    { docId: "doc-1", anchor, viewer: commenter, sessionRole: "commenter", label: "<svg onload=alert(1)>", comment: { body: "hi" }, authorId: "u-c" },
+    repo,
+  );
+
+  expect(res).toEqual({ created: false, reason: "invalid_label" });
+  expect(repo.inserted).toHaveLength(0);
 });
