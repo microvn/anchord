@@ -29,6 +29,7 @@ import { createApiTokenRepo } from "./mcp/token-repo";
 import { McpRateLimiter } from "./mcp/rate-limit";
 import { baselineTools } from "./mcp/server";
 import { createPublishToolsForDb } from "./mcp/tools/publish-tools-wiring";
+import { createPullToolsForDb } from "./mcp/tools/pull-tools-wiring";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
 const { db, dbCheck } = createDb(cfg.DATABASE_URL);
@@ -408,6 +409,12 @@ const app = createApp({
             { docId, versionId, newContentHtml },
           );
         },
+      }),
+      // S-004: the pull/read tools (anchord_pull_annotations / anchord_list_comments) over
+      // the annotation-core model. resolveAccess is the SAME shared per-doc gate (AS-010.T1).
+      ...createPullToolsForDb({
+        db,
+        resolveAccess: sharedResolveAccess,
       }),
     },
     allowedOrigins: [`http://localhost:${cfg.PORT}`],
