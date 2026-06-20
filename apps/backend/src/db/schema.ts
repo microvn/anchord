@@ -398,7 +398,22 @@ export const comments = pgTable(
 // drives the unread badge; the (user_id, read) index backs the unread list.
 //
 // Portable on purpose (no Postgres-only features) so a future SQLite build stays open.
-export const notificationType = pgEnum("notification_type", ["reply"]);
+//
+// notifications-email S-001 (2026-06-20): extended ADDITIVELY — the legacy `reply` value stays
+// valid (existing rows unaffected) and the new event taxonomy joins. High-signal (email + in-app):
+// new_feedback, thread_activity, suggestion_decided. Low-signal (in-app only): resolved, detached,
+// invited. `reply` is the legacy thread-activity alias kept green until S-002 folds it in. The
+// generated migration only APPENDS enum values (no DROP/ALTER of `reply`); plain enum, no
+// Postgres-only tricks, so the SQLite door stays open.
+export const notificationType = pgEnum("notification_type", [
+  "reply",
+  "new_feedback",
+  "thread_activity",
+  "suggestion_decided",
+  "resolved",
+  "detached",
+  "invited",
+]);
 
 export const notifications = pgTable(
   "notifications",

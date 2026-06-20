@@ -7,7 +7,7 @@
 // Integration-verified against a real Postgres in test/integration/notify.itest.ts.
 
 import { and, eq, isNotNull } from "drizzle-orm";
-import { annotations, comments, docs, notifications, user } from "../db/schema";
+import { annotations, comments, docMembers, docs, notifications, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { NewNotification, NotifyRepo } from "./notify";
 
@@ -44,6 +44,27 @@ export function createNotifyRepo(db: DB): NotifyRepo {
       return row?.ownerId ?? null;
     },
 
+    // S-001 (new_feedback): DISTINCT account-holder user_ids that are ACTIVE EDITORS on the
+    // annotation's doc. Joins annotations → doc_members on the doc, filtered to role='editor',
+    // status='active', and a bound (non-null) user_id (a pending invite has no account yet, so
+    // it is never a recipient). The owner is NOT here (owner is no doc_members row) — the service
+    // unions the owner in separately and dedups (C-005).
+    async listEditorIds(annotationId: string): Promise<string[]> {
+      const rows = await db
+        .selectDistinct({ userId: docMembers.userId })
+        .from(annotations)
+        .innerJoin(docMembers, eq(docMembers.docId, annotations.docId))
+        .where(
+          and(
+            eq(annotations.id, annotationId),
+            eq(docMembers.role, "editor"),
+            eq(docMembers.status, "active"),
+            isNotNull(docMembers.userId),
+          ),
+        );
+      return rows.map((r) => r.userId).filter((id): id is string => id != null);
+    },
+
     async getUserEmail(userId: string): Promise<string | null> {
       const [row] = await db.select({ email: user.email }).from(user).where(eq(user.id, userId));
       return row?.email ?? null;
@@ -60,14 +81,12 @@ export function createNotifyRepo(db: DB): NotifyRepo {
     },
 
     async insertNotification(input: NewNotification): Promise<{ id: string }> {
-      // S-007 widened NotificationType ahead of the DB enum (the additive `notification_type`
-      // extension lands in S-001). Until that migration, only `reply` is a valid enum value at
-      // the DB; the new event types are exercised at the service layer (unit) and persist once
-      // S-001 extends the enum. Cast at this boundary so the wider type compiles against today's
-      // `["reply"]` enum without weakening the service-level NotificationType.
+      // S-001 extended the `notification_type` pgEnum additively to the full taxonomy, so the
+      // service-level NotificationType now persists directly — the S-007 `as "reply"` boundary
+      // cast (which existed only while the DB enum was still `["reply"]`) is gone.
       const [row] = await db
         .insert(notifications)
-        .values({ userId: input.userId, type: input.type as "reply", refId: input.refId })
+        .values({ userId: input.userId, type: input.type, refId: input.refId })
         .returning({ id: notifications.id });
       return { id: row.id };
     },

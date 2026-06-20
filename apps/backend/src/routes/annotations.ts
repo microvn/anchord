@@ -72,7 +72,7 @@ import {
   createSuggestionRepo,
 } from "../annotation/repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
-import { notifyOnReply, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
+import { notifyOnReply, notifyOnNewFeedback, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { annotations as annotationsTable, docs as docsTable, docVersions, docMembers, user } from "../db/schema";
@@ -458,6 +458,33 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   }
 
   /**
+   * notifications-email S-001 — best-effort post-commit notify on NEW FEEDBACK (a brand-new
+   * annotation). Notifies the doc owner + every active editor, minus the actor (C-002), minus
+   * any candidate without CURRENT doc access (C-003). The access-filter is built HERE from the
+   * REAL `resolveAccess` (the seam, AS-002) keyed on this doc — a revoked editor gets dropped.
+   * Never throws (notifyOnNewFeedback swallows + logs), so a notify failure can't 500 the create.
+   * No-op when the notify block is unwired.
+   */
+  async function dispatchNewFeedbackNotify(
+    docId: string,
+    annotationId: string,
+    actorUserId: string | null,
+  ) {
+    if (!notifyDeps) return;
+    await notifyOnNewFeedback(
+      { annotationId, actorUserId },
+      {
+        ...notifyDeps,
+        type: "new_feedback",
+        // C-003 seam: hit the real resolver against this doc — a candidate without current
+        // access (e.g. an editor whose membership was revoked) is dropped before any channel.
+        accessFilter: async (userId) =>
+          (await deps.resolveAccess(docId, { kind: "user", userId })).canView,
+      },
+    );
+  }
+
+  /**
    * Resolve a doc by slug to a visible doc or throw 404 (existence-hiding, C-006).
    * doc-access-routing S-001 / C-001: the gate is the single authoritative
    * `resolveAccess` — NOT the permissive `canViewDoc` stub (which let any logged-in user
@@ -555,12 +582,10 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       if (result.reason === "empty_name") throw new ValidationError("guestName is required", { field: "guestName" });
       throw new ForbiddenError(); // viewer/forged role → 403 (AS-020)
     }
-    // S-006: the first comment surfaces to participants the same as a reply would (the old two-call
-    // flow's addComment went through the notify path); on a brand-new annotation the only
-    // participant is the creator, whom notifyOnReply excludes, so this is a no-op in practice.
-    if (result.commentId != null) {
-      await dispatchReplyNotify(result.id, actor.userId);
-    }
+    // notifications-email S-001 / C-004: a brand-new annotation is NEW FEEDBACK, not thread
+    // activity — notify the doc owner + every editor (minus the actor, minus no-access), NOT
+    // the reply path (which had only the creator as participant here → was a no-op anyway).
+    await dispatchNewFeedbackNotify(doc.id, result.id, actor.userId);
     set.status = 201;
     return { annotationId: result.id, ...(result.commentId != null ? { commentId: result.commentId } : {}) };
   }
@@ -959,13 +984,11 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       if (result.reason === "empty_name") throw new ValidationError("guestName is required", { field: "guestName" });
       throw new ForbiddenError(); // viewer/forged role → 403
     }
-    // S-006: a guest's first comment still notifies account-holder participants + owner; the guest
-    // has no account, so replierUserId is null → the guest is excluded automatically. A member's
-    // first comment on a brand-new annotation has no other participants yet, so this is a no-op for
-    // them in practice, but mirrors the reply path for consistency.
-    if (result.commentId != null) {
-      await dispatchReplyNotify(result.id, actor?.userId ?? null);
-    }
+    // notifications-email S-001 / C-004 + C-011: a brand-new annotation is NEW FEEDBACK →
+    // notify the doc owner + every editor, minus the actor, minus no-access. A GUEST create
+    // (actor null) still notifies owner + editors and excludes nobody (the guest has no
+    // account, so is never a recipient anyway).
+    await dispatchNewFeedbackNotify(doc.id, result.id, actor?.userId ?? null);
     set.status = 201;
     return { annotationId: result.id, ...(result.commentId != null ? { commentId: result.commentId } : {}) };
   }

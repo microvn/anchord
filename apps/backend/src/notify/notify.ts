@@ -37,6 +37,13 @@ export interface NotifyRepo {
   listParticipantIds(annotationId: string): Promise<string[]>;
   /** The annotation's doc's owner_id, or null when the doc has no owner. */
   getDocOwnerId(annotationId: string): Promise<string | null>;
+  /**
+   * S-001 (new_feedback): DISTINCT account-holder user_ids that are ACTIVE EDITORS on the
+   * annotation's doc (doc_members where role='editor', status='active', bound to a user).
+   * Empty for an owner-only doc. Optional so existing reply-path fakes stay valid — the
+   * new-feedback dispatch treats a missing impl as "no editors".
+   */
+  listEditorIds?(annotationId: string): Promise<string[]>;
   /** The recipient's email (for the email channel), or null when absent. */
   getUserEmail(userId: string): Promise<string | null>;
   /**
@@ -165,6 +172,14 @@ export interface NotifyDeps {
    * high-signal alias) so the existing reply-notify path is unchanged.
    */
   type?: NotificationType;
+  /**
+   * S-001 / C-003: the access-filter — a candidate without CURRENT doc access is dropped
+   * before any channel fires (no in-app row, no email). This MUST call the real access
+   * resolver (the seam, AS-002), not a stubbed allow-all: `(userId) → has current access`.
+   * Omit on the reply path (it already constrains to participants ∪ owner); the new-feedback
+   * dispatch wires it from the route's real `resolveAccess`. Absent → no filtering.
+   */
+  accessFilter?: (userId: string) => Promise<boolean>;
   /** Optional structured logger for best-effort failures (defaults to console.error). */
   logError?: (msg: string, err: unknown) => void;
 }
@@ -189,6 +204,31 @@ export function computeRecipients(
   const set = new Set<string>(participantIds);
   if (docOwnerId != null) set.add(docOwnerId);
   if (replierUserId != null) set.delete(replierUserId);
+  return [...set];
+}
+
+/**
+ * S-001 (new_feedback) — compute the candidate set for a brand-new annotation:
+ * ({docOwner} ∪ editors) − actor, deduped.
+ *
+ * - docOwner: included when present (null → no owner row to notify).
+ * - editors: every account-holder active editor on the doc (C-001 relationship-derived).
+ * - actor: removed last — self-exclusion wins even when the actor is also the owner or an
+ *   editor (C-002). A GUEST actor (null) removes nobody, so a guest's new annotation still
+ *   notifies owner + editors (C-011).
+ *
+ * Returns a deduped list — owner-who-is-also-an-editor collapses to ONE entry (C-005). This
+ * is the RELATIONSHIP set only; the per-recipient access-filter (C-003) runs in the dispatch
+ * after this, against the real resolver.
+ */
+export function computeNewFeedbackCandidates(
+  docOwnerId: string | null,
+  editorIds: string[],
+  actorUserId: string | null,
+): string[] {
+  const set = new Set<string>(editorIds);
+  if (docOwnerId != null) set.add(docOwnerId);
+  if (actorUserId != null) set.delete(actorUserId);
   return [...set];
 }
 
@@ -220,40 +260,111 @@ export async function notifyOnReply(
       deps.repo.getDocOwnerId(annotationId),
     ]);
     const recipients = computeRecipients(participantIds, docOwnerId, replierUserId);
-
-    // C-006: email is sent ONLY for a high-signal type. A low-signal event writes the in-app
-    // row(s) and enqueues NO mail. Eligibility is derived from `type`, never a stored column.
-    const emailEligible = isEmailEligible(type);
-    // C-013: resolve the doc slug once (per event) to build the per-recipient deep-link.
-    const slug = emailEligible && deps.repo.getDocSlug ? await deps.repo.getDocSlug(annotationId) : null;
-
-    let inAppSent = 0;
-    let emailsSent = 0;
-    for (const userId of recipients) {
-      // Channel 1 — in-app: one notification row per recipient (always, the durable channel).
-      await deps.repo.insertNotification({ userId, type, refId: annotationId });
-      inAppSent += 1;
-
-      // Channel 2 — email: high-signal only (C-006); one mail per recipient that has an address.
-      // Guard a missing email (account-holders should always have one, but never crash on null).
-      if (!emailEligible) continue;
-      const email = await deps.repo.getUserEmail(userId);
-      if (email != null && email.length > 0) {
-        // C-013 / C-012: plain-text body carrying the absolute deep-link (no doc body embedded).
-        const deepLink =
-          deps.appUrl && slug ? buildAnnotationDeepLink(deps.appUrl, slug, annotationId) : null;
-        const text = deepLink
-          ? buildEmailBody(type, deepLink)
-          : EVENT_SUMMARY[type] ?? "You have a new notification on anchord.";
-        deps.mail.enqueue({ to: email, subject: emailSubjectFor(type), text });
-        emailsSent += 1;
-      }
-    }
-    return { recipients, inAppSent, emailsSent };
+    return await deliverToRecipients(annotationId, recipients, type, deps);
   } catch (err) {
     // Post-commit best-effort: log and swallow so the reply still succeeds (C-004 intent
     // — notify must not block/fail the reply).
     log("notifyOnReply failed (best-effort, reply already persisted)", err);
     return empty;
   }
+}
+
+export interface NotifyOnNewFeedbackInput {
+  /** The brand-new annotation — also the in-app deep-link ref. */
+  annotationId: string;
+  /**
+   * The acting creator's user id, or null for a GUEST create (no account). A guest is never a
+   * recipient and excludes nobody from the candidate set (C-002/C-011).
+   */
+  actorUserId: string | null;
+}
+
+/**
+ * S-001 — notify on NEW FEEDBACK (a brand-new annotation): the doc OWNER and EVERY active
+ * EDITOR, minus the actor (C-002), minus any candidate without CURRENT doc access (C-003),
+ * over in-app + email (new_feedback is high-signal, C-006), deduped (C-005).
+ *
+ * The recipients are RELATIONSHIP-derived candidates computed server-side (C-001) — owner +
+ * editors, never client-selected. The access-filter (deps.accessFilter, C-003) is the seam
+ * (AS-002): it MUST call the real resolver so a candidate whose access was revoked is dropped
+ * before any channel fires. A guest actor (null) still notifies owner + editors (C-011).
+ *
+ * BEST-EFFORT / POST-COMMIT (C-007): runs AFTER the annotation persists; the whole pass is
+ * wrapped so a throwing repo/mail/filter is logged and swallowed — a create is never turned
+ * into a 500 because notify failed.
+ */
+export async function notifyOnNewFeedback(
+  input: NotifyOnNewFeedbackInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { annotationId, actorUserId } = input;
+  const type: NotificationType = deps.type ?? "new_feedback";
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    const [docOwnerId, editorIds] = await Promise.all([
+      deps.repo.getDocOwnerId(annotationId),
+      deps.repo.listEditorIds ? deps.repo.listEditorIds(annotationId) : Promise.resolve([]),
+    ]);
+    const candidates = computeNewFeedbackCandidates(docOwnerId, editorIds, actorUserId);
+
+    // C-003: drop any candidate without CURRENT doc access BEFORE any channel fires. The filter
+    // calls the real resolver (the seam) — a revoked editor gets no row and no email (AS-002).
+    let recipients = candidates;
+    if (deps.accessFilter) {
+      const filter = deps.accessFilter;
+      const checks = await Promise.all(candidates.map((u) => filter(u)));
+      recipients = candidates.filter((_, i) => checks[i]);
+    }
+
+    return await deliverToRecipients(annotationId, recipients, type, deps);
+  } catch (err) {
+    log("notifyOnNewFeedback failed (best-effort, annotation already persisted)", err);
+    return empty;
+  }
+}
+
+/**
+ * Shared per-recipient channel send (C-005/C-006/C-012/C-013): for each recipient write ONE
+ * in-app row (always — the durable channel) and, for a high-signal type only, enqueue ONE
+ * email carrying the absolute deep-link. The recipient list is already deduped + filtered by
+ * the caller; this stage owns only the two channels. Throws propagate to the caller's
+ * best-effort try/catch.
+ */
+async function deliverToRecipients(
+  annotationId: string,
+  recipients: string[],
+  type: NotificationType,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  // C-006: email is sent ONLY for a high-signal type. A low-signal event writes the in-app
+  // row(s) and enqueues NO mail. Eligibility is derived from `type`, never a stored column.
+  const emailEligible = isEmailEligible(type);
+  // C-013: resolve the doc slug once (per event) to build the per-recipient deep-link.
+  const slug = emailEligible && deps.repo.getDocSlug ? await deps.repo.getDocSlug(annotationId) : null;
+
+  let inAppSent = 0;
+  let emailsSent = 0;
+  for (const userId of recipients) {
+    // Channel 1 — in-app: one notification row per recipient (always, the durable channel).
+    await deps.repo.insertNotification({ userId, type, refId: annotationId });
+    inAppSent += 1;
+
+    // Channel 2 — email: high-signal only (C-006); one mail per recipient that has an address.
+    // Guard a missing email (account-holders should always have one, but never crash on null).
+    if (!emailEligible) continue;
+    const email = await deps.repo.getUserEmail(userId);
+    if (email != null && email.length > 0) {
+      // C-013 / C-012: plain-text body carrying the absolute deep-link (no doc body embedded).
+      const deepLink =
+        deps.appUrl && slug ? buildAnnotationDeepLink(deps.appUrl, slug, annotationId) : null;
+      const text = deepLink
+        ? buildEmailBody(type, deepLink)
+        : EVENT_SUMMARY[type] ?? "You have a new notification on anchord.";
+      deps.mail.enqueue({ to: email, subject: emailSubjectFor(type), text });
+      emailsSent += 1;
+    }
+  }
+  return { recipients, inAppSent, emailsSent };
 }

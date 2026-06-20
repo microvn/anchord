@@ -1,7 +1,9 @@
 import { test, expect, describe } from "bun:test";
 import {
   computeRecipients,
+  computeNewFeedbackCandidates,
   notifyOnReply,
+  notifyOnNewFeedback,
   isEmailEligible,
   buildAnnotationDeepLink,
   buildEmailBody,
@@ -20,6 +22,7 @@ import type { NotificationType } from "./types";
 function fakeRepo(opts: {
   participants?: string[];
   owner?: string | null;
+  editors?: string[];
   emails?: Record<string, string | null>;
   slug?: string | null;
 }): NotifyRepo & { inserted: NewNotification[] } {
@@ -31,6 +34,9 @@ function fakeRepo(opts: {
     },
     async getDocOwnerId() {
       return opts.owner ?? null;
+    },
+    async listEditorIds() {
+      return opts.editors ?? [];
     },
     async getUserEmail(userId: string) {
       const map = opts.emails ?? {};
@@ -312,5 +318,183 @@ describe("notifyOnReply parameterized by type (S-007 email/delivery seams)", () 
     expect(result.emailsSent).toBe(1);
     expect(mail.sent[0]!.text).toBeDefined();
     expect(mail.sent[0]!.text).not.toContain("#annotation-"); // no link when slug unresolved
+  });
+});
+
+// ---------------------------------------------------------------------------
+// notifications-email S-001 — notify on NEW FEEDBACK (a brand-new annotation): the doc
+// owner + every active editor, minus the actor (C-002), minus any candidate without current
+// doc access (C-003, the access-filter seam), over in-app + email (high-signal, C-006),
+// deduped (C-005). Recipients are relationship-derived server-side (C-001).
+// ---------------------------------------------------------------------------
+
+describe("computeNewFeedbackCandidates (candidates = owner ∪ editors − actor, deduped)", () => {
+  test("C-001: owner Alice + editor Dan, actor Bob (commenter) → {Alice, Dan}", () => {
+    const c = computeNewFeedbackCandidates("Alice", ["Dan"], "Bob");
+    expect(c.sort()).toEqual(["Alice", "Dan"]);
+  });
+
+  test("C-005: owner-who-is-also-an-editor collapses to ONE entry", () => {
+    // Alice is the owner AND appears in the editor list → exactly once.
+    const c = computeNewFeedbackCandidates("Alice", ["Alice", "Dan"], "Bob");
+    expect(c.sort()).toEqual(["Alice", "Dan"]);
+    expect(c.filter((u) => u === "Alice")).toHaveLength(1);
+  });
+
+  test("C-002: actor IS the owner → owner excluded (creator of own annotation notifies no one)", () => {
+    // Alice owns the doc and creates the annotation; no editors → nobody.
+    expect(computeNewFeedbackCandidates("Alice", [], "Alice")).toEqual([]);
+  });
+
+  test("C-002: actor is also an editor → still self-excluded (rule wins over editor membership)", () => {
+    expect(computeNewFeedbackCandidates("Alice", ["Dan", "Bob"], "Bob").sort()).toEqual([
+      "Alice",
+      "Dan",
+    ]);
+  });
+
+  test("AS-001 edge: empty editor set, owner present → owner-only", () => {
+    expect(computeNewFeedbackCandidates("Alice", [], "Bob")).toEqual(["Alice"]);
+  });
+
+  test("AS-001 edge: null owner + empty editors → no candidates", () => {
+    expect(computeNewFeedbackCandidates(null, [], "Bob")).toEqual([]);
+  });
+
+  test("C-011: guest actor (null) excludes nobody — owner + editors still candidates", () => {
+    expect(computeNewFeedbackCandidates("Alice", ["Dan"], null).sort()).toEqual(["Alice", "Dan"]);
+  });
+});
+
+describe("notifyOnNewFeedback (owner + editors, both channels, access-filtered)", () => {
+  test("AS-001.T1/T2/T3: Bob creates a new annotation → Alice + Dan each get one in-app row + one email; Bob (actor) gets neither", async () => {
+    const repo = fakeRepo({ owner: "Alice", editors: ["Dan"], slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    // recipients are exactly {Alice, Dan}; Bob excluded
+    expect(result.recipients.sort()).toEqual(["Alice", "Dan"]);
+    expect(result.recipients).not.toContain("Bob");
+    // T1: one in-app row each (type=new_feedback, ref=annotation id), none for Bob
+    expect(result.inAppSent).toBe(2);
+    expect(repo.inserted.map((n) => n.userId).sort()).toEqual(["Alice", "Dan"]);
+    expect(repo.inserted.every((n) => n.type === "new_feedback" && n.refId === "ann_1")).toBe(true);
+    expect(repo.inserted.map((n) => n.userId)).not.toContain("Bob");
+    // T2: one email each (high-signal), none for Bob
+    expect(result.emailsSent).toBe(2);
+    expect(mail.sent.map((m) => m.to).sort()).toEqual(["Alice@example.com", "Dan@example.com"]);
+    // T3: actor excluded on the email channel too
+    expect(mail.sent.map((m) => m.to)).not.toContain("Bob@example.com");
+  });
+
+  test("AS-002: a candidate without current access is dropped before any channel (no row, no email)", async () => {
+    // Dan was removed from the doc; Alice still has access. The access-filter (the seam in
+    // prod; here a real predicate) drops Dan: no in-app row, no email — only Alice notified.
+    const repo = fakeRepo({ owner: "Alice", editors: ["Dan"], slug: "spec-v2" });
+    const mail = fakeMail();
+    const hasAccess = new Set(["Alice"]); // Dan revoked
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      {
+        repo,
+        mail,
+        type: "new_feedback",
+        appUrl: "https://anchord.example.com",
+        accessFilter: async (userId) => hasAccess.has(userId),
+      },
+    );
+
+    expect(result.recipients).toEqual(["Alice"]);
+    expect(repo.inserted.map((n) => n.userId)).toEqual(["Alice"]);
+    expect(repo.inserted.map((n) => n.userId)).not.toContain("Dan");
+    expect(mail.sent.map((m) => m.to)).toEqual(["Alice@example.com"]);
+    expect(mail.sent.map((m) => m.to)).not.toContain("Dan@example.com");
+  });
+
+  test("C-005: owner-also-editor gets exactly ONE in-app row + ONE email (dedup through dispatch)", async () => {
+    const repo = fakeRepo({ owner: "Alice", editors: ["Alice", "Dan"], slug: "spec-v2" });
+    const mail = fakeMail();
+
+    await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(repo.inserted.filter((n) => n.userId === "Alice")).toHaveLength(1);
+    expect(mail.sent.filter((m) => m.to === "Alice@example.com")).toHaveLength(1);
+  });
+
+  test("C-002: actor is the owner (owner creates own annotation), no editors → no one notified", async () => {
+    const repo = fakeRepo({ owner: "Alice", editors: [], slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Alice" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("AS-001 edge: owner-only doc (empty editor set) → only the owner notified", async () => {
+    const repo = fakeRepo({ owner: "Alice", editors: [], slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients).toEqual(["Alice"]);
+    expect(result.inAppSent).toBe(1);
+    expect(result.emailsSent).toBe(1);
+  });
+
+  test("C-011: a GUEST actor (null) still notifies owner + editors", async () => {
+    const repo = fakeRepo({ owner: "Alice", editors: ["Dan"], slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: null },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients.sort()).toEqual(["Alice", "Dan"]);
+    expect(repo.inserted).toHaveLength(2);
+    expect(mail.sent).toHaveLength(2);
+  });
+
+  test("C-007: a throwing repo read does NOT throw out of dispatch (best-effort, post-commit)", async () => {
+    const throwingRepo: NotifyRepo = {
+      async listParticipantIds() {
+        return [];
+      },
+      async getDocOwnerId() {
+        throw new Error("db boom");
+      },
+      async getUserEmail() {
+        return null;
+      },
+      async insertNotification() {
+        return { id: "x" };
+      },
+    };
+    const mail = fakeMail();
+    const logged: unknown[] = [];
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo: throwingRepo, mail, type: "new_feedback", logError: (_m, e) => logged.push(e) },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(logged).toHaveLength(1);
   });
 });
