@@ -72,7 +72,7 @@ import {
   createSuggestionRepo,
 } from "../annotation/repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
-import { notifyOnThreadActivity, notifyOnNewFeedback, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
+import { notifyOnThreadActivity, notifyOnNewFeedback, notifyOnSuggestionDecided, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { annotations as annotationsTable, docs as docsTable, docVersions, docMembers, user } from "../db/schema";
@@ -505,6 +505,35 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   }
 
   /**
+   * notifications-email S-003 — best-effort post-commit notify on SUGGESTION DECIDED (an owner
+   * accepted or rejected a proposal). Notifies the proposal's durable AUTHOR, minus the actor
+   * (C-002 self-exclusion — owner deciding their own proposal notifies no one), minus the author
+   * if they lost doc access (C-003). Emits `suggestion_decided` (high-signal → in-app + email,
+   * C-006); the deep-link points at the suggestion's own annotation id. A guest-authored proposal
+   * (null author) is a clean no-op. The access-filter is built HERE from the REAL `resolveAccess`
+   * (the seam) keyed on this doc. Never throws (notifyOnSuggestionDecided swallows + logs), so a
+   * notify failure can't 500 the decide. No-op when the notify block is unwired.
+   */
+  async function dispatchSuggestionDecidedNotify(
+    docId: string,
+    suggestionId: string,
+    authorId: string | null,
+    actorUserId: string | null,
+  ) {
+    if (!notifyDeps) return;
+    await notifyOnSuggestionDecided(
+      { annotationId: suggestionId, authorId, actorUserId },
+      {
+        ...notifyDeps,
+        type: "suggestion_decided",
+        // C-003 seam: hit the real resolver against this doc — an author who lost access is dropped.
+        accessFilter: async (userId) =>
+          (await deps.resolveAccess(docId, { kind: "user", userId })).canView,
+      },
+    );
+  }
+
+  /**
    * Resolve a doc by slug to a visible doc or throw 404 (existence-hiding, C-006).
    * doc-access-routing S-001 / C-001: the gate is the single authoritative
    * `resolveAccess` — NOT the permissive `canViewDoc` stub (which let any logged-in user
@@ -702,6 +731,12 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         details: { status: "stale" },
       });
     }
+    // notifications-email S-003 (AS-006/AS-007): a SETTLED decision (accepted or rejected) is
+    // suggestion_decided → notify the proposal's author (minus the deciding actor — self-exclusion,
+    // C-002), best-effort post-commit. The actor is the session owner; the author is the proposal's
+    // durable creator (found.authorId; null for a guest → no recipient). A stale outcome (above)
+    // already returned, so this fires only on a real accept/reject.
+    await dispatchSuggestionDecidedNotify(parent.docId, params.id, found!.authorId, actor.userId);
     return { status: result.status };
   }
 

@@ -349,6 +349,87 @@ export async function notifyOnNewFeedback(
   }
 }
 
+export interface NotifyOnSuggestionDecidedInput {
+  /**
+   * The decided suggestion's annotation id — a suggestion IS a suggestion-type annotation, so this
+   * is both the deep-link ref and the key the repo (getDocSlug) resolves the doc slug from.
+   */
+  annotationId: string;
+  /**
+   * The proposal's durable author (account id), or null for a guest-authored proposal. A guest has
+   * no account → no recipient (C-011); a null author yields an empty recipient set.
+   */
+  authorId: string | null;
+  /**
+   * The acting owner who decided (accept/reject), resolved SERVER-side. When it equals the author
+   * the proposal was self-decided → no recipient (C-002 self-exclusion). Owner-gated route, so an
+   * actor always exists in prod; the pure logic still handles a null defensively.
+   */
+  actorUserId: string | null;
+}
+
+/**
+ * S-003 — compute the recipient set for a decided suggestion: the proposal's AUTHOR, minus the
+ * actor (C-002 self-exclusion). The outcome (accept vs reject) does NOT change the recipient —
+ * the author is notified identically either way.
+ *
+ * - author present + ≠ actor → [author] (the one recipient).
+ * - author == actor (owner decided their OWN proposal, AS-007) → [] (self-exclusion, C-002).
+ * - author null (guest-authored, C-011) → [] (a guest is never a recipient; and a null author can
+ *   never equal a non-null actor, so the guard collapses cleanly to empty).
+ *
+ * Trivially at most one recipient, so dedup (C-005) is a no-op here, but it routes through the same
+ * deliverToRecipients stage as the multi-recipient events.
+ */
+export function computeSuggestionDecidedRecipient(
+  authorId: string | null,
+  actorUserId: string | null,
+): string[] {
+  if (authorId == null) return []; // guest-authored → no account recipient (C-011).
+  if (authorId === actorUserId) return []; // self-decided → self-exclusion (C-002, AS-007).
+  return [authorId];
+}
+
+/**
+ * S-003 — notify on SUGGESTION DECIDED (an owner accepted or rejected a proposal): the proposal's
+ * AUTHOR, minus the actor (C-002), minus the author if they lost doc access (C-003), over in-app +
+ * email (suggestion_decided is high-signal, C-006). The recipient is the durable author resolved
+ * SERVER-side (C-001) — never client-selected. Accept and reject notify identically (the recipient
+ * rule is independent of the decision outcome).
+ *
+ * BEST-EFFORT / POST-COMMIT (C-007): runs AFTER the decision persists; the whole pass is wrapped so
+ * a throwing repo/mail/filter is logged and swallowed — the decide is never turned into a 500
+ * because notify failed. A guest-authored proposal (null author) is a clean no-op (no recipient).
+ */
+export async function notifyOnSuggestionDecided(
+  input: NotifyOnSuggestionDecidedInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { annotationId, authorId, actorUserId } = input;
+  const type: NotificationType = deps.type ?? "suggestion_decided";
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    const candidates = computeSuggestionDecidedRecipient(authorId, actorUserId);
+
+    // C-003: drop the author if they no longer have CURRENT doc access BEFORE any channel fires.
+    // The filter hits the real resolver (the seam) — same approach the other events use; absent
+    // filter → no filtering (back-compat with unit fakes).
+    let recipients = candidates;
+    if (deps.accessFilter) {
+      const filter = deps.accessFilter;
+      const checks = await Promise.all(candidates.map((u) => filter(u)));
+      recipients = candidates.filter((_, i) => checks[i]);
+    }
+
+    return await deliverToRecipients(annotationId, recipients, type, deps);
+  } catch (err) {
+    log("notifyOnSuggestionDecided failed (best-effort, decision already persisted)", err);
+    return empty;
+  }
+}
+
 /**
  * Shared per-recipient channel send (C-005/C-006/C-012/C-013): for each recipient write ONE
  * in-app row (always — the durable channel) and, for a high-signal type only, enqueue ONE

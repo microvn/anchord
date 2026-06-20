@@ -2,8 +2,10 @@ import { test, expect, describe } from "bun:test";
 import {
   computeRecipients,
   computeNewFeedbackCandidates,
+  computeSuggestionDecidedRecipient,
   notifyOnThreadActivity,
   notifyOnNewFeedback,
+  notifyOnSuggestionDecided,
   isEmailEligible,
   buildAnnotationDeepLink,
   buildEmailBody,
@@ -571,5 +573,145 @@ describe("notifyOnNewFeedback (owner + editors, both channels, access-filtered)"
 
     expect(result.recipients).toEqual([]);
     expect(logged).toHaveLength(1);
+  });
+});
+
+// notifications-email S-003 — notify on suggestion decided (AS-006/AS-007 / C-002, C-003, C-005).
+// On a settled decision (accept OR reject), notify the proposal's AUTHOR, minus the deciding actor
+// (self-exclusion). High-signal → in-app + email. A guest-authored proposal (null author) and a
+// self-decided proposal both yield no recipient. Pure logic + the shared dispatch against fakes.
+
+describe("computeSuggestionDecidedRecipient (recipient = author − actor; guest/self → none)", () => {
+  test("C-001: author Bob, decider Alice (owner) → [Bob]", () => {
+    expect(computeSuggestionDecidedRecipient("Bob", "Alice")).toEqual(["Bob"]);
+  });
+
+  test("C-002: author == actor (owner decided own proposal) → [] (self-exclusion, AS-007)", () => {
+    expect(computeSuggestionDecidedRecipient("Alice", "Alice")).toEqual([]);
+  });
+
+  test("C-011: guest-authored proposal (null author) → [] (a guest is never a recipient)", () => {
+    expect(computeSuggestionDecidedRecipient(null, "Alice")).toEqual([]);
+  });
+
+  test("C-002 edge: null author can never equal a non-null actor → [] (no crash, no recipient)", () => {
+    expect(computeSuggestionDecidedRecipient(null, null)).toEqual([]);
+  });
+});
+
+describe("notifyOnSuggestionDecided (author recipient, both channels, access-filtered)", () => {
+  test("AS-006: Alice (owner) accepts Bob's suggestion → Bob gets ONE in-app row + ONE email; Alice (decider) gets neither", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnSuggestionDecided(
+      { annotationId: "sug_1", authorId: "Bob", actorUserId: "Alice" },
+      { repo, mail, type: "suggestion_decided", appUrl: "https://anchord.example.com" },
+    );
+
+    // recipient is exactly Bob (the author); Alice the decider excluded.
+    expect(result.recipients).toEqual(["Bob"]);
+    expect(result.recipients).not.toContain("Alice");
+    // ONE in-app row (type=suggestion_decided, ref=the suggestion's annotation id).
+    expect(result.inAppSent).toBe(1);
+    expect(repo.inserted).toHaveLength(1);
+    expect(repo.inserted[0]!.userId).toBe("Bob");
+    expect(repo.inserted[0]!.type).toBe("suggestion_decided");
+    expect(repo.inserted[0]!.refId).toBe("sug_1");
+    // ONE email (high-signal), carrying the absolute deep-link; none for Alice.
+    expect(result.emailsSent).toBe(1);
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0]!.to).toBe("Bob@example.com");
+    expect(mail.sent[0]!.text).toContain("https://anchord.example.com/d/spec-v2#annotation-sug_1");
+    expect(mail.sent.map((m) => m.to)).not.toContain("Alice@example.com");
+  });
+
+  test("AS-006 (reject parity): rejecting notifies the SAME author identically (recipient is decision-independent)", async () => {
+    // The dispatch is given only author + actor — the outcome (accept/reject) lives in the route,
+    // not here — so reject reaches the author exactly as accept does. The route fires this same
+    // dispatch for both the accept and the reject branch.
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnSuggestionDecided(
+      { annotationId: "sug_2", authorId: "Bob", actorUserId: "Alice" },
+      { repo, mail, type: "suggestion_decided", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients).toEqual(["Bob"]);
+    expect(result.inAppSent).toBe(1);
+    expect(result.emailsSent).toBe(1);
+  });
+
+  test("AS-007: Alice (owner) authored AND decides her own suggestion (reject) → NO notification (self-exclusion)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnSuggestionDecided(
+      { annotationId: "sug_1", authorId: "Alice", actorUserId: "Alice" },
+      { repo, mail, type: "suggestion_decided", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0); // no in-app row
+    expect(mail.sent).toHaveLength(0); // no email
+  });
+
+  test("C-011: a guest-authored proposal (null author) → no recipient, no row, no email (no crash)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnSuggestionDecided(
+      { annotationId: "sug_1", authorId: null, actorUserId: "Alice" },
+      { repo, mail, type: "suggestion_decided", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-003: the author who lost doc access is dropped before any channel (no row, no email)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+    const hasAccess = new Set<string>(); // Bob revoked → empty allow-set
+
+    const result = await notifyOnSuggestionDecided(
+      { annotationId: "sug_1", authorId: "Bob", actorUserId: "Alice" },
+      {
+        repo,
+        mail,
+        type: "suggestion_decided",
+        appUrl: "https://anchord.example.com",
+        accessFilter: async (userId) => hasAccess.has(userId),
+      },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-007: a throwing mail enqueue does NOT throw out of dispatch (best-effort, decide already persisted)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail(true); // enqueue throws
+    const logged: unknown[] = [];
+
+    const result = await notifyOnSuggestionDecided(
+      { annotationId: "sug_1", authorId: "Bob", actorUserId: "Alice" },
+      {
+        repo,
+        mail,
+        type: "suggestion_decided",
+        appUrl: "https://anchord.example.com",
+        logError: (_m, e) => logged.push(e),
+      },
+    );
+
+    // The in-app row was written before the mail throw; the throw is swallowed (returns empty).
+    expect(result.recipients).toEqual([]);
+    expect(logged).toHaveLength(1);
+    // Best-effort: the row that landed before the throw stays (no rollback in notify).
+    expect(repo.inserted).toHaveLength(1);
   });
 });
