@@ -275,6 +275,138 @@ describe("anchord_search_documents", () => {
   });
 });
 
+// ── S-001 (mcp-patch-document): addressable blocks on read_document ──────────
+// read_document gains a `blocks: { blockId, sourceText? }[]` array (additive — `content` stays).
+// sourceText is the block's SOURCE string (markdown source for md, innerHTML for html); it is
+// OMITTED for a non-patchable block (no resolvable source range — GAP-005 fail-closed).
+
+const blockStore = (over: Partial<StoreDoc>): StoreDoc[] => [
+  {
+    docId: "d_blocks",
+    slug: "blocks-doc",
+    title: "Blocks Doc",
+    kind: "markdown",
+    workspaceId: "W1",
+    role: "owner",
+    version: 1,
+    content: "",
+    ...over,
+  },
+];
+
+describe("anchord_read_document — addressable blocks (mcp-patch-document S-001)", () => {
+  test("AS-001: markdown read returns per-block source + version + retains content", async () => {
+    // A 2-heading markdown doc → block-h2-1 ("## Overview"), block-p-1, block-h2-2 (#Data above).
+    const content = "## Overview\n\nFirst paragraph.\n\n## Details\n";
+    const { ports } = fakeRead(blockStore({ kind: "markdown", version: 3, content }));
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_blocks" }, ctx());
+
+    expect(res.version).toBe(3);
+    // The existing content field is present, unchanged (back-compat).
+    expect(res.content).toBe(content);
+
+    const byId = new Map(res.blocks.map((b) => [b.blockId, b]));
+    // One entry per addressable block WITH a resolvable source range.
+    expect(byId.get("block-h2-1")).toEqual({ blockId: "block-h2-1", sourceText: "## Overview" });
+    expect(byId.get("block-h2-2")).toEqual({ blockId: "block-h2-2", sourceText: "## Details" });
+    expect(byId.get("block-p-1")).toEqual({ blockId: "block-p-1", sourceText: "First paragraph." });
+  });
+
+  test("AS-001: two identical-source markdown blocks disambiguate by distinct ranges (special chars/dupes)", async () => {
+    // Two literally-identical "## Overview" blocks must each get their OWN sourceText by id,
+    // proving the token.map range (not the text) is the key.
+    const content = "## Overview\n\nbody a\n\n## Overview\n\nbody b\n";
+    const { ports } = fakeRead(blockStore({ content }));
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_blocks" }, ctx());
+    const byId = new Map(res.blocks.map((b) => [b.blockId, b.sourceText]));
+    expect(byId.get("block-h2-1")).toBe("## Overview");
+    expect(byId.get("block-h2-2")).toBe("## Overview");
+  });
+
+  test("AS-002: html read returns per-block source (sourceText = block innerHTML)", async () => {
+    // html doc with one <p> ("Hello world") and one <h1>; sourceText = innerHTML, not textContent.
+    const content = "<h1>Title</h1><p>Hello world</p>";
+    const { ports } = fakeRead(blockStore({ kind: "html", version: 7, content }));
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_blocks" }, ctx());
+
+    expect(res.version).toBe(7);
+    const byId = new Map(res.blocks.map((b) => [b.blockId, b]));
+    expect(byId.get("block-p-1")).toEqual({ blockId: "block-p-1", sourceText: "Hello world" });
+    expect(byId.get("block-h1-1")).toEqual({ blockId: "block-h1-1", sourceText: "Title" });
+  });
+
+  test("AS-002: html sourceText keeps inline markup (innerHTML, not textContent)", async () => {
+    const content = "<p>Hello <b>world</b></p>";
+    const { ports } = fakeRead(blockStore({ kind: "html", content }));
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_blocks" }, ctx());
+    const p = res.blocks.find((b) => b.blockId === "block-p-1");
+    expect(p?.sourceText).toBe("Hello <b>world</b>");
+  });
+
+  test("AS-003: a doc with no addressable blocks returns an empty blocks array (version still returned)", async () => {
+    // Inline-only / whitespace content → no block-level elements.
+    const { ports } = fakeRead(blockStore({ kind: "markdown", version: 4, content: "   " }));
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_blocks" }, ctx());
+    expect(res.blocks).toEqual([]);
+    expect(res.version).toBe(4);
+  });
+
+  test("AS-003: an image doc (no body text) returns an empty blocks array", async () => {
+    const { ports } = fakeRead(
+      blockStore({ kind: "image", version: 2, content: "photo.png" }),
+    );
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_blocks" }, ctx());
+    expect(res.blocks).toEqual([]);
+    expect(res.version).toBe(2);
+  });
+
+  test("AS-004: an unreadable doc is rejected with no blocks/sourceText leaked", async () => {
+    // A doc the token-owner has no role on (restricted, not shared) — auth unchanged from the
+    // existing read tool; the rejection must carry no block data.
+    const { ports } = fakeRead(
+      blockStore({ docId: "d_secret", slug: "secret", role: null, content: "## Secret\n" }),
+    );
+    await expect(
+      readDocumentHandler(ports)({ idOrSlug: "d_secret" }, ctx()),
+    ).rejects.toThrow(/not found or not accessible/);
+  });
+
+  test("AS-004: a cross-workspace doc is rejected with no block data leaked", async () => {
+    // Owner is a W2 member (role resolves) but the token is bound to W1 → reject, no blocks.
+    const { ports } = fakeRead(
+      blockStore({ workspaceId: "W2", role: "viewer", content: "## W2\n" }),
+    );
+    await expect(
+      readDocumentHandler(ports)({ idOrSlug: "d_blocks" }, ctx({ workspaceId: "W1" })),
+    ).rejects.toThrow(/not found or not accessible/);
+  });
+
+  test("AS-023: a non-mappable markdown block (table cell, raw-html) omits sourceText; heading keeps it", async () => {
+    // md with a heading (patchable), a table (cells td/th carry token.map=null), and a raw <div>
+    // block (token-walk id never matches the rendered <div> — GAP-005 fail-closed).
+    const content =
+      "## Title\n\n| a | b |\n| - | - |\n| c | d |\n\n<div>raw block</div>\n";
+    const { ports } = fakeRead(blockStore({ kind: "markdown", content }));
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_blocks" }, ctx());
+    const byId = new Map(res.blocks.map((b) => [b.blockId, b]));
+
+    // The heading is patchable — it carries sourceText.
+    expect(byId.get("block-h2-1")).toEqual({ blockId: "block-h2-1", sourceText: "## Title" });
+
+    // Table cells: listed by blockId, but OMIT sourceText (non-patchable signal).
+    for (const cellId of ["block-td-1", "block-td-2", "block-th-1", "block-th-2"]) {
+      expect(byId.has(cellId)).toBe(true);
+      expect(byId.get(cellId)).not.toHaveProperty("sourceText");
+    }
+    // The raw-html <div> block: listed by blockId, sourceText omitted (token-walk↔HTML mismatch).
+    expect(byId.has("block-div-1")).toBe(true);
+    expect(byId.get("block-div-1")).not.toHaveProperty("sourceText");
+
+    // All blocks are still enumerated by blockId (nothing silently dropped).
+    expect(res.blocks.length).toBeGreaterThanOrEqual(7);
+  });
+});
+
 // ── pipeline-level: the scope gate (C-009) + identity threading through handleJsonRpc ─
 
 describe("read tools through the S-001 pipeline", () => {

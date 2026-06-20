@@ -20,7 +20,7 @@
 // is overkill here; this stays portable and trivially unit-testable.)
 
 /** Block-level tags that get a positional id. Inline tags (span/a/strong/…) do not. */
-const BLOCK_TAGS = [
+export const BLOCK_TAGS = [
   "p",
   "h1",
   "h2",

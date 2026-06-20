@@ -31,6 +31,7 @@
 import type { ToolContext, ToolDef } from "../server";
 import { can, type Role } from "../../sharing/roles";
 import { McpToolError } from "./publish-tools";
+import { addressableBlocks, type AddressableBlock } from "../../render/markdown";
 
 // ── shared pagination (page + limit — AS-006.T2) ────────────────────────────
 
@@ -72,6 +73,14 @@ export interface ReadDocumentResult {
   kind: "html" | "markdown" | "image";
   version: number;
   content: string;
+  /**
+   * The doc's addressable blocks (mcp-patch-document S-001), each `{ blockId, sourceText? }` in
+   * document order — the agent's edit-addressing surface for `anchord_patch_document`. `sourceText`
+   * is the block's SOURCE-LEVEL string (markdown source for md, innerHTML for html); it is OMITTED
+   * for a non-patchable block (no resolvable source range — a table cell, raw-html block, or a
+   * token-walk↔rendered-HTML mismatch — GAP-005 fail-closed, AS-023). `content` stays unchanged.
+   */
+  blocks: AddressableBlock[];
 }
 
 // ── ports (injectable seams over the workspace-wide reads + search) ──────────
@@ -198,6 +207,10 @@ export function readDocumentHandler(
       kind: doc.kind,
       version: doc.version,
       content: doc.content,
+      // Additive (S-001): the addressable blocks for patch-addressing. Derived purely from the
+      // current version's content + kind; a non-patchable block omits sourceText (AS-023). Computed
+      // ONLY after the auth gate above, so an unreadable doc leaks no block data (AS-004).
+      blocks: addressableBlocks(doc.content, doc.kind),
     };
   };
 }
