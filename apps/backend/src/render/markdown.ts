@@ -3,6 +3,8 @@ import DOMPurify from "isomorphic-dompurify";
 import { Window } from "happy-dom";
 import { injectBlockIds, BLOCK_TAGS } from "../annotation/block-id";
 
+const BLOCK_TAG_LOWER = new Set<string>(BLOCK_TAGS);
+
 // Markdown render path (story S-003). MD is rendered in the APP origin (not the
 // sandbox iframe), so it MUST be sanitized (C-002): markdown-it → DOMPurify strips
 // scripts, event handlers, and javascript: URLs. HTML docs go the sandbox route
@@ -314,4 +316,128 @@ export function patchMarkdownSource(markdownSource: string, edits: BlockEdit[]):
   }
 
   return newSource;
+}
+
+// ── Block-addressed HTML patch (mcp-patch-document S-003) ─────────────────────
+//
+// The html sibling of `patchMarkdownSource`. For an html doc the "source string" of a
+// block is its element `innerHTML` (the SAME string `read_document` handed the agent via
+// `addressableBlocks(html,"html")`, inline markup preserved). A patch is the SAME set of
+// `{ blockId, find, replace }` edits: locate the addressed element by its positional
+// block-id, run a LITERAL find/replace (C-001 — reusing `countOccurrences`) on that
+// element's innerHTML STRING, and re-serialize. The whole patch is ATOMIC (C-002): every
+// edit validates (block found, find present + unique) before ANY mutation lands. The
+// replacement is kept VERBATIM — NO patch-specific sanitize (C-007): html docs are served
+// raw to the sandbox, identical to a whole-doc html publish; XSS stays contained by
+// sandbox-origin isolation. Well-formedness is enforced by the STRUCTURAL guard (C-008):
+// re-render and compare the ordered block-id sequence; a breakout edit (an unbalanced tag
+// that escapes the block) changes that sequence and is refused.
+//
+// The stored html carries NO injected block-ids — we replicate `injectBlockIds`' per-tag
+// positional counter by walking the live DOM in document order, so the live element we
+// locate lines up EXACTLY with the addressable id set (no ids are ever written to output).
+
+const BLOCK_BY_ID_NOT_FOUND = Symbol("block-not-found");
+
+/**
+ * Locate the live element addressed by `blockId` (`block-{tag}-{n}` or a `data-block-id`)
+ * inside a happy-dom body, replicating `injectBlockIds`' walk: per-tag positional counter in
+ * document order, and an element that ALREADY declares its own `id` is addressed by
+ * `data-block-id` (don't-clobber) so its positional id never matches. Returns the matching
+ * Element, or the not-found sentinel.
+ */
+function locateHtmlBlock(body: Element, blockId: string): Element | typeof BLOCK_BY_ID_NOT_FOUND {
+  const counters = new Map<string, number>();
+  const all = body.querySelectorAll("*");
+  for (let i = 0; i < all.length; i++) {
+    const el = all[i] as unknown as Element;
+    const tag = el.tagName.toLowerCase();
+    if (!BLOCK_TAG_LOWER.has(tag)) continue;
+    const n = (counters.get(tag) ?? 0) + 1;
+    counters.set(tag, n);
+    const positionalId = `block-${tag}-${n}`;
+    // An element with its own id is stamped via data-block-id (injectBlockIds don't-clobber);
+    // an element without one is addressed by the positional id directly.
+    const hasOwnId = el.hasAttribute("id");
+    const addressId = hasOwnId ? (el.getAttribute("data-block-id") ?? positionalId) : positionalId;
+    if (addressId === blockId) return el;
+  }
+  return BLOCK_BY_ID_NOT_FOUND;
+}
+
+/** The ordered block-id list of html — the structural-guard fingerprint (C-008, html surface). */
+function orderedHtmlBlockIds(html: string): string[] {
+  return addressableBlocks(html, "html").map((b) => b.blockId);
+}
+
+/**
+ * Apply block-addressed edits to an HTML document, returning the new stored html. Mirrors
+ * `patchMarkdownSource` exactly in shape — atomic validation (C-002), literal find/replace on
+ * each addressed block's innerHTML STRING (C-001), then the structural guard (C-008) — but the
+ * unit of edit is the element innerHTML, NOT a markdown source slice, and the replacement is
+ * NEVER re-sanitized (C-007). Two edits on one block compose in order against the running
+ * innerHTML; an edit whose `find` is absent/ambiguous in its (possibly already-edited) block is
+ * refused, leaving the whole document untouched.
+ */
+export function patchHtmlSource(html: string, edits: BlockEdit[]): string {
+  if (edits.length === 0) {
+    throw new MarkdownPatchError("a patch requires a non-empty edits array (at least one edit)");
+  }
+
+  const before = orderedHtmlBlockIds(html);
+
+  let win: Window | null = null;
+  try {
+    win = new Window();
+    win.document.body.innerHTML = html;
+    const body = win.document.body as unknown as Element;
+
+    for (const edit of edits) {
+      const el = locateHtmlBlock(body, edit.blockId);
+      if (el === BLOCK_BY_ID_NOT_FOUND) {
+        // AS-017 (find can't be located) / addressing a block not in the doc — non-patchable.
+        throw new MarkdownPatchError(
+          `block '${edit.blockId}' is not patchable (not found in the document) — ` +
+            `use anchord_update_document to replace the whole document instead`,
+        );
+      }
+      const current = el.innerHTML;
+      const occurrences = countOccurrences(current, edit.find);
+      if (occurrences === 0) {
+        // AS-017: find absent in the addressed block → whole patch refused (atomic, html surface).
+        throw new MarkdownPatchError(`find text was not found in block '${edit.blockId}'`);
+      }
+      if (occurrences > 1) {
+        // find ambiguous — occurs more than once in the block (C-002, html surface).
+        throw new MarkdownPatchError(
+          `find text is ambiguous in block '${edit.blockId}' (occurs ${occurrences} times) — make it unique`,
+        );
+      }
+      // Literal splice on the innerHTML STRING (NOT textContent — inline markup preserved,
+      // AS-015) and kept VERBATIM — no DOMPurify on the replace path (C-007/AS-016).
+      const idx = current.indexOf(edit.find);
+      el.innerHTML = current.slice(0, idx) + edit.replace + current.slice(idx + edit.find.length);
+    }
+
+    const newHtml = body.innerHTML;
+
+    // C-008 structural guard (html surface): the ordered block-id sequence must be identical
+    // before/after. A breakout replacement (an unbalanced close tag that escapes its block,
+    // AS-018) re-renders into a different block sequence and is refused here.
+    const after = orderedHtmlBlockIds(newHtml);
+    if (before.length !== after.length || before.some((id, i) => id !== after[i])) {
+      throw new MarkdownPatchError(
+        "patch changes the block structure (the ordered block-id sequence differs) — " +
+          "a text edit may not add, remove, or reorder blocks",
+      );
+    }
+
+    return newHtml;
+  } finally {
+    try {
+      win?.happyDOM?.close?.();
+    } catch {
+      /* best-effort teardown */
+    }
+  }
 }

@@ -683,3 +683,108 @@ describe("AS-024: a patch addressing a non-patchable block is rejected", () => {
     expect(fk.reanchorFired).toHaveLength(0);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// S-003 — anchord_patch_document on an HTML doc (block-addressed innerHTML splice)
+// ════════════════════════════════════════════════════════════════════════════
+
+// An html doc whose block-p-1 element has innerHTML `Hello <b>world</b>` (inline markup),
+// plus a heading + a second paragraph so the block sequence is non-trivial. The stored html
+// carries NO injected block-ids — patchHtmlSource replicates injectBlockIds' positional walk.
+const HTML_DOC = "<h1>Title</h1><p>Hello <b>world</b></p><p>Second paragraph.</p>";
+
+// ── AS-015: block-addressed html edit on innerHTML preserves inline markup ────
+describe("AS-015: anchord_patch_document edits html innerHTML, preserving inline markup", () => {
+  test("AS-015: find/replace runs on the innerHTML STRING (<b> preserved), new version 3", async () => {
+    const fk = fakePatch({
+      docs: { doc_h: { kind: "html", version: 2, content: HTML_DOC } },
+      roles: { "doc_h:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    const res = await tool(
+      { docId: "doc_h", expectedVersion: 2, edits: [{ blockId: "block-p-1", find: "world", replace: "earth" }] },
+      ctx(),
+    );
+    // Return shape + new immutable version 3 appended (previous 2).
+    expect(res).toEqual({ docId: "doc_h", version: 3, previousVersion: 2 });
+    // block-p-1's innerHTML becomes `Hello <b>earth</b>` — the <b> tag is preserved because
+    // find/replace ran on the innerHTML STRING, not textContent.
+    expect(fk.store.doc_h!.content).toContain("Hello <b>earth</b>");
+    expect(fk.store.doc_h!.content).not.toContain("world");
+    // Sibling blocks untouched.
+    expect(fk.store.doc_h!.content).toContain("<h1>Title</h1>");
+    expect(fk.store.doc_h!.content).toContain("Second paragraph.");
+    // re-anchor fired for the new html version (C-004).
+    expect(fk.store.doc_h!.version).toBe(3);
+    expect(fk.reanchorFired).toHaveLength(1);
+    expect(fk.reanchorFired[0]!.version).toBe(3);
+    expect(fk.reanchorFired[0]!.kind).toBe("html");
+  });
+});
+
+// ── AS-016: replacement html is kept VERBATIM (not sanitized — C-007) ─────────
+describe("AS-016: a replacement is kept verbatim, never sanitized (C-007)", () => {
+  test("AS-016: replace containing onclick/span stays VERBATIM; patch accepted, block set unchanged", async () => {
+    const fk = fakePatch({
+      docs: { doc_h: { kind: "html", version: 2, content: HTML_DOC } },
+      roles: { "doc_h:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    // Replacement markup the markdown/DOMPurify path would strip, staying WITHIN the block.
+    const res = await tool(
+      {
+        docId: "doc_h",
+        expectedVersion: 2,
+        edits: [{ blockId: "block-p-1", find: "Hello <b>world</b>", replace: 'text <span onclick="x()">y</span>' }],
+      },
+      ctx(),
+    );
+    expect(res.version).toBe(3);
+    // The onclick/span survive VERBATIM in the stored html — no patch-specific sanitize.
+    expect(fk.store.doc_h!.content).toContain('<span onclick="x()">y</span>');
+    expect(fk.reanchorFired).toHaveLength(1);
+  });
+});
+
+// ── AS-017: an absent find rejects the whole html patch (atomic, html surface) ─
+describe("AS-017: an absent find rejects the whole html patch", () => {
+  test("AS-017: find not present in the addressed block → refused, no version, doc stays at 2", async () => {
+    const fk = fakePatch({
+      docs: { doc_h: { kind: "html", version: 2, content: HTML_DOC } },
+      roles: { "doc_h:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_h", expectedVersion: 2, edits: [{ blockId: "block-p-1", find: "absent-text", replace: "x" }] }, ctx()),
+    ).rejects.toThrow(/not found|absent|could not (be )?locate/i);
+    expect(fk.store.doc_h!.version).toBe(2); // no new version
+    expect(fk.store.doc_h!.content).toBe(HTML_DOC); // unchanged
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-018: a replacement that breaks out of its block → structural guard ─────
+describe("AS-018: a replacement that breaks out of its html block is rejected (structural guard)", () => {
+  test("AS-018: an unbalanced close tag escaping the <p> changes the block sequence → refused, stays at 2", async () => {
+    const fk = fakePatch({
+      docs: { doc_h: { kind: "html", version: 2, content: HTML_DOC } },
+      roles: { "doc_h:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    // The replace closes the <p> early and opens a NEW <p> — after re-render the ordered
+    // block-id sequence gains a paragraph, so the structural guard refuses (C-008).
+    await expect(
+      tool(
+        {
+          docId: "doc_h",
+          expectedVersion: 2,
+          edits: [{ blockId: "block-p-1", find: "Hello <b>world</b>", replace: "ok</p><p>injected" }],
+        },
+        ctx(),
+      ),
+    ).rejects.toThrow(/structural|block (set|sequence) changed|changes the block/i);
+    expect(fk.store.doc_h!.version).toBe(2); // no new version
+    expect(fk.store.doc_h!.content).toBe(HTML_DOC); // unchanged
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});

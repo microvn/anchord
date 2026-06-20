@@ -23,7 +23,7 @@
 
 import type { ToolContext, ToolDef } from "../server";
 import { can, type Role } from "../../sharing/roles";
-import { patchMarkdownSource, MarkdownPatchError, type BlockEdit } from "../../render/markdown";
+import { patchMarkdownSource, patchHtmlSource, MarkdownPatchError, type BlockEdit } from "../../render/markdown";
 
 /** Thrown by a tool when the request is rejected — the pipeline maps it to a JSON-RPC error. */
 export class McpToolError extends Error {
@@ -339,18 +339,25 @@ export function patchDocumentHandler(
       throw new McpToolError(`document '${docId}' has no current version to patch`);
     }
 
-    // Patch is markdown-only in S-002 (html patch is S-003). Guard explicitly.
-    if (doc.kind !== "markdown") {
+    // Patch supports markdown (S-002) + html (S-003). Image has no addressable text body.
+    if (doc.kind === "image") {
       throw new McpToolError(
-        `anchord_patch_document supports markdown documents in this version (doc kind '${doc.kind}')`,
+        `anchord_patch_document does not support image documents (doc kind '${doc.kind}')`,
       );
     }
 
-    // C-002 atomic splice + C-008 structural guard. A MarkdownPatchError (find absent/ambiguous,
-    // non-patchable block, structural change) is mapped to McpToolError → NO version appended.
+    // C-002 atomic splice + C-008 structural guard, applied to the doc's SOURCE STRING:
+    //   • markdown → splice the addressed block's markdown source (sanitized at render).
+    //   • html     → splice the addressed element's innerHTML, kept VERBATIM (C-007 — html
+    //                docs are served raw to the sandbox; no patch-specific sanitize).
+    // A MarkdownPatchError (find absent/ambiguous, non-patchable block, structural change) is
+    // mapped to McpToolError → NO version appended.
     let newContent: string;
     try {
-      newContent = patchMarkdownSource(current.content, edits);
+      newContent =
+        doc.kind === "html"
+          ? patchHtmlSource(current.content, edits)
+          : patchMarkdownSource(current.content, edits);
     } catch (e) {
       if (e instanceof MarkdownPatchError) throw new McpToolError(e.message);
       throw e;
