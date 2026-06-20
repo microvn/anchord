@@ -136,7 +136,9 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
     expect(recipients).not.toContain(A);
     // One row per recipient (B, C) — no duplicates.
     expect(rows).toHaveLength(2);
-    expect(rows.every((r) => r.type === "reply" && r.read === false)).toBe(true);
+    // S-002 taxonomy migration: a reply on an existing annotation now persists `thread_activity`
+    // (was the legacy `reply`). Updated, not weakened — same recipients/dedup/unread assertions.
+    expect(rows.every((r) => r.type === "thread_activity" && r.read === false)).toBe(true);
 
     // Email: one enqueued per recipient (B, C) → 2 pending in the queue.
     expect(mail.statusCounts().pending).toBe(2);

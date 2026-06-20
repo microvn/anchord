@@ -1,14 +1,25 @@
-// In-process route tests for notify-on-reply (workspace-project S-006, AS-011 / C-004).
+// In-process route tests for notify-on-thread-activity (notifications-email S-002,
+// AS-003/AS-004/AS-023 / C-003/C-004). Supersedes the workspace-project S-006 reply-route suite.
 //
-// Exercise the HTTP GLUE only — the reply route dispatches a best-effort notification
-// AFTER a successful comment insert — via app.handle(Request)→Response. Fake comment +
-// notify repos + a fake mail enqueuer are injected so route→service→notify runs without
-// Postgres; the real-DB path is covered by test/integration/notify.itest.ts.
+// Exercise the HTTP GLUE only — the comment route dispatches a best-effort notification AFTER a
+// successful comment insert — via app.handle(Request)→Response. Fake comment + notify repos + a
+// fake mail enqueuer are injected so route→service→notify runs without Postgres; the real-DB path
+// is covered by test/integration/notify.itest.ts.
+//
+// LINKED-FIELD SEAM (S-002): the participant set is read from the REAL notify repo
+// (listParticipantIds), not a hand-fed recipient array; C-003's access-filter calls the route's
+// REAL resolveAccess. REGRESSION NOTE: the legacy AS-011 reply test below is migrated (not
+// weakened) to the new taxonomy — same route, same 201 + recipient assertions, but the emitted
+// type is now `thread_activity`, not `reply`.
 //
 // AS map:
-//   AS-011  a session reply dispatches in-app + email to the OTHER participants/owner,
-//           never the replier; a throwing mail queue still returns 201 (best-effort).
-//   C-004   same — participants + owner, both channels, replier excluded.
+//   AS-003  a session reply dispatches in-app + email to the OTHER participants/owner, never the
+//           replier; the emitted type is thread_activity.
+//   AS-004  a top-level comment (no parentId) on an EXISTING annotation also raises thread_activity
+//           (not new_feedback) — the trigger-drift fix.
+//   AS-023  a guest comment notifies account-holders, never the guest.
+//   C-003   a participant who lost doc access is dropped before any channel fires (real resolver).
+//   C-004   participants + owner, both channels, actor excluded.
 
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
@@ -113,6 +124,9 @@ function buildApp(opts: {
   commentSeed: CommentRow[];
   notifyRepo: NotifyRepo;
   mail: MailEnqueuer;
+  // C-003 seam: lets a test revoke a recipient's access via the REAL resolveAccess the route
+  // wires the access-filter from. Defaults to allow-all commenter (admits the happy paths).
+  resolveAccess?: (docId: string, viewer: any) => Promise<{ role: Role; canView: boolean }>;
 }) {
   return createApp({
     dbCheck: async () => {},
@@ -139,8 +153,9 @@ function buildApp(opts: {
       resolveSession: opts.resolveSession,
       resolveWorkspaceRole: async () => "member",
       resolveDocRole: asCommenter,
-      // doc-access-routing S-001: the single read gate admits these notify-path tests.
-      resolveAccess: async () => ({ role: "commenter", canView: true }),
+      // doc-access-routing S-001: the single read gate admits these notify-path tests. Also the
+      // C-003 access-filter seam — overridable so a test can revoke a participant's access.
+      resolveAccess: opts.resolveAccess ?? (async () => ({ role: "commenter", canView: true })),
       notify: { repo: opts.notifyRepo, mail: opts.mail },
     },
   });
@@ -153,14 +168,14 @@ function req(path: string, init: RequestInit = {}) {
   });
 }
 
-describe("POST /api/annotations/:id/comments dispatches notify (S-006)", () => {
+describe("POST /api/annotations/:id/comments dispatches thread-activity notify (S-002)", () => {
   // Thread {A,B}, owner C; A replies. The root comment seeds A as an existing participant.
   const replierA: SessionResolver = async () => ({ userId: "A" });
   const seed: CommentRow[] = [
     { id: "root", annotationId: "ann_1", parentId: null, authorId: "B", guestName: null, body: "B's comment" },
   ];
 
-  test("AS-011: a session reply enqueues in-app + email for B and C, not the replier A", async () => {
+  test("AS-003: a session reply enqueues in-app + email for B and C, not the replier A (type thread_activity)", async () => {
     const notifyRepo = fakeNotifyRepo({ participants: ["A", "B"], owner: "C" });
     const mail = fakeMail();
     const app = buildApp({ resolveSession: replierA, commentSeed: seed, notifyRepo, mail });
@@ -176,10 +191,90 @@ describe("POST /api/annotations/:id/comments dispatches notify (S-006)", () => {
     // in-app: rows for B and C only — A (the replier) excluded
     expect(notifyRepo.inserted.map((n) => n.userId).sort()).toEqual(["B", "C"]);
     expect(notifyRepo.inserted.map((n) => n.userId)).not.toContain("A");
-    expect(notifyRepo.inserted.every((n) => n.type === "reply" && n.refId === "ann_1")).toBe(true);
+    // taxonomy migrated: emitted type is thread_activity (NOT the legacy 'reply')
+    expect(notifyRepo.inserted.every((n) => n.type === "thread_activity" && n.refId === "ann_1")).toBe(true);
     // email: B and C only
     expect(mail.sent.map((m) => m.to).sort()).toEqual(["B@example.com", "C@example.com"]);
     expect(mail.sent.map((m) => m.to)).not.toContain("A@example.com");
+  });
+
+  test("AS-004: a TOP-LEVEL comment (no parentId) by a non-participant raises thread_activity, NOT new_feedback", async () => {
+    // The drift-fix at the route seam: D posts a top-level comment on the EXISTING annotation;
+    // participants {B} (read from the REAL notify repo), owner C. The route must dispatch
+    // thread_activity (B + C notified), never new_feedback (which would be owner + editors).
+    const notifyRepo = fakeNotifyRepo({ participants: ["B"], owner: "C" });
+    const mail = fakeMail();
+    const commenterD: SessionResolver = async () => ({ userId: "D" });
+    const app = buildApp({ resolveSession: commenterD, commentSeed: seed, notifyRepo, mail });
+
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/comments", {
+        method: "POST",
+        body: JSON.stringify({ body: "D's top-level comment" }), // NO parentId → top-level
+      }),
+    );
+    expect(res.status).toBe(201);
+
+    // B + C notified; D (actor) excluded; the event TYPE is thread_activity, never new_feedback.
+    expect(notifyRepo.inserted.map((n) => n.userId).sort()).toEqual(["B", "C"]);
+    expect(notifyRepo.inserted.map((n) => n.userId)).not.toContain("D");
+    expect(notifyRepo.inserted.every((n) => n.type === "thread_activity")).toBe(true);
+    expect(notifyRepo.inserted.some((n) => n.type === "new_feedback")).toBe(false);
+  });
+
+  test("C-003: a participant who lost doc access is dropped before any channel (real resolveAccess seam)", async () => {
+    // Thread {A,B}, owner C; B's access revoked. A replies → only C notified. The route builds the
+    // access-filter from the REAL resolveAccess below (B → canView:false), proving the seam.
+    const notifyRepo = fakeNotifyRepo({ participants: ["A", "B"], owner: "C" });
+    const mail = fakeMail();
+    const app = buildApp({
+      resolveSession: replierA,
+      commentSeed: seed,
+      notifyRepo,
+      mail,
+      // The first call (route read-gate, viewer = actor A) must admit; the per-recipient filter
+      // calls revoke B. Keyed on the viewer's userId.
+      resolveAccess: async (_docId, viewer) => {
+        const uid = viewer?.userId;
+        const canView = uid !== "B"; // B revoked; A (actor) + C retain access
+        return { role: "commenter", canView };
+      },
+    });
+
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/comments", {
+        method: "POST",
+        body: JSON.stringify({ body: "A's reply", parentId: "root" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+
+    // B dropped by the access-filter; A is the actor → only C remains.
+    expect(notifyRepo.inserted.map((n) => n.userId)).toEqual(["C"]);
+    expect(notifyRepo.inserted.map((n) => n.userId)).not.toContain("B");
+    expect(mail.sent.map((m) => m.to)).toEqual(["C@example.com"]);
+  });
+
+  test("AS-023: a GUEST top-level comment notifies account-holders B + C, never the guest", async () => {
+    // Anon session (guest); doc link role commenter (resolveAccess admits + grants comment). The
+    // guest has no account → never a recipient; B + C get thread_activity rows + email.
+    const notifyRepo = fakeNotifyRepo({ participants: ["B"], owner: "C" });
+    const mail = fakeMail();
+    const anon: SessionResolver = async () => null;
+    const app = buildApp({ resolveSession: anon, commentSeed: seed, notifyRepo, mail });
+
+    const res = await app.handle(
+      req("/api/docs/spec-v2/annotations/ann_1/comments", {
+        method: "POST",
+        body: JSON.stringify({ body: "guest comment", guestName: "Gina" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+
+    // B + C notified; no guest entry; thread_activity type.
+    expect(notifyRepo.inserted.map((n) => n.userId).sort()).toEqual(["B", "C"]);
+    expect(notifyRepo.inserted.every((n) => n.type === "thread_activity")).toBe(true);
+    expect(mail.sent.map((m) => m.to).sort()).toEqual(["B@example.com", "C@example.com"]);
   });
 
   test("C-004: a throwing mail queue still returns 201 (notify is best-effort, post-commit)", async () => {

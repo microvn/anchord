@@ -72,7 +72,7 @@ import {
   createSuggestionRepo,
 } from "../annotation/repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
-import { notifyOnReply, notifyOnNewFeedback, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
+import { notifyOnThreadActivity, notifyOnNewFeedback, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { annotations as annotationsTable, docs as docsTable, docVersions, docMembers, user } from "../db/schema";
@@ -448,13 +448,33 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       : null;
 
   /**
-   * Best-effort post-commit notify dispatch (AS-011 / C-004). Runs AFTER a reply has
-   * persisted; never throws (notifyOnReply swallows + logs), so a notify failure can't
-   * turn a successful reply into a 500. No-op when the notify block is unwired.
+   * notifications-email S-002 — best-effort post-commit notify on THREAD ACTIVITY (a comment OR
+   * reply on an EXISTING annotation). Notifies the thread participants ∪ doc owner, minus the
+   * actor (C-002), minus any candidate without CURRENT doc access (C-003), emitting
+   * `thread_activity` (C-004) — NOT the legacy `reply` type, and NOT new_feedback (a brand-new
+   * annotation uses dispatchNewFeedbackNotify instead, so a top-level comment on an existing
+   * annotation routes here — the trigger-drift fix, AS-004). The access-filter is built HERE from
+   * the REAL `resolveAccess` (the seam) keyed on this doc — a participant whose access was revoked
+   * is dropped before any channel. Never throws (notifyOnThreadActivity swallows + logs), so a
+   * notify failure can't 500 the comment. No-op when the notify block is unwired.
    */
-  async function dispatchReplyNotify(annotationId: string, replierUserId: string | null) {
+  async function dispatchThreadActivityNotify(
+    docId: string,
+    annotationId: string,
+    actorUserId: string | null,
+  ) {
     if (!notifyDeps) return;
-    await notifyOnReply({ annotationId, replierUserId }, notifyDeps);
+    await notifyOnThreadActivity(
+      { annotationId, actorUserId },
+      {
+        ...notifyDeps,
+        type: "thread_activity",
+        // C-003 seam: hit the real resolver against this doc — a participant without current
+        // access (e.g. membership revoked) is dropped before any channel fires.
+        accessFilter: async (userId) =>
+          (await deps.resolveAccess(docId, { kind: "user", userId })).canView,
+      },
+    );
   }
 
   /**
@@ -840,9 +860,11 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         if (result.reason === "empty_body") throw new ValidationError("body must not be empty", { field: "body" });
         throw new NotFoundError("Parent comment not found"); // parent_not_found (reply path only)
       }
-      // S-006: reply persisted → notify others (best-effort, post-commit). The replier
-      // is the session actor; they never notify themselves (handled in notifyOnReply).
-      await dispatchReplyNotify(params.id, actor.userId);
+      // S-002: comment/reply persisted on an EXISTING annotation → notify thread participants ∪
+      // owner (best-effort, post-commit) as `thread_activity` (C-004 — covers BOTH the reply and
+      // the top-level-comment branch above; the top-level case no longer drifts onto new_feedback,
+      // AS-004). The actor is the session user; they never notify themselves (notifyOnThreadActivity).
+      await dispatchThreadActivityNotify(parent.docId, params.id, actor.userId);
       set.status = 201;
       return { commentId: result.id };
     }
@@ -861,8 +883,8 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     }
     // C-008 (AS-022): rate-limit the anonymous write surface per IP + per doc BEFORE any
     // work (and before notify) so a flood is refused (429) and can't amplify mail — the
-    // SAME limiter gates the reply-notification dispatch below (a refused write never
-    // reaches dispatchReplyNotify because we throw here first).
+    // SAME limiter gates the thread-activity-notification dispatch below (a refused write never
+    // reaches dispatchThreadActivityNotify because we throw here first).
     const limit = await rateLimitComment(`${clientIp(request)}:${parent.docId}`);
     if (!limit.allowed) {
       throw new RateLimitedError("Too many comments — slow down and try again shortly");
@@ -894,9 +916,11 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       if (result.reason === "empty_name") throw new ValidationError("guestName is required", { field: "guestName" });
       throw new ValidationError("body must not be empty", { field: "body" });
     }
-    // S-006: a GUEST reply still notifies account-holder participants + owner; the guest
-    // has no account, so replierUserId is null → the guest is excluded automatically.
-    await dispatchReplyNotify(params.id, null);
+    // S-002 (C-011, AS-023): a GUEST comment on an existing annotation still notifies
+    // account-holder participants + owner as `thread_activity`; the guest has no account, so the
+    // actor is null → the guest is never a recipient (excluded automatically — and never IN the
+    // participant set, since the repo lists account-holder author_ids only).
+    await dispatchThreadActivityNotify(parent.docId, params.id, null);
     set.status = 201;
     return { commentId: result.id };
   }

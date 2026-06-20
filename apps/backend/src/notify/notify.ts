@@ -1,10 +1,14 @@
-// Notify on reply (workspace-project S-006, AS-011 / C-004).
+// Notify on thread activity (notifications-email S-002, AS-003/AS-004/AS-005/AS-023 / C-004).
+// (Folds the workspace-project S-006 reply baseline into the broader thread-activity event.)
 //
-// On a SUCCESSFUL reply to an annotation, notify the thread participants ∪ the doc
-// owner, MINUS the replier — over TWO channels per recipient: an in-app row
-// (notifications table) AND one email (the shared MailQueue). The replier never
-// notifies themselves; the owner-who-is-also-a-participant is deduped to ONE
-// notification.
+// On a SUCCESSFUL comment OR reply landing on an EXISTING annotation, notify the thread
+// participants ∪ the doc owner, MINUS the actor — over TWO channels per recipient: an in-app
+// row (notifications table) AND one email (the shared MailQueue). The actor never notifies
+// themselves; the owner-who-is-also-a-participant is deduped to ONE notification. The emitted
+// type is `thread_activity` (C-004) — a brand-new annotation is `new_feedback` (S-001), NOT
+// thread activity, so a top-level comment on an EXISTING annotation routes HERE, not there
+// (the trigger-drift fix, AS-004). A per-recipient access-filter (C-003) drops a participant
+// who lost doc access before any channel fires (same real-resolver seam S-001 uses).
 //
 // GAP-002 (email opt-out / digest vs per-event) is OPEN and parked for v0. This
 // builds the SIMPLE form per AS-011: ALWAYS send, ONE email per reply event — no
@@ -138,14 +142,14 @@ export function emailSubjectFor(type: NotificationType): string {
   return EVENT_SUBJECT[type] ?? "anchord notification";
 }
 
-export interface NotifyOnReplyInput {
-  /** The annotation (thread) the reply landed on — also the in-app deep-link ref. */
+export interface NotifyOnThreadActivityInput {
+  /** The annotation (thread) the comment/reply landed on — also the in-app deep-link ref. */
   annotationId: string;
   /**
-   * The acting replier's user id, or null for a GUEST reply (no account). A guest is
-   * never a recipient anyway, so a null replier simply excludes nobody from the set.
+   * The acting commenter/replier's user id, or null for a GUEST action (no account). A guest is
+   * never a recipient anyway, so a null actor simply excludes nobody from the set (C-002/C-011).
    */
-  replierUserId: string | null;
+  actorUserId: string | null;
 }
 
 /** What a notify pass did — the recipients reached and rows/mails sent (for assertions/logs). */
@@ -233,24 +237,33 @@ export function computeNewFeedbackCandidates(
 }
 
 /**
- * Notify thread participants + doc owner of a reply (AS-011 / C-004), over in-app +
- * email, excluding the replier and deduping owner==participant.
+ * S-002 — notify on THREAD ACTIVITY (a comment OR reply on an EXISTING annotation):
+ * thread participants ∪ doc owner, minus the actor (C-002), minus any candidate without
+ * CURRENT doc access (C-003), over in-app + email (thread_activity is high-signal, C-006),
+ * deduped owner==participant (C-005). Emits type `thread_activity` by default (C-004) — a
+ * brand-new annotation goes through notifyOnNewFeedback instead, so a top-level comment on an
+ * existing annotation lands HERE, not on the new-feedback path (the trigger-drift fix, AS-004).
  *
- * BEST-EFFORT: this runs AFTER the reply has persisted (post-commit). The whole pass is
- * wrapped so a throwing repo or mail enqueue is logged and swallowed — a reply is never
- * turned into a 500 because notify failed. The route awaits this but ignores its outcome
- * for the response.
+ * The recipients are RELATIONSHIP-derived server-side (C-001) — participants read from the real
+ * thread + the doc owner, never client-selected. The access-filter (deps.accessFilter, C-003) is
+ * the seam (AS-002 pattern): it MUST call the real resolver so a participant whose access was
+ * revoked is dropped before any channel fires. A guest actor (null) excludes nobody and still
+ * notifies the account-holder participants + owner (C-011).
  *
- * Per recipient: insert ONE in-app row (type='reply', ref=annotationId) AND enqueue ONE
- * email (looked up from the user's email; skipped/guarded when the user has no email —
- * shouldn't happen for an account-holder, but we don't crash on it).
+ * BEST-EFFORT / POST-COMMIT (C-007): runs AFTER the comment/reply persists; the whole pass is
+ * wrapped so a throwing repo/mail/filter is logged and swallowed — a comment is never turned into
+ * a 500 because notify failed. The route awaits this but ignores its outcome for the response.
+ *
+ * Per recipient: insert ONE in-app row (type='thread_activity', ref=annotationId) AND enqueue ONE
+ * email (looked up from the user's email; skipped/guarded when the user has no email — shouldn't
+ * happen for an account-holder, but we don't crash on it).
  */
-export async function notifyOnReply(
-  input: NotifyOnReplyInput,
+export async function notifyOnThreadActivity(
+  input: NotifyOnThreadActivityInput,
   deps: NotifyDeps,
 ): Promise<NotifyResult> {
-  const { annotationId, replierUserId } = input;
-  const type: NotificationType = deps.type ?? "reply";
+  const { annotationId, actorUserId } = input;
+  const type: NotificationType = deps.type ?? "thread_activity";
   const log = deps.logError ?? ((msg, err) => console.error(msg, err));
   const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
 
@@ -259,12 +272,23 @@ export async function notifyOnReply(
       deps.repo.listParticipantIds(annotationId),
       deps.repo.getDocOwnerId(annotationId),
     ]);
-    const recipients = computeRecipients(participantIds, docOwnerId, replierUserId);
+    const candidates = computeRecipients(participantIds, docOwnerId, actorUserId);
+
+    // C-003: drop any candidate without CURRENT doc access BEFORE any channel fires. The filter
+    // calls the real resolver (the seam) — a revoked participant gets no row and no email. Same
+    // approach S-001's notifyOnNewFeedback uses; absent filter → no filtering (back-compat).
+    let recipients = candidates;
+    if (deps.accessFilter) {
+      const filter = deps.accessFilter;
+      const checks = await Promise.all(candidates.map((u) => filter(u)));
+      recipients = candidates.filter((_, i) => checks[i]);
+    }
+
     return await deliverToRecipients(annotationId, recipients, type, deps);
   } catch (err) {
-    // Post-commit best-effort: log and swallow so the reply still succeeds (C-004 intent
-    // — notify must not block/fail the reply).
-    log("notifyOnReply failed (best-effort, reply already persisted)", err);
+    // Post-commit best-effort: log and swallow so the comment still succeeds (C-004/C-007 intent
+    // — notify must not block/fail the comment).
+    log("notifyOnThreadActivity failed (best-effort, comment already persisted)", err);
     return empty;
   }
 }

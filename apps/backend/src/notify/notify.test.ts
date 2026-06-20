@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import {
   computeRecipients,
   computeNewFeedbackCandidates,
-  notifyOnReply,
+  notifyOnThreadActivity,
   notifyOnNewFeedback,
   isEmailEligible,
   buildAnnotationDeepLink,
@@ -97,21 +97,28 @@ describe("computeRecipients (recipient set = participants ∪ owner − replier,
   });
 });
 
-describe("notifyOnReply (both channels fire per recipient; best-effort)", () => {
-  test("C-004: A replies thread {A,B} owner C → B and C each get in-app + email; A gets none", async () => {
+// notifications-email S-002 — notify on THREAD ACTIVITY (a comment OR reply on an EXISTING
+// annotation): participants ∪ owner − actor, deduped (C-005), access-filtered (C-003), over
+// in-app + email (thread_activity is high-signal, C-006), best-effort post-commit (C-007).
+// REGRESSION NOTE: this describe block is the migrated workspace-project S-006 reply-path suite —
+// updated (NOT weakened) to the new taxonomy: notifyOnReply → notifyOnThreadActivity,
+// replierUserId → actorUserId, emitted type 'reply' → 'thread_activity'. Same recipient
+// invariants (exclusion, dedup, guest, email-guard, best-effort) are still asserted.
+describe("notifyOnThreadActivity (both channels fire per recipient; best-effort)", () => {
+  test("AS-003: A replies thread {A,B} owner C → B and C each get in-app + email; A (replier) gets none", async () => {
     const repo = fakeRepo({ participants: ["A", "B"], owner: "C" });
     const mail = fakeMail();
 
-    const result = await notifyOnReply({ annotationId: "ann_1", replierUserId: "A" }, { repo, mail });
+    const result = await notifyOnThreadActivity({ annotationId: "ann_1", actorUserId: "A" }, { repo, mail });
 
     // recipients are exactly {B, C}, A excluded
     expect(result.recipients.sort()).toEqual(["B", "C"]);
-    // in-app: 2 rows (B, C), none for A; type='reply', ref=annotation id
+    // in-app: 2 rows (B, C), none for A; type='thread_activity', ref=annotation id (NOT 'reply')
     expect(repo.inserted).toHaveLength(2);
     expect(repo.inserted.map((n) => n.userId).sort()).toEqual(["B", "C"]);
-    expect(repo.inserted.every((n) => n.type === "reply" && n.refId === "ann_1")).toBe(true);
+    expect(repo.inserted.every((n) => n.type === "thread_activity" && n.refId === "ann_1")).toBe(true);
     expect(repo.inserted.map((n) => n.userId)).not.toContain("A");
-    // email: 2 enqueued (B, C), none for A
+    // email: 2 enqueued (B, C), none for A (thread_activity is high-signal)
     expect(mail.sent).toHaveLength(2);
     expect(mail.sent.map((m) => m.to).sort()).toEqual(["B@example.com", "C@example.com"]);
     expect(mail.sent.map((m) => m.to)).not.toContain("A@example.com");
@@ -119,29 +126,74 @@ describe("notifyOnReply (both channels fire per recipient; best-effort)", () => 
     expect(result.emailsSent).toBe(2);
   });
 
-  test("C-004: owner==participant deduped to ONE in-app row + ONE email", async () => {
+  test("AS-004: the emitted event TYPE is thread_activity (default) — NOT reply, NOT new_feedback", async () => {
+    // The drift-fix assertion: a comment on an EXISTING annotation, dispatched with NO explicit
+    // type, defaults to thread_activity — it must never emit the legacy 'reply' nor 'new_feedback'.
+    const repo = fakeRepo({ participants: ["B"], owner: "C" });
+    const mail = fakeMail();
+
+    await notifyOnThreadActivity({ annotationId: "ann_1", actorUserId: "D" }, { repo, mail });
+
+    expect(repo.inserted.every((n) => n.type === "thread_activity")).toBe(true);
+    expect(repo.inserted.some((n) => n.type === "reply")).toBe(false);
+    expect(repo.inserted.some((n) => n.type === "new_feedback")).toBe(false);
+  });
+
+  test("AS-005: owner==participant deduped to ONE in-app row + ONE email", async () => {
     // C is owner AND a participant; A replies → recipients {B, C}, C exactly once.
     const repo = fakeRepo({ participants: ["B", "C"], owner: "C" });
     const mail = fakeMail();
 
-    await notifyOnReply({ annotationId: "ann_1", replierUserId: "A" }, { repo, mail });
+    await notifyOnThreadActivity({ annotationId: "ann_1", actorUserId: "A" }, { repo, mail });
 
     expect(repo.inserted.filter((n) => n.userId === "C")).toHaveLength(1);
     expect(mail.sent.filter((m) => m.to === "C@example.com")).toHaveLength(1);
   });
 
-  test("C-004: guest replier (null) still notifies account-holder participants + owner", async () => {
-    const repo = fakeRepo({ participants: ["A", "B"], owner: "C" });
+  test("AS-005: actor is owner+participant → self-exclusion wins over BOTH relationships (one fewer, never a row)", async () => {
+    // C is the owner AND a participant AND the actor → C is excluded entirely; only B remains.
+    const repo = fakeRepo({ participants: ["B", "C"], owner: "C" });
     const mail = fakeMail();
 
-    const result = await notifyOnReply(
-      { annotationId: "ann_1", replierUserId: null },
+    const result = await notifyOnThreadActivity({ annotationId: "ann_1", actorUserId: "C" }, { repo, mail });
+
+    expect(result.recipients).toEqual(["B"]);
+    expect(repo.inserted.map((n) => n.userId)).not.toContain("C");
+  });
+
+  test("AS-023: guest actor (null) still notifies account-holder participants + owner; guest never a recipient", async () => {
+    const repo = fakeRepo({ participants: ["B"], owner: "C" });
+    const mail = fakeMail();
+
+    const result = await notifyOnThreadActivity(
+      { annotationId: "ann_1", actorUserId: null },
       { repo, mail },
     );
 
-    expect(result.recipients.sort()).toEqual(["A", "B", "C"]);
-    expect(repo.inserted).toHaveLength(3);
-    expect(mail.sent).toHaveLength(3);
+    // B + C notified; no guest entry (guests are never in the participant set — repo lists
+    // account-holder author_ids only — and a null actor removes nobody).
+    expect(result.recipients.sort()).toEqual(["B", "C"]);
+    expect(repo.inserted).toHaveLength(2);
+    expect(mail.sent).toHaveLength(2);
+  });
+
+  test("C-003: a participant who lost doc access is dropped before any channel fires", async () => {
+    // Thread {A,B}, owner C; B's access was revoked. A replies → only C notified (B dropped by
+    // the access-filter seam). Same real-resolver approach S-001 (AS-002) uses.
+    const repo = fakeRepo({ participants: ["A", "B"], owner: "C" });
+    const mail = fakeMail();
+    const hasAccess = new Set(["A", "C"]); // B revoked
+
+    const result = await notifyOnThreadActivity(
+      { annotationId: "ann_1", actorUserId: "A" },
+      { repo, mail, accessFilter: async (userId) => hasAccess.has(userId) },
+    );
+
+    expect(result.recipients).toEqual(["C"]); // B dropped, A is the actor
+    expect(repo.inserted.map((n) => n.userId)).toEqual(["C"]);
+    expect(repo.inserted.map((n) => n.userId)).not.toContain("B");
+    expect(mail.sent.map((m) => m.to)).toEqual(["C@example.com"]);
+    expect(mail.sent.map((m) => m.to)).not.toContain("B@example.com");
   });
 
   test("C-004: recipient with no email still gets in-app; email skipped (guarded)", async () => {
@@ -149,7 +201,7 @@ describe("notifyOnReply (both channels fire per recipient; best-effort)", () => 
     const repo = fakeRepo({ participants: ["B"], owner: null, emails: { B: null } });
     const mail = fakeMail();
 
-    const result = await notifyOnReply({ annotationId: "ann_1", replierUserId: "A" }, { repo, mail });
+    const result = await notifyOnThreadActivity({ annotationId: "ann_1", actorUserId: "A" }, { repo, mail });
 
     expect(repo.inserted.map((n) => n.userId)).toEqual(["B"]); // in-app fired
     expect(mail.sent).toHaveLength(0); // email guarded
@@ -157,25 +209,48 @@ describe("notifyOnReply (both channels fire per recipient; best-effort)", () => 
     expect(result.emailsSent).toBe(0);
   });
 
-  test("AS-011: no other participants and no owner → zero notifications", async () => {
+  test("AS-003: empty participant set + owner present → only the owner is notified", async () => {
+    // No other participants, distinct owner C; actor A → only C (the empty-set edge).
+    const repo = fakeRepo({ participants: ["A"], owner: "C" });
+    const mail = fakeMail();
+
+    const result = await notifyOnThreadActivity({ annotationId: "ann_1", actorUserId: "A" }, { repo, mail });
+
+    expect(result.recipients).toEqual(["C"]);
+    expect(result.inAppSent).toBe(1);
+  });
+
+  test("AS-023: all-guest thread (no account participants) + owner → only the owner is notified", async () => {
+    // Participants list is empty (every prior commenter was a guest → no account_id rows); a guest
+    // comments now (actor null). Only the account-holder owner C is notified.
+    const repo = fakeRepo({ participants: [], owner: "C" });
+    const mail = fakeMail();
+
+    const result = await notifyOnThreadActivity({ annotationId: "ann_1", actorUserId: null }, { repo, mail });
+
+    expect(result.recipients).toEqual(["C"]);
+    expect(repo.inserted.map((n) => n.userId)).toEqual(["C"]);
+  });
+
+  test("AS-003: no other participants and no owner → zero notifications", async () => {
     const repo = fakeRepo({ participants: ["A"], owner: null });
     const mail = fakeMail();
 
-    const result = await notifyOnReply({ annotationId: "ann_1", replierUserId: "A" }, { repo, mail });
+    const result = await notifyOnThreadActivity({ annotationId: "ann_1", actorUserId: "A" }, { repo, mail });
 
     expect(result.recipients).toEqual([]);
     expect(repo.inserted).toHaveLength(0);
     expect(mail.sent).toHaveLength(0);
   });
 
-  test("C-004: a throwing mail enqueue does NOT throw out of dispatch (best-effort)", async () => {
+  test("C-007: a throwing mail enqueue does NOT throw out of dispatch (best-effort)", async () => {
     const repo = fakeRepo({ participants: ["B"], owner: "C" });
     const mail = fakeMail(true); // enqueue throws
     const logged: unknown[] = [];
 
-    // Must resolve, not reject — the reply has already persisted.
-    const result = await notifyOnReply(
-      { annotationId: "ann_1", replierUserId: "A" },
+    // Must resolve, not reject — the comment has already persisted.
+    const result = await notifyOnThreadActivity(
+      { annotationId: "ann_1", actorUserId: "A" },
       { repo, mail, logError: (_m, e) => logged.push(e) },
     );
 
@@ -183,7 +258,7 @@ describe("notifyOnReply (both channels fire per recipient; best-effort)", () => 
     expect(logged).toHaveLength(1); // failure logged, not surfaced
   });
 
-  test("C-004: a throwing repo read does NOT throw out of dispatch (best-effort)", async () => {
+  test("C-007: a throwing repo read does NOT throw out of dispatch (best-effort)", async () => {
     const throwingRepo: NotifyRepo = {
       async listParticipantIds() {
         throw new Error("db boom");
@@ -201,8 +276,8 @@ describe("notifyOnReply (both channels fire per recipient; best-effort)", () => 
     const mail = fakeMail();
     const logged: unknown[] = [];
 
-    const result = await notifyOnReply(
-      { annotationId: "ann_1", replierUserId: "A" },
+    const result = await notifyOnThreadActivity(
+      { annotationId: "ann_1", actorUserId: "A" },
       { repo: throwingRepo, mail, logError: (_m, e) => logged.push(e) },
     );
 
@@ -214,7 +289,7 @@ describe("notifyOnReply (both channels fire per recipient; best-effort)", () => 
 // ---------------------------------------------------------------------------
 // S-007 — email eligibility (C-006), deep-link (C-013), minimal plain-text body (C-012),
 // best-effort post-commit (C-007). The per-event dispatch (S-001/S-002) is NOT built here;
-// these test the reusable email/delivery seams via notifyOnReply parameterized by `type`.
+// these test the reusable email/delivery seams via notifyOnThreadActivity parameterized by `type`.
 // ---------------------------------------------------------------------------
 
 describe("isEmailEligible (C-006: channel policy derived from notification type)", () => {
@@ -253,13 +328,13 @@ describe("buildAnnotationDeepLink (C-013: {APP_URL}/d/{slug}#annotation-{id})", 
   });
 });
 
-describe("notifyOnReply parameterized by type (S-007 email/delivery seams)", () => {
+describe("notifyOnThreadActivity parameterized by type (S-007 email/delivery seams)", () => {
   test("AS-019.T1/T2/T3: a high-signal event sends ONE plain-text email with the absolute deep-link", async () => {
     const repo = fakeRepo({ participants: [], owner: "Alice", slug: "spec-v2" });
     const mail = fakeMail();
 
-    const result = await notifyOnReply(
-      { annotationId: "abc123", replierUserId: "Bob" },
+    const result = await notifyOnThreadActivity(
+      { annotationId: "abc123", actorUserId: "Bob" },
       { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
     );
 
@@ -280,8 +355,8 @@ describe("notifyOnReply parameterized by type (S-007 email/delivery seams)", () 
     const repo = fakeRepo({ participants: [], owner: "Bob", slug: "spec-v2" });
     const mail = fakeMail();
 
-    const result = await notifyOnReply(
-      { annotationId: "abc123", replierUserId: "Carol" },
+    const result = await notifyOnThreadActivity(
+      { annotationId: "abc123", actorUserId: "Carol" },
       { repo, mail, type: "resolved", appUrl: "https://anchord.example.com" },
     );
 
@@ -297,8 +372,8 @@ describe("notifyOnReply parameterized by type (S-007 email/delivery seams)", () 
     const mail = fakeMail(true); // enqueue throws
     const logged: unknown[] = [];
 
-    const result = await notifyOnReply(
-      { annotationId: "abc123", replierUserId: "Bob" },
+    const result = await notifyOnThreadActivity(
+      { annotationId: "abc123", actorUserId: "Bob" },
       { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com", logError: (_m, e) => logged.push(e) },
     );
 
@@ -310,8 +385,8 @@ describe("notifyOnReply parameterized by type (S-007 email/delivery seams)", () 
     const repo = fakeRepo({ participants: [], owner: "Alice", slug: null });
     const mail = fakeMail();
 
-    const result = await notifyOnReply(
-      { annotationId: "abc123", replierUserId: "Bob" },
+    const result = await notifyOnThreadActivity(
+      { annotationId: "abc123", actorUserId: "Bob" },
       { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
     );
 
