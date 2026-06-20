@@ -4,13 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
-// annotation-core-ui-commenting S-005 — Guest commenting. A logged-out viewer (guest commenting
-// enabled) gets a random session display name + a Rename control (AS-009), must enter a name to
-// send (email optional, AS-010/AS-011), and every untrusted string (body + guest name) renders
-// inert + the name is length-limited (AS-012). A guest comment is visibly attributed as a guest
-// (C-010). Reversal 2026-06-20: the FE derives guest mode from `!signedIn && canComment(role)` (the
-// commenter+ link role IS the grant — no toggle, no `doc.guest` flag); these tests drive it via the
-// session (anon for guests, signed-in for the member case).
+// annotation-core S-007 — Guest commenting. A logged-out viewer (anyone-with-link, commenter+ link
+// role) gets ONE session-stable random name shown as a top-bar GuestIdentityChip (AS-016, session
+// name + Rename next to Sign in), and the composer shows NO name/email field — the session name rides
+// up on send (AS-017). Every untrusted string (body + guest name) renders inert (AS-019). A guest
+// comment is visibly attributed as a guest (C-010). Reversal 2026-06-20: the FE derives guest mode
+// from `!signedIn && canComment(role)` (the commenter+ link role IS the grant — no toggle, no
+// `doc.guest` flag); these tests drive it via the session (anon for guests, signed-in for the member
+// case). The session name lives in sessionStorage (cleared by the global afterEach).
 
 const okEnv = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 const okRead = (body: unknown) => ({ data: body, error: null });
@@ -137,23 +138,34 @@ function openComposer() {
   });
 }
 
-describe("Guest commenting S-005", () => {
-  it("AS-009: a guest is shown a random display name on open, with a Rename control", async () => {
+describe("Guest commenting S-007", () => {
+  it("AS-016: a guest gets a session-stable identity chip in the top bar (session name + Rename next to Sign in)", async () => {
     await renderViewer();
-    openComposer();
-    await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-comment"));
-    const composer = await screen.findByTestId("composer");
-
-    // A random session name is shown (matches the "Anonymous <Animal>" generator).
-    const nameField = within(composer).getByTestId("guest-name");
-    expect((nameField as HTMLInputElement).value).toMatch(/^Anonymous \w+$/);
-    // A Rename control exists and cycles the name.
-    const before = (nameField as HTMLInputElement).value;
-    await userEvent.click(within(composer).getByTestId("guest-rename"));
-    expect((within(composer).getByTestId("guest-name") as HTMLInputElement).value).not.toBe(before);
+    const topBar = screen.getByTestId("viewer-top-bar");
+    // The chip lives in the top bar (NOT the composer) — a `?` disc + the session name + Rename.
+    const chip = within(topBar).getByTestId("guest-id");
+    const nameEl = within(chip).getByTestId("guest-name");
+    expect(nameEl.textContent ?? "").toMatch(/^Anonymous \w+$/);
+    // The chip sits next to the Sign in CTA (both render in the top bar for a guest).
+    expect(within(topBar).getByTestId("vt-signin")).toBeTruthy();
+    // Rename cycles the session name in place.
+    const before = nameEl.textContent;
+    await userEvent.click(within(chip).getByTestId("guest-rename"));
+    expect(within(topBar).getByTestId("guest-name").textContent).not.toBe(before);
   });
 
-  it("AS-010: a guest comments with a name (email optional) — addComment is called with guestName and no account author", async () => {
+  it("AS-016: the session name persists across a remount (NOT re-rolled) and shows in the composer's send payload", async () => {
+    // First mount: read the assigned session name from the chip.
+    const { unmount } = render(<App />);
+    await screen.findByTestId("markdown-view");
+    const firstName = within(screen.getByTestId("viewer-top-bar")).getByTestId("guest-name").textContent!;
+    unmount();
+    // Remount (same session / sessionStorage intact) → SAME name (survives reload / in-tab nav).
+    await renderViewer();
+    expect(within(screen.getByTestId("viewer-top-bar")).getByTestId("guest-name").textContent).toBe(firstName);
+  });
+
+  it("AS-017: the composer shows NO name field and NO email field; the session name rides up on send", async () => {
     const realAnnotation = {
       id: "anno-real-1",
       type: "range",
@@ -161,13 +173,7 @@ describe("Guest commenting S-005", () => {
       isOrphaned: false,
       anchor: { blockId: "block-p-1", textSnippet: "Payment expires after 24h", offset: 0, length: 25 },
       comments: [
-        {
-          id: "cmt-real-1",
-          parentId: null,
-          guestName: "Lan",
-          body: "Why 24h?",
-          createdAt: new Date().toISOString(),
-        },
+        { id: "cmt-real-1", parentId: null, guestName: "Anonymous Otter", body: "Why 24h?", createdAt: new Date().toISOString() },
       ],
     };
     listAnnotations.mockImplementation(async () =>
@@ -175,52 +181,32 @@ describe("Guest commenting S-005", () => {
     );
 
     await renderViewer();
+    // The session name as shown in the header chip — this is what must ride up on send.
+    const headerName = within(screen.getByTestId("viewer-top-bar")).getByTestId("guest-name").textContent!;
+
     openComposer();
     await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-comment"));
     const composer = await screen.findByTestId("composer");
 
-    const nameField = within(composer).getByTestId("guest-name") as HTMLInputElement;
-    await userEvent.clear(nameField);
-    await userEvent.type(nameField, "Lan");
+    // AS-017: the composer has NEITHER a name field NOR an email field.
+    expect(within(composer).queryByTestId("guest-name")).toBeNull();
+    expect(within(composer).queryByLabelText(/email/i)).toBeNull();
+    // Send is enabled on a body alone (the session name is always present).
     await userEvent.type(within(composer).getByTestId("composer-input"), "Why 24h?");
+    expect(within(composer).getByTestId("composer-send")).not.toBeDisabled();
     await userEvent.click(within(composer).getByTestId("composer-send"));
 
-    // C-018: the guest comment now rides the SAME atomic createAnnotation `comment` payload (no
-    // separate addComment). It carries the guest name only — NO email (AS-017, 2026-06-20) — no userId.
+    // C-018: the guest comment rides the atomic createAnnotation `comment` payload, carrying the
+    // SESSION name (from the header chip) — NO email (AS-017), no userId.
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
     const comment = (createAnnotation.mock.calls[0]![1] as { comment: { body: string; guestName?: string } }).comment;
     expect(comment.body).toBe("Why 24h?");
-    expect(comment.guestName).toBe("Lan");
-    expect("guestEmail" in comment).toBe(false); // AS-017: no email collected or sent
-    expect(addComment).not.toHaveBeenCalled();
-
-    // It appears in the thread under the guest name.
-    const card = (await screen.findAllByTestId("thread-card"))[0]!;
-    expect(card).toHaveTextContent("Lan");
-    expect(card).toHaveTextContent("Why 24h?");
-  });
-
-  it("AS-011: send is blocked until a guest provides a name, with a 'name required' hint — nothing is submitted", async () => {
-    await renderViewer();
-    openComposer();
-    await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-comment"));
-    const composer = await screen.findByTestId("composer");
-
-    // Clear the name, type a body → Send stays disabled, hint reads "name required".
-    await userEvent.clear(within(composer).getByTestId("guest-name"));
-    await userEvent.type(within(composer).getByTestId("composer-input"), "anonymous body");
-    const send = within(composer).getByTestId("composer-send");
-    expect(send).toBeDisabled();
-    expect(within(composer).getByTestId("composer-hint").textContent ?? "").toMatch(/name required/i);
-
-    // Clicking the disabled send submits nothing.
-    await userEvent.click(send);
-    await Promise.resolve();
-    expect(createAnnotation).not.toHaveBeenCalled();
+    expect(comment.guestName).toBe(headerName);
+    expect("guestEmail" in comment).toBe(false);
     expect(addComment).not.toHaveBeenCalled();
   });
 
-  it("AS-012.T1: a guest comment body with HTML renders inert (the script does not run)", async () => {
+  it("AS-019: a guest comment body with HTML renders inert (the script does not run)", async () => {
     const xss = "<img src=x onerror=alert(1)>";
     listAnnotations.mockImplementation(async () =>
       createAnnotation.mock.calls.length > 0
@@ -243,8 +229,6 @@ describe("Guest commenting S-005", () => {
     openComposer();
     await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-comment"));
     const composer = await screen.findByTestId("composer");
-    await userEvent.clear(within(composer).getByTestId("guest-name"));
-    await userEvent.type(within(composer).getByTestId("guest-name"), "Lan");
     await userEvent.type(within(composer).getByTestId("composer-input"), xss);
     await userEvent.click(within(composer).getByTestId("composer-send"));
 
@@ -253,7 +237,7 @@ describe("Guest commenting S-005", () => {
     expect(card.querySelector("img")).toBeNull();
   });
 
-  it("AS-012.T1: a guest name with HTML renders inert in the thread (the script does not run)", async () => {
+  it("AS-019: a guest name with HTML renders inert in the thread (the script does not run)", async () => {
     const evil = `<img src=x onerror=alert(1)>`;
     listAnnotations.mockImplementation(async () =>
       createAnnotation.mock.calls.length > 0
@@ -278,26 +262,11 @@ describe("Guest commenting S-005", () => {
     openComposer();
     await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-comment"));
     const composer = await screen.findByTestId("composer");
-    await userEvent.clear(within(composer).getByTestId("guest-name"));
-    await userEvent.type(within(composer).getByTestId("guest-name"), "Lan");
     await userEvent.type(within(composer).getByTestId("composer-input"), "hi");
     await userEvent.click(within(composer).getByTestId("composer-send"));
 
     const card = (await screen.findAllByTestId("thread-card"))[0]!;
     expect(card.querySelector("img")).toBeNull();
-  });
-
-  it("AS-012.T2: an over-long guest name is truncated (on input and at sanitize)", async () => {
-    await renderViewer();
-    openComposer();
-    await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-comment"));
-    const composer = await screen.findByTestId("composer");
-
-    const nameField = within(composer).getByTestId("guest-name") as HTMLInputElement;
-    await userEvent.clear(nameField);
-    await userEvent.type(nameField, "x".repeat(GUEST_NAME_MAX + 50));
-    // The input value is clamped to the limit (truncate on input).
-    expect(nameField.value.length).toBeLessThanOrEqual(GUEST_NAME_MAX);
   });
 
   it("C-007: a logged-in (non-guest) session shows NO guest name field and Send only needs a body", async () => {

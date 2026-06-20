@@ -1,11 +1,14 @@
 import { Icon, Brandmark } from "@/components/icon";
 import { useTheme } from "@/app/theme-provider";
 import type { ViewerDocKind } from "@/features/viewer/services/client";
+import { GuestIdentityChip } from "./guest-identity-chip";
 
 // ViewerTopBar (S-005, AS-012): the bar ABOVE the 3-pane viewer body. Mirrors the prototype's
 // `.vtop` (viewer-shell.jsx ViewerTopBar) structurally, in Tailwind/DESIGN.md tokens:
-//   outline-toggle (drawer mode) · back · brand · title · LiveBadge · FormatBadge · VersionButton ·
+//   brand · outline-toggle (drawer mode) · back · title · LiveBadge · FormatBadge · VersionButton ·
 //   CommentsToggle · ShareButton · ThemeToggle · OverflowMenu.
+//   (Brand sits at the OUTERMOST left — moved ahead of outline-toggle/back per request 2026-06-20,
+//   a deliberate deviation from the prototype, which placed brand after back.)
 //
 // The identity fields (title / live / format / version) come from the doc meta the viewer already
 // fetches (S-001 GET …/docs/:slug → { title, kind→format, version, status }).
@@ -53,6 +56,7 @@ export function ViewerTopBar({
   onOverflow,
   anonymous = false,
   onSignIn,
+  guestIdentity,
 }: {
   doc: TopBarDoc;
   /** is the comments rail currently shown (desktop). The toggle reflects + flips this. */
@@ -79,6 +83,9 @@ export function ViewerTopBar({
   /** AS-029: invoked when the anonymous Sign in CTA is pressed (caller routes to /signin with a
    *  return-to-doc target so sign-in returns the visitor here — AS-016). */
   onSignIn?: () => void;
+  /** S-007 (AS-016): a guest's session identity — the persistent chip (session name + Rename) shown
+   *  NEXT TO the Sign in CTA. Present only for a guest (anon + can-comment); absent → no chip. */
+  guestIdentity?: { name: string; onRename: () => void };
 }) {
   const { theme, toggleTheme } = useTheme();
   // "Live" = the doc is shared beyond restricted — the SAME rule the dashboard list uses
@@ -96,6 +103,13 @@ export function ViewerTopBar({
       data-testid="viewer-top-bar"
       className="flex h-12 flex-none items-center gap-2 border-b border-line bg-paper px-3"
     >
+      {/* Brandmark pinned to the OUTERMOST left (ahead of the outline-toggle + back nav), so the
+          Anchord mark is the first thing on the bar. (Deviates from the prototype `.vtop` order,
+          which placed brand after back — intentional per request 2026-06-20.) */}
+      <span className="flex flex-none items-center" aria-hidden="true">
+        <Brandmark size={18} />
+      </span>
+
       {showTocToggle && onToggleToc && (
         <button type="button" aria-label="Outline" className={ICON_BTN} onClick={onToggleToc}>
           <Icon name="list" size={18} />
@@ -113,10 +127,6 @@ export function ViewerTopBar({
           <Icon name="chevLeft" size={18} />
         </button>
       )}
-
-      <span className="flex items-center" aria-hidden="true">
-        <Brandmark size={18} />
-      </span>
 
       <span className="h-4 w-px bg-line" aria-hidden="true" />
 
@@ -169,6 +179,12 @@ export function ViewerTopBar({
           <Icon name="share" size={14} />
           Share
         </button>
+      )}
+
+      {/* S-007 (AS-016): the guest identity chip — session name + Rename, sitting NEXT TO the Sign in
+          CTA. Present only for a guest commenter (the caller passes it only then). */}
+      {guestIdentity && (
+        <GuestIdentityChip name={guestIdentity.name} onRename={guestIdentity.onRename} />
       )}
 
       {/* AS-029: the anonymous Sign in CTA — the doc's primary action for a signed-out visitor,

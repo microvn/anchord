@@ -42,6 +42,8 @@ const LABEL_HUE = "#cbb24a"; // gold (all labels + like)
 // it never false-flags iframe-resident anchors "couldn't place" (a fresh `[]` each render would
 // re-run the placer effect every commit; this identity-stable const keeps the single-place guarantee).
 const EMPTY_PLACEABLE: PlaceableAnnotation[] = [];
+import { useGuestIdentity } from "@/features/viewer/hooks/use-guest-identity";
+import { GuestIdentityChip } from "./guest-identity-chip";
 import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
 import { useDraggable } from "@/features/viewer/hooks/use-draggable";
 import { useCompose, peelCommentId } from "@/features/viewer/hooks/use-compose";
@@ -269,6 +271,12 @@ function ViewerShell({
 }) {
   const { drawerMode, tocDrawer } = useViewerLayoutMode();
   const navigate = useNavigate();
+
+  // S-007 (AS-016 / C-007): the session-stable guest identity — ONE random name for the whole
+  // viewing session (sessionStorage-backed; survives reload + in-tab nav, NOT re-rolled per composer).
+  // Shown as the top-bar GuestIdentityChip (next to Sign in) and ridden up on every guest comment.
+  // The hook always runs (Rules of Hooks); its name is only SURFACED when this is a guest session.
+  const guestIdentity = useGuestIdentity();
 
   // The scrollable doc pane is both the scroll-spy container, the TOC heading source, AND the
   // highlight host for S-003. A callback ref re-derives once the content mounts (and on new doc).
@@ -505,6 +513,8 @@ function ViewerShell({
         quote={compose.quote}
         pending={compose.pending}
         guest={guest}
+        // S-007 (AS-017): the session name rides up on send; the composer shows no name field.
+        guestName={guest ? guestIdentity.name : undefined}
         // S-003 (C-003): a Like opens the composer pre-filled "Looks good" (editable); a plain
         // Comment opens empty. The pre-fill is carried from useCompose's startLike.
         initialBody={compose.composeInitialBody}
@@ -549,6 +559,9 @@ function ViewerShell({
           onOverflow={() => toast("More actions")}
           anonymous={anonymous}
           onSignIn={onSignIn}
+          // S-007 (AS-016): a guest's session identity chip — session name + Rename, shown next to
+          // the Sign in CTA. Only for a guest (anon + can-comment); a member/viewer-anon gets none.
+          guestIdentity={guest ? { name: guestIdentity.name, onRename: guestIdentity.rename } : undefined}
         />
       ) : (
         // Loading / not-found / error states have no doc yet → a minimal title-only bar.
@@ -818,6 +831,7 @@ function InlineComposerPopover({
   quote,
   pending,
   guest,
+  guestName,
   initialBody,
   onSend,
   onCancel,
@@ -826,6 +840,8 @@ function InlineComposerPopover({
   quote: string;
   pending?: boolean;
   guest?: boolean;
+  /** S-007 (AS-016/017): the session-stable guest name that rides up on send (no in-composer field). */
+  guestName?: string;
   /** S-003 (C-003): the composer's pre-filled body — "Looks good" for a Like, empty for a Comment. */
   initialBody?: string;
   onSend: (body: string, guestIdentity?: { guestName: string }) => void;
@@ -854,6 +870,7 @@ function InlineComposerPopover({
         quote={quote}
         pending={pending}
         guest={guest}
+        guestName={guestName}
         initialBody={initialBody}
         onSend={onSend}
         onCancel={onCancel}

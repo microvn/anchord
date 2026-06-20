@@ -31,12 +31,13 @@ function autoSizeTextarea(el: HTMLTextAreaElement): void {
 // as markdown. Comment bodies are PLAINTEXT in v0, so there is NO "Markdown supported" hint — a
 // neutral hint is shown instead.
 //
-// S-005 (guest commenting): when the read side surfaces a guest session (`guest`), the composer
-// shows a GuestNameField — a random "Anonymous <Animal>" name assigned for the session (AS-009)
-// with a Rename control and an editable name input (length/charset-limited, C-008.T3). No email
-// field (AS-017). Send is gated on a non-empty guest name (AS-011/C-007); the name rides to
-// addComment alongside the body (AS-010). The FE only CONSUMES the guest flag — whether a guest can
-// comment is decided by the anyone-with-link role, owned by sharing-permissions, not here.
+// S-007 (guest commenting, AS-017): when the read side surfaces a guest session (`guest`), the
+// composer shows NO name field and NO email field. The guest's identity is the SESSION name owned by
+// `useGuestIdentity` and shown in the top-bar `GuestIdentityChip` (AS-016); it is passed in here as
+// `guestName` and rides up with the comment on send (the composer no longer owns or re-rolls the
+// name). Send is gated on a non-empty body (and, for a guest, the session name — which the hook
+// guarantees non-empty). The FE only CONSUMES the guest flag — whether a guest can comment is decided
+// by the anyone-with-link link role, owned by sharing-permissions, not here.
 
 // GUEST_NAMES — the "Anonymous <Animal>" pool (prototype `viewer-data.jsx`). One is assigned per
 // session on open (AS-009); Rename cycles to the next.
@@ -64,18 +65,6 @@ export function nextGuestName(current: string): string {
 }
 
 /**
- * Input-time guest-name guard: strip angle brackets + control chars and clamp to GUEST_NAME_MAX,
- * but do NOT trim (so a user can type interior/trailing spaces while editing — "Anonymous Lynx").
- * The store/display value is still `sanitizeGuestName` (trimmed) when the comment is sent.
- */
-function sanitizeGuestNameInput(raw: string): string {
-  return raw
-    // eslint-disable-next-line no-control-regex
-    .replace(/[<>\x00-\x1f\x7f]/g, "")
-    .slice(0, GUEST_NAME_MAX);
-}
-
-/**
  * Make a guest-entered name safe to STORE and DISPLAY (C-008.T3): trim, strip angle brackets +
  * control characters (charset-limited — an inert plaintext label, never HTML), and truncate to
  * GUEST_NAME_MAX (over-long names truncated, AS-012.T2). Rendering is still done via React children
@@ -93,6 +82,7 @@ export function Composer({
   quote,
   pending,
   guest,
+  guestName,
   initialBody,
   onSend,
   onCancel,
@@ -107,10 +97,13 @@ export function Composer({
   initialBody?: string;
   /** true while the create write is in flight — disables Send (optimistic UI is in the rail). */
   pending?: boolean;
-  /** S-005: this is a guest session (consumed from the read side). Shows the GuestNameField + gates
-   *  Send on a non-empty name. Absent/false → a logged-in member: body-only send, no name field. */
+  /** S-007: this is a guest session (consumed from the read side). The composer shows NO name/email
+   *  field (AS-017); the SESSION name rides up on send. Absent/false → a logged-in member: body-only. */
   guest?: boolean;
-  /** S-005: a guest passes its self-entered name up alongside the body (AS-010). No email (AS-017). */
+  /** S-007 (AS-016/017): the session-stable guest display name (from useGuestIdentity / the top-bar
+   *  chip). Rides up with the comment on send when `guest` is true. Ignored for a member. */
+  guestName?: string;
+  /** S-007 (AS-017): a guest send carries the session name up alongside the body. No email. */
   onSend: (body: string, guestIdentity?: { guestName: string }) => void;
   onCancel: () => void;
   /** #2 (2026-06-12): when the composer is a draggable inline popover, these props turn the quote-ref
@@ -124,9 +117,10 @@ export function Composer({
   // (editable). A plain Comment passes no initialBody → empty. The seed runs once on mount (the
   // composer is remounted per pending selection), so an edit isn't clobbered by a re-render.
   const [body, setBody] = useState(initialBody ?? "");
-  // S-005: a random session name is assigned once on open (AS-009); the user may edit or Rename it.
-  const [guestName, setGuestName] = useState(() => randomGuestName());
-  const guestNameOk = !guest || sanitizeGuestName(guestName).length > 0;
+  // S-007 (AS-017): the composer no longer owns the guest name — it is the SESSION name from the
+  // top-bar chip (useGuestIdentity), passed in as `guestName` and guaranteed non-empty for a guest.
+  // Send is gated on a non-empty body (and, for a guest, the session name); no in-composer name input.
+  const guestNameOk = !guest || (guestName ?? "").trim().length > 0;
   const canSend = body.trim().length > 0 && guestNameOk && !pending;
 
   // Autofocus the comment textarea when the composer opens, with the caret at the END so a
@@ -152,8 +146,10 @@ export function Composer({
   // disabled button) so an early Shift+Enter can't post an empty/in-flight comment.
   const submit = () => {
     if (!canSend) return;
+    // S-007 (AS-017): a guest carries the SESSION name (sanitized-safe at the source); a member sends
+    // body-only. The session name is guaranteed non-empty by the gate above.
     if (guest) {
-      onSend(body.trim(), { guestName: sanitizeGuestName(guestName) });
+      onSend(body.trim(), { guestName: sanitizeGuestName(guestName ?? "") });
     } else {
       onSend(body.trim());
     }
@@ -164,39 +160,8 @@ export function Composer({
       data-testid="composer"
       className="rounded-md border border-accent bg-paper p-[11px] ring-[3px] ring-accent-soft"
     >
-      {/* S-005 GuestNameField (guest only): a `?` avatar disc, the editable session name, and a
-          Rename control that cycles the random pool (AS-009). NO email field (AS-017) — guest
-          identity is the name only. The name is length/charset-limited on input (C-008.T3) — the
-          value layer never holds HTML/control chars. Matches the prototype `.guest-id` look. */}
-      {guest && (
-        <div data-testid="guest-id" className="mb-[9px]">
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className="flex h-6 w-6 flex-none items-center justify-center rounded-full border border-line bg-sunken text-[12px] text-subtle"
-            >
-              ?
-            </span>
-            <input
-              data-testid="guest-name"
-              aria-label="Your name"
-              value={guestName}
-              maxLength={GUEST_NAME_MAX}
-              onChange={(e) => setGuestName(sanitizeGuestNameInput(e.target.value))}
-              placeholder="Your name"
-              className="min-w-0 flex-1 rounded-[5px] border border-line bg-surface px-2 py-1 text-[12px] font-semibold text-ink outline-none focus:border-accent"
-            />
-            <button
-              type="button"
-              data-testid="guest-rename"
-              onClick={() => setGuestName(nextGuestName(guestName))}
-              className="flex-none cursor-pointer text-[11px] font-semibold text-accent hover:text-accent-strong"
-            >
-              Rename
-            </button>
-          </div>
-        </div>
-      )}
+      {/* S-007 (AS-017): NO guest name/email field here — the guest's identity is the session name
+          from the top-bar GuestIdentityChip (useGuestIdentity), which rides up on send. */}
 
       {/* PendingQuoteRef + drag handle (#2): the HEADER row carries the inert quote, a close ✕, and
           — when mounted as a draggable inline popover — the drag handle. Grab the header (NOT the
@@ -248,10 +213,11 @@ export function Composer({
       />
 
       <div className="mt-2 flex items-center justify-between gap-2">
-        {/* Hint: "Name required" when a guest has no name yet (AS-011/C-007); otherwise the neutral
-            plaintext hint — NOT "Markdown supported" (C-008: bodies are plaintext in v0). */}
+        {/* Hint: the neutral plaintext hint — NOT "Markdown supported" (C-008: bodies are plaintext
+            in v0). S-007: a guest's session name is supplied by the header chip, so there is no more
+            "name required" state in the composer. */}
         <span data-testid="composer-hint" className="text-[11px] text-subtle">
-          {guest && !guestNameOk ? "Name required to comment" : "Plain text only"}
+          Plain text only
         </span>
         <button
           type="button"
