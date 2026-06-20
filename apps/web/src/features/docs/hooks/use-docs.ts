@@ -205,7 +205,8 @@ export function useProjectDocs(workspaceId: string, projectId: string) {
 }
 
 export interface WorkspaceDocs {
-  /** Active projects, each annotated with its WHOLE-workspace accessible-doc count. */
+  /** The active-project list (id + name) — for the move/copy picker + project-count stat. No
+   * per-project doc count rides this read (AS-024); the Projects browser counts via its own read. */
   projects: ProjectRow[];
   /** One PAGE of the browse-visible doc union, each annotated with its project name. */
   docs: DocRow[];
@@ -222,12 +223,12 @@ interface WorkspaceDocsResult {
 
 /**
  * The workspace-wide docs view: ONE backend read (S-008) returns the requested page of the
- * access-filtered doc union (each doc annotated with its project name), every active project with
- * its WHOLE-workspace accessible-doc count, and the page summary — replacing the old N+1 fan-out
- * (1 projects read + 1 read per project). `page` is part of the query key, so each page is its own
- * cache entry; the All-docs grid pages server-side 1:1 (one server page = one grid page). Counts
- * (the all-docs total, project-card counts, sidebar badge) come from `pagination.total` +
- * `projects[].docCount`, NOT `docs.length` (which is now just one page).
+ * access-filtered doc union (each doc annotated with its project name), the active-project list
+ * (id + name — for the move/copy picker + the project-count stat; NO per-project doc count, AS-024),
+ * and the page summary — replacing the old N+1 fan-out (1 projects read + 1 read per project).
+ * `page` is part of the query key, so each page is its own cache entry; the All-docs grid pages
+ * server-side 1:1 (one server page = one grid page). Counts (the all-docs total, sidebar badge)
+ * come from `pagination.total`, NOT `docs.length` (which is now just one page).
  */
 export function useWorkspaceDocs(workspaceId: string, page = 1) {
   return useQuery<WorkspaceDocs, ApiError>({

@@ -2,10 +2,11 @@
 // Proves the parts the route/unit tests deferred to a DB:
 //   AS-023 — workspaceDocs returns the union across the workspace's ACTIVE projects, each row
 //            joined to its project name, ordered most-recently-updated first.
-//   AS-024 — counts fall out of the SAME union read (no per-project query).
+//   AS-024 — the active-project span (id + name) falls out of the SAME union read (no per-project
+//            query); NO per-project doc count is computed (unused — corrected 2026-06-21).
 //   AS-026 — access filtering (C-003, via filterBrowsableDocs, the SAME filter the per-project
-//            browse uses) drops out-of-access docs before paging/counting: a restricted doc the
-//            caller is NOT invited to never appears in the union page, the total, or a count.
+//            browse uses) drops out-of-access docs before paging/the total: a restricted doc the
+//            caller is NOT invited to never appears in the union page or the total.
 // An ARCHIVED project's docs are excluded from the union (the inner join is active-only).
 //
 // Run: RUN_INTEGRATION=1 bun test ./test/integration/workspace-docs.itest.ts
@@ -132,7 +133,7 @@ describe.skipIf(!RUN)("workspace-project S-008: workspace-wide docs union (real 
     expect(visible.length).toBe(3);
   });
 
-  test("AS-024: the owner A sees all 4 active-project docs (Alpha 3, Beta 1) from the one read", async () => {
+  test("AS-024: the active-project span (id + name) falls out of the one union read — Alpha + Beta, no per-project count", async () => {
     const ctx = createProjectsRouteRepo(h.db);
     const union = await ctx.workspaceDocs(WS);
     const visible = (await filterBrowsableDocs(A, union, {
@@ -140,9 +141,12 @@ describe.skipIf(!RUN)("workspace-project S-008: workspace-wide docs union (real 
       isWorkspaceMember: () => Promise.resolve(true),
     })) as WorkspaceDocRow[];
     expect(visible.length).toBe(4); // A owns all, including the restricted Doc3
-    const counts = new Map<string, number>();
-    for (const v of visible) counts.set(v.projectName, (counts.get(v.projectName) ?? 0) + 1);
-    expect(counts.get("Alpha")).toBe(3);
-    expect(counts.get("Beta")).toBe(1);
+    // The union carries each doc's project id + name — the active-project list (id + name) the
+    // route surfaces is derivable from the same read; the two active projects are Alpha + Beta.
+    const span = new Map(visible.map((v) => [v.projectId, v.projectName]));
+    expect(new Set(span.values())).toEqual(new Set(["Alpha", "Beta"]));
+    expect([pActive1, pActive2].every((id) => span.has(id))).toBe(true);
+    // The union rows carry NO per-project doc count field (it was unused, dropped 2026-06-21).
+    for (const v of visible) expect((v as any).docCount).toBeUndefined();
   });
 });

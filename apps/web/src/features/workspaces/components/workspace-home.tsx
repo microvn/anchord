@@ -33,7 +33,8 @@ export function WorkspaceHome() {
   const docs = docsQuery.data?.docs ?? [];
   const projects = docsQuery.data?.projects ?? [];
   // The Docs count is the WHOLE-workspace accessible total (pagination.total), NOT docs.length —
-  // which is now just one page. Per-project counts ride on projects[].docCount (same one read).
+  // which is now just one page. The Projects stat is projects.length (the active-project list);
+  // this read carries no per-project doc count (AS-024).
   const totalDocs = docsQuery.data?.pagination?.total ?? docs.length;
   const memberCount = isAdmin ? membersQuery.data?.members?.length : undefined;
 

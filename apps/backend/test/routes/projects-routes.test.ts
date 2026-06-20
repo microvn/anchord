@@ -510,7 +510,7 @@ describe("/api/w/:id/docs workspace-wide read (workspace-project S-008)", () => 
     });
   });
 
-  test("AS-024: the same response carries per-project docCount + workspace total, from the one read", async () => {
+  test("AS-024: the same response carries the active-project list (id + name) + workspace total, NO per-project docCount", async () => {
     const f = fakeRepo([
       { id: "pA", workspaceId: WS, name: "Alpha", ownerId: "u_a", isDefault: false, archivedAt: null },
       { id: "pB", workspaceId: WS, name: "Beta", ownerId: "u_a", isDefault: false, archivedAt: null },
@@ -524,14 +524,15 @@ describe("/api/w/:id/docs workspace-wide read (workspace-project S-008)", () => 
     const app = buildApp(asUser("u_a"), f.repo, fakeCtx({ workspaceDocs: union }));
     const res = await app.handle(req("GET", "/api/w/ws_1/docs?limit=18"));
     const json = (await res.json()) as any;
-    const count = (id: string) => json.data.projects.find((p: any) => p.id === id)?.docCount;
-    expect(count("pA")).toBe(5);
-    expect(count("pB")).toBe(4);
-    expect(count("pC")).toBe(3);
+    // The active-project list carries id + name (the move/copy picker + project-count stat).
+    expect(json.data.projects.map((p: any) => ({ id: p.id, name: p.name }))).toEqual([
+      { id: "pA", name: "Alpha" },
+      { id: "pB", name: "Beta" },
+      { id: "pC", name: "Gamma" },
+    ]);
+    // NO per-project doc count rides this read (unused — Projects browser counts via its own read).
+    for (const p of json.data.projects) expect(p.docCount).toBeUndefined();
     expect(json.data.pagination.total).toBe(12);
-    // The total equals the sum of the per-project counts (one read, consistent).
-    const sum = json.data.projects.reduce((a: number, p: any) => a + p.docCount, 0);
-    expect(sum).toBe(12);
   });
 
   test("AS-025: a later page returns its slice; requested page size honored up to cap 100", async () => {
@@ -555,7 +556,7 @@ describe("/api/w/:id/docs workspace-wide read (workspace-project S-008)", () => 
     expect(cappedJson.data.docs).toHaveLength(40); // all 40 fit under the 100 cap
   });
 
-  test("AS-026: access filtering before paging/counting — out-of-access docs absent from page, total, AND per-project counts", async () => {
+  test("AS-026: access filtering before paging and the total — out-of-access docs absent from page and total", async () => {
     // 50 docs: 22 accessible (anyone_in_workspace), 28 restricted with u_x uninvited → filtered out.
     // pA: 12 accessible + 18 restricted. pB: 10 accessible + 10 restricted.
     const f = fakeRepo([
@@ -578,13 +579,9 @@ describe("/api/w/:id/docs workspace-wide read (workspace-project S-008)", () => 
     const app = buildApp(asUser("u_x"), f.repo, fakeCtx({ workspaceDocs: union }));
 
     const page1 = (await (await app.handle(req("GET", "/api/w/ws_1/docs?limit=20"))).json()) as any;
-    // Total reflects only the 22 accessible docs, never 50.
+    // Total reflects only the 22 accessible docs, never 50 — filter runs before the total.
     expect(page1.data.pagination).toMatchObject({ total: 22, totalPages: 2, hasNext: true });
     expect(page1.data.docs).toHaveLength(20);
-    // Per-project counts reflect only accessible docs (pA 12, pB 10) — never the raw 30/20.
-    const count = (id: string) => page1.data.projects.find((p: any) => p.id === id)?.docCount;
-    expect(count("pA")).toBe(12);
-    expect(count("pB")).toBe(10);
 
     const page2 = (await (await app.handle(req("GET", "/api/w/ws_1/docs?page=2&limit=20"))).json()) as any;
     expect(page2.data.docs).toHaveLength(2);

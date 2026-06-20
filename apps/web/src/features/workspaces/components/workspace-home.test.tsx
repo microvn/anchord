@@ -31,7 +31,7 @@ mock.module("@/features/workspaces/services/client", () => ({
 
 // ---- features/docs/client (projects + docs + search + publish) ----
 // S-008: WorkspaceHome reads the SINGLE workspace-docs endpoint (fetchWorkspaceDocs) — one page of
-// the doc union + per-project docCount + the workspace `pagination.total`. We mock that one thunk;
+// the doc union + the active-project list (id + name) + the workspace `pagination.total`. We mock that one thunk;
 // fetchProjects/fetchProjectDocs stay declared (process-global mock surface) but are no longer
 // called by useWorkspaceDocs.
 let workspaceDocs: unknown;
@@ -52,10 +52,11 @@ mock.module("@/features/docs/services/client", () => ({
   copyDoc: mock(async () => env({ docId: "d2", slug: "s2", projectId: "p1" })),
 }));
 
-/** Build the workspace-docs envelope: docs page + per-project docCount + a pagination total. */
+/** Build the workspace-docs envelope: docs page + the active-project list (id + name; no
+ * per-project docCount, AS-024) + a pagination total. */
 function wsDocs(
   docs: Record<string, unknown>[],
-  projects: { id: string; name: string; isDefault: boolean; archived: boolean; docCount: number }[],
+  projects: { id: string; name: string; isDefault: boolean; archived: boolean }[],
   total = docs.length,
 ) {
   return env({
@@ -121,8 +122,8 @@ describe("workspace-project S-003 — workspace dashboard", () => {
         { id: "d3", slug: "rfc", title: "Render + publish pipeline RFC", kind: "html", projectId: "p2", projectName: "render-publish" },
       ],
       [
-        { id: "p1", name: "web-core", isDefault: true, archived: false, docCount: 2 },
-        { id: "p2", name: "render-publish", isDefault: false, archived: false, docCount: 1 },
+        { id: "p1", name: "web-core", isDefault: true, archived: false },
+        { id: "p2", name: "render-publish", isDefault: false, archived: false },
       ],
       3,
     );
@@ -153,7 +154,7 @@ describe("workspace-project S-003 — workspace dashboard", () => {
         { id: "d2", slug: "b", title: "B", kind: "markdown", annotationCount: 4, projectId: "p1", projectName: "web-core" },
         { id: "d3", slug: "c", title: "C", kind: "markdown", annotationCount: 3, projectId: "p1", projectName: "web-core" },
       ],
-      [{ id: "p1", name: "web-core", isDefault: true, archived: false, docCount: 3 }],
+      [{ id: "p1", name: "web-core", isDefault: true, archived: false }],
       3,
     );
 
@@ -170,7 +171,7 @@ describe("workspace-project S-003 — workspace dashboard", () => {
   it("a workspace with zero docs shows the EmptyState (not a doc list)", async () => {
     workspaceDocs = wsDocs(
       [],
-      [{ id: "p1", name: "default", isDefault: true, archived: false, docCount: 0 }],
+      [{ id: "p1", name: "default", isDefault: true, archived: false }],
       0,
     );
 

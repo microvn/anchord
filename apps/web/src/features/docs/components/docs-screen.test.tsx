@@ -95,7 +95,8 @@ const docRow = (d: Record<string, unknown>) => ({
   ...d,
 });
 
-/** Build the workspace-docs envelope: a page of docs + per-project docCount + a pagination total. */
+/** Build the workspace-docs envelope: a page of docs + the active-project list (id + name; no
+ * per-project docCount, AS-024) + a pagination total. */
 function wsDocs(
   docs: Record<string, unknown>[],
   opts: { total?: number; page?: number; limit?: number; projects?: Record<string, unknown>[] } = {},
@@ -105,7 +106,7 @@ function wsDocs(
   const page = opts.page ?? 1;
   return env({
     docs,
-    projects: opts.projects ?? [{ id: "p1", name: "web-core", isDefault: true, archived: false, docCount: total }],
+    projects: opts.projects ?? [{ id: "p1", name: "web-core", isDefault: true, archived: false }],
     pagination: {
       page,
       limit,
@@ -287,7 +288,7 @@ function pageOfDocs(page: number, limit: number, total: number) {
   });
   return env({
     docs,
-    projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false, docCount: total }],
+    projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }],
     pagination: {
       page,
       limit,

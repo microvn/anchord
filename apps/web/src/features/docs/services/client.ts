@@ -57,8 +57,9 @@ export function fetchProjectDocs(
 /**
  * GET /api/w/:workspaceId/docs?page=&limit= — the workspace-wide docs read (S-008). Returns, in
  * ONE response, a PAGE of the access-filtered doc union (each annotated with `projectId` +
- * `projectName`), every active project with its accessible-doc count (`docCount`), the workspace
- * total, and the page summary. Retires the old N+1 fan-out (1 projects read + 1 per project).
+ * `projectName`), the active-project list (id + name — for the move/copy picker + project-count
+ * stat; NO per-project doc count, AS-024), the workspace total, and the page summary. Retires the
+ * old N+1 fan-out (1 projects read + 1 per project).
  */
 export function fetchWorkspaceDocs(
   workspaceId: string,

@@ -258,10 +258,10 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
     // GET docs (workspace-wide) — the ACCESS-FILTERED union of docs across the workspace's
     // ACTIVE projects, in ONE read (S-008). Retires the FE N+1 fan-out (1 projects read + 1
     // per project). Returns the requested PAGE of the union (each doc annotated with its
-    // projectId + projectName), every active project with its accessible-doc count, and the
-    // workspace total — all from the same read. Access filtering (C-003) runs BEFORE paging
-    // AND counting (same filter as the per-project browse), so no out-of-access doc appears
-    // in `docs`, `total`, or any project's `docCount` (AS-026). Default page size 20, cap 100.
+    // projectId + projectName), the active-project list (id + name, for the move/copy picker
+    // + project-count stat — NO per-project doc count, AS-024), and the workspace total — all
+    // from the same read. Access filtering (C-003) runs BEFORE paging AND the total, so no
+    // out-of-access doc appears in `docs` or `total` (AS-026). Default page size 20, cap 100.
     .get("/api/w/:workspaceId/docs", async ({ actor, ws, query }) => {
       const page = browsePage.parse(query) as PaginationParams;
       // ONE union pass (repo joins docs → active projects + browse columns; no per-project loop).
@@ -276,16 +276,14 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         isWorkspaceMember: () => Promise.resolve(true),
       })) as WorkspaceDocRow[];
 
-      // Per-project accessible count — WHOLE-workspace (not page-scoped). Every ACTIVE project
-      // appears, even with 0 accessible docs (AS-024 lists each active project).
+      // Active-project list — WHOLE-workspace, every ACTIVE project (AS-024). This feeds the
+      // move/copy target picker + the project-count stat; it does NOT carry a per-project doc
+      // count (no consumer of this read renders one — the Projects browser shows per-project
+      // counts via its own useProjectsBrowse read).
       const activeProjects = await listProjects(
         { workspaceId: ws.workspaceId, includeArchived: false },
         { repo },
       );
-      const countByProject = new Map<string, number>();
-      for (const v of visible) {
-        countByProject.set(v.projectId, (countByProject.get(v.projectId) ?? 0) + 1);
-      }
 
       // Paginate AFTER the access filter (C-003): total = accessible union size; page slice
       // off the updated-desc-ordered union.
@@ -311,13 +309,14 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
           projectId: d.projectId,
           projectName: d.projectName,
         })),
-        // S-008/AS-024: every active project with its accessible-doc count, from the same read.
+        // S-008/AS-024: the active-project list (id + name) from the same read — for the
+        // move/copy target picker + the project-count stat. NO per-project doc count (unused).
+        // isDefault/archived ride along so the picker can badge the default; the count does not.
         projects: activeProjects.map((p) => ({
           id: p.id,
           name: p.name,
           isDefault: p.isDefault,
           archived: p.archivedAt != null,
-          docCount: countByProject.get(p.id) ?? 0,
         })),
         pagination: buildPagination({ page: page.page, limit: page.limit, total }),
       };
