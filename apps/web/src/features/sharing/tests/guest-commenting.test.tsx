@@ -186,12 +186,12 @@ describe("Guest commenting S-005", () => {
     await userEvent.click(within(composer).getByTestId("composer-send"));
 
     // C-018: the guest comment now rides the SAME atomic createAnnotation `comment` payload (no
-    // separate addComment). It carries the guest name (email optional → undefined), no userId.
+    // separate addComment). It carries the guest name only — NO email (AS-017, 2026-06-20) — no userId.
     await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
-    const comment = (createAnnotation.mock.calls[0]![1] as { comment: { body: string; guestName?: string; guestEmail?: string } }).comment;
+    const comment = (createAnnotation.mock.calls[0]![1] as { comment: { body: string; guestName?: string } }).comment;
     expect(comment.body).toBe("Why 24h?");
     expect(comment.guestName).toBe("Lan");
-    expect(comment.guestEmail ?? "").toBe(""); // optional — not provided
+    expect("guestEmail" in comment).toBe(false); // AS-017: no email collected or sent
     expect(addComment).not.toHaveBeenCalled();
 
     // It appears in the thread under the guest name.

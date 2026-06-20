@@ -180,12 +180,11 @@ export interface CreateAnchor {
 }
 
 /** C-018: the OPTIONAL first comment carried on the unified create. A member sends only `body`; a
- *  guest adds its self-entered `guestName` (+ optional `guestEmail`). Body+name are sanitized
+ *  guest adds its self-entered `guestName` (name only — no email, AS-017). Body+name are sanitized
  *  SERVER-side (C-008). Omit for a commentless highlight. */
 export interface CreateCommentPayload {
   body: string;
   guestName?: string;
-  guestEmail?: string;
 }
 
 /** S-006 (AS-014) / C-018: the OPTIONAL suggestion payload — `from` is the pinned span; omit `to`
@@ -234,7 +233,6 @@ export interface AddCommentBody {
   body: string;
   parentId?: string;
   guestName?: string;
-  guestEmail?: string;
 }
 
 export interface AddCommentResult {

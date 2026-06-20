@@ -370,8 +370,6 @@ export const comments = pgTable(
     // The signed-in author; NULL for a guest comment (S-007), which carries guestName.
     authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
     guestName: text("guest_name"),
-    // Optional email a guest may supply with a comment (S-007 / AS-017). NULL when absent.
-    guestEmail: text("guest_email"),
     body: text("body").notNull(),
     createdAt: createdAt(),
     // updated_at (annotation-core C-017): mutation watermark on the comment row itself.

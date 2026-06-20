@@ -169,14 +169,13 @@ export interface NewAnnotation {
 /**
  * C-018: the already-sanitized first comment to persist ATOMICALLY with the annotation in ONE
  * transaction. `body` is the inert plaintext (sanitized at the service boundary, C-008); a guest
- * carries a cleaned `guestName` (+ optional `guestEmail`) and a null `authorId`; a member carries
+ * carries a cleaned `guestName` (no email — AS-017) and a null `authorId`; a member carries
  * `authorId` and no guest fields. A commentless create (future pure highlight) omits this entirely.
  */
 export interface NewFirstComment {
   body: string;
   authorId: string | null;
   guestName: string | null;
-  guestEmail?: string | null;
 }
 
 /**
@@ -282,13 +281,12 @@ export async function createAnnotation(
 }
 
 /** The first comment the unified create may carry (C-018). A member supplies only `body`; a guest
- *  supplies `body` + `guestName` (+ optional `guestEmail`). Identity (authorId/null) is decided by
+ *  supplies `body` + `guestName` (no email — AS-017). Identity (authorId/null) is decided by
  *  the service from the session, never the body. Omit `comment` for a commentless highlight. */
 export interface FirstCommentInput {
   body: string;
-  /** S-007 (AS-017): a guest's self-entered name (+ optional email). Absent for a member. */
+  /** S-007 (AS-017): a guest's self-entered name (name only, no email). Absent for a member. */
   guestName?: string;
-  guestEmail?: string;
 }
 
 /** S-006 (AS-014): the suggestion payload the unified create may carry, subsuming the standalone
@@ -380,9 +378,6 @@ export async function createAnnotationWithComment(
       body: sanitizeInert(comment.body), // C-008/AS-019: stored inert.
       authorId: authorId ?? null,
       guestName,
-      ...(isGuest && comment.guestEmail != null && comment.guestEmail.trim().length > 0
-        ? { guestEmail: comment.guestEmail.trim() }
-        : {}),
     };
   }
 

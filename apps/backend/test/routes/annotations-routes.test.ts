@@ -770,19 +770,20 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
     expect(res.status).toBe(403);
   });
 
-  test("AS-017: guest comment (no session) with name + email → 201", async () => {
+  test("AS-017: guest comment (no session) with name only — NO email collected or stored → 201", async () => {
     const gr = fakeGuestCommentRepo();
     const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr });
     const res = await app.handle(
       req("/api/w/ws_1/annotations/ann_1/comments", {
         method: "POST",
-        body: JSON.stringify({ body: "guest here", guestName: "Anon Fox", guestEmail: "fox@example.com" }),
+        body: JSON.stringify({ body: "guest here", guestName: "Anon Fox" }),
       }),
     );
     expect(res.status).toBe(201);
     expect(gr.calls.inserts[0]?.guestName).toBe("Anon Fox");
-    expect(gr.calls.inserts[0]?.guestEmail).toBe("fox@example.com");
     expect(gr.calls.inserts[0]?.authorId).toBeNull();
+    // AS-017 (2026-06-20): no email field ever reaches the repo.
+    expect("guestEmail" in (gr.calls.inserts[0] ?? {})).toBe(false);
   });
 
   test("AS-019: guest body sanitized inert (script stripped)", async () => {

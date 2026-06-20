@@ -9,10 +9,10 @@ import {
 import { ANON_ANIMALS } from "../sharing/anon-identity";
 
 // annotation-core S-007 — guest commenting. A logged-out viewer gets a random anon
-// name (AS-016), comments with a name + optional email stored guest_name / author_id
-// null (AS-017), and any HTML in body/guest_name is sanitized inert with the name
-// length-capped (AS-019/C-008). Pure logic against a fake GuestCommentRepo (mirrors
-// reply.test.ts).
+// name (AS-016), comments under that name ONLY — NO email is collected or stored —
+// stored guest_name / author_id null (AS-017), and any HTML in body/guest_name is
+// sanitized inert with the name length-capped (AS-019/C-008). Pure logic against a fake
+// GuestCommentRepo (mirrors reply.test.ts).
 //
 // NOTE (sharing reversal 2026-06-20): there is NO guest-commenting toggle. An anon on an
 // anyone_with_link + commenter+ doc is authorized to comment by the LINK ROLE alone (the
@@ -45,13 +45,12 @@ test("AS-016: a logged-out viewer is assigned a random name (reuse generateAnonN
   }
 });
 
-test("AS-017: guest comment stored with guest_name 'Lan', author_id empty, email optional-and-stored — NO toggle required (link role is the grant)", async () => {
+test("AS-017: guest comment stored with guest_name 'Lan', author_id empty, NO email collected or stored — NO toggle required (link role is the grant)", async () => {
   const repo = fakeRepo();
   const res = await createGuestComment(
     {
       annotationId: "ann-1",
       guestName: "Lan",
-      email: "lan@example.com",
       body: "looks good to me",
     },
     repo,
@@ -59,22 +58,12 @@ test("AS-017: guest comment stored with guest_name 'Lan', author_id empty, email
 
   expect(res).toEqual({ created: true, id: "c-1" });
   expect(repo.inserted).toHaveLength(1);
-  const row = repo.inserted[0];
+  const row = repo.inserted[0]!;
   expect(row.guestName).toBe("Lan"); // AS-017: the entered name
   expect(row.authorId).toBeNull(); // AS-017: author_id empty (no account)
   expect(row.parentId).toBeNull(); // top-level comment on the annotation
-  expect(row.guestEmail).toBe("lan@example.com"); // optional email stored when given
-});
-
-test("AS-017: the email is OPTIONAL — a guest comment with no email still stores (guestEmail absent)", async () => {
-  const repo = fakeRepo();
-  const res = await createGuestComment(
-    { annotationId: "ann-1", guestName: "Lan", body: "no email here" },
-    repo,
-  );
-  expect(res.created).toBe(true);
-  expect(repo.inserted[0].guestName).toBe("Lan");
-  expect(repo.inserted[0].guestEmail).toBeUndefined(); // not required, not stored
+  // AS-017 (2026-06-20): guest identity is the NAME ONLY — no email field is ever stored.
+  expect("guestEmail" in row).toBe(false);
 });
 
 test("C-007: guest comments REQUIRE a name — empty / whitespace-only name is rejected, nothing persisted", async () => {
@@ -97,7 +86,7 @@ test("C-007: guest comments REQUIRE a name — empty / whitespace-only name is r
 
 test("AS-017: NO guest-commenting toggle exists — a valid guest comment is created without any toggle precondition (the bug fix)", async () => {
   // Regression for the live bug: the guest comment used to be gated by a never-emitted toggle.
-  // createGuestComment now accepts only { annotationId, guestName, email?, body } — a valid name
+  // createGuestComment now accepts only { annotationId, guestName, body } — a valid name
   // + body is created purely on its own merits (the route already authorized via the link role).
   const repo = fakeRepo();
   const res = await createGuestComment(

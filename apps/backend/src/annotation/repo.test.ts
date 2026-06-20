@@ -158,7 +158,6 @@ describe("C-017: updated_at is bumped at every annotation mutation site", () => 
       parentId: null,
       authorId: null,
       guestName: "Guest",
-      guestEmail: "g@example.com",
       body: "guest reply",
     });
     expect(inserts).toHaveLength(1);

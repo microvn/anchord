@@ -2,7 +2,7 @@
 // annotation-core repos driven through the real service functions against a REAL
 // Postgres. This is the glue the unit suite deferred behind fake repos — here we prove
 // the full lifecycle round-trips through actual rows: create annotation → reply →
-// resolve/reopen → guest comment (with the just-added guest_email column) → suggestion
+// resolve/reopen → guest comment (name only — no email, AS-017) → suggestion
 // create/decide. Mirrors version-repo.itest.ts.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -312,7 +312,7 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
     expect(row.status).toBe("unresolved");
   });
 
-  test("S-007: createGuestComment persists null authorId + guest_email end-to-end", async () => {
+  test("S-007: createGuestComment persists null authorId + guest_name (no email) end-to-end", async () => {
     const docId = await newDoc(h);
     const annRepo = createAnnotationRepo(h.db);
     const guestRepo = createGuestCommentRepo(h.db);
@@ -328,7 +328,6 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
       {
         annotationId: annId,
         guestName: "Visiting Otter",
-        email: "otter@example.com",
         body: "a guest note",
       },
       guestRepo,
@@ -339,14 +338,12 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
       .select({
         authorId: comments.authorId,
         guestName: comments.guestName,
-        guestEmail: comments.guestEmail,
         body: comments.body,
       })
       .from(comments)
       .where(eq(comments.id, guest.created ? guest.id : ""));
     expect(row.authorId).toBeNull(); // AS-017: no account.
-    expect(row.guestName).toBe("Visiting Otter");
-    expect(row.guestEmail).toBe("otter@example.com"); // the just-added column, proven live.
+    expect(row.guestName).toBe("Visiting Otter"); // AS-017: name only — no email column.
     expect(row.body).toBe("a guest note");
   });
 

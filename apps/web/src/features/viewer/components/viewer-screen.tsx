@@ -798,7 +798,7 @@ function InlineComposerPopover({
   guest?: boolean;
   /** S-003 (C-003): the composer's pre-filled body — "Looks good" for a Like, empty for a Comment. */
   initialBody?: string;
-  onSend: (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => void;
+  onSend: (body: string, guestIdentity?: { guestName: string }) => void;
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);

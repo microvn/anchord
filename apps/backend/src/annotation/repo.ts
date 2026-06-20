@@ -85,7 +85,6 @@ export function createAnnotationRepo(db: DB): AnnotationRepo {
             parentId: null,
             authorId: comment.authorId,
             guestName: comment.guestName,
-            guestEmail: comment.guestEmail ?? null,
             body: comment.body,
           })
           .returning({ id: comments.id });
@@ -238,9 +237,8 @@ export function createCommentRepo(db: DB): CommentRepo {
 // ── S-007: guest comment (GuestCommentRepo extends CommentRepo) ─────────────
 
 /**
- * Construct a GuestCommentRepo — the CommentRepo widened to persist the optional
- * guest_email (S-007 / AS-017). A guest comment carries guestName + (optional) guestEmail
- * and a NULL authorId; the service already sanitizes the values.
+ * Construct a GuestCommentRepo (S-007 / AS-017). A guest comment carries guestName
+ * (name only — no email) and a NULL authorId; the service already sanitizes the values.
  */
 export function createGuestCommentRepo(db: DB): GuestCommentRepo {
   return {
@@ -259,7 +257,6 @@ export function createGuestCommentRepo(db: DB): GuestCommentRepo {
             parentId: input.parentId, // null — a guest comment is top-level.
             authorId: input.authorId, // AS-017: NULL, no account.
             guestName: input.guestName,
-            guestEmail: input.guestEmail ?? null, // AS-017: optional email when supplied.
             body: input.body,
           })
           .returning({ id: comments.id });

@@ -109,10 +109,10 @@ export interface ComposeApi {
    *  workspaceId is reachable (the workspace-scoped suggestion route is unreachable). */
   startRedline: () => void;
   dismissPopover: () => void;
-  /** S-005: a guest send carries its self-entered name + optional email (AS-010); a member send
-   *  omits `guestIdentity`. The fields ride to addComment alongside the body — no userId either way
-   *  (identity is the session cookie; a guest has none → guestName is its display label, C-010). */
-  send: (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => void;
+  /** S-005: a guest send carries its self-entered name (AS-010, name only — no email AS-017); a
+   *  member send omits `guestIdentity`. The name rides to addComment alongside the body — no userId
+   *  either way (identity is the session cookie; a guest has none → guestName is its display label). */
+  send: (body: string, guestIdentity?: { guestName: string }) => void;
   cancel: () => void;
   /** S-002: open the compose flow from an externally-supplied anchor (the HTML-sandbox bridge
    *  relays the selection over its port — the parent can't read the opaque iframe's selection).
@@ -285,6 +285,13 @@ export function useCompose(
       if (!get) return; // bridge path re-posts its own rect (TASK 3) — nothing to re-read here.
       const rect = get();
       if (!rect) return;
+      // A collapsed / cleared doc selection — e.g. focus moved into the composer textarea (autofocus
+      // on open) — yields a zero/origin rect. Re-placing from it would slam the popover to the
+      // top-left corner. This ALSO fires when the textarea scrolls its OWN content once the body
+      // overflows its rows (the capture-phase scroll listener catches that inner scroll). In both
+      // cases there is no real on-screen selection box to follow, so KEEP the current position
+      // (the user may also have dragged the card) instead of repositioning to garbage.
+      if (rect.top === 0 && rect.left === 0 && rect.bottom === 0 && rect.right === 0) return;
       if (isRectOutOfViewport(rect, viewport())) {
         // Only the floating selection popover auto-dismisses on scroll-out; the composer (the user
         // is mid-typing) stays mounted so an accidental scroll doesn't discard the draft.
@@ -552,7 +559,7 @@ export function useCompose(
   }, [slug, docPaneEl, redlineCtx, onCreatedAnnotation, currentUser?.id, currentUser?.name, canEditDoc]);
 
   const send = useCallback(
-    (body: string, guestIdentity?: { guestName: string; guestEmail?: string }) => {
+    (body: string, guestIdentity?: { guestName: string }) => {
       const anchor = active;
       if (!anchor || !slug || body.trim().length === 0) return;
       // S-003 (C-003): capture the label for THIS send (Like → "looks-good", Comment → none). Carried
@@ -674,15 +681,10 @@ export function useCompose(
             // label; the server validates it ∈ the preset set (AS-014 server-side). Omitted for a comment.
             ...(label ? { label } : {}),
             // C-018: the first comment rides the create. S-005 (AS-010): a guest posts under its
-            // self-entered name + optional email; a member posts body-only (identity = session cookie).
+            // self-entered name (name only — no email, AS-017); a member posts body-only (identity = session cookie).
             comment: {
               body,
-              ...(guestIdentity
-                ? {
-                    guestName: guestIdentity.guestName,
-                    ...(guestIdentity.guestEmail ? { guestEmail: guestIdentity.guestEmail } : {}),
-                  }
-                : {}),
+              ...(guestIdentity ? { guestName: guestIdentity.guestName } : {}),
             },
             // annotation-create-version-pin S-001 (AS-005): pin the create to the version the viewer
             // RENDERED. If an agent advanced the doc since, the server 409s and we keep the draft +

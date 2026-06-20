@@ -1,6 +1,6 @@
 // Guest commenting (annotation-core S-007). Someone opens an anyone-with-link doc
 // without an account: they view under a random anon name (AS-016), and when they
-// comment they enter a name + optional email (AS-017). Guest-supplied content is
+// comment they enter a name only — NO email is collected or stored (AS-017). Guest-supplied content is
 // UNTRUSTED — both body and guest_name are sanitized so any HTML/script renders
 // inert at the app origin, and the name is length/charset-limited (C-008/AS-019).
 //
@@ -61,8 +61,6 @@ export interface CreateGuestCommentInput {
   annotationId: string;
   /** The name the guest typed; REQUIRED and non-empty after cleaning (C-007). */
   guestName: string;
-  /** Optional — stored verbatim-ish if supplied, never required (AS-017). */
-  email?: string;
   body: string;
 }
 
@@ -72,7 +70,7 @@ export type CreateGuestCommentResult =
 
 /**
  * Create a guest comment (S-007). Stored with `guest_name` set and `author_id` NULL
- * (AS-017); `email` is optional and stored on the row only when given.
+ * (AS-017); NO email is collected or stored — guest identity is the name only.
  *
  * Authorization (Google-Docs model, sharing-permissions reversal 2026-06-20): there is
  * NO separate guest-commenting toggle — an anon caller is admitted to this path purely
@@ -93,7 +91,7 @@ export async function createGuestComment(
   input: CreateGuestCommentInput,
   repo: GuestCommentRepo,
 ): Promise<CreateGuestCommentResult> {
-  const { annotationId, guestName, email, body } = input;
+  const { annotationId, guestName, body } = input;
 
   // C-007: a guest comment REQUIRES a name. Clean first so an HTML-only / control-only
   // name (which sanitizes to empty) is correctly rejected, not stored as blank.
@@ -116,20 +114,16 @@ export async function createGuestComment(
     authorId: null, // AS-017: no account.
     guestName: cleanName, // AS-017: the entered name, cleaned (C-008).
     body: cleanBody,
-    // email is optional — only attach the key when supplied (AS-017).
-    ...(email != null && email.trim().length > 0 ? { guestEmail: email.trim() } : {}),
   });
   return { created: true, id };
 }
 
 /**
- * The CommentRepo (from reply.ts) extended with the optional guest email field. The
- * `comments` table carries a nullable guest_email alongside guest_name; addReply never
- * needed it, so it lives here as a widening of NewComment rather than changing reply.ts.
+ * The CommentRepo (from reply.ts) port for guest comments. A guest comment carries
+ * guest_name (+ a null author_id) — NO email field (AS-017, 2026-06-20). It is a
+ * type alias of NewComment rather than a widening; addReply never needed any guest field.
  */
-export interface NewGuestComment extends NewComment {
-  guestEmail?: string;
-}
+export type NewGuestComment = NewComment;
 
 export interface GuestCommentRepo extends CommentRepo {
   insertComment(input: NewGuestComment): Promise<{ id: string }>;

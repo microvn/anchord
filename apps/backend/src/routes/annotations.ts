@@ -322,7 +322,6 @@ const imageAnchorSchema = z.object({
 const firstCommentSchema = z.object({
   body: z.string(),
   guestName: z.string().optional(),
-  guestEmail: z.string().optional(),
 });
 
 /** S-006 (AS-014) / C-018: the optional suggestion payload — `from` pinned span, `to` omitted for a
@@ -362,7 +361,6 @@ const replySchema = z.object({
   body: z.string(),
   parentId: z.string().optional(),
   guestName: z.string().optional(),
-  guestEmail: z.string().optional(),
 });
 
 const resolutionSchema = z.object({
@@ -859,7 +857,6 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       {
         annotationId: params.id,
         guestName: body.guestName ?? "",
-        email: body.guestEmail,
         body: body.body,
       },
       guestCommentRepo,

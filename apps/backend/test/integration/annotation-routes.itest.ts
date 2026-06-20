@@ -180,7 +180,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
     const guestRes = await guestApp.handle(
       req(`/api/w/${WS}/annotations/${annId}/comments`, {
         method: "POST",
-        body: JSON.stringify({ body: "guest feedback", guestName: "Anon Otter", guestEmail: "otter@example.com" }),
+        body: JSON.stringify({ body: "guest feedback", guestName: "Anon Otter" }),
       }),
     );
     expect(guestRes.status).toBe(201);
@@ -188,8 +188,7 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
 
     const [row] = await h.db.select().from(comments).where(eq(comments.id, cid));
     expect(row.authorId).toBeNull();
-    expect(row.guestName).toBe("Anon Otter");
-    expect(row.guestEmail).toBe("otter@example.com");
+    expect(row.guestName).toBe("Anon Otter"); // AS-017: name only — no email column.
     expect(row.body).toBe("guest feedback");
   });
 

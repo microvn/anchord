@@ -71,6 +71,13 @@
       "when": 1781884811262,
       "tag": "0009_careless_warpath",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1781973557832,
+      "tag": "0010_omniscient_rictor",
+      "breakpoints": true
     }
   ]
 }
