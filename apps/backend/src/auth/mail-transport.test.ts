@@ -17,7 +17,8 @@ import type { EmailProvider } from "../config/env";
 // clients are INJECTED so we assert message→payload mapping WITHOUT real network.
 // Real network send = integration-verified-later.
 
-const msg: MailMessage = { to: "bob@x.com", subject: "Verify your email", body: "<a href='#'>click</a>" };
+// S-007: MailMessage carries `text` (v0 plain text) / `html` (Phase 2); `body` is gone.
+const msg: MailMessage = { to: "bob@x.com", subject: "Verify your email", text: "click here: https://app/x" };
 
 const resendCfg: EmailProvider = { kind: "resend", apiKey: "re_test_key" };
 const smtpCfg: EmailProvider = {
@@ -67,13 +68,23 @@ test("AS-012: Resend transport — draining the queue calls the Resend client wi
 
   expect(final.status).toBe("sent");
   expect(calls).toHaveLength(1);
-  // body → html mapping; from is the configured/default sender.
+  // S-007 / AS-019.T2: v0 maps `text` → text/plain, NOT html (the old behavior sent html).
   expect(calls[0]).toMatchObject({
     to: "bob@x.com",
     subject: "Verify your email",
-    html: "<a href='#'>click</a>",
+    text: "click here: https://app/x",
   });
+  expect(calls[0]!.html).toBeUndefined(); // plain text only — no HTML body in v0
   expect(typeof calls[0]!.from).toBe("string");
+});
+
+test("S-007 / AS-019.T2: an html-only MailMessage maps to html (Phase 2 drop-in path)", async () => {
+  // Forward-compat: when html is set the transport sends html (text/plain stays the v0 default).
+  const { client, calls } = fakeResend();
+  const transport = createMailTransport(resendCfg, { resendClient: client });
+  await transport.send({ to: "z@x.com", subject: "s", html: "<p>hi</p>" });
+  expect(calls[0]).toMatchObject({ html: "<p>hi</p>" });
+  expect(calls[0]!.text).toBeUndefined();
 });
 
 test("AS-012: Resend transport — a provider error surfaces as a thrown send (so the queue can retry/dead-letter)", async () => {
@@ -85,7 +96,7 @@ test("AS-012: Resend transport — a provider error surfaces as a thrown send (s
     },
   };
   const transport = createMailTransport(resendCfg, { resendClient: errClient });
-  const q = new MailQueue({ maxAttempts: 2 });
+  const q = new MailQueue({ maxAttempts: 2, retryDelayMs: 0 }); // S-007: fast retry, backoff tested in mail-queue
 
   const final = await q.send(msg, transport);
 
@@ -104,11 +115,13 @@ test("AS-012: SMTP transport — draining the queue calls nodemailer sendMail wi
 
   expect(final.status).toBe("sent");
   expect(calls).toHaveLength(1);
+  // SMTP transport likewise sends text/plain in v0 (regression: was html).
   expect(calls[0]).toMatchObject({
     to: "bob@x.com",
     subject: "Verify your email",
-    html: "<a href='#'>click</a>",
+    text: "click here: https://app/x",
   });
+  expect(calls[0]!.html).toBeUndefined();
 });
 
 test("AS-012: selector picks Resend when the config kind is resend, SMTP otherwise", async () => {
@@ -153,7 +166,8 @@ test("AS-012 / C-009: makeSendVerificationEmail enqueues a verification mail thr
 
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ to: "alice@x.com" });
-  expect(String(calls[0]!.html)).toContain("https://app/verify?t=abc"); // verify URL in the body
+  expect(String(calls[0]!.text)).toContain("https://app/verify?t=abc"); // verify URL in the plain-text body
+  expect(calls[0]!.html).toBeUndefined();
   expect(q.statusCounts().sent).toBe(1);
 });
 
@@ -167,8 +181,25 @@ test("AS-012 / C-009: sendInviteEmail enqueues an invite mail carrying the accep
 
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ to: "carol@x.com" });
-  expect(String(calls[0]!.html)).toContain(link); // email-independent accept-link in body
+  expect(String(calls[0]!.text)).toContain(link); // email-independent accept-link in plain-text body
+  expect(calls[0]!.html).toBeUndefined();
   expect(q.statusCounts().sent).toBe(1);
+});
+
+test("S-007: sendInviteEmail with appUrl makes the relative accept-link ABSOLUTE (latent-bug fix)", async () => {
+  const { client, calls } = fakeResend();
+  const transport = createMailTransport(resendCfg, { resendClient: client });
+  const q = new MailQueue();
+  const link = buildAcceptLink("inv_1", "tok_abc"); // relative: /invite/accept/...
+
+  await sendInviteEmail(q, transport, {
+    to: "carol@x.com",
+    acceptLink: link,
+    appUrl: "https://anchord.example.com",
+  });
+
+  // The body now carries an ABSOLUTE, clickable link (was a relative path before S-007).
+  expect(String(calls[0]!.text)).toContain(`https://anchord.example.com${link}`);
 });
 
 test("AS-012: empty recipient still maps through (transport does not silently drop) — edge", async () => {
@@ -176,6 +207,15 @@ test("AS-012: empty recipient still maps through (transport does not silently dr
   // still reach the client as an empty string, not be dropped, so a misuse is visible.
   const { client, calls } = fakeResend();
   const transport = createMailTransport(resendCfg, { resendClient: client });
-  await transport.send({ to: "", subject: "s", body: "b" });
-  expect(calls[0]).toMatchObject({ to: "", subject: "s", html: "b" });
+  await transport.send({ to: "", subject: "s", text: "b" });
+  expect(calls[0]).toMatchObject({ to: "", subject: "s", text: "b" });
+});
+
+test("S-007: a MailMessage with neither text nor html still sends a defined (empty text) body — edge", async () => {
+  // Defensive: a body-less message must reach the provider with a defined field, not undefined
+  // both, so a provider that requires one doesn't reject on a misuse.
+  const { client, calls } = fakeResend();
+  const transport = createMailTransport(resendCfg, { resendClient: client });
+  await transport.send({ to: "a@b.co", subject: "s" });
+  expect(calls[0]).toMatchObject({ text: "" });
 });

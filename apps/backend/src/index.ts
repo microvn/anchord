@@ -174,7 +174,7 @@ const sharingResolveDocRole = createResolveDocRole(db, {
 // queue (operator-visible), never surfaced to the replier — matching notifyOnReply's
 // best-effort contract.
 const notifyMail = {
-  enqueue(msg: { to: string; subject: string; body: string }): string {
+  enqueue(msg: { to: string; subject: string; text?: string; html?: string }): string {
     const id = mailQueue.enqueue(msg);
     // Fire-and-forget delivery; the queue handles retry/dead-letter. Swallow here so an
     // unhandled rejection can't crash the process (the reply already returned).
@@ -284,7 +284,7 @@ const app = createApp({
     isActiveMemberName: createIsActiveMemberName(db),
     // S-006: notify thread participants + doc owner on a reply (in-app row via the DB
     // notify repo + one email per recipient through the shared queue). Best-effort.
-    notify: { mail: notifyMail },
+    notify: { mail: notifyMail, appUrl: cfg.APP_URL },
   },
   // workspaces S-002/S-004: top-level workspace lifecycle + invitations.
   workspaces: {
@@ -295,7 +295,7 @@ const app = createApp({
     // reject landing link the FE consumes — through the SAME shared queue + transport the
     // verification mail uses. Fixes the live wiring gap where this dep was absent so the
     // route's optional `enqueueInvite?.(...)` silently no-op'd (201, no mail, no way in).
-    enqueueInvite: createEnqueueWorkspaceInvite(mailQueue, mailTransport),
+    enqueueInvite: createEnqueueWorkspaceInvite(mailQueue, mailTransport, cfg.APP_URL),
   },
   // workspaces S-003: top-level bootstrap (/api/me) + switch. The active workspace is the
   // login-default landing (C-005); read/written on the session row.

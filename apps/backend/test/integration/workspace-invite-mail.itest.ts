@@ -143,8 +143,8 @@ describe.skipIf(!RUN)("workspaces S-004 AS-009: invite enqueues mail (real Postg
     expect(sent).toHaveLength(1);
     expect(sent[0]!.to).toBe(email("bob"));
     expect(sent[0]!.subject).toContain("workspace");
-    expect(sent[0]!.body).toContain("/invite/workspace/");
+    expect(sent[0]!.text).toContain("/invite/workspace/");
     // The accept link in the mail points at the REAL invitation id (json.data.id).
-    expect(sent[0]!.body).toContain(json.data.id);
+    expect(sent[0]!.text).toContain(json.data.id);
   });
 });

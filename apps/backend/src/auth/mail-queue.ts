@@ -14,7 +14,14 @@
 export interface MailMessage {
   to: string;
   subject: string;
-  body: string;
+  /**
+   * Plain-text body. v0 fills ONLY this; the transport sends `text/plain` when `html` is
+   * absent (notifications-email S-007). Phase 2 adds `html` keeping `text` as the multipart
+   * fallback → a pure drop-in.
+   */
+  text?: string;
+  /** HTML body (Phase 2). When set, the transport prefers it. */
+  html?: string;
 }
 
 /** Injectable transport. The real one wraps SMTP; the fake one can throw to test retry. */
@@ -39,9 +46,22 @@ export interface MailQueueOptions {
   maxAttempts?: number;
   /** ID generator (injectable for deterministic tests). */
   idGen?: () => string;
+  /**
+   * Light backoff between retry attempts in `deliverWithRetry` (notifications-email S-007 /
+   * GAP-005: "2 attempts, ~5s apart"). Default ~5000ms. Set to 0 (or inject `sleep`) in tests
+   * so they never actually wait.
+   */
+  retryDelayMs?: number;
+  /**
+   * Injectable delay used between retries — defaults to a real `setTimeout` sleep. Tests pass a
+   * fake that records the requested delay (asserting ~5s) WITHOUT sleeping.
+   */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_MAX_ATTEMPTS = 3;
+/** GAP-005: one retry after ~5s, then dead-letter. */
+const DEFAULT_RETRY_DELAY_MS = 5000;
 
 /**
  * In-memory mail queue: enqueue, attempt delivery via an injectable transport,
@@ -54,10 +74,14 @@ const DEFAULT_MAX_ATTEMPTS = 3;
 export class MailQueue {
   private readonly maxAttempts: number;
   private readonly idGen: () => string;
+  private readonly retryDelayMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
   private readonly items = new Map<string, QueuedMail>();
 
   constructor(opts: MailQueueOptions = {}) {
     this.maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    this.retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+    this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     let seq = 0;
     this.idGen = opts.idGen ?? (() => `mail_${++seq}`);
   }
@@ -103,6 +127,13 @@ export class MailQueue {
     if (!item) throw new Error(`MailQueue: unknown message ${id}`);
     while (item.status !== "sent" && item.status !== "dead") {
       item = await this.attempt(id, transport);
+      // Light backoff (S-007 / GAP-005): after a FAILED attempt that is still retry-eligible,
+      // wait ~retryDelayMs before the next try. A `sent` or `dead` terminal state exits the
+      // loop first, so we never delay after the final attempt. The sleep is injectable so tests
+      // assert the ~5s delay without actually waiting.
+      if (item.status === "failed" && this.retryDelayMs > 0) {
+        await this.sleep(this.retryDelayMs);
+      }
     }
     return item;
   }

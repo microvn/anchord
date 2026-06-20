@@ -285,6 +285,8 @@ export interface AnnotationsRoutesDeps {
   notify?: {
     repo?: NotifyRepo;
     mail: MailEnqueuer;
+    /** notifications-email S-007: APP_URL so the reply email carries an absolute deep-link (C-013). */
+    appUrl?: string;
   };
 }
 
@@ -440,6 +442,8 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       ? {
           repo: deps.notify.repo ?? (deps.db ? createNotifyRepo(deps.db) : need("notify.repo")),
           mail: deps.notify.mail,
+          // S-007: forwarded so the reply email (high-signal) carries the absolute deep-link.
+          appUrl: deps.notify.appUrl,
         }
       : null;
 

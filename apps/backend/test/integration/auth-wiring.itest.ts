@@ -62,11 +62,15 @@ function setCookieToCookie(setCookie: string): string {
     .join("; ");
 }
 
-/** Pull the first http(s) URL out of a verify/invite mail body. */
-function urlFromBody(body: string): string {
-  const m = body.match(/href="([^"]+)"/);
-  if (!m) throw new Error(`no link found in mail body: ${body}`);
-  return m[1]!;
+/** Pull the first http(s) URL out of a verify/invite mail body (S-007: plain text now, no href). */
+function urlFromBody(body: string | undefined): string {
+  const text = body ?? "";
+  // Prefer an href if a future HTML body sets one; otherwise grab the first bare http(s) URL.
+  const href = text.match(/href="([^"]+)"/);
+  if (href) return href[1]!;
+  const bare = text.match(/https?:\/\/\S+/);
+  if (!bare) throw new Error(`no link found in mail body: ${text}`);
+  return bare[0]!;
 }
 
 describe.skipIf(!RUN)("auth wiring S-001/S-005: verification + invite-on-verify + accept-link (real Postgres)", () => {
@@ -139,7 +143,7 @@ describe.skipIf(!RUN)("auth wiring S-001/S-005: verification + invite-on-verify 
     const verifyMail = transport.sent.slice(before).find((m) => m.to === email && /verify/i.test(m.subject));
     expect(verifyMail).toBeDefined();
     // It carries a usable verify URL with a token (AS-012 — the deliverable artifact).
-    const url = urlFromBody(verifyMail!.body);
+    const url = urlFromBody(verifyMail!.text);
     expect(url).toContain("/verify-email");
     expect(url).toContain("token=");
 
@@ -162,7 +166,7 @@ describe.skipIf(!RUN)("auth wiring S-001/S-005: verification + invite-on-verify 
 
     // Verify via the real token captured from the verify mail.
     const verifyMail = transport.sent.slice(before).find((m) => m.to === email);
-    const url = new URL(urlFromBody(verifyMail!.body));
+    const url = new URL(urlFromBody(verifyMail!.text));
     const token = url.searchParams.get("token");
     expect(token).toBeTruthy();
     await verifyToken(token!);
@@ -201,7 +205,7 @@ describe.skipIf(!RUN)("auth wiring S-001/S-005: verification + invite-on-verify 
     const before = transport.sent.length;
     await signUp(bob);
     const verifyMail = transport.sent.slice(before).find((m) => m.to === bob);
-    const token = new URL(urlFromBody(verifyMail!.body)).searchParams.get("token")!;
+    const token = new URL(urlFromBody(verifyMail!.text)).searchParams.get("token")!;
     await verifyToken(token);
 
     // The invite is now ACTIVE, bound to Bob's user id, role editor on the doc.
@@ -278,7 +282,7 @@ describe.skipIf(!RUN)("auth wiring S-001/S-005: verification + invite-on-verify 
     const before = transport.sent.length;
     await signUp(email);
     const verifyMail = transport.sent.slice(before).find((m) => m.to === email);
-    const token = new URL(urlFromBody(verifyMail!.body)).searchParams.get("token")!;
+    const token = new URL(urlFromBody(verifyMail!.text)).searchParams.get("token")!;
     await verifyToken(token);
     const signIn = await app.handle(
       authPost("/api/auth/sign-in/email", { email, password: "correct horse battery staple" }),

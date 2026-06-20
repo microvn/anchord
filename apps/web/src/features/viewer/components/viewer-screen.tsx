@@ -348,6 +348,36 @@ function ViewerShell({
     htmlFrameRef.current?.postFocus(htmlFocusedId);
   }, [isHtml, htmlFocusedId]);
 
+  // notifications-email S-007 (C-013 / AS-024): the email deep-link is
+  // `{APP_URL}/d/{slug}#annotation-{id}` — landing here with that fragment must scroll to +
+  // highlight the target annotation, reusing the SAME in-app focus path a rail click takes
+  // (onFocusThread → setFocusedId + scrollToAnno). With no fragment, the viewer opens normally
+  // and nothing is focused. We fire ONCE per doc mount (a ref guard), waiting until the doc +
+  // the target mark have rendered so scrollToAnno actually finds it; `anno.count` re-runs the
+  // effect as the annotation list loads/places, and the guard prevents stealing focus afterward.
+  const deepLinkHandledRef = useRef(false);
+  const onFocusThread = anno.railProps.onFocusThread;
+  useEffect(() => {
+    if (!hasDoc || deepLinkHandledRef.current) return;
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    const match = /^#annotation-(.+)$/.exec(hash);
+    if (!match) {
+      // AS-024 (no fragment): nothing to focus — mark handled so a later annotation load
+      // (e.g. a refetch) doesn't retroactively grab focus the user never asked for.
+      deepLinkHandledRef.current = true;
+      return;
+    }
+    const targetId = decodeURIComponent(match[1]!);
+    // For markdown the mark lives in the light DOM (docPaneEl); wait until it's placed. For an
+    // HTML doc the focus is relayed down the iframe bridge (the htmlFocusedId effect above), so
+    // onFocusThread alone (which sets focusedId) suffices. Only finalize once we can act.
+    const markReady = isHtml || (docPaneEl?.querySelector(`[data-anno="${targetId}"]`) ?? null) != null;
+    if (!markReady) return; // try again on the next annotation placement (count change)
+    deepLinkHandledRef.current = true;
+    onFocusThread(targetId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasDoc, isHtml, docPaneEl, anno.count, onFocusThread]);
+
   // S-001 (commenting write path): capture a text selection on the doc → popover → composer → send.
   // Gated by `canCompose` (C-004): a viewer-only role never sees a popover/composer (read-only rail).
   // S-002: on a successful create for an HTML doc, relay the highlight to the iframe bridge.

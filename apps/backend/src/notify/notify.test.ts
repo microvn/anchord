@@ -2,10 +2,14 @@ import { test, expect, describe } from "bun:test";
 import {
   computeRecipients,
   notifyOnReply,
+  isEmailEligible,
+  buildAnnotationDeepLink,
+  buildEmailBody,
   type MailEnqueuer,
   type NewNotification,
   type NotifyRepo,
 } from "./notify";
+import type { NotificationType } from "./types";
 
 // workspace-project S-006 — notify on reply (AS-011 / C-004). On a successful reply,
 // notify (participants ∪ doc owner) − replier, deduped, over TWO channels (in-app row +
@@ -17,6 +21,7 @@ function fakeRepo(opts: {
   participants?: string[];
   owner?: string | null;
   emails?: Record<string, string | null>;
+  slug?: string | null;
 }): NotifyRepo & { inserted: NewNotification[] } {
   const inserted: NewNotification[] = [];
   return {
@@ -32,6 +37,10 @@ function fakeRepo(opts: {
       // Default: every user has a synthetic email unless the test overrides to null.
       return userId in map ? map[userId] : `${userId}@example.com`;
     },
+    async getDocSlug() {
+      // Default slug so deep-link tests have one unless overridden to null.
+      return opts.slug === undefined ? "spec-v2" : opts.slug;
+    },
     async insertNotification(input: NewNotification) {
       inserted.push(input);
       return { id: `n_${inserted.length}` };
@@ -41,9 +50,9 @@ function fakeRepo(opts: {
 
 // A recording mail enqueuer; `throwOnEnqueue` lets a test prove best-effort failure.
 function fakeMail(throwOnEnqueue = false): MailEnqueuer & {
-  sent: { to: string; subject: string; body: string }[];
+  sent: { to: string; subject: string; text?: string; html?: string }[];
 } {
-  const sent: { to: string; subject: string; body: string }[] = [];
+  const sent: { to: string; subject: string; text?: string; html?: string }[] = [];
   return {
     sent,
     enqueue(msg) {
@@ -193,5 +202,115 @@ describe("notifyOnReply (both channels fire per recipient; best-effort)", () => 
 
     expect(result.recipients).toEqual([]);
     expect(logged).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S-007 — email eligibility (C-006), deep-link (C-013), minimal plain-text body (C-012),
+// best-effort post-commit (C-007). The per-event dispatch (S-001/S-002) is NOT built here;
+// these test the reusable email/delivery seams via notifyOnReply parameterized by `type`.
+// ---------------------------------------------------------------------------
+
+describe("isEmailEligible (C-006: channel policy derived from notification type)", () => {
+  test("C-006: high-signal types are email-eligible", () => {
+    for (const t of ["new_feedback", "thread_activity", "suggestion_decided", "reply"] as NotificationType[]) {
+      expect(isEmailEligible(t)).toBe(true);
+    }
+  });
+
+  test("C-006: low-signal types are NOT email-eligible (in-app only)", () => {
+    for (const t of ["resolved", "detached", "invited"] as NotificationType[]) {
+      expect(isEmailEligible(t)).toBe(false);
+    }
+  });
+});
+
+describe("buildAnnotationDeepLink (C-013: {APP_URL}/d/{slug}#annotation-{id})", () => {
+  test("C-013: builds the absolute deep-link in the exact spec format", () => {
+    expect(buildAnnotationDeepLink("https://anchord.example.com", "spec-v2", "abc123")).toBe(
+      "https://anchord.example.com/d/spec-v2#annotation-abc123",
+    );
+  });
+
+  test("C-013: trims a trailing slash on APP_URL so the path joins clean (edge)", () => {
+    expect(buildAnnotationDeepLink("https://anchord.example.com/", "spec-v2", "abc123")).toBe(
+      "https://anchord.example.com/d/spec-v2#annotation-abc123",
+    );
+  });
+
+  test("C-012/C-013: the email body carries the deep-link and NO doc body (minimal content)", () => {
+    const link = "https://anchord.example.com/d/spec-v2#annotation-abc123";
+    const body = buildEmailBody("new_feedback", link);
+    expect(body).toContain(link);
+    // Minimal: a short summary line + the link, nothing resembling embedded doc HTML.
+    expect(body).not.toContain("<");
+  });
+});
+
+describe("notifyOnReply parameterized by type (S-007 email/delivery seams)", () => {
+  test("AS-019.T1/T2/T3: a high-signal event sends ONE plain-text email with the absolute deep-link", async () => {
+    const repo = fakeRepo({ participants: [], owner: "Alice", slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnReply(
+      { annotationId: "abc123", replierUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    // T1: exactly ONE email (one recipient = Alice the owner; Bob the actor excluded).
+    expect(result.recipients).toEqual(["Alice"]);
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0]!.to).toBe("Alice@example.com");
+    // T2: plain text — `text` set, `html` NOT set.
+    expect(mail.sent[0]!.text).toBeDefined();
+    expect(mail.sent[0]!.html).toBeUndefined();
+    // T3: the body contains the absolute deep-link in the exact spec format.
+    expect(mail.sent[0]!.text).toContain(
+      "https://anchord.example.com/d/spec-v2#annotation-abc123",
+    );
+  });
+
+  test("AS-021: a low-signal (resolved) event writes the in-app row but enqueues NO email", async () => {
+    const repo = fakeRepo({ participants: [], owner: "Bob", slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnReply(
+      { annotationId: "abc123", replierUserId: "Carol" },
+      { repo, mail, type: "resolved", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(repo.inserted).toHaveLength(1); // in-app row written
+    expect(repo.inserted[0]!.type).toBe("resolved");
+    expect(result.inAppSent).toBe(1);
+    expect(mail.sent).toHaveLength(0); // C-006: low-signal → no email
+    expect(result.emailsSent).toBe(0);
+  });
+
+  test("C-007: a high-signal email enqueue that throws does NOT fail the action (best-effort)", async () => {
+    const repo = fakeRepo({ participants: [], owner: "Alice", slug: "spec-v2" });
+    const mail = fakeMail(true); // enqueue throws
+    const logged: unknown[] = [];
+
+    const result = await notifyOnReply(
+      { annotationId: "abc123", replierUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com", logError: (_m, e) => logged.push(e) },
+    );
+
+    expect(result).toBeDefined(); // resolved, not rejected — the action already persisted
+    expect(logged).toHaveLength(1); // swallowed + logged
+  });
+
+  test("C-013: with APP_URL present but slug null, the email still sends (summary only, link omitted)", async () => {
+    const repo = fakeRepo({ participants: [], owner: "Alice", slug: null });
+    const mail = fakeMail();
+
+    const result = await notifyOnReply(
+      { annotationId: "abc123", replierUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.emailsSent).toBe(1);
+    expect(mail.sent[0]!.text).toBeDefined();
+    expect(mail.sent[0]!.text).not.toContain("#annotation-"); // no link when slug unresolved
   });
 });

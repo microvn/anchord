@@ -6,6 +6,8 @@ import { parseConfig, ConfigError } from "./env";
 const baseNoMail = {
   APP_SECRET: "x".repeat(16),
   DATABASE_URL: "postgres://anchord:anchord@localhost:5432/anchord",
+  // S-007: APP_URL is now boot-mandatory (absolute http(s)://). Every valid env carries it.
+  APP_URL: "https://anchord.example.com",
 };
 const smtpEnv = {
   SMTP_HOST: "smtp.example.com",
@@ -100,4 +102,28 @@ test("C-002: parseConfig refuses a non-postgres DATABASE_URL", () => {
   try { parseConfig({ ...valid, DATABASE_URL: "mysql://x" }); } catch (e) { err = e; }
   expect(err).toBeInstanceOf(ConfigError);
   expect((err as ConfigError).message).toContain("DATABASE_URL");
+});
+
+test("AS-022: parseConfig accepts a valid absolute APP_URL", () => {
+  const cfg = parseConfig({ ...valid, APP_URL: "https://anchord.example.com" });
+  expect(cfg.APP_URL).toBe("https://anchord.example.com");
+});
+
+test("AS-022: boot fails fast when APP_URL is unset (validated at boot like DATABASE_URL)", () => {
+  const { APP_URL, ...rest } = valid;
+  let err: unknown;
+  try { parseConfig(rest); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ConfigError);
+  expect((err as ConfigError).message).toContain("APP_URL");
+});
+
+test("AS-022: boot fails fast when APP_URL is not an absolute http(s):// URL ('notaurl')", () => {
+  let err: unknown;
+  try { parseConfig({ ...valid, APP_URL: "notaurl" }); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ConfigError);
+  expect((err as ConfigError).message).toContain("APP_URL");
+  // A relative path is likewise rejected — only an absolute http(s) base boots.
+  let err2: unknown;
+  try { parseConfig({ ...valid, APP_URL: "/d/spec" }); } catch (e) { err2 = e; }
+  expect(err2).toBeInstanceOf(ConfigError);
 });

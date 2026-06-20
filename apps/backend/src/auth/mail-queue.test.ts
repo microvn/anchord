@@ -5,7 +5,8 @@ import { MailQueue, type MailMessage, type MailTransport } from "./mail-queue";
 // Every outbound mail enqueues + retries + dead-letters + surfaces a status.
 // Pure logic, injectable transport — NO real SMTP.
 
-const msg: MailMessage = { to: "bob@x.com", subject: "Verify", body: "click" };
+// S-007: MailMessage is now `{to, subject, text?, html?}`. v0 fills `text`.
+const msg: MailMessage = { to: "bob@x.com", subject: "Verify", text: "click" };
 
 /** Transport that throws the first `failTimes` attempts, then succeeds. */
 function flakyTransport(failTimes: number): { transport: MailTransport; calls: () => number } {
@@ -29,7 +30,8 @@ const alwaysFails: MailTransport = {
 };
 
 test("AS-011: a runtime send failure enqueues the message and retries (does not get stuck)", async () => {
-  const q = new MailQueue({ maxAttempts: 3 });
+  // S-007: retryDelayMs: 0 keeps this retry-mechanics test fast (the ~5s backoff is its own test).
+  const q = new MailQueue({ maxAttempts: 3, retryDelayMs: 0 });
   const { transport, calls } = flakyTransport(2); // fail twice, then succeed
 
   const final = await q.send(msg, transport);
@@ -40,7 +42,7 @@ test("AS-011: a runtime send failure enqueues the message and retries (does not 
 });
 
 test("AS-011: a permanently failing transport dead-letters after N attempts and surfaces a status", async () => {
-  const q = new MailQueue({ maxAttempts: 3 });
+  const q = new MailQueue({ maxAttempts: 3, retryDelayMs: 0 });
 
   const final = await q.send(msg, alwaysFails);
 
@@ -52,7 +54,7 @@ test("AS-011: a permanently failing transport dead-letters after N attempts and 
 });
 
 test("C-009: queue exposes operator-visible status counts (send-failed surface)", async () => {
-  const q = new MailQueue({ maxAttempts: 2 });
+  const q = new MailQueue({ maxAttempts: 2, retryDelayMs: 0 });
   const sent = q.enqueue({ ...msg, subject: "ok" });
   const dead = q.enqueue({ ...msg, subject: "doomed" });
 
@@ -102,4 +104,59 @@ test("AS-011: maxAttempts boundary — maxAttempts=1 dead-letters on the first f
   const final = await q.send(msg, alwaysFails);
   expect(final.status).toBe("dead");
   expect(final.attempts).toBe(1);
+});
+
+// S-007 / GAP-005 backoff (AS-020): 2 attempts ~5s apart. We assert the requested DELAY via an
+// injected fake sleep (recording the ms) — the test never actually waits 5s.
+test("AS-020.T1: a transient error retries once after ~5s (2 attempts total)", async () => {
+  const delays: number[] = [];
+  const q = new MailQueue({
+    maxAttempts: 2,
+    retryDelayMs: 5000,
+    sleep: async (ms) => {
+      delays.push(ms); // record, don't actually sleep
+    },
+  });
+  const { transport, calls } = flakyTransport(1); // fail once, then succeed on the 2nd attempt
+
+  const final = await q.send(msg, transport);
+
+  expect(final.status).toBe("sent");
+  expect(calls()).toBe(2); // exactly 2 attempts total
+  expect(final.attempts).toBe(2);
+  // Exactly ONE backoff between the two attempts, at ~5s.
+  expect(delays).toEqual([5000]);
+});
+
+test("AS-020.T2: dead-letters after the 2nd failure (no infinite retry), backoff applied once", async () => {
+  const delays: number[] = [];
+  const q = new MailQueue({
+    maxAttempts: 2,
+    retryDelayMs: 5000,
+    sleep: async (ms) => {
+      delays.push(ms);
+    },
+  });
+
+  const final = await q.send(msg, alwaysFails);
+
+  expect(final.status).toBe("dead"); // dead-lettered after the 2nd failure
+  expect(final.attempts).toBe(2);
+  // One backoff between attempt 1 (failed) and attempt 2; no delay after the dead-letter.
+  expect(delays).toEqual([5000]);
+});
+
+test("AS-020: no backoff is applied when the first attempt succeeds (delay only on retry)", async () => {
+  const delays: number[] = [];
+  const q = new MailQueue({
+    maxAttempts: 2,
+    retryDelayMs: 5000,
+    sleep: async (ms) => {
+      delays.push(ms);
+    },
+  });
+
+  await q.send(msg, flakyTransport(0).transport); // succeeds first try
+
+  expect(delays).toEqual([]); // never delayed — terminal `sent` exits before any sleep
 });

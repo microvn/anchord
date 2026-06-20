@@ -17,24 +17,53 @@ import { buildWorkspaceAcceptLink } from "./invite";
 // one (Resend/SMTP both require a from). Not a secret, safe as a constant for v0.
 const DEFAULT_FROM = "anchord <no-reply@anchord.local>";
 
+/**
+ * Make a relative app path absolute against the configured APP_URL (S-007). Invite accept-links
+ * were RELATIVE before this change — a latent bug: a relative `/invite/accept/...` in an email
+ * body is not clickable. Joining against APP_URL (trailing slash trimmed) makes them absolute.
+ * An already-absolute link is passed through unchanged.
+ */
+export function absoluteLink(appUrl: string, pathOrUrl: string): string {
+  if (/^https?:\/\//.test(pathOrUrl)) return pathOrUrl;
+  const base = appUrl.replace(/\/+$/, "");
+  const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  return `${base}${path}`;
+}
+
 // ---------------------------------------------------------------------------
 // Injectable client shapes (structural subsets of the real SDKs — keeps the unit
 // tests free of the real `resend` / `nodemailer` packages and any network).
 // ---------------------------------------------------------------------------
 
-/** Subset of the Resend client we use: `client.emails.send({from,to,subject,html})`. */
+/**
+ * Subset of the Resend client we use. v0 sends `text` (plain text) when no `html` is set
+ * (S-007 / C-012); Phase 2 fills `html`. Both fields are optional in the payload — the
+ * transport sets exactly the one(s) the MailMessage carried.
+ */
 export interface ResendLike {
   emails: {
-    send(payload: { from: string; to: string; subject: string; html: string }): Promise<{
+    send(payload: {
+      from: string;
+      to: string;
+      subject: string;
+      text?: string;
+      html?: string;
+    }): Promise<{
       data: { id: string } | null;
       error: { name: string; message: string } | null;
     }>;
   };
 }
 
-/** Subset of a nodemailer transporter: `transporter.sendMail({from,to,subject,html})`. */
+/** Subset of a nodemailer transporter: `transporter.sendMail({from,to,subject,text?,html?})`. */
 export interface NodemailerLike {
-  sendMail(payload: { from: string; to: string; subject: string; html: string }): Promise<{
+  sendMail(payload: {
+    from: string;
+    to: string;
+    subject: string;
+    text?: string;
+    html?: string;
+  }): Promise<{
     messageId: string;
   }>;
 }
@@ -46,6 +75,21 @@ export interface MailTransportDeps {
   smtpTransporter?: NodemailerLike;
   /** From address override (defaults to DEFAULT_FROM). */
   from?: string;
+}
+
+/**
+ * Map a MailMessage body onto the provider payload fields (S-007 / C-012). v0 messages carry
+ * `text` only → the provider sends `text/plain`, NOT HTML (today's code sent `html: msg.body`,
+ * so this is a real behavior change). When `html` is present (Phase 2) it is sent too, with
+ * `text` as the multipart fallback. A message with neither falls back to an empty text body so
+ * the provider still receives a defined field.
+ */
+function bodyPayload(msg: MailMessage): { text?: string; html?: string } {
+  const out: { text?: string; html?: string } = {};
+  if (msg.html != null) out.html = msg.html;
+  if (msg.text != null) out.text = msg.text;
+  if (out.text == null && out.html == null) out.text = "";
+  return out;
 }
 
 /** Build the real Resend client. Imported lazily so tests never touch the SDK. */
@@ -89,7 +133,7 @@ export function createMailTransport(
           from,
           to: msg.to,
           subject: msg.subject,
-          html: msg.body,
+          ...bodyPayload(msg),
         });
         if (res.error) {
           throw new Error(`Resend send failed: ${res.error.name} — ${res.error.message}`);
@@ -106,7 +150,7 @@ export function createMailTransport(
         from,
         to: msg.to,
         subject: msg.subject,
-        html: msg.body,
+        ...bodyPayload(msg),
       });
     },
   };
@@ -142,10 +186,12 @@ export interface VerificationMailArgs {
  */
 export function makeSendVerificationEmail(queue: MailQueue, transport: MailTransport) {
   return async ({ user, url }: VerificationMailArgs): Promise<void> => {
+    // S-007: plain text now (the transport sends text/plain). The verify URL better-auth
+    // hands us is already absolute, so it goes through unchanged.
     await sendAppMail(queue, transport, {
       to: user.email,
       subject: "Verify your email",
-      body: `<p>Confirm your anchord account:</p><p><a href="${url}">${url}</a></p>`,
+      text: `Confirm your anchord account:\n${url}`,
     });
   };
 }
@@ -159,12 +205,15 @@ export function makeSendVerificationEmail(queue: MailQueue, transport: MailTrans
 export function sendInviteEmail(
   queue: MailQueue,
   transport: MailTransport,
-  args: { to: string; acceptLink: string },
+  args: { to: string; acceptLink: string; appUrl?: string },
 ): Promise<QueuedMail> {
+  // S-007: plain text + an ABSOLUTE accept-link. The accept-link was relative (a latent bug —
+  // not clickable in an email); when appUrl is supplied we make it absolute against APP_URL.
+  const link = args.appUrl ? absoluteLink(args.appUrl, args.acceptLink) : args.acceptLink;
   return sendAppMail(queue, transport, {
     to: args.to,
     subject: "You've been invited to a doc on anchord",
-    body: `<p>You have a pending invite. Accept it here:</p><p><a href="${args.acceptLink}">${args.acceptLink}</a></p>`,
+    text: `You have a pending invite. Accept it here:\n${link}`,
   });
 }
 
@@ -178,12 +227,14 @@ export function sendInviteEmail(
 export function sendWorkspaceInviteEmail(
   queue: MailQueue,
   transport: MailTransport,
-  args: { to: string; acceptLink: string },
+  args: { to: string; acceptLink: string; appUrl?: string },
 ): Promise<QueuedMail> {
+  // S-007: plain text + an ABSOLUTE accept/reject landing link (absolute against APP_URL).
+  const link = args.appUrl ? absoluteLink(args.appUrl, args.acceptLink) : args.acceptLink;
   return sendAppMail(queue, transport, {
     to: args.to,
     subject: "You've been invited to a workspace on anchord",
-    body: `<p>You've been invited to a workspace on anchord. Accept or decline here:</p><p><a href="${args.acceptLink}">${args.acceptLink}</a></p>`,
+    text: `You've been invited to a workspace on anchord. Accept or decline here:\n${link}`,
   });
 }
 
@@ -199,10 +250,12 @@ export function sendWorkspaceInviteEmail(
 export function createEnqueueWorkspaceInvite(
   queue: MailQueue,
   transport: MailTransport,
+  /** S-007: APP_URL so the accept/reject landing link is ABSOLUTE in the email (was relative). */
+  appUrl?: string,
 ): (msg: { workspaceId: string; email: string; token: string; invitationId: string }) => void {
   return (msg) => {
     const acceptLink = buildWorkspaceAcceptLink(msg.invitationId, msg.token, msg.email);
-    void sendWorkspaceInviteEmail(queue, transport, { to: msg.email, acceptLink }).catch(
+    void sendWorkspaceInviteEmail(queue, transport, { to: msg.email, acceptLink, appUrl }).catch(
       (err) => {
         console.error("workspace invite mail delivery failed (dead-lettered)", err);
       },

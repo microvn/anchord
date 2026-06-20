@@ -82,8 +82,8 @@ describe("workspaces S-004 AS-009 — inviting a member enqueues a workspace-inv
     expect(sent).toHaveLength(1);
     expect(sent[0]!.to).toBe("bob@acme.com");
     expect(sent[0]!.subject).toContain("workspace");
-    expect(sent[0]!.body).toContain("/invite/workspace/inv_1");
-    expect(sent[0]!.body).toContain("tok_123");
+    expect(sent[0]!.text).toContain("/invite/workspace/inv_1");
+    expect(sent[0]!.text).toContain("tok_123");
   });
 
   test("the route invokes the wired enqueue (not the no-op) and surfaces the accept link", async () => {

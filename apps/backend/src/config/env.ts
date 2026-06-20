@@ -24,6 +24,17 @@ const schema = z
     DATABASE_URL: z
       .string()
       .refine((s) => /^postgres(ql)?:\/\//.test(s), "DATABASE_URL must be a postgres:// URL"),
+    // APP_URL — the absolute public base URL of this instance (notifications-email S-007, C-013).
+    // Validated at boot like DATABASE_URL: the app refuses to start without a valid absolute
+    // http(s):// URL, because notification emails build absolute deep-links from it
+    // (`{APP_URL}/d/{slug}#annotation-{id}`) and the invite accept-links are relative-and-broken
+    // without it. A relative or non-http value (e.g. "notaurl") is a config error → no boot.
+    APP_URL: z
+      .string()
+      .refine(
+        (s) => /^https?:\/\/.+/.test(s),
+        "APP_URL must be an absolute http(s):// URL",
+      ),
     // SMTP — now OPTIONAL per field. A provider is "SMTP" only when the WHOLE group
     // (HOST+PORT+USER+PASS) is present; the cross-field rule below enforces that.
     SMTP_HOST: z.string().min(1).optional(),
@@ -68,6 +79,12 @@ export type Config = {
   PORT: number;
   APP_SECRET: string;
   DATABASE_URL: string;
+  /**
+   * The absolute public base URL of this instance (S-007). Used to build absolute deep-links
+   * in notification email (`{APP_URL}/d/{slug}#annotation-{id}`) and invite accept-links.
+   * No trailing slash is assumed by consumers; they join with a leading-slash path.
+   */
+  APP_URL: string;
   /**
    * The active email provider, resolved from the SMTP group or RESEND_API_KEY (both → resend).
    * This is what the mail transport selector reads (auth AS-012).
@@ -131,6 +148,7 @@ export function parseConfig(raw: Record<string, unknown>): Config {
     PORT: d.PORT,
     APP_SECRET: d.APP_SECRET,
     DATABASE_URL: d.DATABASE_URL,
+    APP_URL: d.APP_URL,
     email,
     SMTP: smtp,
     ASSETS_DIR: d.ASSETS_DIR,

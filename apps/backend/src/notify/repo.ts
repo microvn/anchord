@@ -49,10 +49,25 @@ export function createNotifyRepo(db: DB): NotifyRepo {
       return row?.email ?? null;
     },
 
+    // S-007: the annotation's doc slug — backs the email deep-link {APP_URL}/d/{slug}#annotation-{id}.
+    async getDocSlug(annotationId: string): Promise<string | null> {
+      const [row] = await db
+        .select({ slug: docs.slug })
+        .from(annotations)
+        .innerJoin(docs, eq(docs.id, annotations.docId))
+        .where(eq(annotations.id, annotationId));
+      return row?.slug ?? null;
+    },
+
     async insertNotification(input: NewNotification): Promise<{ id: string }> {
+      // S-007 widened NotificationType ahead of the DB enum (the additive `notification_type`
+      // extension lands in S-001). Until that migration, only `reply` is a valid enum value at
+      // the DB; the new event types are exercised at the service layer (unit) and persist once
+      // S-001 extends the enum. Cast at this boundary so the wider type compiles against today's
+      // `["reply"]` enum without weakening the service-level NotificationType.
       const [row] = await db
         .insert(notifications)
-        .values({ userId: input.userId, type: input.type, refId: input.refId })
+        .values({ userId: input.userId, type: input.type as "reply", refId: input.refId })
         .returning({ id: notifications.id });
       return { id: row.id };
     },
