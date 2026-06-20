@@ -424,6 +424,9 @@ function ViewerShell({
       void composeQueryClient.invalidateQueries({ queryKey: ["viewer-annotations", slug] });
       toast("The document changed — reloaded; please re-select and try again");
     },
+    // S-007 (AS-017): the session guest name for a guest session, so startRedline (which bypasses the
+    // composer) attaches it to the create. Null for a signed-in member.
+    guest ? guestIdentity.name : null,
   );
 
   // S-006 (C-009 / AS-020..023): the ACTIVE tool routes a text selection. useCompose raises

@@ -169,6 +169,11 @@ export function useCompose(
    *  and surfaces a "document changed — reloaded" message; `send` itself PRESERVES the user's draft
    *  (re-opens the composer with the same body/anchor) so the annotation is never silently lost. */
   onStaleCreate?: () => void,
+  /** S-007 (AS-017): the session guest name when this is a guest session (null/undefined for a
+   *  signed-in member). Immediate-create paths that BYPASS the composer — startRedline — attach it to
+   *  the create `comment` so a guest suggestion carries its name (the composer `send` gets the name
+   *  from its own prop). Without this, a guest redline POSTs no name and the server rejects it. */
+  guestName?: string | null,
 ): ComposeApi {
   const [popover, setPopover] = useState<{ top: number; left: number; centered: boolean } | null>(null);
   const [active, setActive] = useState<SelectionAnchor | null>(null);
@@ -437,7 +442,7 @@ export function useCompose(
     const createdAt = new Date().toISOString();
     // A redline is a signed-in member action (no guest path) → attribute it to the REAL session
     // author + durable authorId so it reads as own immediately (the owner-decide gate keys on this).
-    const author = optimisticAuthor(currentUser, undefined);
+    const author = optimisticAuthor(currentUser, guestName ? { guestName } : undefined);
     // annotation-actions S-006: a creator who can EDIT the doc has their own proposal born ACCEPTED
     // (mirrors the backend createSuggestion auto-accept); a commenter's stays pending. Used for BOTH
     // the optimistic temp and the no-refetch reconciled real row so neither flashes Pending.
@@ -522,7 +527,9 @@ export function useCompose(
             segments: anchor.segments,
           },
           suggestion: { from: anchor.textSnippet, againstVersion: redlineCtx.version },
-          comment: { body: REDLINE_ROOT_BODY },
+          // S-007 (AS-017): a guest redline carries the session name (else the server rejects the
+          // anon write with "guestName is required"); a member omits it (identity is the session).
+          comment: { body: REDLINE_ROOT_BODY, ...(guestName ? { guestName } : {}) },
         });
         if (created.error || !created.data) {
           rollback();
@@ -556,7 +563,7 @@ export function useCompose(
         setPending(false);
       }
     })();
-  }, [slug, docPaneEl, redlineCtx, onCreatedAnnotation, currentUser?.id, currentUser?.name, canEditDoc]);
+  }, [slug, docPaneEl, redlineCtx, onCreatedAnnotation, currentUser?.id, currentUser?.name, canEditDoc, guestName]);
 
   const send = useCallback(
     (body: string, guestIdentity?: { guestName: string }) => {

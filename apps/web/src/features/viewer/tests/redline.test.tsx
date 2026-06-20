@@ -401,3 +401,56 @@ describe("Redline create flow (S-002, through ViewerScreen)", () => {
     expect(toastError.mock.calls[0]![0]).toMatch(/couldn't create your redline/i);
   });
 });
+
+// ── AS-017: a GUEST redline carries the session name ──
+// Regression: startRedline bypasses the composer (which is where the guest name lived), so a guest's
+// delete-suggestion POSTed `comment:{body}` with NO guestName → the server rejected the anon write
+// with "guestName is required". The session identity (header chip) must ride up on EVERY guest
+// create surface, not just the plain composer.
+describe("Guest redline carries the session name (S-007 / AS-017)", () => {
+  beforeEach(() => {
+    createAnnotation.mockClear();
+    addComment.mockClear();
+    session = null; // logged-out guest
+    try {
+      window.sessionStorage.removeItem("anchord.guest-name");
+    } catch {
+      /* storage unavailable in this env — the hook falls back to in-memory */
+    }
+    // An anyone-with-link doc whose link role is commenter+ → the FE guest flag is set (canComment).
+    docResponse = okEnv({
+      doc: {
+        title: "Spec",
+        kind: "markdown",
+        version: 4,
+        status: "live",
+        generalAccess: "anyone_with_link",
+        effectiveRole: "commenter",
+        workspaceId: null, // public/anon: no member workspace — the create is doc-addressed (C-018)
+      },
+      content: MD,
+    });
+    redlineResult = okEnv({ annotationId: "rl-real-2", commentId: "rl-cmt-2" });
+  });
+  afterEach(() => {
+    session = null;
+  });
+
+  it("AS-017: a guest's redline POSTs comment.guestName = the session chip name (not an empty/absent name)", async () => {
+    await renderViewer();
+
+    // The session identity is shown as the header chip; capture its name.
+    const chipName = screen.getByTestId("guest-name").textContent?.trim() ?? "";
+    expect(chipName.length).toBeGreaterThan(0);
+
+    selectPhrase("block-h1", "Implementation Plan: Real-time Collaboration");
+    await userEvent.click(within(await screen.findByTestId("selection-popover")).getByTestId("popover-redline"));
+
+    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
+    const [, body] = createAnnotation.mock.calls[0]!;
+    // The bug was a missing name → the server 400'd. The create must carry the session name.
+    expect(body.comment.guestName).toBe(chipName);
+    expect(typeof body.comment.guestName).toBe("string");
+    expect((body.comment.guestName as string).length).toBeGreaterThan(0);
+  });
+});
