@@ -164,6 +164,11 @@ export function useCompose(
    *  auto-accept), so the optimistic + reconciled redline shows Accepted, not Pending. Commenter →
    *  false → the proposal stays pending awaiting an owner decision. */
   canEditDoc?: boolean,
+  /** annotation-create-version-pin S-001 (AS-005): called when a create is refused as STALE (409 —
+   *  the doc advanced past the version the viewer rendered). The screen reloads the doc + annotations
+   *  and surfaces a "document changed — reloaded" message; `send` itself PRESERVES the user's draft
+   *  (re-opens the composer with the same body/anchor) so the annotation is never silently lost. */
+  onStaleCreate?: () => void,
 ): ComposeApi {
   const [popover, setPopover] = useState<{ top: number; left: number; centered: boolean } | null>(null);
   const [active, setActive] = useState<SelectionAnchor | null>(null);
@@ -608,6 +613,20 @@ export function useCompose(
           { id: tempId, anchor: { blockId: anchor.blockId, textSnippet: anchor.textSnippet, offset: anchor.offset, length: anchor.length } },
         ]);
       }
+      // S-001 (AS-005): snapshot the draft (anchor + quote + composer anchor + label + body) BEFORE
+      // clearing, so a STALE refusal can re-open the SAME composer with the user's text intact — the
+      // annotation is never silently lost on a "document changed" reload.
+      const draftQuote = quote;
+      const draftComposerAnchor = composerAnchor;
+      const draftLabel = composeLabel;
+      const restoreDraft = () => {
+        setActive(anchor);
+        setQuote(draftQuote);
+        setComposerAnchor(draftComposerAnchor);
+        setComposeLabel(draftLabel);
+        setComposeInitialBody(body);
+      };
+
       setActive(null);
       setQuote(null);
       setComposerAnchor(null); // #3: close the inline composer popover on send.
@@ -665,8 +684,21 @@ export function useCompose(
                   }
                 : {}),
             },
+            // annotation-create-version-pin S-001 (AS-005): pin the create to the version the viewer
+            // RENDERED. If an agent advanced the doc since, the server 409s and we keep the draft +
+            // reload (the staleRefusal branch below) instead of silently anchoring against new content.
+            ...(redlineCtx ? { expectedVersion: redlineCtx.version } : {}),
           });
           if (created.error || !created.data) {
+            // S-001 (AS-005 / C-002): a 409 means the doc changed — the server refused the create and
+            // returned its current version. Reload doc + annotations, KEEP the draft (re-open the
+            // composer with the same body/anchor), and surface the message — never a silent loss.
+            if (isStaleConflict(created.error)) {
+              clearOptimistic(); // drop the optimistic temp; the reload brings the real (newer) state.
+              restoreDraft();
+              onStaleCreate?.();
+              return;
+            }
             rollback();
             return;
           }
@@ -718,7 +750,7 @@ export function useCompose(
         }
       })();
     },
-    [active, slug, docPaneEl, composeLabel, onCreatedAnnotation, onCreated, currentUser?.id, currentUser?.name],
+    [active, slug, docPaneEl, composeLabel, quote, composerAnchor, redlineCtx, onCreatedAnnotation, onCreated, onStaleCreate, currentUser?.id, currentUser?.name],
   );
 
   return {
@@ -740,6 +772,13 @@ export function useCompose(
     setPopoverSize,
     armSelectionIntercept,
   };
+}
+
+// annotation-create-version-pin S-001 (AS-005 / C-002): a create refused as STALE comes back 409
+// (the server's ConflictError — the doc advanced past the rendered version). The Eden error is
+// `unknown` at the type layer; read its status defensively (mirrors the redline-decide 409 check).
+function isStaleConflict(error: unknown): boolean {
+  return (error as { status?: number } | null)?.status === 409;
 }
 
 // The create result is `{ annotationId }`, but useApiQuery's peel runs on READS; the write thunks

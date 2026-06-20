@@ -215,6 +215,12 @@ export interface CreateAnnotationBody {
   /** S-006 (AS-014) / C-018: a redline / replace suggestion rides this SAME create (subsumes the old
    *  workspace-scoped suggestion route). Mutually exclusive with `label`. */
   suggestion?: CreateSuggestionPayload;
+  /** annotation-create-version-pin S-001 (AS-005 / C-001): the doc version the viewer RENDERED the
+   *  anchor against. The server refuses the create (409, carrying the current version) when a newer
+   *  version has landed since — so a comment never silently anchors against stale content. The viewer
+   *  always sends it (the doc read's `version`); omit it and the create skips the version check
+   *  (back-compat). */
+  expectedVersion?: number;
 }
 
 export interface CreateAnnotationResult {

@@ -162,6 +162,9 @@ function fakeLookupRepo(doc: DocLookup | null): DocLookupRepo {
 
 function fakeAnnotationLookupRepo(
   doc?: { docId: string; generalAccess: DocLookup["generalAccess"]; authorId?: string | null } | null,
+  /** annotation-create-version-pin S-001: the doc's current version number for the optimistic-create
+   *  gate. Omitted → null (no versions) → the gate never refuses (back-compat with existing tests). */
+  currentVersion?: number,
 ): AnnotationLookupRepo {
   const parent =
     doc === undefined ? { docId: "doc_1", generalAccess: "anyone_with_link" as const, authorId: null } : doc;
@@ -176,6 +179,9 @@ function fakeAnnotationLookupRepo(
     },
     async getCurrentVersionContent() {
       return null;
+    },
+    async getCurrentVersion() {
+      return currentVersion ?? null;
     },
   };
 }
@@ -451,6 +457,35 @@ describe("AS-001 / C-018: a commented annotation is ONE atomic create via the do
   });
 });
 
+// annotation-create-version-pin S-001 (AS-004 / C-001 / C-002): the version gate is identity-agnostic
+// — it runs BEFORE the guest-name assignment, so a guest's stale create is refused the same way a
+// member's is, with NO write and the current version returned.
+describe("annotation-create-version-pin S-001: a GUEST stale create is refused the same way (AS-004)", () => {
+  test("AS-004/C-001/C-002: a guest create with expectedVersion=4 while current=5 → 409, no write, current version 5 returned", async () => {
+    const ar = fakeAnnotationRepo();
+    // anyone-with-link + guest commenting ON; the doc's current version is 5, the guest rendered 4.
+    const app = buildApp({
+      resolveSession: noSession,
+      loadShareConfig: guestOn,
+      annotationRepo: ar,
+      annotationLookupRepo: fakeAnnotationLookupRepo(undefined, 5),
+    });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "stale guest", guestName: "Sam" }, expectedVersion: 4 }),
+      }),
+    );
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("CONFLICT");
+    expect(json.error.details.currentVersion).toBe(5); // C-002
+    // The gate ran before guest-name assignment AND before the atomic write — nothing persisted.
+    expect(ar.calls.inserts).toHaveLength(0);
+    expect(ar.calls.comments).toHaveLength(0);
+  });
+});
+
 // ── AS-018 / C-005 / C-009: guest comments with a name, marked server-side ───
 describe("AS-018 / C-005 / C-009: guest comment with a name on anyone_with_link + guest-on", () => {
   test("AS-018: anon guest comment → 201, attributed to the guest name AND marked guest server-side (authorId null)", async () => {
@@ -704,6 +739,9 @@ function lookupWithAuthor(
     async getCurrentVersionContent() {
       return null;
     },
+    async getCurrentVersion() {
+      return null;
+    },
   };
 }
 
@@ -821,6 +859,9 @@ describe("AS-013 / C-006: deleting on a doc the caller cannot view is indistingu
         return null;
       },
       async getCurrentVersionContent() {
+        return null;
+      },
+      async getCurrentVersion() {
         return null;
       },
     };

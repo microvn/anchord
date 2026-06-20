@@ -187,6 +187,9 @@ function fakeLookupRepo(doc: DocLookup | null): DocLookupRepo {
 function fakeAnnotationLookupRepo(opts: {
   doc?: { docId: string; generalAccess: DocLookup["generalAccess"]; authorId?: string | null } | null;
   currentHtml?: string;
+  /** annotation-create-version-pin S-001: the doc's current version number for the optimistic-create
+   *  gate. Omitted → null (no versions) → the gate never refuses (back-compat with existing tests). */
+  currentVersion?: number;
 }): AnnotationLookupRepo {
   const parent =
     opts.doc === undefined ? { docId: "doc_1", generalAccess: "anyone_with_link" as const, authorId: null } : opts.doc;
@@ -202,6 +205,9 @@ function fakeAnnotationLookupRepo(opts: {
     },
     async getCurrentVersionContent() {
       return opts.currentHtml ?? null;
+    },
+    async getCurrentVersion() {
+      return opts.currentVersion ?? null;
     },
   };
 }
@@ -412,6 +418,75 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     const json = (await res.json()) as any;
     expect(json.error.code).toBe("VALIDATION_ERROR");
     expect(ar.calls.inserts).toHaveLength(0);
+  });
+});
+
+// annotation-create-version-pin (sub-spec of annotation-core) — the optional `expectedVersion`
+// optimistic-concurrency gate on annotation create. C-001 (present→check / absent→no-check / refusal
+// atomic-preserving) + C-002 (a stale refusal carries the doc's current version).
+describe("annotation-create-version-pin S-001: optimistic version gate on create", () => {
+  test("AS-001: create with expectedVersion == current → created normally (atomic anchor+comment, C-001)", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({
+      resolveDocRole: asCommenter,
+      annotationRepo: ar,
+      annotationLookupRepo: fakeAnnotationLookupRepo({ currentVersion: 4 }),
+    });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "looks off" }, expectedVersion: 4 }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const json = (await res.json()) as any;
+    expect(json.data.annotationId).toBeString();
+    // C-001: the version matched → the atomic anchor + first comment both persisted, exactly as a
+    // create with no version would have.
+    expect(ar.calls.inserts).toHaveLength(1);
+    expect(ar.calls.comments).toHaveLength(1);
+  });
+
+  test("AS-002/C-002: create with expectedVersion=4 while current=5 → 409, NO write, response carries current version 5", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({
+      resolveDocRole: asCommenter,
+      annotationRepo: ar,
+      annotationLookupRepo: fakeAnnotationLookupRepo({ currentVersion: 5 }),
+    });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "stale" }, expectedVersion: 4 }),
+      }),
+    );
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("CONFLICT");
+    // C-002: the current version rides the refusal so the client can re-read.
+    expect(json.error.details.currentVersion).toBe(5);
+    // C-001 atomicity: the gate threw BEFORE the atomic write — NEITHER an annotation NOR its first
+    // comment was persisted (no partial).
+    expect(ar.calls.inserts).toHaveLength(0);
+    expect(ar.calls.comments).toHaveLength(0);
+  });
+
+  test("AS-003/C-001: create with NO expectedVersion → created with no version check (back-compat)", async () => {
+    const ar = fakeAnnotationRepo();
+    // current version is 5 but the request omits expectedVersion → the gate must NOT fire.
+    const app = buildApp({
+      resolveDocRole: asCommenter,
+      annotationRepo: ar,
+      annotationLookupRepo: fakeAnnotationLookupRepo({ currentVersion: 5 }),
+    });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: TEXT_ANCHOR }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(ar.calls.inserts).toHaveLength(1);
   });
 });
 

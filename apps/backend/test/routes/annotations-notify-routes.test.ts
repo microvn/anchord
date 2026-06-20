@@ -68,6 +68,9 @@ function fakeAnnotationLookupRepo(): AnnotationLookupRepo {
     async getCurrentVersionContent() {
       return null;
     },
+    async getCurrentVersion() {
+      return null;
+    },
   };
 }
 

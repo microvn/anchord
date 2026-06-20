@@ -105,6 +105,11 @@ export interface AnnotationLookupRepo {
    *  and reattach/anchor validation. Markdown docs are rendered to HTML here (renderForAnchoring)
    *  so block-ids exist before the matcher runs; html docs pass through unchanged. */
   getCurrentVersionContent(docId: string): Promise<string | null>;
+  /** annotation-create-version-pin S-001 / C-001: the doc's CURRENT version NUMBER (max version in
+   *  doc_versions), or null when the doc has no version yet. A light read for the optimistic create
+   *  gate (compare the caller's `expectedVersion` against this); the content is not needed, only the
+   *  number. Distinct from getCurrentVersionContent (which renders HTML for the placement matcher). */
+  getCurrentVersion(docId: string): Promise<number | null>;
 }
 
 /**
@@ -159,6 +164,17 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
       // Render markdown→HTML so the matcher sees block-ids (markdown source has none); html
       // passes through unchanged. Without this, reattach/anchor validation 400s on markdown docs.
       return renderForAnchoring(row.content, row.kind);
+    },
+    async getCurrentVersion(docId) {
+      // S-001 / C-001: the max version number for the doc (the light optimistic-create gate). No
+      // content rendering — just the number the viewer pinned against.
+      const [row] = await db
+        .select({ version: docVersions.version })
+        .from(docVersions)
+        .where(eq(docVersions.docId, docId))
+        .orderBy(desc(docVersions.version))
+        .limit(1);
+      return row?.version ?? null;
     },
   };
 }
@@ -344,6 +360,11 @@ const createAnnotationSchema = z
     // create (the standalone POST …/suggestions is subsumed). Mutually exclusive with a label
     // (AS-029, refused below + re-checked in the service).
     suggestion: createSuggestionPayloadSchema.optional(),
+    // annotation-create-version-pin S-001 / C-001: an OPTIONAL optimistic-concurrency token — the doc
+    // version the client composed the anchor against. PRESENT + ≠ current → the create is refused with
+    // NO write (409, carrying the current version, AS-002/C-002). ABSENT → no version check (back-compat,
+    // AS-003). The gate runs in the handler BEFORE the atomic write, so a refusal is atomic-preserving.
+    expectedVersion: z.number().int().optional(),
   })
   .refine((b) => !(b.label != null && b.suggestion != null), {
     message: "a label annotation and a suggestion are mutually exclusive",
@@ -477,6 +498,26 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   }
 
   /**
+   * annotation-create-version-pin S-001 / C-001 / C-002: the LIGHT optimistic-concurrency gate
+   * shared by BOTH create entry points (session + guest), so the version check is identity-agnostic
+   * (AS-004) and lives in ONE place. When `expectedVersion` is PRESENT and ≠ the doc's CURRENT
+   * version → throw a 409 ConflictError carrying the current version, so NOTHING is written (it runs
+   * BEFORE createAnnotationWithComment — atomicity preserved, C-018). When ABSENT → no-op (back-compat,
+   * AS-003). NOT the in-transaction hard pin of mcp-patch-document:C-003 — create mutates no doc
+   * content, so this read-compare is best-effort (a benign race re-anchors at the next publish).
+   */
+  async function gateExpectedVersion(docId: string, expectedVersion: number | undefined): Promise<void> {
+    if (expectedVersion === undefined) return; // AS-003: omitted → no check.
+    const currentVersion = await annotationLookupRepo.getCurrentVersion(docId);
+    if (currentVersion !== null && currentVersion !== expectedVersion) {
+      // AS-002 / C-002: refuse with NO write; carry the current version so the client can re-read.
+      throw new ConflictError("Document has changed — re-read before annotating", {
+        details: { currentVersion },
+      });
+    }
+  }
+
+  /**
    * Best-effort client IP for the anon rate-limit key (C-008). Prefers the first
    * `x-forwarded-for` hop (the real client behind a reverse proxy), falling back to
    * `x-real-ip`, then a literal "unknown" so a missing header still rate-limits per-doc
@@ -495,6 +536,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const viewer: Viewer = { kind: "user", userId: actor.userId };
     const doc = await loadVisibleDocBySlug(params.slug, viewer); // 404 if missing/hidden
     const sessionRole = await docRole(doc.id, actor.userId); // server re-auth (AS-020)
+    // S-001 / C-001: optimistic version gate — a stale `expectedVersion` 409s BEFORE the atomic
+    // write, so neither the annotation nor its first comment is persisted (AS-002 atomic-preserving).
+    await gateExpectedVersion(doc.id, body.expectedVersion);
     // C-018: annotation + first comment (+ optional suggestion) in ONE atomic write.
     const result = await createAnnotationWithComment(
       {
@@ -859,6 +903,11 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const access = found ? await deps.resolveAccess(found.id, viewer) : { role: null, canView: false };
     const doc = enforceReadAccess({ doc: found, allowed: found !== null && access.canView }); // 404 if missing/hidden
     const sessionRole = await writeRole(doc.id, viewer, access); // server re-auth (AS-017/AS-020)
+
+    // S-001 / C-001 (AS-004): the optimistic version gate runs HERE — identity-agnostic, BEFORE the
+    // guest-name guards and the atomic write — so a guest's stale create is refused the same way a
+    // member's is, with NO annotation/comment written and the current version returned (409, C-002).
+    await gateExpectedVersion(doc.id, body.expectedVersion);
 
     // C-018: a GUEST (no session) create carrying a comment must clear the SAME guest guards the
     // standalone guest-comment path enforced before the comment rode the create — the rate-limit

@@ -106,7 +106,10 @@ export function ViewerScreen() {
   const query = useApiQuery<ViewerDocResponse>(
     ["viewer-doc", slug],
     () => fetchViewerDoc(slug),
-    { meta: { viewerRead: true } },
+    // refetchOnWindowFocus: an agent can publish a new version out-of-band (MCP patch/update) with no
+    // push channel — refetch when the reviewer returns to the tab so a newer version surfaces (the 30s
+    // staleTime bounds how often this fires).
+    { meta: { viewerRead: true }, refetchOnWindowFocus: true },
   );
 
   // AS-016: route to sign-in carrying a return-to-doc, so completing sign-in lands back on /d/:slug.
@@ -282,6 +285,10 @@ function ViewerShell({
   const [docWidth, setDocWidth] = useState<"wide" | "focus">("wide");
   const hasDoc = Boolean(slug);
 
+  // annotation-create-version-pin S-001 (AS-005): the query client for the stale-create reload —
+  // invalidates ["viewer-doc", slug] + ["viewer-annotations", slug] so a 409'd create surfaces the
+  // current version + content.
+  const composeQueryClient = useQueryClient();
   // S-001 (AS-001): the ShareDialog open-state, hosted here so the top bar's Share button opens it.
   const [shareOpen, setShareOpen] = useState(false);
   // versioning-diff-ui S-001 (AS-001): the VersionHistoryPanel open-state, hosted here so the top
@@ -366,6 +373,15 @@ function ViewerShell({
     // annotation-actions S-006: owner/editor can edit the doc → their own redline is born ACCEPTED
     // (optimistic + reconciled), mirroring the backend auto-accept; commenter's stays pending.
     effectiveRole === "owner" || effectiveRole === "editor",
+    // annotation-create-version-pin S-001 (AS-005): on a STALE create refusal (the doc advanced past
+    // the rendered version) reload the doc + annotations so the current version + content show, and
+    // surface a message. useCompose itself KEEPS the user's draft (re-opens the composer) — the
+    // annotation is never silently lost.
+    () => {
+      void composeQueryClient.invalidateQueries({ queryKey: ["viewer-doc", slug] });
+      void composeQueryClient.invalidateQueries({ queryKey: ["viewer-annotations", slug] });
+      toast("The document changed — reloaded; please re-select and try again");
+    },
   );
 
   // S-006 (C-009 / AS-020..023): the ACTIVE tool routes a text selection. useCompose raises
@@ -934,7 +950,9 @@ function useAnnotations(
   const annoQuery = useApiQuery<ListAnnotationsResponse>(
     annoKey,
     () => listAnnotations(slug ?? ""),
-    { enabled, meta: { viewerRead: true } },
+    // refetchOnWindowFocus (paired with the doc read above): a new version re-anchors annotations
+    // server-side, so refresh the list when the reviewer tabs back to pick up the carried/orphaned state.
+    { enabled, meta: { viewerRead: true }, refetchOnWindowFocus: true },
   );
 
   const annotations: ViewerAnnotation[] = annoQuery.data?.items ?? [];
