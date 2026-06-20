@@ -8,6 +8,7 @@ import { workspaceLabel } from "@/features/workspaces/types";
 import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { isCompact, useBreakpoint } from "@/hooks/use-breakpoint";
 import { Icon } from "@/components/icon";
+import { NotificationsBell } from "@/features/notifications/components/notifications-bell";
 
 // AppHeader (web-core S-005): the thin top bar, styled with Tailwind utilities reading the
 // anchord @theme tokens (no shell.css). DESIGN.md §App shell — `surface` bg + a `line` hairline
@@ -238,22 +239,10 @@ function ThemeToggle({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
   );
 }
 
-// GAP-003: no backend notifications-count endpoint exists yet. The bell keeps the prototype's
-// shape (an active hairline icon-button, NOT dimmed) but is INERT — no unread count is faked,
-// so it shows no badge. When a notifications slice ships it gets the real count + a teal pill.
-function NotificationsBell({ testid, inMenu }: { testid: string; inMenu?: boolean }) {
-  return (
-    <button
-      type="button"
-      data-testid={testid}
-      aria-label="Notifications"
-      className={`relative ${inMenu ? MENU_ITEM : ICON_BTN}`}
-    >
-      <Icon name="bell" size={16} />
-      {inMenu && <span>Notifications</span>}
-    </button>
-  );
-}
+// notifications-email S-006: the real bell — unread badge (polled) + dropdown panel — now lives in
+// `@/features/notifications/components/notifications-bell` (imported above), replacing the former
+// inert GAP-003 placeholder. The header just slots it in (desktop) / folds it into the avatar menu
+// (mobile), exactly where the placeholder sat.
 
 // `contextActions` is the per-screen slot (e.g. a teal Share on a doc screen). Feature screens
 // fill it; web-core renders it empty.

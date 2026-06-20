@@ -10,6 +10,7 @@ import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotati
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
 import { workspacesRoutes, type WorkspacesRoutesDeps } from "./routes/workspaces";
 import { meRoutes, type MeRoutesDeps } from "./routes/me";
+import { notificationsRoutes, type NotificationsRoutesDeps } from "./routes/notifications";
 import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
 import { membersRoutes, type MembersRoutesDeps } from "./routes/members";
 import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
@@ -128,6 +129,13 @@ export type AppDeps = {
    * active; POST /api/me/active-workspace switches). Top-level. Omit to leave unmounted.
    */
   me?: MeRoutesDeps;
+  /**
+   * notifications-email S-006: the in-app notification READ surface under /api/me/notifications
+   * (list paginated, unread-count, mark-read, mark-all-read). USER-scoped (requireSession +
+   * actor.userId), NOT workspace-scoped — a notification is personal (C-008). Omit to leave
+   * the routes unmounted.
+   */
+  notifications?: NotificationsRoutesDeps;
   /**
    * workspace-project S-003: enables the enveloped, session-gated project routes
    * (create/list/rename/archive/unarchive/delete + access-filtered browse-docs-in-
@@ -282,6 +290,13 @@ export function createApp(deps: AppDeps) {
   // /api/me — workspaces S-003 bootstrap. Lists my workspaces + role + active; switch.
   if (deps.me) {
     app.use(meRoutes(deps.me));
+  }
+
+  // /api/me/notifications — notifications-email S-006, the in-app bell READ surface. Self-
+  // enveloped + session-gated, USER-scoped (every read/mark scoped to actor.userId — C-008),
+  // mounted outside /api/auth/*. List/unread-count/mark-read/mark-all-read.
+  if (deps.notifications) {
+    app.use(notificationsRoutes(deps.notifications));
   }
 
   // /api/projects — workspace-project S-003. Self-enveloped + session-gated, mounted

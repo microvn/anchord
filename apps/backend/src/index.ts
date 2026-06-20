@@ -341,6 +341,10 @@ const app = createApp({
         .where(eq(sessionTable.userId, userId));
     },
   },
+  // notifications-email S-006: the in-app bell READ surface. USER-scoped (the read repo scopes
+  // every query to actor.userId — C-008), backed by the real notifications table the earlier
+  // stories write into.
+  notifications: { db, resolveSession },
   // workspace-project S-003: project routes under /api/w/:workspaceId/projects.
   projects: { db, resolveSession, resolveWorkspaceRole },
   // workspaces S-005: per-workspace member directory + role management under

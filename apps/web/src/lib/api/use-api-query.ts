@@ -33,11 +33,26 @@ export function peelEnvelope(body: unknown): unknown {
 export function useApiQuery<T>(
   queryKey: readonly unknown[],
   call: () => Promise<EdenResult<T>>,
-  options?: { enabled?: boolean; meta?: Record<string, unknown> },
+  // `refetchOnWindowFocus` opts a SINGLE query into focus-refetch — the global QueryClient default
+  // is `false` (query-client.ts), so a screen passes `true` only where stale-on-return matters (the
+  // viewer: an out-of-band MCP/agent patch bumps the doc version server-side with no push channel,
+  // so refetching when the reviewer tabs back is the lightest way to surface it — still gated by the
+  // 30s staleTime, so it never refetches more than once per 30s of focus churn).
+  // `refetchInterval` opts a SINGLE query into background polling (notifications-email S-006: the
+  // unread-count badge polls on a quiet cadence — there is no push channel for async review). The
+  // global default is off, so a query polls only when it asks to.
+  options?: {
+    enabled?: boolean;
+    meta?: Record<string, unknown>;
+    refetchOnWindowFocus?: boolean;
+    refetchInterval?: number;
+  },
 ): UseQueryResult<T, ApiError> {
   return useQuery<T, ApiError>({
     queryKey,
     enabled: options?.enabled,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus,
+    refetchInterval: options?.refetchInterval,
     // doc-access-routing S-003 / C-004: a query may carry `meta.viewerRead` so the shared
     // QueryCache onError (query-client.ts) can EXEMPT it from the global session-expiry bounce.
     // A doc-centric viewer read must never sign the user out / redirect to /signin (AS-014).
