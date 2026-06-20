@@ -1,5 +1,5 @@
 import { describe, it, expect, mock } from "bun:test";
-import { render, fireEvent, within } from "@testing-library/react";
+import { render, fireEvent, within, screen, waitFor } from "@testing-library/react";
 import { GuestIdentityChip } from "./guest-identity-chip";
 
 // annotation-core S-007 / AS-016 — the top-bar identity chip. For a guest it shows the session name +
@@ -20,6 +20,21 @@ describe("GuestIdentityChip (S-007)", () => {
     const { getByTestId } = render(<GuestIdentityChip name="swift-otter-k7m2" onRename={onRename} />);
     fireEvent.click(getByTestId("guest-rename"));
     expect(onRename).toHaveBeenCalledTimes(1);
+  });
+
+  it("AS-016: a `?` hint trigger exposes a guest-identity tooltip explaining the temporary name", async () => {
+    render(<GuestIdentityChip name="swift-otter-k7m2" onRename={() => {}} />);
+    // The affordance: a focusable hint with an accessible name, distinct from the name + Rename.
+    const hint = screen.getByTestId("guest-id-hint");
+    expect(hint.tagName).toBe("BUTTON");
+    expect(hint).toHaveAttribute("aria-label", "About your guest name");
+
+    // Opening it (radix opens on focus) surfaces the guest-context copy, including the session name.
+    fireEvent.focus(hint);
+    const tip = await waitFor(() => screen.getByTestId("guest-id-tooltip"));
+    expect(tip).toHaveTextContent(/commenting as a guest/i);
+    expect(tip).toHaveTextContent("swift-otter-k7m2");
+    expect(tip).toHaveTextContent(/sign in to comment with your account/i);
   });
 
   it("AS-019: a markup-bearing name renders inert (no live element from the name)", () => {

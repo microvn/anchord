@@ -310,7 +310,9 @@ AS-016: An anonymous user gets ONE session-stable random identity shown in the h
   guests on one doc don't collide) for the whole viewing session — the SAME name persists across reloads
   and across every composer in that session (it survives a refresh and in-tab navigation; it is NOT
   re-rolled per comment box); the name is shown as a persistent identity chip in the top bar next to the
-  Sign in CTA, with a Rename control that re-rolls to a different random name. The name does not carry to a separate new session.
+  Sign in CTA, with a Rename control that re-rolls to a different random name and a `?` hint (tooltip on
+  hover/focus) explaining the handle is a temporary guest identity for this session — so the chip implies
+  "commenting as <name>" without crowding the bar. The name does not carry to a separate new session.
 - **Data:** no account; one tab/session; name e.g. "brave-heron-9x3a"
 
 AS-017: Guest comments under the session name — composer asks for neither name nor email
@@ -715,3 +717,4 @@ AS is now AT the hard cap of 30 — any further AS forces a phase/scope-by-layer
 | 2026-06-20 | Major (snapshot 2026-06-20-2.md): guest comments DROP the optional email — guest identity is a random auto-assigned (renameable) name only. AS-017 + S-007 desc + Data Model (`comments.guest_email` retired — column kept unread or dropped via migration) + the create `comment` sub-schema + reply body all drop `guestEmail`. Composer shows no email field. | -- |
 | 2026-06-20 | Major (M4+M6, snapshot 2026-06-20-3.md): guest identity becomes ONE session-stable random name (persisted client-side for the session, sessionStorage — survives reload/in-tab nav, not shared across sessions) shown as a persistent `GuestIdentityChip` in the top bar next to the Sign in CTA, with Rename. AS-016 Then rewritten (session-stable + header chip + rename); AS-017 rewritten (composer shows NO name AND NO email field — the session name rides up on send); C-007 reworded; UI tree: `GuestIdentityChip`+`SignInCta` added to `ViewerTopBar`, `GuestNameField` removed from `Composer`. No new AS (held at 30-cap). Fixes the per-composer re-rolled name + inline name box. | -- |
 | 2026-06-21 | Minor: AS-016 guest-name FORMAT — drop the "Anonymous" prefix; the session name is now an `adjective-animal-suffix` handle (e.g. "swift-otter-k7m2") with a random alphanumeric suffix for low collision; Rename re-rolls to a different random name. Behavior (one session-stable random name, header chip) unchanged → Minor, no snapshot. | -- |
+| 2026-06-21 | Minor: AS-016 — the guest chip's `?` disc is a hint (ShadCN Tooltip on hover/focus) explaining the handle is a temporary guest identity ("You're commenting as a guest … sign in to comment with your account"), so the bare handle isn't a mystery. Affordance/microcopy only, no behavior contract change → Minor. | -- |
