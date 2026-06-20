@@ -1063,7 +1063,13 @@ function useAnnotations(
   // stays referentially stable across a selection re-render (the single-place guarantee, BUG #1).
   const placeable = useMemo(
     () =>
-      annotations.map((a) => {
+      annotations
+        // C-002 (AS-006): a REJECTED delete-proposal carries NO doc mark — the proposal is dead, so the
+        // text it struck renders plain again (no dangling strike on text that stays). Excluded from BOTH
+        // mark paths (the light-DOM placer clears+redraws from this set; htmlPlaceable derives from it).
+        // An ACCEPTED redline is NOT excluded — its strike stays (dimmed), slated for MCP-apply (AS-005).
+        .filter((a) => !(a.type === "suggestion" && a.suggestion?.kind === "delete" && a.suggestionStatus === "rejected"))
+        .map((a) => {
         const isRedline = a.type === "suggestion" && a.suggestion?.kind === "delete";
         // DESIGN.md type/tool palette: 4 basic tool hues (NOT per-label). A redline strikes red (via
         // kind, no hue); ANY label (incl. the Like "looks-good" preset) → Label gold; a plain comment

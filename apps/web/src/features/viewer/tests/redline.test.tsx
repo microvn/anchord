@@ -246,7 +246,7 @@ mock.module("sonner", () => ({
 // viewer source the workspaceId from the read response (memberWorkspaceId). bun's mock.module is
 // process-global; we reset `session` to null after each test (runtime reset) so it doesn't leak a
 // stray signed-in session into later files. See memory bun-mockmodule-leak.
-let session: { user: { email: string } } | null = null;
+let session: { user: { email: string; id?: string; name?: string } } | null = null;
 mock.module("@/lib/api/auth-client", () => ({
   useSession: () => ({ data: session, isPending: false }),
   signOut: mock(async () => ({ data: { success: true }, error: null })),
@@ -452,5 +452,90 @@ describe("Guest redline carries the session name (S-007 / AS-017)", () => {
     expect(body.comment.guestName).toBe(chipName);
     expect(typeof body.comment.guestName).toBe("string");
     expect((body.comment.guestName as string).length).toBeGreaterThan(0);
+  });
+});
+
+// ── AS-005 / AS-006: the doc strike mark tracks the decision ──
+// C-002: an ACCEPTED redline keeps its strike (dimmed — slated for MCP-apply); a REJECTED redline has
+// its strike REMOVED (the proposal is dead; the struck text renders plain again — no dangling mark on
+// text that stays). The miss-case this closes: a rejected deletion left a lingering dimmed red strike.
+describe("Redline decide → the doc strike mark (S-002, through ViewerScreen)", () => {
+  const servedRedline = (): ViewerAnnotation => ({
+    id: "rl-served-1",
+    type: "suggestion",
+    status: "unresolved",
+    isOrphaned: false,
+    anchor: { blockId: "block-h1", textSnippet: "Implementation Plan: Real-time Collaboration", offset: 0, length: 44 },
+    suggestion: { kind: "delete", from: "Implementation Plan: Real-time Collaboration", againstVersion: 4 },
+    suggestionStatus: "pending",
+    comments: [
+      { id: "rl-served-1-c", parentId: null, authorName: "Mara", body: "Suggested deletion", createdAt: new Date().toISOString() },
+    ],
+  });
+
+  beforeEach(() => {
+    fetchViewerDoc.mockClear();
+    listAnnotations.mockClear();
+    listAnnotations.mockImplementation(async () => okRead({ items: [servedRedline()] }));
+    // signed-in OWNER → can decide (workspace-scoped). A resolved user id is required for the
+    // owner-decide (Accept/Reject) row to appear (it's withheld until the session resolves, C-003).
+    session = { user: { email: "owner@b.co", id: "owner-1", name: "Owner" } };
+    docResponse = okEnv({
+      doc: {
+        title: "Spec",
+        kind: "markdown",
+        version: 4,
+        status: "live",
+        generalAccess: "restricted",
+        effectiveRole: "owner",
+        workspaceId: "ws-1",
+      },
+      content: MD,
+    });
+  });
+  afterEach(() => {
+    session = null;
+    listAnnotations.mockImplementation(async () => okRead({ items: [] }));
+  });
+
+  it("AS-006: rejecting a redline REMOVES its strike mark from the doc (text renders plain)", async () => {
+    await renderViewer();
+    const view = screen.getByTestId("markdown-view");
+
+    // The pending redline has struck the title — a redline-kind mark is on the text.
+    await waitFor(() => {
+      const mark = view.querySelector('[data-anno="rl-served-1"]') as HTMLElement | null;
+      expect(mark).not.toBeNull();
+      expect(mark!.dataset.annoKind).toBe("redline");
+    });
+
+    // Owner rejects via the rail card.
+    const card = (await screen.findAllByTestId("thread-card"))[0]!;
+    await userEvent.click(within(card).getByTestId("redline-reject"));
+
+    // The strike is removed: no mark for this id survives on the doc text.
+    await waitFor(() => {
+      expect(view.querySelector('[data-anno="rl-served-1"]')).toBeNull();
+    });
+  });
+
+  it("AS-005: accepting a redline KEEPS its strike mark (dimmed) — slated for deletion", async () => {
+    await renderViewer();
+    const view = screen.getByTestId("markdown-view");
+
+    await waitFor(() => {
+      expect(view.querySelector('[data-anno="rl-served-1"]')).not.toBeNull();
+    });
+
+    const card = (await screen.findAllByTestId("thread-card"))[0]!;
+    await userEvent.click(within(card).getByTestId("redline-accept"));
+
+    // The strike STAYS (the deletion is approved, applied later via MCP) and dims (resolved).
+    await waitFor(() => {
+      const mark = view.querySelector('[data-anno="rl-served-1"]') as HTMLElement | null;
+      expect(mark).not.toBeNull();
+      expect(mark!.dataset.annoKind).toBe("redline");
+      expect(mark!.dataset.resolved).toBe("true");
+    });
   });
 });
