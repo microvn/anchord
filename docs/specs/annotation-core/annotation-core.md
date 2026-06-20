@@ -1,7 +1,7 @@
 # Spec: annotation-core
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-21
 **Status:** Draft
 
 ## Overview
@@ -38,8 +38,8 @@ See `## Linked Fields`._
   Consider alternatives · Ensure no regression · Out of scope · Needs tests · Nice approach.
   A per-workspace customizable preset table is deferred (annotation-core-ui-types-modes Phase 4).
 - **comments**: `id`, `annotation_id`, `parent_id` (one level, flat), `author_id`
-  (nullable), `guest_name` (nullable), `guest_email` (nullable — the optional email a
-  guest may supply with a comment, AS-017), `body`, `created_at`, `updated_at` (set at create;
+  (nullable), `guest_name` (nullable — a random auto-assigned name, renameable; a guest gives
+  NO email, removed 2026-06-20), `body`, `created_at`, `updated_at` (set at create;
   adding a comment bumps its parent annotation's `updated_at` too, so a reply surfaces in the
   annotation `(updated_at, id)` changed-since query; C-017).
 - Content served via the content-route (`render-publish`) gets a stable
@@ -289,8 +289,8 @@ AS-030: The annotations list read serves a suggestion's payload + status
 
 ### S-007: Guest commenting (P1)
 
-**Description:** As someone who opens a link without an account, I view under a random
-name; when I comment I enter a name (and an optional email).
+**Description:** As someone who opens a link without an account, I view + comment under a
+random auto-assigned name (renameable); no email is asked for.
 **Source:** docs/explore/annotation-core.md#decisions (item 8 guest), sharing-permissions.
 
 **Execution:**
@@ -301,17 +301,26 @@ name; when I comment I enter a name (and an optional email).
 
 **Acceptance Scenarios:**
 
-AS-016: An anonymous user is assigned a random name
-- **Given:** the doc has anyone-with-link + guest commenting enabled
+AS-016: An anonymous user gets ONE session-stable random identity shown in the header
+- **Given:** the doc is anyone-with-link with link role commenter+ (the role IS the grant — no
+  separate guest-commenting toggle; sharing-permissions reversal 2026-06-20)
 - **When:** a logged-out user opens the link
-- **Then:** they are assigned a random name (e.g. "Anonymous Cat") for the viewing session
-- **Data:** no account
+- **Then:** they are assigned ONE random low-collision name in an `adjective-animal-suffix` shape
+  (e.g. "swift-otter-k7m2" — NO "Anonymous" prefix; the suffix is a few random alphanumerics so two
+  guests on one doc don't collide) for the whole viewing session — the SAME name persists across reloads
+  and across every composer in that session (it survives a refresh and in-tab navigation; it is NOT
+  re-rolled per comment box); the name is shown as a persistent identity chip in the top bar next to the
+  Sign in CTA, with a Rename control that re-rolls to a different random name. The name does not carry to a separate new session.
+- **Data:** no account; one tab/session; name e.g. "brave-heron-9x3a"
 
-AS-017: Guest comments with a name + optional email
-- **Given:** an anonymous user wants to comment
-- **When:** they select text, enter the name "Lan" + an optional email, then submit
-- **Then:** the comment is stored with `guest_name` "Lan" (author_id empty)
-- **Data:** name "Lan", email optional
+AS-017: Guest comments under the session name — composer asks for neither name nor email
+- **Given:** an anonymous user on an anyone-with-link doc whose link role is commenter+ (that link
+  role is what authorizes the guest write — no toggle), already carrying their session identity from
+  the header chip (auto-assigned, optionally renamed, e.g. "Lan")
+- **When:** they select text and submit a comment — the composer shows NO name field and NO email field;
+  the session name rides up with the comment on send
+- **Then:** the comment is stored with `guest_name` "Lan" (author_id empty); no email is collected or stored
+- **Data:** session name "Lan" (random or renamed); composer body only
 
 AS-019: HTML in the comment body / guest_name renders inert [harden C3]
 - **Given:** a guest submits a comment body or guest_name containing HTML/script
@@ -410,7 +419,11 @@ AS-029: A create carrying both a label and a suggestion payload is refused
   is owned by `annotation-actions` (which also adds owner-no-self-approve + delete). C-005 is no longer
   the whole story for suggestions; see annotation-actions C-001..C-006.
 - C-006: Image-region stores normalized 0..1 coordinates relative to the original image, durable across zoom/screen changes. (AS-005, AS-006, AS-007)
-- C-007: Anonymous viewers are assigned a random name; guest comments require a name. (AS-016, AS-017)
+- C-007: An anonymous viewer is assigned ONE random name per viewing session, stable for the whole
+  session (persisted client-side for the session — survives reload/in-tab navigation, not shared with a
+  separate session) and shown as a persistent header identity chip next to the Sign in CTA; Rename updates
+  the session name everywhere. The composer collects neither name nor email — the session name rides up with
+  each guest comment, and a guest comment always carries a non-empty name. (AS-016, AS-017)
 - C-008 [harden C3]: comment `body` and `guest_name` are untrusted; render escaped/sanitized
   (DOMPurify or plaintext-only) at the app origin; `guest_name` is limited in length + charset.
   HTML in the body/name renders inert. (AS-019)
@@ -496,7 +509,7 @@ From `docs/explore/annotation-core.md` §UI sketches. Greenfield → everything 
 names only. Dark-operator (`DESIGN.md`), chrome recedes behind doc+comment. Precedence: AS > Tree.
 
 - `DocViewer` `[N]` *(3-pane; the core screen, chrome shared with render-publish)*
-  - `ViewerTopBar`: title · `LiveBadge` · `FormatBadge` · versionLabel · undo/redo · `PreviewEditToggle` · `CommentsButton` · `ShareButton` · `ThemeToggle` · `OverflowMenu`
+  - `ViewerTopBar`: title · `LiveBadge` · `FormatBadge` · versionLabel · undo/redo · `PreviewEditToggle` · `CommentsButton` · `ShareButton` · `ThemeToggle` · `GuestIdentityChip` *(guest only; session name + Rename, sits next to the Sign in CTA — AS-016)* · `SignInCta` *(guest only)* · `OverflowMenu`
   - `SpecMetaStrip` *(spec-type docs only: tags · stories · AS · Draft · url)*
   - `TocSidebar` *(collapsible)*
     - `TocSearch`
@@ -510,7 +523,7 @@ names only. Dark-operator (`DESIGN.md`), chrome recedes behind doc+comment. Prec
     - `RailHeader` *(count)*
     - `CommentThread`: `QuoteRef` · `Avatar` · name · time · body · `ReplyList` *(flat, one level)* · badge (`SuggestBadge`/`ResolvedBadge`)
     - `DetachedSection` *(amber; `is_orphaned` annotations)*
-    - `Composer`: textarea · `GuestNameField` *(when guest)* · sendButton
+    - `Composer`: textarea · sendButton *(no guest name/email field — guest identity comes from `GuestIdentityChip` in the top bar, AS-017)*
   - *Mobile (<600): `TocSidebar` + `AnnotationsRail` → drawer/bottom-sheet; `CommentFab` (count) opens the rail; tapping a highlight opens the thread.*
 - `ImageRegionLayer` `[N]` *(over ImageViewer)*: `RegionPin` *(click=point)* · `RegionBox` *(drag)* — normalized 0..1 coordinates
 
@@ -522,9 +535,9 @@ by session role (C-009 here = api-core C-005); a forged client role/postMessage 
 
 | Method · Path | Serves | Auth | Request | Success | Errors |
 |---|---|---|---|---|---|
-| `POST /api/w/:workspaceId/docs/:slug/annotations` | S-001 (AS-001/002/003), S-002 (AS-005/006), S-009 (AS-027/028/029 labeled), S-006 (AS-014 suggestion create) | session/guest with comment role | `{ type?, anchor, label?, comment?{ body, guestName?, guestEmail? }, suggestion?{ from, to?, againstVersion } }` — request `type` is the ANCHOR SHAPE ∈ {range, multi_range, block, doc} (optional, defaults to range); a redline/suggestion is created by carrying a `suggestion` payload, NOT by sending `type:"suggestion"` (the server DERIVES the stored type=suggestion). (Zod; text/image-region; `label` validated ∈ preset set, C-015; `label`+`suggestion` mutually exclusive) | 201 `{ annotationId, commentId? }` — annotation + initial comment persisted in ONE atomic write (C-018) | 400 VALIDATION_ERROR (empty selection AS-004; unknown label AS-028; label+suggestion AS-029; `type:"suggestion"` sent as a request type — not an anchor shape), 403 FORBIDDEN (viewer, AS-020 forged role), 404 (no-access doc, AS-021/C-006) |
+| `POST /api/w/:workspaceId/docs/:slug/annotations` | S-001 (AS-001/002/003), S-002 (AS-005/006), S-009 (AS-027/028/029 labeled), S-006 (AS-014 suggestion create) | session/guest with comment role | `{ type?, anchor, label?, comment?{ body, guestName? }, suggestion?{ from, to?, againstVersion } }` — request `type` is the ANCHOR SHAPE ∈ {range, multi_range, block, doc} (optional, defaults to range); a redline/suggestion is created by carrying a `suggestion` payload, NOT by sending `type:"suggestion"` (the server DERIVES the stored type=suggestion). (Zod; text/image-region; `label` validated ∈ preset set, C-015; `label`+`suggestion` mutually exclusive) | 201 `{ annotationId, commentId? }` — annotation + initial comment persisted in ONE atomic write (C-018) | 400 VALIDATION_ERROR (empty selection AS-004; unknown label AS-028; label+suggestion AS-029; `type:"suggestion"` sent as a request type — not an anchor shape), 403 FORBIDDEN (viewer, AS-020 forged role), 404 (no-access doc, AS-021/C-006) |
 | `GET /api/w/:workspaceId/docs/:slug/annotations` | S-001 (AS-021 read-authz), S-009 (AS-027 serves `label`), S-006 (AS-030 serves suggestion payload + `suggestion_status`) | session (viewer+) | pagination query | 200 `{ items, pagination }` (each item carries `label` when set; and the `suggestion` payload + `suggestion_status` when `type`=suggestion) | 404 (no-access → indistinguishable, C-006) |
-| `POST /api/w/:workspaceId/annotations/:id/comments` | S-003 (AS-008 reply), S-007 (AS-016/017/019 guest) — a REPLY to an ALREADY-EXISTING annotation (the first comment rides the create endpoint, C-018; this path is also `mcp-roundtrip`'s reply tool) | session OR guest (name required) | `{ body, parentId?, guestName?, guestEmail? }` (Zod; body+name sanitized C-008) | 201 `{ commentId }` | 400 VALIDATION_ERROR (empty body/name), 403 FORBIDDEN |
+| `POST /api/w/:workspaceId/annotations/:id/comments` | S-003 (AS-008 reply), S-007 (AS-016/017/019 guest) — a REPLY to an ALREADY-EXISTING annotation (the first comment rides the create endpoint, C-018; this path is also `mcp-roundtrip`'s reply tool) | session OR guest (name required) | `{ body, parentId?, guestName? }` (Zod; body+name sanitized C-008) | 201 `{ commentId }` | 400 VALIDATION_ERROR (empty body/name), 403 FORBIDDEN |
 | `PATCH /api/w/:workspaceId/annotations/:id/resolution` | S-004 (AS-009/010), S-006 (AS-026 decided-suggestion reopen) | session (commenter+; OWNER-only when reopening a DECIDED suggestion, C-016) | `{ resolved }` (Zod) | 200 `{ status }` (reopening a decided suggestion also resets `suggestion_status` → pending) | 403 FORBIDDEN (viewer; non-owner reopening a decided suggestion, AS-026) |
 | ~~`POST /api/w/:workspaceId/docs/:slug/suggestions`~~ | **SUBSUMED into the create endpoint (C-018)** — a suggestion is created by `POST …/annotations` with a `suggestion` payload (+ optional first `comment`), atomically. S-006 (AS-014) now runs through the create endpoint. | — | — | — | — |
 | `PATCH /api/w/:workspaceId/suggestions/:id` | S-006 (AS-015/022) | session (owner) | `{ decision }` accept\|reject (Zod) | 200 `{ status }` (accepted\|rejected\|stale) | 403 FORBIDDEN, 409 CONFLICT (stale `from` AS-022) |
@@ -698,3 +711,7 @@ AS is now AT the hard cap of 30 — any further AS forces a phase/scope-by-layer
 | 2026-06-19 | Major (snapshot 2026-06-19-2.md): +C-018 atomic create-with-comment — annotation + first comment persist in ONE transaction, partial failure persists neither (no orphan); create endpoint accepts optional `comment`+`suggestion` (one atomic call), subsuming the standalone suggestion-create; `/comments` = replies to existing annotations only (the MCP reply path). AS-001 Then strengthened. No new AS (at 30-cap). Fixes the orphan-annotation bug (FE created annotation + comment in 2 calls; comment failure left an orphan). | -- |
 | 2026-06-20 | Minor (no snapshot — no M1-M6): clarified the create-annotation REQUEST `type` = anchor shape ∈ {range, multi_range, block, doc} (optional, defaults to range), distinct from the stored `type` column (`suggestion` is server-derived from a `suggestion` payload, never a sent request type). Updated the API create row + Data Model `type` note + AS-014 wording (P1) + added Clarifications 2026-06-20. Reconciles the redline-create drift (FE sent `type:"suggestion"` → server 400; fixed commit 503a6d8). No new AS/constraint (held at 30-AS cap). | /mf-fix 503a6d8 |
 | 2026-06-19 | Major (M6, snapshot 2026-06-19-3.md): the re-anchor matcher (S-005) is EXTRACTED + deepened into the new `annotation-reanchor` sub-spec (S1 model — block_id demoted to a hint, whole-doc text fallback, W3C prefix/suffix context, 0.8 fuzzy threshold, immutable per-(annotation,version) `anchor_resolution` ledger). C-001/C-002 gain delegation pointers (block_id-as-hint now REALIZED via whole-doc fallback; ladder owned by the sub-spec); S-005 description notes "lost block" = text-gone-anywhere, not block-id-changed (fixes the row-delete cascade dogfooded 2026-06-19). GAP-001 resolved → annotation-reanchor C-002/GAP-002 (threshold 0.8, empirical tuning deferred). No AS added to this spec (held at 30-cap; new AS live in the sub-spec). Driven by the cascade investigation + Hypothes.is/W3C research + Plannotator source read + principal-eng review. | annotation-reanchor |
+| 2026-06-20 | Major (snapshot 2026-06-20.md): guest commenting no longer gated by a toggle — sharing-permissions dropped the guest-commenting sub-toggle (Google-Docs model). AS-016/AS-017 Given updated: an anon on an anyone-with-link doc with link role commenter+ may comment (the link role is the grant); the `guestCommentingEnabled` gate is removed from the anon-write path. No new AS (at 30-cap). | -- |
+| 2026-06-20 | Major (snapshot 2026-06-20-2.md): guest comments DROP the optional email — guest identity is a random auto-assigned (renameable) name only. AS-017 + S-007 desc + Data Model (`comments.guest_email` retired — column kept unread or dropped via migration) + the create `comment` sub-schema + reply body all drop `guestEmail`. Composer shows no email field. | -- |
+| 2026-06-20 | Major (M4+M6, snapshot 2026-06-20-3.md): guest identity becomes ONE session-stable random name (persisted client-side for the session, sessionStorage — survives reload/in-tab nav, not shared across sessions) shown as a persistent `GuestIdentityChip` in the top bar next to the Sign in CTA, with Rename. AS-016 Then rewritten (session-stable + header chip + rename); AS-017 rewritten (composer shows NO name AND NO email field — the session name rides up on send); C-007 reworded; UI tree: `GuestIdentityChip`+`SignInCta` added to `ViewerTopBar`, `GuestNameField` removed from `Composer`. No new AS (held at 30-cap). Fixes the per-composer re-rolled name + inline name box. | -- |
+| 2026-06-21 | Minor: AS-016 guest-name FORMAT — drop the "Anonymous" prefix; the session name is now an `adjective-animal-suffix` handle (e.g. "swift-otter-k7m2") with a random alphanumeric suffix for low collision; Rename re-rolls to a different random name. Behavior (one session-stable random name, header chip) unchanged → Minor, no snapshot. | -- |

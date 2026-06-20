@@ -12,10 +12,10 @@ beforeEach(() => {
 });
 
 describe("useGuestIdentity (S-007)", () => {
-  it("AS-016: a fresh session assigns a random 'Anonymous <Animal>' name AND persists it", () => {
+  it("AS-016: a fresh session assigns a random adjective-animal-suffix name AND persists it", () => {
     expect(sessionStorage.getItem(GUEST_NAME_STORAGE_KEY)).toBeNull();
     const { result } = renderHook(() => useGuestIdentity());
-    expect(result.current.name).toMatch(/^Anonymous \w+$/);
+    expect(result.current.name).toMatch(/^[a-z]+-[a-z]+-[a-z0-9]{4}$/);
     // Persisted to sessionStorage so a reload re-reads the same name.
     expect(sessionStorage.getItem(GUEST_NAME_STORAGE_KEY)).toBe(result.current.name);
   });
@@ -36,7 +36,7 @@ describe("useGuestIdentity (S-007)", () => {
     act(() => result.current.rename());
     const after = result.current.name;
     expect(after).not.toBe(before);
-    expect(after).toMatch(/^Anonymous \w+$/);
+    expect(after).toMatch(/^[a-z]+-[a-z]+-[a-z0-9]{4}$/);
     // Persisted: a remount reads the renamed value, not a re-roll.
     expect(sessionStorage.getItem(GUEST_NAME_STORAGE_KEY)).toBe(after);
   });

@@ -9,15 +9,15 @@ import { GuestIdentityChip } from "./guest-identity-chip";
 
 describe("GuestIdentityChip (S-007)", () => {
   it("AS-016: shows the session name + a Rename control", () => {
-    const { getByTestId } = render(<GuestIdentityChip name="Anonymous Otter" onRename={() => {}} />);
+    const { getByTestId } = render(<GuestIdentityChip name="swift-otter-k7m2" onRename={() => {}} />);
     const chip = getByTestId("guest-id");
-    expect(within(chip).getByTestId("guest-name")).toHaveTextContent("Anonymous Otter");
+    expect(within(chip).getByTestId("guest-name")).toHaveTextContent("swift-otter-k7m2");
     expect(within(chip).getByTestId("guest-rename")).toBeTruthy();
   });
 
   it("AS-016: clicking Rename calls onRename", () => {
     const onRename = mock(() => {});
-    const { getByTestId } = render(<GuestIdentityChip name="Anonymous Otter" onRename={onRename} />);
+    const { getByTestId } = render(<GuestIdentityChip name="swift-otter-k7m2" onRename={onRename} />);
     fireEvent.click(getByTestId("guest-rename"));
     expect(onRename).toHaveBeenCalledTimes(1);
   });

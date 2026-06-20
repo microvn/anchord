@@ -7,7 +7,7 @@ import {
 } from "@/features/viewer/components/composer";
 
 // useGuestIdentity (annotation-core S-007 / AS-016, C-007): owns the SESSION-stable guest display
-// name for a logged-out commenter. One random name (e.g. "Anonymous Otter") is assigned for the
+// name for a logged-out commenter. One random name (e.g. "swift-otter-k7m2") is assigned for the
 // WHOLE viewing session and persisted in `sessionStorage`, so it:
 //   - survives a reload (F5) and in-tab navigation (sessionStorage keeps the value while the tab lives),
 //   - is the SAME across every composer in that session (NOT re-rolled per comment box),

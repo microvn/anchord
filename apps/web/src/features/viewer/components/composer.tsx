@@ -39,29 +39,46 @@ function autoSizeTextarea(el: HTMLTextAreaElement): void {
 // guarantees non-empty). The FE only CONSUMES the guest flag — whether a guest can comment is decided
 // by the anyone-with-link link role, owned by sharing-permissions, not here.
 
-// GUEST_NAMES — the "Anonymous <Animal>" pool (prototype `viewer-data.jsx`). One is assigned per
-// session on open (AS-009); Rename cycles to the next.
-export const GUEST_NAMES = [
-  "Anonymous Dugong",
-  "Anonymous Heron",
-  "Anonymous Lynx",
-  "Anonymous Marten",
-  "Anonymous Otter",
-  "Anonymous Petrel",
+// Guest session display name (AS-016): an `adjective-animal-suffix` handle — e.g. "swift-otter-k7m2".
+// NO "Anonymous" prefix (dropped 2026-06-21). The random base36 suffix keeps two guests on one doc
+// from colliding: ~50 adjectives × ~40 animals × 36^4 suffixes ≈ 4 billion combos, so a same-doc
+// collision is effectively impossible for the handful of reviewers a v0 doc sees.
+const GUEST_ADJECTIVES = [
+  "swift", "brave", "quiet", "bold", "calm", "keen", "lucid", "merry", "nimble", "plucky",
+  "rapid", "sly", "spry", "wry", "zesty", "amber", "azure", "coral", "ivory", "jade",
+  "rust", "teal", "umber", "olive", "slate", "lunar", "solar", "misty", "frosty", "sunny",
+  "dusky", "vivid", "gentle", "sharp", "sturdy", "wily", "agile", "breezy", "cozy", "fleet",
+  "grand", "hardy", "jolly", "lush", "mellow", "noble", "perky", "sage", "trusty", "witty",
 ] as const;
+const GUEST_ANIMALS = [
+  "otter", "heron", "lynx", "marten", "petrel", "dugong", "ibex", "tapir", "civet", "vole",
+  "gecko", "raven", "finch", "stoat", "shrew", "badger", "osprey", "marmot", "ferret", "kestrel",
+  "wombat", "quokka", "narwhal", "puffin", "macaw", "lemur", "panther", "bison", "falcon", "heron",
+  "weasel", "mongoose", "caracal", "serval", "okapi", "tapir", "pangolin", "axolotl", "capybara", "meerkat",
+] as const;
+const SUFFIX_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 /** Max stored/displayed guest-name length (C-008.T3: length-limited). */
 export const GUEST_NAME_MAX = 40;
 
-/** A random session display name for a guest (AS-009). */
-export function randomGuestName(): string {
-  return GUEST_NAMES[Math.floor(Math.random() * GUEST_NAMES.length)]!;
+function randomSuffix(len = 4): string {
+  let s = "";
+  for (let i = 0; i < len; i++) s += SUFFIX_ALPHABET[Math.floor(Math.random() * SUFFIX_ALPHABET.length)];
+  return s;
 }
 
-/** Rename → the NEXT name in the pool (deterministic cycle, like the prototype's Rename). */
+/** A random low-collision session display name for a guest (AS-016): `adjective-animal-suffix`. */
+export function randomGuestName(): string {
+  const adj = GUEST_ADJECTIVES[Math.floor(Math.random() * GUEST_ADJECTIVES.length)]!;
+  const animal = GUEST_ANIMALS[Math.floor(Math.random() * GUEST_ANIMALS.length)]!;
+  return `${adj}-${animal}-${randomSuffix()}`;
+}
+
+/** Rename → re-roll to a DIFFERENT random name (AS-016; no fixed pool to cycle). */
 export function nextGuestName(current: string): string {
-  const i = GUEST_NAMES.indexOf(current as (typeof GUEST_NAMES)[number]);
-  return GUEST_NAMES[(i + 1) % GUEST_NAMES.length]!;
+  let next = randomGuestName();
+  for (let i = 0; i < 5 && next === current; i++) next = randomGuestName();
+  return next;
 }
 
 /**

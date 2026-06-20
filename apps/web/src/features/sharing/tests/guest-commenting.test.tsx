@@ -145,7 +145,7 @@ describe("Guest commenting S-007", () => {
     // The chip lives in the top bar (NOT the composer) — a `?` disc + the session name + Rename.
     const chip = within(topBar).getByTestId("guest-id");
     const nameEl = within(chip).getByTestId("guest-name");
-    expect(nameEl.textContent ?? "").toMatch(/^Anonymous \w+$/);
+    expect(nameEl.textContent ?? "").toMatch(/^[a-z]+-[a-z]+-[a-z0-9]{4}$/);
     // The chip sits next to the Sign in CTA (both render in the top bar for a guest).
     expect(within(topBar).getByTestId("vt-signin")).toBeTruthy();
     // Rename cycles the session name in place.
@@ -173,7 +173,7 @@ describe("Guest commenting S-007", () => {
       isOrphaned: false,
       anchor: { blockId: "block-p-1", textSnippet: "Payment expires after 24h", offset: 0, length: 25 },
       comments: [
-        { id: "cmt-real-1", parentId: null, guestName: "Anonymous Otter", body: "Why 24h?", createdAt: new Date().toISOString() },
+        { id: "cmt-real-1", parentId: null, guestName: "swift-otter-k7m2", body: "Why 24h?", createdAt: new Date().toISOString() },
       ],
     };
     listAnnotations.mockImplementation(async () =>
@@ -328,9 +328,9 @@ describe("Guest commenting S-007", () => {
 });
 
 describe("guest name helpers (S-005 — pure)", () => {
-  it("AS-009: randomGuestName returns an 'Anonymous <Animal>' label", () => {
+  it("AS-009: randomGuestName returns an adjective-animal-suffix handle", () => {
     for (let i = 0; i < 10; i++) {
-      expect(randomGuestName()).toMatch(/^Anonymous \w+$/);
+      expect(randomGuestName()).toMatch(/^[a-z]+-[a-z]+-[a-z0-9]{4}$/);
     }
   });
 
