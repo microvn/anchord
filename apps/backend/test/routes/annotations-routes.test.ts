@@ -235,10 +235,13 @@ function buildApp(opts: {
   dismissReattachRepo?: ReturnType<typeof fakeDismissReattachRepo>;
 }) {
   const resolveDocRole = opts.resolveDocRole ?? asOwner;
-  // Default gate: admit, mirroring the resolved role (anon → null role but still admitted
-  // for the default anyone_with_link doc the tests use). No-access cases override this.
+  // Default gate: admit, mirroring the resolved role. For an anon on the default
+  // anyone_with_link doc the LINK ROLE is commenter — the grant a guest write needs
+  // (AS-017 reply gate): the anon write path now requires commenter+ (no separate
+  // guest-commenting toggle), so a viewer-level link would be refused. No-access cases
+  // override this with denyAll.
   const defaultAccess = async (docId: string, viewer: Viewer): Promise<AccessResult> => {
-    const role = viewer.kind === "user" ? await resolveDocRole(docId, viewer.userId) : null;
+    const role = viewer.kind === "user" ? await resolveDocRole(docId, viewer.userId) : "commenter";
     return { role, canView: true };
   };
   return createApp({

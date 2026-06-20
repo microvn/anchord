@@ -545,6 +545,22 @@ describe("AS-017: a guest reply on an anyone_with_link doc is created without an
     expect(gr.calls.inserts[0]?.guestName).toBe("Sam");
     expect(gr.calls.inserts[0]?.authorId).toBeNull(); // server-enforced guest marker
   });
+
+  test("AS-017 (reply gate, the toggle-removal hole): an anon on a VIEWER-level link reply → 403, no comment stored", async () => {
+    // Closing the authz hole the guest-toggle removal exposed (commit 41d9f32): the toggle was
+    // the only gate on the anon reply path. The reply must match the create path — an anon may
+    // write ONLY when the effective LINK ROLE is commenter+. A viewer-level link reads, never writes.
+    const gr = fakeGuestCommentRepo();
+    const app = buildApp({ resolveSession: noSession, resolveAccess: linkViewer, guestCommentRepo: gr });
+    const res = await app.handle(
+      req("/api/docs/doc-one/annotations/ann_1/comments", {
+        method: "POST",
+        body: JSON.stringify({ body: "I shouldn't be able to write this", guestName: "Sam" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(gr.calls.inserts).toHaveLength(0); // refused BEFORE any write — no comment persisted
+  });
 });
 
 // ── AS-021: reply + resolve, addressed by the annotation id ───────────────────

@@ -40,7 +40,7 @@ import { enforceReadAccess } from "../http/access-result";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
 import { type Viewer, type GeneralAccessLevel } from "../sharing/access";
 import { type AccessResult } from "../sharing/resolve-access";
-import { type Role } from "../sharing/roles";
+import { can, type Role } from "../sharing/roles";
 import {
   createAnnotation,
   createAnnotationWithComment,
@@ -821,6 +821,17 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     }
 
     // ── ANON (guest) write path ──────────────────────────────────────────────
+    // AS-017 (reply gate): an anon may write (reply OR create) ONLY when the effective LINK
+    // ROLE is commenter+ — the SAME gate the create path applies via writeRole + can. The
+    // guest-commenting toggle that USED to gate this path was removed (commit 41d9f32); without
+    // this check a viewer-level anyone_with_link guest could reply (read-only link → write). The
+    // link role IS the grant (Google-Docs model): a viewer-level link is REFUSED here (403) BEFORE
+    // any write — no rate-limit work, no name check, no comment persisted.
+    const access = await deps.resolveAccess(parent.docId, viewer);
+    const linkRole = await writeRole(parent.docId, viewer, access);
+    if (!can(linkRole, "comment")) {
+      throw new ForbiddenError();
+    }
     // C-008 (AS-022): rate-limit the anonymous write surface per IP + per doc BEFORE any
     // work (and before notify) so a flood is refused (429) and can't amplify mail — the
     // SAME limiter gates the reply-notification dispatch below (a refused write never
