@@ -32,7 +32,9 @@ export const DETACHED_ALERT_THRESHOLD = 0.25;
  * union-overlap type error.
  */
 export interface ReanchorAnnotationReader {
-  listByDoc(docId: string): Promise<{ id: string; anchor: Anchor; type: string; deletedAt?: Date | null }[]>;
+  listByDoc(
+    docId: string,
+  ): Promise<{ id: string; anchor: Anchor; type: string; deletedAt?: Date | null; authorId?: string | null }[]>;
 }
 
 /** Write port: apply a re-anchor outcome to the annotations row. Both writes are idempotent. */
@@ -64,6 +66,23 @@ export interface ReanchorJobDeps {
   onSummary?: (summary: ReanchorSummary) => void;
   /** Override the alert threshold (default DETACHED_ALERT_THRESHOLD). */
   alertThreshold?: number;
+  /**
+   * notifications-email S-004 (AS-009 / C-007): the per-publish DETACH notify sink. Called ONCE
+   * per publish with ONE entry per AUTHOR whose annotations detached THIS publish (grouped — the
+   * count is how many of theirs detached), so each affected author gets exactly one grouped in-app
+   * row ("N of your annotations were detached"). GAP-002 (resolved): the entries are the affected
+   * annotation AUTHORS ONLY (a guest author — null authorId — is excluded, C-011; the owner is NOT
+   * auto-added). NOT called when zero annotations detached (no empty notice). BEST-EFFORT: a
+   * throwing sink is swallowed (C-007) so it never fails the (already-async, off-publish) job. The
+   * grouped row is value-idempotent per publish ONLY to the extent the in-app insert is — see the
+   * idempotency note: a forced re-run of the WHOLE job would re-call this (the ledger short-circuits
+   * the matcher, not this sink), so the sink is invoked once per job invocation, not once per
+   * (annotation, version). Provide a once-per-publish caller (the route fires the job once).
+   */
+  onDetachedGrouped?: (
+    groups: { authorId: string; count: number }[],
+    ctx: { docId: string; versionId: string },
+  ) => Promise<void> | void;
 }
 
 export interface ReanchorJobInput {
@@ -116,9 +135,12 @@ export async function runReanchorForNewVersion(
   // (`toReanchor.length`). The production listByDoc (repo.ts) already excludes deleted rows at
   // the SQL layer; this filter is the explicit, unit-checkable guard so the rule holds for any
   // reader and can never silently resurrect a deleted annotation on a later publish.
-  const toReanchor: AnnotationToReanchor[] = rows
-    .filter((r) => r.type !== "suggestion" && r.deletedAt == null)
-    .map((r) => ({ id: r.id, anchor: r.anchor }));
+  const live = rows.filter((r) => r.type !== "suggestion" && r.deletedAt == null);
+  const toReanchor: AnnotationToReanchor[] = live.map((r) => ({ id: r.id, anchor: r.anchor }));
+  // S-004 (AS-009): annotation id → durable author, so a detached annotation can be grouped by its
+  // author for the per-publish notify. A guest-created annotation (null authorId) is never in this
+  // map's value as a recipient — the grouping below drops a null author (C-011).
+  const authorById = new Map<string, string | null>(live.map((r) => [r.id, r.authorId ?? null]));
 
   // C-012: preload persisted outcomes so a re-run for the same version is a no-op.
   await deps.ledger.loadEntries?.(input.versionId);
@@ -157,5 +179,28 @@ export async function runReanchorForNewVersion(
     alert: detachedRate > threshold,
   };
   deps.onSummary?.(summary);
+
+  // notifications-email S-004 (AS-009 / C-007): GROUP the detached annotations by durable author and
+  // raise ONE notice per author per publish. Guest-authored detaches (null author) are dropped
+  // (C-011). When NOTHING detached, the sink is NOT called at all (no empty "0 detached" notice).
+  // BEST-EFFORT: a throwing sink is swallowed so it can never fail the off-publish job (C-007).
+  if (deps.onDetachedGrouped && detached.length > 0) {
+    const counts = new Map<string, number>();
+    for (const d of detached) {
+      const authorId = authorById.get(d.id);
+      if (authorId == null) continue; // guest author → no account recipient (C-011).
+      counts.set(authorId, (counts.get(authorId) ?? 0) + 1);
+    }
+    if (counts.size > 0) {
+      const groups = [...counts.entries()].map(([authorId, count]) => ({ authorId, count }));
+      try {
+        await deps.onDetachedGrouped(groups, { docId: input.docId, versionId: input.versionId });
+      } catch (err) {
+        // The orphan-marking already persisted; a notify failure must never fail the job.
+        console.error("[reanchor] detached-notify failed (best-effort, orphans already marked)", err);
+      }
+    }
+  }
+
   return summary;
 }

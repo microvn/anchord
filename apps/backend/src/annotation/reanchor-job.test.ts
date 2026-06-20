@@ -267,6 +267,147 @@ test("AS-021: job with NO changedBlockIds runs the FULL matcher (whole-doc updat
   expect(summary).toMatchObject({ total: 1, carried: 0, detached: 1 });
 });
 
+// ===========================================================================
+// notifications-email S-004 (AS-009 / C-007) — the JOB raises ONE grouped `detached` notice per
+// AUTHOR per publish via the onDetachedGrouped sink. These drive the REAL job wiring (the sink is
+// the surface), not the notify dispatch directly. The reader now carries authorId per row.
+// ===========================================================================
+
+/** A reader that also carries `authorId` per row (for the detach-grouping tests). */
+function readerWithAuthors(
+  rows: { id: string; anchor: Anchor; authorId?: string | null; type?: string }[],
+): ReanchorAnnotationReader {
+  return {
+    async listByDoc() {
+      return rows.map((r) => ({ id: r.id, anchor: r.anchor, type: r.type ?? "range", deletedAt: null, authorId: r.authorId ?? null }));
+    },
+  };
+}
+
+const lostN = (n: number): Anchor => ({ blockId: `block-p-${90 + n}`, textSnippet: "gone", offset: 0, length: 4 });
+
+test("AS-009: a 5-annotation detach burst by Bob raises ONE grouped notice (count 5) per publish, no email", async () => {
+  // 5 of Bob's annotations all orphan in one publish → the sink is called ONCE with a single
+  // grouped entry { authorId: Bob, count: 5 } — not 5 calls, not 5 entries. The job carries no
+  // email channel for detach (in-app only is the notify layer's concern; here we assert the GROUP).
+  const calls: { groups: { authorId: string; count: number }[]; ctx: { docId: string; versionId: string } }[] = [];
+  const rows = readerWithAuthors([1, 2, 3, 4, 5].map((n) => ({ id: `a${n}`, anchor: lostN(n), authorId: "Bob" })));
+  await runReanchorForNewVersion(
+    {
+      annotations: rows,
+      apply: applyRepo().repo,
+      ledger: ledger().repo,
+      onDetachedGrouped: async (groups, ctx) => { calls.push({ groups, ctx }); },
+    },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
+  );
+
+  expect(calls).toHaveLength(1); // ONE call per publish
+  expect(calls[0]!.groups).toEqual([{ authorId: "Bob", count: 5 }]); // ONE grouped entry, count = 5
+  expect(calls[0]!.ctx).toEqual({ docId: "doc_1", versionId: "doc_1:2" });
+});
+
+test("AS-009 (GAP-002, multi-author): two authors detached in one publish → one entry each, correct counts", async () => {
+  // Bob loses 2, Dora loses 1, in the SAME publish. The sink gets ONE call with one entry per
+  // author — recipients are the affected AUTHORS only (the owner is not auto-added here).
+  const calls: { groups: { authorId: string; count: number }[] }[] = [];
+  const rows = readerWithAuthors([
+    { id: "b1", anchor: lostN(1), authorId: "Bob" },
+    { id: "b2", anchor: lostN(2), authorId: "Bob" },
+    { id: "d1", anchor: lostN(3), authorId: "Dora" },
+  ]);
+  await runReanchorForNewVersion(
+    {
+      annotations: rows,
+      apply: applyRepo().repo,
+      ledger: ledger().repo,
+      onDetachedGrouped: async (groups) => { calls.push({ groups }); },
+    },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
+  );
+
+  expect(calls).toHaveLength(1);
+  const byAuthor = Object.fromEntries(calls[0]!.groups.map((g) => [g.authorId, g.count]));
+  expect(byAuthor).toEqual({ Bob: 2, Dora: 1 });
+});
+
+test("AS-009 edge: a guest-authored (null author) detached annotation is excluded from the grouping (C-011)", async () => {
+  // Bob loses 1, a guest (null authorId) loses 1 in the same publish → the guest is dropped, so
+  // only Bob's entry survives. A guest has no account → never a recipient.
+  const calls: { groups: { authorId: string; count: number }[] }[] = [];
+  const rows = readerWithAuthors([
+    { id: "b1", anchor: lostN(1), authorId: "Bob" },
+    { id: "g1", anchor: lostN(2), authorId: null },
+  ]);
+  await runReanchorForNewVersion(
+    {
+      annotations: rows,
+      apply: applyRepo().repo,
+      ledger: ledger().repo,
+      onDetachedGrouped: async (groups) => { calls.push({ groups }); },
+    },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
+  );
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.groups).toEqual([{ authorId: "Bob", count: 1 }]); // guest excluded
+});
+
+test("AS-009 edge: a publish that detaches 1 annotation still groups it (count 1)", async () => {
+  const calls: { groups: { authorId: string; count: number }[] }[] = [];
+  const rows = readerWithAuthors([{ id: "b1", anchor: lostN(1), authorId: "Bob" }]);
+  await runReanchorForNewVersion(
+    {
+      annotations: rows,
+      apply: applyRepo().repo,
+      ledger: ledger().repo,
+      onDetachedGrouped: async (groups) => { calls.push({ groups }); },
+    },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
+  );
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.groups).toEqual([{ authorId: "Bob", count: 1 }]);
+});
+
+test("AS-009 edge: a publish with ZERO detached annotations does NOT call the sink (no empty notice)", async () => {
+  // The single annotation CARRIES (byte-identical text), so nothing detaches → the sink is never
+  // called: no empty "0 detached" notice is raised.
+  const carriedAnchor: Anchor = { blockId: "block-p-7", textSnippet: "expires after 24h", offset: 8, length: 17 };
+  const calls: unknown[] = [];
+  await runReanchorForNewVersion(
+    {
+      annotations: readerWithAuthors([{ id: "a1", anchor: carriedAnchor, authorId: "Bob" }]),
+      apply: applyRepo().repo,
+      ledger: ledger().repo,
+      onDetachedGrouped: async (groups, ctx) => { calls.push({ groups, ctx }); },
+    },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
+  );
+
+  expect(calls).toHaveLength(0); // sink never invoked when nothing detached
+});
+
+test("C-007: a THROWING onDetachedGrouped sink is swallowed — the reanchor job still completes", async () => {
+  // The job is fired async OFF the publish path; a notify failure must never fail the job. The
+  // apply writes (markDetached) already ran before the sink, so they persist; the throw is logged.
+  const apply = applyRepo();
+  const rows = readerWithAuthors([{ id: "b1", anchor: lostN(1), authorId: "Bob" }]);
+  const summary = await runReanchorForNewVersion(
+    {
+      annotations: rows,
+      apply: apply.repo,
+      ledger: ledger().repo,
+      onDetachedGrouped: async () => { throw new Error("notify boom"); },
+    },
+    { docId: "doc_1", versionId: "doc_1:2", content: doc(SEVEN), kind: "html" },
+  );
+
+  // The job returned a summary normally despite the throwing sink (best-effort).
+  expect(summary).toMatchObject({ total: 1, carried: 0, detached: 1 });
+  expect(apply.detached).toEqual(["b1"]); // the orphan-marking persisted before the sink threw
+});
+
 test("C-012: edge — a doc with zero annotations does no work and never alerts", async () => {
   const apply = applyRepo();
   const led = ledger();

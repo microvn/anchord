@@ -23,6 +23,8 @@ import {
   createAnchorResolutionRepo,
 } from "./annotation/repo";
 import { runReanchorForNewVersion } from "./annotation/reanchor-job";
+import { notifyOnDetached } from "./notify/notify";
+import { createNotifyRepo } from "./notify/repo";
 import { createIsActiveMemberName } from "./routes/annotations";
 import { createCommentRateLimiter } from "./annotation/comment-rate-limit";
 import { createApiTokenRepo } from "./mcp/token-repo";
@@ -185,6 +187,26 @@ const notifyMail = {
   },
 };
 
+// notifications-email S-004 (AS-009 / C-007): the per-publish DETACH notify sink wired into the
+// reanchor job. Called once per publish with the per-author grouped tally; raises ONE in-app
+// `detached` row per affected author (IN-APP ONLY — low-signal, no email). C-003: drop an author
+// who lost current access via the shared resolver. Best-effort (notifyOnDetached swallows + logs),
+// so it can never fail the (already async, off-publish) reanchor job.
+const onDetachedGrouped = async (
+  groups: { authorId: string; count: number }[],
+  ctx: { docId: string; versionId: string },
+): Promise<void> => {
+  await notifyOnDetached(
+    { refId: ctx.docId, authors: groups },
+    {
+      repo: createNotifyRepo(db),
+      mail: notifyMail, // unused (low-signal → no email), but the port is required.
+      accessFilter: async (userId) =>
+        (await sharedResolveAccess(ctx.docId, { kind: "user", userId })).canView,
+    },
+  );
+};
+
 // render-publish S-002/S-003/S-004 — the access-gated doc viewer (/d/:slug, /v/:id).
 //
 // The session resolver for the viewer routes: better-auth's cookie → { userId } | null.
@@ -263,6 +285,8 @@ const app = createApp({
               );
             }
           },
+          // S-004 (AS-009): raise ONE grouped in-app `detached` row per affected author per publish.
+          onDetachedGrouped,
         },
         { docId, versionId, content, kind },
       );
@@ -409,6 +433,9 @@ const app = createApp({
                   );
                 }
               },
+              // notifications-email S-004 (AS-009): the MCP publish path also detaches annotations
+              // — raise the SAME grouped per-author in-app notice off this fire-site.
+              onDetachedGrouped,
             },
             // S-004/C-004: forward the patch's changed-block set (undefined for the whole-doc
             // update path → full matcher; present for a patch → deterministic carry off-block).

@@ -430,6 +430,158 @@ export async function notifyOnSuggestionDecided(
   }
 }
 
+export interface NotifyOnResolvedInput {
+  /** The resolved/reopened annotation — also the in-app deep-link ref. */
+  annotationId: string;
+  /**
+   * The annotation's durable CREATOR (account id), or null for a guest-created annotation. A guest
+   * has no account → no recipient (C-011); a null creator yields an empty recipient set.
+   */
+  creatorId: string | null;
+  /**
+   * The acting resolver/reopener, resolved SERVER-side. When it equals the creator the annotation
+   * was self-resolved → no recipient (C-002 self-exclusion). Commenter+ gated route, so an actor
+   * always exists in prod; the pure logic still handles a null defensively.
+   */
+  actorUserId: string | null;
+}
+
+/**
+ * S-004 — compute the recipient for a resolved/reopened annotation: the annotation's CREATOR,
+ * minus the actor (C-002 self-exclusion). Resolve and reopen are IDENTICAL — the recipient rule is
+ * independent of the direction (both emit `resolved`).
+ *
+ * - creator present + ≠ actor → [creator] (the one recipient).
+ * - creator == actor (resolver resolving their OWN annotation, AS-008) → [] (self-exclusion, C-002).
+ * - creator null (guest-created, C-011) → [] (a guest is never a recipient; a null creator can
+ *   never equal a non-null actor, so the guard collapses cleanly to empty).
+ *
+ * At most one recipient, so dedup (C-005) is a no-op here, but it routes through the same
+ * deliverToRecipients stage as the multi-recipient events.
+ */
+export function computeResolvedRecipient(
+  creatorId: string | null,
+  actorUserId: string | null,
+): string[] {
+  if (creatorId == null) return []; // guest-created → no account recipient (C-011).
+  if (creatorId === actorUserId) return []; // self-resolved → self-exclusion (C-002, AS-008).
+  return [creatorId];
+}
+
+/**
+ * S-004 — notify on RESOLVED/REOPENED (someone resolved or reopened an annotation): the
+ * annotation's durable CREATOR, minus the actor (C-002 self-exclusion), minus the creator if they
+ * lost doc access (C-003). IN-APP ONLY — `resolved` is LOW-SIGNAL (C-006), so NO email is ever
+ * enqueued (isEmailEligible("resolved") === false → deliverToRecipients sends no mail). Reopen is
+ * IDENTICAL: same event type `resolved`, same creator recipient (the toggle direction is invisible
+ * to notify). The recipient is the durable creator resolved SERVER-side (C-001) — never client-fed.
+ *
+ * BEST-EFFORT / POST-COMMIT (C-007): runs AFTER the resolution persists; the whole pass is wrapped
+ * so a throwing repo/filter is logged and swallowed — the resolve is never turned into a 500 because
+ * notify failed. A guest-created annotation (null creator) is a clean no-op (no recipient).
+ */
+export async function notifyOnResolved(
+  input: NotifyOnResolvedInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { annotationId, creatorId, actorUserId } = input;
+  // C-006: forced LOW-SIGNAL — `resolved` is in-app only regardless of any deps.type override.
+  const type: NotificationType = "resolved";
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    const candidates = computeResolvedRecipient(creatorId, actorUserId);
+
+    // C-003: drop the creator if they no longer have CURRENT doc access BEFORE any channel fires.
+    // The filter hits the real resolver (the seam) — same approach the other events use; absent
+    // filter → no filtering (back-compat with unit fakes).
+    let recipients = candidates;
+    if (deps.accessFilter) {
+      const filter = deps.accessFilter;
+      const checks = await Promise.all(candidates.map((u) => filter(u)));
+      recipients = candidates.filter((_, i) => checks[i]);
+    }
+
+    return await deliverToRecipients(annotationId, recipients, type, deps);
+  } catch (err) {
+    log("notifyOnResolved failed (best-effort, resolution already persisted)", err);
+    return empty;
+  }
+}
+
+/** A grouped per-author detach tally for one publish: the author + how many of THEIR annotations
+ *  detached in that publish. The count feeds the single grouped in-app row's content (AS-009). */
+export interface DetachedAuthorGroup {
+  authorId: string;
+  count: number;
+}
+
+export interface NotifyOnDetachedInput {
+  /**
+   * The deep-link ref for the in-app row — the doc the publish detached annotations on. A detach is
+   * a per-publish, per-author GROUP (not a single annotation), so the row points at the doc, not at
+   * any one orphaned annotation.
+   */
+  refId: string;
+  /**
+   * One entry per AUTHOR whose annotations detached in THIS publish, carrying the count. Already
+   * grouped by the caller (the reanchor job) — one row is written per entry (AS-009 grouping is
+   * per-recipient per publish). GAP-002 (resolved): the doc owner is NOT auto-added — only the
+   * affected annotation AUTHORS are recipients.
+   */
+  authors: DetachedAuthorGroup[];
+}
+
+/**
+ * S-004 — notify on a DETACH BURST (a republish orphaned annotations): ONE grouped in-app row per
+ * AUTHOR per publish (AS-009), minus any author who lost doc access (C-003). IN-APP ONLY — `detached`
+ * is LOW-SIGNAL (C-006), so NO email is ever enqueued. The grouping is the caller's responsibility
+ * (the reanchor job tallies per author); this writes exactly one `detached` row per surviving author.
+ * An EMPTY author set (0 annotations detached) writes NOTHING — no empty "0 detached" row.
+ *
+ * Recipients are the affected annotation AUTHORS ONLY (GAP-002) — the owner is NOT notified for
+ * OTHERS' detached annotations. A guest-authored annotation never reaches here (the job excludes a
+ * null author from the tally — a guest has no account, C-011).
+ *
+ * BEST-EFFORT / POST-COMMIT (C-007): the reanchor job is fired async OFF the publish path, and this
+ * runs after the orphan-marking persists; the whole pass is wrapped so a throwing repo/filter is
+ * logged and swallowed — neither the job nor the publish is failed because notify failed.
+ */
+export async function notifyOnDetached(
+  input: NotifyOnDetachedInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { refId, authors } = input;
+  const type: NotificationType = "detached"; // C-006: LOW-SIGNAL, in-app only.
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    // Defensive dedup (C-005): collapse any duplicate author entry to one row (the job already
+    // groups, but a malformed caller never produces two rows for one author).
+    const seen = new Set<string>();
+    const candidates = authors
+      .filter((a) => a.authorId != null && a.count > 0)
+      .map((a) => a.authorId)
+      .filter((id) => (seen.has(id) ? false : (seen.add(id), true)));
+
+    // C-003: drop any author who lost doc access BEFORE any channel fires.
+    let recipients = candidates;
+    if (deps.accessFilter) {
+      const filter = deps.accessFilter;
+      const checks = await Promise.all(candidates.map((u) => filter(u)));
+      recipients = candidates.filter((_, i) => checks[i]);
+    }
+
+    // One grouped row per surviving author. deliverToRecipients enqueues NO email (low-signal).
+    return await deliverToRecipients(refId, recipients, type, deps);
+  } catch (err) {
+    log("notifyOnDetached failed (best-effort, orphan-marking already persisted)", err);
+    return empty;
+  }
+}
+
 /**
  * Shared per-recipient channel send (C-005/C-006/C-012/C-013): for each recipient write ONE
  * in-app row (always — the durable channel) and, for a high-signal type only, enqueue ONE

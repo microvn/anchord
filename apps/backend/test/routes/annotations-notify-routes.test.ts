@@ -294,3 +294,134 @@ describe("POST /api/annotations/:id/comments dispatches thread-activity notify (
     expect(json.data.commentId).toBeString();
   });
 });
+
+// notifications-email S-004 (AS-008) — the RESOLUTION ROUTE drives the resolved-notify dispatch.
+// PATCH /api/w/:workspaceId/annotations/:id/resolution: a successful resolve/reopen notifies the
+// annotation's durable CREATOR (authorId), minus the acting resolver (self-exclusion). IN-APP ONLY
+// (resolved is low-signal) → ZERO emails. Drives the REAL route → setResolution → dispatchResolvedNotify
+// wiring (not the notify dispatch in isolation), per the S-004 surface-coverage contract.
+
+// A resolution-route app builder: parametrize the annotation's authorId (the creator/recipient).
+function buildResolutionApp(opts: {
+  resolveSession: SessionResolver;
+  authorId: string | null;
+  notifyRepo: NotifyRepo;
+  mail: MailEnqueuer;
+}) {
+  return createApp({
+    dbCheck: async () => {},
+    annotations: {
+      commentRepo: fakeCommentRepo([]),
+      annotationRepo: { async insertAnnotation() { return { id: "x" }; }, async insertAnnotationWithComment() { return { id: "x" }; }, async listByDoc() { return []; }, async listCommentsByDoc() { return []; } },
+      guestCommentRepo: { async listByAnnotation() { return []; }, async insertComment() { return { id: "g" }; } },
+      // Toggle the status to whatever was requested (idempotent no-op in the fake).
+      resolutionRepo: { async setAnnotationStatus() {}, async resetSuggestionStatusToPending() {} },
+      deleteRepo: { async setDeletedAt() {} },
+      restoreRepo: { async clearDeletedAt() {} },
+      dismissReattachRepo: { async dismiss() {}, async reattach() {} },
+      // getSuggestion → null: this is an ORDINARY annotation (a remark), so the commenter+ resolve
+      // path runs (not the owner-only proposal gate).
+      suggestionRepo: { async insertSuggestion() { return { id: "s" }; }, async getSuggestion() { return null; }, async setSuggestionStatus() {} },
+      lookupRepo: fakeLookupRepo(VISIBLE_DOC),
+      // The annotation lookup carries the durable creator (authorId) the resolved-notify recipient is.
+      annotationLookupRepo: {
+        async findAnnotationDoc() {
+          return { docId: VISIBLE_DOC.id, generalAccess: VISIBLE_DOC.generalAccess, authorId: opts.authorId, deletedAt: null };
+        },
+        async findSuggestionDoc() { return null; },
+        async getCurrentVersionContent() { return null; },
+        async getCurrentVersion() { return null; },
+      },
+      resolveSession: opts.resolveSession,
+      resolveWorkspaceRole: async () => "member",
+      // commenter+ may resolve a remark (the actor's role; not author-gated).
+      resolveDocRole: asCommenter,
+      resolveAccess: async () => ({ role: "commenter", canView: true }),
+      notify: { repo: opts.notifyRepo, mail: opts.mail },
+    },
+  });
+}
+
+describe("PATCH …/annotations/:id/resolution dispatches resolved notify (S-004, in-app only)", () => {
+  test("AS-008: Carol resolves Bob's annotation → Bob gets ONE in-app row, ZERO emails, type resolved", async () => {
+    const carol: SessionResolver = async () => ({ userId: "Carol" });
+    const notifyRepo = fakeNotifyRepo({ participants: [], owner: null });
+    const mail = fakeMail();
+    const app = buildResolutionApp({ resolveSession: carol, authorId: "Bob", notifyRepo, mail });
+
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/resolution", {
+        method: "PATCH",
+        body: JSON.stringify({ resolved: true }),
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    // ONE in-app row for the creator Bob; type resolved; Carol (actor) excluded.
+    expect(notifyRepo.inserted.map((n) => n.userId)).toEqual(["Bob"]);
+    expect(notifyRepo.inserted.every((n) => n.type === "resolved" && n.refId === "ann_1")).toBe(true);
+    // CRUX (C-006): resolved is low-signal → ZERO emails enqueued.
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("AS-008 (reopen): reopening Bob's annotation notifies Bob identically — same type, ZERO emails", async () => {
+    const carol: SessionResolver = async () => ({ userId: "Carol" });
+    const notifyRepo = fakeNotifyRepo({ participants: [], owner: null });
+    const mail = fakeMail();
+    const app = buildResolutionApp({ resolveSession: carol, authorId: "Bob", notifyRepo, mail });
+
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/resolution", {
+        method: "PATCH",
+        body: JSON.stringify({ resolved: false }), // reopen
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    expect(notifyRepo.inserted.map((n) => n.userId)).toEqual(["Bob"]);
+    expect(notifyRepo.inserted.every((n) => n.type === "resolved")).toBe(true);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("AS-008 (self-resolve, C-002): Bob resolves his OWN annotation → NO notify row", async () => {
+    const bob: SessionResolver = async () => ({ userId: "Bob" });
+    const notifyRepo = fakeNotifyRepo({ participants: [], owner: null });
+    const mail = fakeMail();
+    const app = buildResolutionApp({ resolveSession: bob, authorId: "Bob", notifyRepo, mail });
+
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/resolution", {
+        method: "PATCH",
+        body: JSON.stringify({ resolved: true }),
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    // creator == actor → self-exclusion: no in-app row, no email.
+    expect(notifyRepo.inserted).toHaveLength(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-007: a throwing notify repo still returns 200 (resolve persisted; notify best-effort)", async () => {
+    const carol: SessionResolver = async () => ({ userId: "Carol" });
+    const mail = fakeMail();
+    // A notify repo whose insert throws — must NOT turn the resolve into a 500.
+    const throwingNotify: NotifyRepo = {
+      async listParticipantIds() { return []; },
+      async getDocOwnerId() { return null; },
+      async getUserEmail() { return null; },
+      async insertNotification() { throw new Error("db boom"); },
+    };
+    const app = buildResolutionApp({ resolveSession: carol, authorId: "Bob", notifyRepo: throwingNotify, mail });
+
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/resolution", {
+        method: "PATCH",
+        body: JSON.stringify({ resolved: true }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.status).toBe("resolved");
+  });
+});

@@ -3,9 +3,12 @@ import {
   computeRecipients,
   computeNewFeedbackCandidates,
   computeSuggestionDecidedRecipient,
+  computeResolvedRecipient,
   notifyOnThreadActivity,
   notifyOnNewFeedback,
   notifyOnSuggestionDecided,
+  notifyOnResolved,
+  notifyOnDetached,
   isEmailEligible,
   buildAnnotationDeepLink,
   buildEmailBody,
@@ -713,5 +716,232 @@ describe("notifyOnSuggestionDecided (author recipient, both channels, access-fil
     expect(logged).toHaveLength(1);
     // Best-effort: the row that landed before the throw stays (no rollback in notify).
     expect(repo.inserted).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// notifications-email S-004 — notify on RESOLUTION (resolved/reopened) and DETACH.
+// resolved + detached are LOW-SIGNAL (C-006): in-app ONLY, NEVER email. The crux of every
+// assertion below is ZERO emails. Pure logic against the same fake ports.
+// ===========================================================================
+
+describe("computeResolvedRecipient (recipient = creator − actor; guest/self → none)", () => {
+  test("C-001: creator Bob, resolver Carol → [Bob]", () => {
+    expect(computeResolvedRecipient("Bob", "Carol")).toEqual(["Bob"]);
+  });
+
+  test("C-002: creator == actor (resolver resolved own annotation) → [] (self-exclusion, AS-008)", () => {
+    expect(computeResolvedRecipient("Bob", "Bob")).toEqual([]);
+  });
+
+  test("C-011: guest-created annotation (null creator) → [] (a guest is never a recipient)", () => {
+    expect(computeResolvedRecipient(null, "Carol")).toEqual([]);
+  });
+});
+
+describe("notifyOnResolved (creator recipient, in-app ONLY — C-006 low-signal, NO email)", () => {
+  test("AS-008: Carol resolves Bob's annotation → Bob gets ONE in-app row, ZERO emails (type resolved)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnResolved(
+      { annotationId: "ann_1", creatorId: "Bob", actorUserId: "Carol" },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    // recipient is exactly Bob (the creator); Carol the resolver excluded.
+    expect(result.recipients).toEqual(["Bob"]);
+    expect(result.recipients).not.toContain("Carol");
+    // ONE in-app row (type=resolved, ref=the annotation id).
+    expect(result.inAppSent).toBe(1);
+    expect(repo.inserted).toHaveLength(1);
+    expect(repo.inserted[0]!.userId).toBe("Bob");
+    expect(repo.inserted[0]!.type).toBe("resolved");
+    expect(repo.inserted[0]!.refId).toBe("ann_1");
+    // CRUX (C-006): resolved is LOW-SIGNAL → ZERO emails, even with appUrl set.
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("AS-008 (reopen parity): reopening notifies the SAME creator with the SAME type, ZERO emails", async () => {
+    // Reopen reaches the dispatch identically — the route fires notifyOnResolved for BOTH the
+    // resolve and the reopen branch; the toggle direction is invisible here.
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnResolved(
+      { annotationId: "ann_2", creatorId: "Bob", actorUserId: "Carol" },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients).toEqual(["Bob"]);
+    expect(repo.inserted[0]!.type).toBe("resolved"); // same event type as resolve
+    expect(result.inAppSent).toBe(1);
+    expect(result.emailsSent).toBe(0); // still no email
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("AS-008 (self-resolve): the creator resolves their OWN annotation → NO notify (C-002)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnResolved(
+      { annotationId: "ann_1", creatorId: "Bob", actorUserId: "Bob" },
+      { repo, mail },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0); // no in-app row
+    expect(mail.sent).toHaveLength(0); // no email
+  });
+
+  test("C-011 edge: a guest-created annotation (null creator) → no recipient, no row, no crash", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnResolved(
+      { annotationId: "ann_1", creatorId: null, actorUserId: "Carol" },
+      { repo, mail },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-003: the creator who lost doc access is dropped before any channel (no row, no email)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+    const hasAccess = new Set<string>(); // Bob revoked → empty allow-set
+
+    const result = await notifyOnResolved(
+      { annotationId: "ann_1", creatorId: "Bob", actorUserId: "Carol" },
+      { repo, mail, accessFilter: async (userId) => hasAccess.has(userId) },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-007: a throwing repo does NOT throw out of dispatch (best-effort, resolution already persisted)", async () => {
+    const mail = fakeMail();
+    const logged: unknown[] = [];
+    const repo: NotifyRepo = {
+      async listParticipantIds() { return []; },
+      async getDocOwnerId() { return null; },
+      async getUserEmail() { return null; },
+      async insertNotification() { throw new Error("db boom"); },
+    };
+
+    const result = await notifyOnResolved(
+      { annotationId: "ann_1", creatorId: "Bob", actorUserId: "Carol" },
+      { repo, mail, logError: (_m, e) => logged.push(e) },
+    );
+
+    // Swallowed — returns the empty result, never throws (the resolve must not become a 500).
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(logged).toHaveLength(1);
+  });
+});
+
+describe("notifyOnDetached (ONE grouped row per author, in-app ONLY — C-006 low-signal, NO email)", () => {
+  test("AS-009: a 5-annotation detach burst → Bob gets ONE in-app row, ZERO emails (type detached)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnDetached(
+      { refId: "doc_1", authors: [{ authorId: "Bob", count: 5 }] },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    // Exactly ONE row for Bob covering all 5 (grouped) — NOT five rows.
+    expect(result.recipients).toEqual(["Bob"]);
+    expect(result.inAppSent).toBe(1);
+    expect(repo.inserted).toHaveLength(1);
+    expect(repo.inserted[0]!.userId).toBe("Bob");
+    expect(repo.inserted[0]!.type).toBe("detached");
+    expect(repo.inserted[0]!.refId).toBe("doc_1");
+    // CRUX (C-006): detached is LOW-SIGNAL → ZERO emails.
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("AS-009 (multi-author, GAP-002): two authors in one publish → each gets exactly one row, correct refId", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnDetached(
+      { refId: "doc_1", authors: [{ authorId: "Bob", count: 3 }, { authorId: "Dora", count: 2 }] },
+      { repo, mail },
+    );
+
+    expect(result.recipients.sort()).toEqual(["Bob", "Dora"]);
+    expect(result.inAppSent).toBe(2);
+    expect(repo.inserted.map((n) => n.userId).sort()).toEqual(["Bob", "Dora"]);
+    expect(repo.inserted.every((n) => n.type === "detached")).toBe(true);
+    expect(mail.sent).toHaveLength(0); // still no email for anyone
+  });
+
+  test("AS-009 edge: empty author set (0 detached) → NO row at all (no empty notice)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnDetached({ refId: "doc_1", authors: [] }, { repo, mail });
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-005: a duplicate author entry collapses to ONE row (defensive dedup)", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnDetached(
+      { refId: "doc_1", authors: [{ authorId: "Bob", count: 2 }, { authorId: "Bob", count: 3 }] },
+      { repo, mail },
+    );
+
+    expect(result.recipients).toEqual(["Bob"]);
+    expect(repo.inserted).toHaveLength(1);
+  });
+
+  test("C-003: an author who lost doc access is dropped before any channel fires", async () => {
+    const repo = fakeRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+    const hasAccess = new Set<string>(["Dora"]); // Bob revoked, Dora retains
+
+    const result = await notifyOnDetached(
+      { refId: "doc_1", authors: [{ authorId: "Bob", count: 5 }, { authorId: "Dora", count: 1 }] },
+      { repo, mail, accessFilter: async (userId) => hasAccess.has(userId) },
+    );
+
+    expect(result.recipients).toEqual(["Dora"]);
+    expect(repo.inserted.map((n) => n.userId)).toEqual(["Dora"]);
+  });
+
+  test("C-007: a throwing repo does NOT throw out of dispatch (best-effort, off-publish job)", async () => {
+    const mail = fakeMail();
+    const logged: unknown[] = [];
+    const repo: NotifyRepo = {
+      async listParticipantIds() { return []; },
+      async getDocOwnerId() { return null; },
+      async getUserEmail() { return null; },
+      async insertNotification() { throw new Error("db boom"); },
+    };
+
+    const result = await notifyOnDetached(
+      { refId: "doc_1", authors: [{ authorId: "Bob", count: 5 }] },
+      { repo, mail, logError: (_m, e) => logged.push(e) },
+    );
+
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(logged).toHaveLength(1);
+  });
+
+  test("C-007b: detached + resolved are NOT email-eligible (low-signal channel confirmed)", () => {
+    expect(isEmailEligible("resolved")).toBe(false);
+    expect(isEmailEligible("detached")).toBe(false);
   });
 });

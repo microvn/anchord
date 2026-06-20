@@ -72,7 +72,7 @@ import {
   createSuggestionRepo,
 } from "../annotation/repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
-import { notifyOnThreadActivity, notifyOnNewFeedback, notifyOnSuggestionDecided, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
+import { notifyOnThreadActivity, notifyOnNewFeedback, notifyOnSuggestionDecided, notifyOnResolved, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { annotations as annotationsTable, docs as docsTable, docVersions, docMembers, user } from "../db/schema";
@@ -534,6 +534,38 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   }
 
   /**
+   * notifications-email S-004 — best-effort post-commit notify on RESOLVED/REOPENED (someone
+   * resolved or reopened an annotation). Notifies the annotation's durable CREATOR, minus the
+   * acting resolver (C-002 self-exclusion — resolving your OWN annotation notifies no one), minus
+   * the creator if they lost doc access (C-003). IN-APP ONLY — `resolved` is LOW-SIGNAL (C-006),
+   * so NO email is enqueued (this is the crux of AS-008). Reopen is IDENTICAL (same `resolved`
+   * type, same creator recipient). A guest-created annotation (null creator) is a clean no-op. The
+   * access-filter is built HERE from the REAL `resolveAccess` (the seam) keyed on this doc. Never
+   * throws (notifyOnResolved swallows + logs), so a notify failure can't 500 the resolve. No-op
+   * when the notify block is unwired.
+   */
+  async function dispatchResolvedNotify(
+    docId: string,
+    annotationId: string,
+    creatorId: string | null,
+    actorUserId: string | null,
+  ) {
+    if (!notifyDeps) return;
+    await notifyOnResolved(
+      { annotationId, creatorId, actorUserId },
+      {
+        ...notifyDeps,
+        // C-006: `resolved` is forced low-signal in notifyOnResolved regardless of this — set for
+        // clarity. No email ever fires for this event.
+        type: "resolved",
+        // C-003 seam: hit the real resolver against this doc — a creator who lost access is dropped.
+        accessFilter: async (userId) =>
+          (await deps.resolveAccess(docId, { kind: "user", userId })).canView,
+      },
+    );
+  }
+
+  /**
    * Resolve a doc by slug to a visible doc or throw 404 (existence-hiding, C-006).
    * doc-access-routing S-001 / C-001: the gate is the single authoritative
    * `resolveAccess` — NOT the permissive `canViewDoc` stub (which let any logged-in user
@@ -674,6 +706,11 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // S-005/C-007: a deleted (terminal) annotation reads as gone → 404 (existence-hiding).
     if (!result.ok && result.reason === "not_found") throw new NotFoundError();
     if (!result.ok) throw new ForbiddenError(); // viewer / non-owner proposal close → 403 (AS-003/AS-010/AS-026)
+    // notifications-email S-004 (AS-008): a settled resolve/reopen notifies the annotation's
+    // durable CREATOR (found.authorId; null for a guest → no recipient), minus the acting resolver
+    // (self-exclusion). IN-APP ONLY (resolved is low-signal). Best-effort post-commit; reopen fires
+    // identically (same event type). Fires only past the ok gate (no notify on a forbidden toggle).
+    await dispatchResolvedNotify(parent.docId, params.id, found!.authorId, actor.userId);
     return { status: result.status };
   }
 
@@ -1087,6 +1124,11 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     );
     if (!result.ok && result.reason === "not_found") throw new NotFoundError(); // deleted → 404
     if (!result.ok) throw new ForbiddenError(); // viewer / non-owner proposal close → 403
+    // notifications-email S-004 (AS-008): same as the workspace-scoped resolution handler — notify
+    // the annotation's durable CREATOR (found.authorId), minus the acting resolver (self-exclusion).
+    // IN-APP ONLY. The actor on this DOC-ADDRESSED route may be a guest (anon) → null actor, which
+    // excludes nobody; a guest still can't be a recipient (the creator is the recipient, not the actor).
+    await dispatchResolvedNotify(parent.docId, params.id, found!.authorId, actor?.userId ?? null);
     return { status: result.status };
   }
 
