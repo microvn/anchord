@@ -78,6 +78,70 @@ export interface PullAnnotationsResult {
   cursor: string | null;
 }
 
+// ── optional filter params (C-004 / AS-007) ─────────────────────────────────
+//
+// The calling MODEL supplies these from the user's request; ALL are optional. With NONE the
+// default is unchanged — every annotation + its status flags (full fidelity, so AS-008
+// incremental change-tracking still surfaces resolve/dismiss/orphan transitions). A supplied
+// filter narrows the set SERVER-SIDE (a WHERE condition); it composes with the cursor (the
+// agent owns the trade-off — a filtered incremental pull won't surface a row that no longer
+// matches, which is the agent's explicit choice, not a silent server drop). The per-annotation
+// payload SHAPE is unchanged either way.
+
+/** The optional pull filters the model supplies at call time (C-004 / AS-007). */
+export interface PullFilter {
+  /** unresolved | resolved — narrows to one resolution state when set. */
+  status?: "unresolved" | "resolved";
+  /** when false, exclude orphaned annotations (default true → kept). */
+  includeOrphaned?: boolean;
+  /** when false, exclude dismissed annotations (default true → kept). */
+  includeDismissed?: boolean;
+  /** when false, exclude soft-deleted annotations (default true → kept). */
+  includeDeleted?: boolean;
+  /** narrows to one annotation type when set. */
+  type?: PulledAnnotation["type"];
+}
+
+const ANNOTATION_TYPES: readonly PulledAnnotation["type"][] = [
+  "range",
+  "multi_range",
+  "block",
+  "doc",
+  "suggestion",
+];
+
+/**
+ * Parse the raw tool params into a PullFilter — empty (`{}`) when no filter param is supplied,
+ * so the default stays "all + flags". Unknown/invalid enum values are IGNORED (treated as
+ * absent) rather than thrown: a bad filter degrades to a wider pull, never aborts the agent.
+ */
+export function parsePullFilter(params: Record<string, unknown>): PullFilter {
+  const filter: PullFilter = {};
+  if (params.status === "unresolved" || params.status === "resolved") filter.status = params.status;
+  if (typeof params.includeOrphaned === "boolean") filter.includeOrphaned = params.includeOrphaned;
+  if (typeof params.includeDismissed === "boolean") filter.includeDismissed = params.includeDismissed;
+  if (typeof params.includeDeleted === "boolean") filter.includeDeleted = params.includeDeleted;
+  if (typeof params.type === "string" && (ANNOTATION_TYPES as string[]).includes(params.type)) {
+    filter.type = params.type as PulledAnnotation["type"];
+  }
+  return filter;
+}
+
+/**
+ * The in-memory predicate that mirrors the SQL WHERE-builder (pull-tools-wiring.ts) one-to-one,
+ * so the fake port and the real Drizzle query share one rule. A null/empty filter keeps every
+ * row (the default-all behavior). `include*` flags exclude ONLY when explicitly false.
+ */
+export function applyPullFilter(row: PullAnnotationRow, filter?: PullFilter | null): boolean {
+  if (!filter) return true;
+  if (filter.status !== undefined && row.status !== filter.status) return false;
+  if (filter.type !== undefined && row.type !== filter.type) return false;
+  if (filter.includeOrphaned === false && row.isOrphaned) return false;
+  if (filter.includeDismissed === false && row.dismissed) return false;
+  if (filter.includeDeleted === false && row.deleted) return false;
+  return true;
+}
+
 // ── cursor: an opaque (updated_at, snowflake id) watermark (C-017 / AS-008) ──
 //
 // The cursor is NOT a page offset — it is a monotonic position in the (updated_at, id)
@@ -189,9 +253,15 @@ export interface PullPorts {
    * Annotations on the doc (INCLUDING soft-deleted + dismissed — AS-007). When `cursor` is
    * given (AS-008), ONLY rows whose (updated_at, id) is strictly greater are returned, ordered
    * by (updated_at, id) ascending (the changed-since query); when omitted, the full set newest
-   * first. NULL/missing doc → []; authorization is gated by resolveRole BEFORE this is called.
+   * first. When `filter` is given (C-004 / AS-007), the set is narrowed server-side by its WHERE
+   * conditions, composing with the cursor; an empty/absent filter keeps every annotation (the
+   * default). NULL/missing doc → []; authorization is gated by resolveRole BEFORE this is called.
    */
-  listAllByDoc(docId: string, cursor?: PullCursor | null): Promise<PullAnnotationRow[]>;
+  listAllByDoc(
+    docId: string,
+    cursor?: PullCursor | null,
+    filter?: PullFilter | null,
+  ): Promise<PullAnnotationRow[]>;
   /** Every comment on the doc's annotations (incl. on deleted/dismissed ones), creation order. */
   listAllCommentsByDoc(docId: string): Promise<PullCommentRow[]>;
 }
@@ -254,9 +324,11 @@ export function pullAnnotationsHandler(
     // AS-008: an opaque (updated_at, id) watermark, if the agent kept one from a prior pull.
     // A malformed cursor decodes to null → a full pull (never an error that aborts the agent).
     const cursor = decodeCursor(params.cursor);
+    // AS-007 / C-004: optional model-supplied filters; empty → the default "all + flags".
+    const filter = parsePullFilter(params);
 
     const [rows, commentRows] = await Promise.all([
-      ports.listAllByDoc(docId, cursor), // changed-since filter when cursor present (AS-008)
+      ports.listAllByDoc(docId, cursor, filter), // changed-since (AS-008) + narrowing filter (AS-007)
       ports.listAllCommentsByDoc(docId),
     ]);
     const threads = groupComments(commentRows);

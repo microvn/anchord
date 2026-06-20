@@ -11,7 +11,7 @@
 // This module is THIN glue; the testable logic is in pull-tools.ts. Kept separate so the
 // unit suite never needs a DB.
 
-import { and, asc, desc, eq, gt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, or, type SQL } from "drizzle-orm";
 import { annotations, comments, user } from "../../db/schema";
 import type { DB } from "../../db/client";
 import type { Anchor } from "../../annotation/annotation";
@@ -22,6 +22,7 @@ import type { Role } from "../../sharing/roles";
 import {
   pullTools,
   type PullCursor,
+  type PullFilter,
   type PullPorts,
   type PullAnnotationRow,
   type PullCommentRow,
@@ -47,7 +48,11 @@ export function createMcpPullPorts(deps: {
       return role;
     },
 
-    async listAllByDoc(docId: string, cursor?: PullCursor | null): Promise<PullAnnotationRow[]> {
+    async listAllByDoc(
+      docId: string,
+      cursor?: PullCursor | null,
+      filter?: PullFilter | null,
+    ): Promise<PullAnnotationRow[]> {
       const cols = {
         id: annotations.id,
         type: annotations.type,
@@ -60,12 +65,23 @@ export function createMcpPullPorts(deps: {
         dismissedAt: annotations.dismissedAt,
         updatedAt: annotations.updatedAt,
       };
-      // AS-007: NO deleted/dismissed filter — pull surfaces every annotation's status.
+      // AS-007 / C-004: with NO filter, pull surfaces EVERY annotation's status (default
+      // unchanged). A supplied filter narrows server-side via extra WHERE conditions:
+      //   status → eq(status); type → eq(type); include*===false → exclude that state.
+      // The include* flags default true (kept), so a row is excluded ONLY when its flag is
+      // explicitly false. Mirrors applyPullFilter (pull-tools.ts) one-to-one.
+      const filterConds: SQL[] = [];
+      if (filter?.status !== undefined) filterConds.push(eq(annotations.status, filter.status));
+      if (filter?.type !== undefined) filterConds.push(eq(annotations.type, filter.type));
+      if (filter?.includeOrphaned === false) filterConds.push(eq(annotations.isOrphaned, false));
+      if (filter?.includeDismissed === false) filterConds.push(isNull(annotations.dismissedAt));
+      if (filter?.includeDeleted === false) filterConds.push(isNull(annotations.deletedAt));
+
       // AS-008 / C-017: with a cursor, return ONLY rows whose (updated_at, id) is strictly
       // greater, ordered by (updated_at, id) ASC — the changed-since query. The lexicographic
       // predicate is `updated_at > c.updatedAt OR (updated_at = c.updatedAt AND id > c.id)`;
-      // the (doc_id, updated_at, id) index serves it ordered. Without a cursor, the full set
-      // newest-first (the original AS-007 behavior, unchanged).
+      // the (doc_id, updated_at, id) index serves it ordered. The filter conditions compose
+      // with it (AS-007). Without a cursor, the full set newest-first (the original behavior).
       const rows = cursor
         ? await db
             .select(cols)
@@ -80,13 +96,14 @@ export function createMcpPullPorts(deps: {
                     gt(annotations.id, cursor.id),
                   ),
                 ),
+                ...filterConds,
               ),
             )
             .orderBy(asc(annotations.updatedAt), asc(annotations.id))
         : await db
             .select(cols)
             .from(annotations)
-            .where(eq(annotations.docId, docId))
+            .where(and(eq(annotations.docId, docId), ...filterConds))
             .orderBy(desc(annotations.createdAt));
       return rows.map((r) => ({
         id: r.id,

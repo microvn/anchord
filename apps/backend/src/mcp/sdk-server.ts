@@ -110,10 +110,18 @@ const TOOL_META: Record<string, ToolMeta> = {
   },
   // ── pull (annotations:read) ───────────────────────────────────────────────
   anchord_pull_annotations: {
-    description: "Pull a document's annotations (anchors + comment threads), cursor-paginated.",
+    description:
+      "Pull a document's annotations (anchors + comment threads + status flags), cursor-paginated. " +
+      "Defaults to ALL annotations + their status flags; pass filters (status / includeOrphaned / " +
+      "includeDismissed / includeDeleted / type) to narrow the set per the user's request.",
     inputSchema: {
       docId: z.string(),
       cursor: z.string().optional(),
+      status: z.enum(["unresolved", "resolved"]).optional(),
+      includeOrphaned: z.boolean().optional(),
+      includeDismissed: z.boolean().optional(),
+      includeDeleted: z.boolean().optional(),
+      type: z.enum(["range", "multi_range", "block", "doc", "suggestion"]).optional(),
     },
   },
   anchord_list_comments: {

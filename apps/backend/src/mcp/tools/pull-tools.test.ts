@@ -13,7 +13,9 @@ import {
   pullTools,
   decodeCursor,
   isAfterCursor,
+  applyPullFilter,
   type PullCursor,
+  type PullFilter,
   type PullPorts,
   type PullAnnotationRow,
   type PullCommentRow,
@@ -62,8 +64,9 @@ function fakePull(opts: {
       roleCalls.push(docId);
       return roles[docId] ?? null;
     },
-    async listAllByDoc(docId, cursor?: PullCursor | null) {
-      const all = annotations[docId] ?? [];
+    async listAllByDoc(docId, cursor?: PullCursor | null, filter?: PullFilter | null) {
+      // Mirror the SQL WHERE-builder: the optional filter narrows the set (AS-007/C-004).
+      const all = (annotations[docId] ?? []).filter((r) => applyPullFilter(r, filter));
       if (!cursor) return all;
       // Mirror the SQL changed-since query: strictly-greater (updated_at, id), ordered ASC.
       return all
@@ -212,6 +215,71 @@ describe("AS-007: anchord_pull_annotations returns thread + status + suggestion 
     const multi = res.annotations.find((a) => a.id === "a_multi")!;
     expect(multi.anchor.segments).toHaveLength(2);
     expect(multi.anchor.segments!.map((s) => s.blockId)).toEqual(["b4", "b5"]);
+  });
+});
+
+// ── AS-007 (filtered): optional filter params narrow the set server-side ─────
+//
+// C-004: the filter params are OPTIONAL — with NONE the default is unchanged (every
+// annotation + flags, proven by AS-007.T1 above). A supplied filter narrows the returned
+// set; the per-annotation payload shape is unchanged. WHICH filter to send is the model's
+// call at request time; the server just applies it as WHERE conditions.
+describe("AS-007 (filtered): optional filter params narrow the pull set", () => {
+  test("AS-007: no filter returns ALL annotations + flags (default unchanged)", async () => {
+    const { annotations, comments } = richDoc();
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: { doc_a: comments } });
+    const res = await pullAnnotationsHandler(fk.ports)({ docId: "doc_a" }, ctx());
+    // all 4 (resolved + unresolved + orphaned+dismissed + multi_range) — full fidelity
+    expect(res.annotations.map((a) => a.id).sort()).toEqual(["a_multi", "a_orphan", "a_sugg", "a_thread"]);
+  });
+
+  test("AS-007: status:unresolved + includeOrphaned:false → only unresolved, non-orphaned", async () => {
+    const { annotations, comments } = richDoc();
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: { doc_a: comments } });
+    const res = await pullAnnotationsHandler(fk.ports)(
+      { docId: "doc_a", status: "unresolved", includeOrphaned: false },
+      ctx(),
+    );
+    const ids = res.annotations.map((a) => a.id).sort();
+    // a_thread is resolved (excluded), a_orphan is orphaned (excluded); a_sugg + a_multi remain
+    expect(ids).toEqual(["a_multi", "a_sugg"]);
+    expect(res.annotations.every((a) => a.status.resolution === "unresolved")).toBe(true);
+    expect(res.annotations.every((a) => !a.status.isOrphaned)).toBe(true);
+  });
+
+  test("AS-007: type:suggestion → only suggestion-type annotations", async () => {
+    const { annotations, comments } = richDoc();
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: { doc_a: comments } });
+    const res = await pullAnnotationsHandler(fk.ports)({ docId: "doc_a", type: "suggestion" }, ctx());
+    expect(res.annotations.map((a) => a.id)).toEqual(["a_sugg"]);
+  });
+
+  test("AS-007: includeDeleted:false excludes deleted annotations", async () => {
+    const { annotations, comments } = richDoc();
+    annotations.push({
+      id: "a_deleted", type: "range", anchor: { blockId: "bd", textSnippet: "rm", offset: 0, length: 2 },
+      status: "unresolved", isOrphaned: false, dismissed: false, deleted: true, suggestion: null, suggestionStatus: null, updatedAt: 5000,
+    });
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: { doc_a: comments } });
+    const withDeleted = await pullAnnotationsHandler(fk.ports)({ docId: "doc_a" }, ctx());
+    expect(withDeleted.annotations.map((a) => a.id)).toContain("a_deleted"); // default keeps it
+    const noDeleted = await pullAnnotationsHandler(fk.ports)({ docId: "doc_a", includeDeleted: false }, ctx());
+    expect(noDeleted.annotations.map((a) => a.id)).not.toContain("a_deleted");
+  });
+
+  test("AS-007: a filter composes with the cursor (filtered incremental pull)", async () => {
+    // Two changed-since rows, one resolved one unresolved; status:unresolved keeps only one.
+    const annotations: PullAnnotationRow[] = [
+      { id: "a_changed_resolved", type: "range", anchor: { blockId: "b", textSnippet: "y", offset: 0, length: 1 }, status: "resolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null, updatedAt: 5000 },
+      { id: "a_changed_unresolved", type: "range", anchor: { blockId: "b", textSnippet: "z", offset: 0, length: 1 }, status: "unresolved", isOrphaned: false, dismissed: false, deleted: false, suggestion: null, suggestionStatus: null, updatedAt: 6000 },
+    ];
+    const cursor: PullCursor = { updatedAt: 4000, id: "a_multi" };
+    const fk = fakePull({ roles: { doc_a: "owner" }, annotations: { doc_a: annotations }, comments: {} });
+    const res = await pullAnnotationsHandler(fk.ports)(
+      { docId: "doc_a", status: "unresolved", cursor: Buffer.from(`${cursor.updatedAt}.${cursor.id}`, "utf8").toString("base64url") },
+      ctx(),
+    );
+    expect(res.annotations.map((a) => a.id)).toEqual(["a_changed_unresolved"]);
   });
 });
 
