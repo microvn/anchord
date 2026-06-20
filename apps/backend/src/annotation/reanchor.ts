@@ -520,6 +520,23 @@ export interface ReanchorForVersionInput {
   newContentHtml: string;
   versionId: string;
   opts?: ReanchorOptions;
+  /**
+   * mcp-patch-document:S-004 / C-005 — the set of block-ids a block-addressed PATCH changed.
+   *
+   *   • UNDEFINED (the whole-doc update path + UI edits) → run the full fuzzy matcher for EVERY
+   *     annotation, byte-identical to today (AS-021). No deterministic-carry branch is taken.
+   *   • PROVIDED → an annotation whose block-id(s) are ALL outside this set is DETERMINISTICALLY
+   *     CARRIED (anchor kept as-is, is_orphaned cleared, the matcher is NOT invoked — AS-019);
+   *     an annotation with ANY block-id IN this set runs the existing matcher exactly as today
+   *     (AS-020), and a multi-range annotation with ANY segment in an edited block runs the
+   *     matcher even if its other segments are untouched (conservative straddle rule — AS-022).
+   *
+   * Why deterministic carry is sound: the patch's structural guard (mcp-patch-document:C-008,
+   * already enforced in patchMarkdownSource/patchHtmlSource) guarantees the ORDERED block-id
+   * sequence is unchanged across the patch, so an untouched block keeps its positional id —
+   * its annotation's anchor still resolves to the same span, with no matcher needed.
+   */
+  changedBlockIds?: Set<string> | string[];
 }
 
 export interface ReanchorForVersionResult {
@@ -541,6 +558,20 @@ export interface ReanchorLedgerRepo {
 }
 
 /**
+ * S-004/C-005 — does this annotation touch any block the patch edited? Single-range → its
+ * `anchor.blockId`. Multi-range → EVERY segment's blockId (anchor.segments[].blockId). Returns
+ * true if ANY of those ids is in the changed set — the CONSERVATIVE straddle rule (AS-022): a
+ * multi-range annotation with even one segment in an edited block runs the full matcher rather
+ * than carrying deterministically, because the edit may have shifted that segment's text.
+ */
+function annotationTouchesChangedBlock(anchor: Anchor, changed: Set<string>): boolean {
+  if (anchor.segments && anchor.segments.length > 0) {
+    return anchor.segments.some((seg) => changed.has(seg.blockId));
+  }
+  return changed.has(anchor.blockId);
+}
+
+/**
  * Re-anchor every annotation from the previous version onto the new content, splitting
  * into carried vs detached, and emitting a per-(annotation_id, versionId) ledger.
  *
@@ -557,8 +588,14 @@ export function reanchorForVersion(
   input: ReanchorForVersionInput,
   repo?: ReanchorLedgerRepo,
 ): ReanchorForVersionResult {
-  const { annotations, newContentHtml, versionId, opts } = input;
+  const { annotations, newContentHtml, versionId, opts, changedBlockIds } = input;
   const injected = newContentHtml; // reanchorAnnotation re-injects; pass raw html through.
+
+  // S-004/C-005: a PROVIDED changed-block set switches on the deterministic-carry pre-check
+  // (a patch named exactly what changed). UNDEFINED keeps today's full-matcher path for ALL
+  // annotations (AS-021) — normalize to a Set once, or null when not supplied (no branch).
+  const changed: Set<string> | null =
+    changedBlockIds === undefined ? null : new Set(changedBlockIds);
 
   const carried: CarriedAnnotation[] = [];
   const detached: DetachedAnnotation[] = [];
@@ -572,6 +609,26 @@ export function reanchorForVersion(
     // double-apply.
     let entry = seen.get(key) ?? repo?.getEntry(ann.id, versionId);
     if (!entry) {
+      // S-004/C-005: PRE-CHECK before the matcher. When a patch supplied the changed-block set
+      // and NONE of this annotation's block-id(s) were edited, carry it deterministically —
+      // keep the anchor as-is, mark carried (clears is_orphaned downstream), do NOT invoke the
+      // fuzzy matcher. The matcher path (reanchorAnnotation) is UNTOUCHED in behavior; this only
+      // skips it for blocks the patch proves were not touched. Sound because the patch's
+      // structural guard (C-008) keeps the ordered block-id sequence stable (see input docs).
+      if (changed !== null && !annotationTouchesChangedBlock(ann.anchor, changed)) {
+        entry = {
+          annotationId: ann.id,
+          versionId,
+          status: "carried",
+          anchor: ann.anchor, // unchanged — the untouched block keeps its positional id.
+          method: "exact",
+          confidence: 1,
+        };
+        seen.set(key, entry);
+        ledger.push(entry); // C-012: still ledgered (status carried) so a re-run is idempotent.
+        carried.push({ id: ann.id, anchor: ann.anchor }); // byte-identical to the input anchor.
+        continue;
+      }
       const result = reanchorAnnotation(ann.anchor, injected, opts);
       entry =
         result.status === "carried"

@@ -394,7 +394,7 @@ const app = createApp({
       ...createPublishToolsForDb({
         db,
         resolveAccess: sharedResolveAccess,
-        reanchorOnNewVersion: async ({ docId, version, content, kind }) => {
+        reanchorOnNewVersion: async ({ docId, version, content, kind, changedBlockIds }) => {
           const versionId = `${docId}:${version}`;
           await runReanchorForNewVersion(
             {
@@ -410,7 +410,9 @@ const app = createApp({
                 }
               },
             },
-            { docId, versionId, content, kind },
+            // S-004/C-004: forward the patch's changed-block set (undefined for the whole-doc
+            // update path → full matcher; present for a patch → deterministic carry off-block).
+            { docId, versionId, content, kind, changedBlockIds },
           );
         },
       }),

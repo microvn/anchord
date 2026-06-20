@@ -143,7 +143,7 @@ function fakePatch(opts: {
   roles: Record<string, Role | null>; // keyed `${docId}:${userId}`
 }) {
   const store = opts.docs;
-  const reanchorFired: { docId: string; version: number; content: string; kind: "html" | "markdown" | "image" }[] = [];
+  const reanchorFired: { docId: string; version: number; content: string; kind: "html" | "markdown" | "image"; changedBlockIds?: string[] }[] = [];
 
   const ports: PatchDocumentPorts = {
     async findDocById(docId): Promise<PatchTargetDoc | null> {
@@ -472,6 +472,31 @@ describe("AS-005: anchord_patch_document splices one block and appends a new ver
     expect(fk.reanchorFired).toHaveLength(1);
     expect(fk.reanchorFired[0]!.version).toBe(6);
     expect(fk.reanchorFired[0]!.kind).toBe("markdown");
+  });
+});
+
+// ── C-004: the patch fires re-anchor WITH the changed-block set (= edited blockIds) ──
+describe("C-004: patch fireReanchor passes the changed-block set so untouched blocks carry deterministically", () => {
+  test("C-004: changedBlockIds = the deduped set of edited blockIds", async () => {
+    // Two edits addressing the SAME block-h2-1 → the changed set is the deduped { block-h2-1 }.
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: "## Overview\n\nbody alpha beta.\n" } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await tool(
+      {
+        docId: "doc_a",
+        expectedVersion: 5,
+        edits: [
+          { blockId: "block-h2-1", find: "Overview", replace: "Overview1" },
+          { blockId: "block-h2-1", find: "1", replace: "1x" },
+        ],
+      },
+      ctx(),
+    );
+    expect(fk.reanchorFired).toHaveLength(1);
+    expect(fk.reanchorFired[0]!.changedBlockIds).toEqual(["block-h2-1"]); // deduped edited blockIds.
   });
 });
 

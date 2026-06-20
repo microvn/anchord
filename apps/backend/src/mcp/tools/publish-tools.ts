@@ -270,13 +270,17 @@ export interface PatchDocumentPorts {
   }): Promise<{ version: number; previousVersion: number | null }>;
   /**
    * FIRE the existing re-anchor seam (annotation-core:S-005, async, idempotent) — identical to
-   * the whole-doc update path (C-004). Not awaited; fired only when previousVersion != null.
+   * the whole-doc update path (C-004), EXCEPT it passes the patch's changed-block set so the job
+   * carries annotations on untouched blocks deterministically (mcp-patch-document:S-004/C-005).
+   * Not awaited; fired only when previousVersion != null.
    */
   fireReanchor?(input: {
     docId: string;
     version: number;
     content: string;
     kind: "html" | "markdown" | "image";
+    /** S-004/C-004: the block-ids this patch edited (= every edits[].blockId). */
+    changedBlockIds: string[];
   }): void;
 }
 
@@ -372,9 +376,12 @@ export function patchDocumentHandler(
       expectedVersion,
     });
 
-    // C-004: fire re-anchor async AFTER the version is committed (only when there is prior content).
+    // C-004 / S-004-C-005: fire re-anchor async AFTER the version is committed (only when there
+    // is prior content), passing the CHANGED-BLOCK SET = every edited blockId. The job carries
+    // annotations on untouched blocks deterministically and runs the matcher only on edited ones.
     if (ports.fireReanchor && previousVersion !== null) {
-      ports.fireReanchor({ docId, version, content: newContent, kind: doc.kind });
+      const changedBlockIds = [...new Set(edits.map((e) => e.blockId))];
+      ports.fireReanchor({ docId, version, content: newContent, kind: doc.kind, changedBlockIds });
     }
 
     return { docId, version, previousVersion };

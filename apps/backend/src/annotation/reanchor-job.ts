@@ -78,6 +78,13 @@ export interface ReanchorJobInput {
   content: string;
   /** The doc's kind. REQUIRED so callers are type-forced to pass it (prevents the raw-markdown regression). */
   kind: "html" | "markdown" | "image";
+  /**
+   * mcp-patch-document:S-004 / C-004/C-005 — the set of block-ids a block-addressed PATCH changed.
+   * Threaded straight into the pure matcher (reanchorForVersion): when PRESENT, annotations on
+   * untouched blocks carry deterministically (no matcher); when ABSENT (the whole-doc update path
+   * + UI edits), every annotation runs the full fuzzy matcher exactly as today (AS-021).
+   */
+  changedBlockIds?: string[];
 }
 
 /** The per-publish run summary (C-012): counts + the detached-rate alert. */
@@ -122,7 +129,14 @@ export async function runReanchorForNewVersion(
   const newContentHtml = renderForAnchoring(input.content, input.kind);
 
   const { carried, detached, ledger } = reanchorForVersion(
-    { annotations: toReanchor, newContentHtml, versionId: input.versionId },
+    {
+      annotations: toReanchor,
+      newContentHtml,
+      versionId: input.versionId,
+      // S-004/C-004/C-005: pass the patch's changed-block set through. undefined for the
+      // whole-doc update path keeps the full-matcher behavior (AS-021).
+      changedBlockIds: input.changedBlockIds,
+    },
     deps.ledger,
   );
 

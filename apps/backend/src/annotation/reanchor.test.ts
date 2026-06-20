@@ -695,3 +695,142 @@ test("C-003: a cell snippet present in the parent's concatenated text anchors to
     expect(r.anchor.textSnippet).toBe("beta");
   }
 });
+
+// ===========================================================================
+// mcp-patch-document:S-004 / C-005 — deterministic carry across a block-addressed patch.
+//
+// When a patch supplies the set of changed block-ids, annotations on UNTOUCHED blocks carry
+// forward WITHOUT the fuzzy matcher (the patch already named what changed); only annotations on
+// an edited block run the existing matcher. A whole-doc publish (no changed set) keeps the full
+// matcher unchanged. These tests drive reanchorForVersion directly with `changedBlockIds`.
+// ===========================================================================
+
+// A 7-paragraph doc: block-p-5 = "intro five", block-p-7 carries the payment snippet. The h2
+// scenarios use a heading doc so block-h2-1 exists.
+const HEADING_DOC = "<h2>Overview</h2><p>alpha body</p><p>beta body</p>";
+
+test("AS-019: annotation on an UNTOUCHED block carries deterministically (matcher NOT invoked)", () => {
+  // The patch edited ONLY block-h2-1; the annotation lives on block-p-5. Crucially, the NEW
+  // version's block-p-5 text is REPLACED so the stored snippet would NOT fuzzy-match — yet the
+  // anchor must be carried BYTE-IDENTICAL, which is only possible if the matcher was skipped.
+  const p5Anchor: Anchor = { blockId: "block-p-5", textSnippet: "intro five", offset: 0, length: 10 };
+  // New content: block-p-5's text is now completely different ("XXXXXXXXXX") → a real matcher run
+  // on this block would orphan the annotation. Deterministic carry must keep it unchanged.
+  const newDoc = doc(["a", "b", "c", "d", "XXXXXXXXXX", "f", "Payment expires after 24h"]);
+
+  const r = reanchorForVersion({
+    annotations: [{ id: "a-p5", anchor: p5Anchor }],
+    newContentHtml: newDoc,
+    versionId: "doc:2",
+    changedBlockIds: ["block-h2-1"], // block-p-5 is NOT changed
+  });
+
+  // Carried (never detached), with the anchor byte-identical to the input → proves no matcher.
+  expect(r.detached).toEqual([]);
+  expect(r.carried).toHaveLength(1);
+  expect(r.carried[0]!.id).toBe("a-p5");
+  expect(r.carried[0]!.anchor).toEqual(p5Anchor); // unchanged offset/snippet → matcher skipped.
+  // Ledger records a carried entry (C-012 idempotency) with method exact / confidence 1.
+  expect(r.ledger).toHaveLength(1);
+  expect(r.ledger[0]).toMatchObject({ annotationId: "a-p5", versionId: "doc:2", status: "carried", confidence: 1 });
+});
+
+test("AS-020: annotation on an EDITED block runs the existing matcher (carried-or-orphaned per ladder)", () => {
+  // The patch edited block-h2-1 which carries an annotation. The new block-h2-1 text differs
+  // enough that the matcher OUTPUT (not a passthrough) decides the fate — here the heading text
+  // is unchanged so it carries via the matcher with a RECOMPUTED anchor (offset re-derived).
+  const headingAnchor: Anchor = { blockId: "block-h2-1", textSnippet: "Overview", offset: 0, length: 8 };
+  const r = reanchorForVersion({
+    annotations: [{ id: "a-h2", anchor: headingAnchor }],
+    newContentHtml: HEADING_DOC, // block-h2-1 text "Overview" still present
+    versionId: "doc:2",
+    changedBlockIds: ["block-h2-1"], // edited → must go through the matcher
+  });
+  // Matcher carried it. The ledger method reflects the ladder tier (exact), NOT the deterministic
+  // stub — for an exact-at-offset hit that is also "exact", so we additionally prove the matcher
+  // ran by orphaning a SECOND annotation whose snippet is absent from the edited block.
+  expect(r.carried.map((c) => c.id)).toEqual(["a-h2"]);
+
+  // Now an annotation on the edited block whose stored text is GONE → matcher orphans it. A
+  // deterministic carry would have (wrongly) kept it; orphaning proves the matcher ran.
+  const goneAnchor: Anchor = { blockId: "block-h2-1", textSnippet: "Nonexistent phrase", offset: 0, length: 18 };
+  const r2 = reanchorForVersion({
+    annotations: [{ id: "a-gone", anchor: goneAnchor }],
+    newContentHtml: HEADING_DOC,
+    versionId: "doc:2",
+    changedBlockIds: ["block-h2-1"],
+  });
+  expect(r2.detached.map((d) => d.id)).toEqual(["a-gone"]); // matcher ran → orphaned (not carried).
+  expect(r2.carried).toEqual([]);
+});
+
+test("AS-021: a whole-doc update (NO changed set) still runs the FULL matcher (no regression)", () => {
+  // No changedBlockIds → the deterministic-carry path is NOT taken; every annotation runs the
+  // full fuzzy matcher exactly as today. Proof: an annotation whose block text was REPLACED
+  // orphans (a deterministic carry would have kept it).
+  const p5Anchor: Anchor = { blockId: "block-p-5", textSnippet: "intro five", offset: 0, length: 10 };
+  const newDoc = doc(["a", "b", "c", "d", "XXXXXXXXXX", "f", "Payment expires after 24h"]);
+  const r = reanchorForVersion({
+    annotations: [{ id: "a-p5", anchor: p5Anchor }],
+    newContentHtml: newDoc,
+    versionId: "doc:2",
+    // changedBlockIds intentionally OMITTED — the whole-doc path.
+  });
+  // Full matcher ran: "intro five" is gone from block-p-5 and not elsewhere → orphaned.
+  expect(r.detached.map((d) => d.id)).toEqual(["a-p5"]);
+  expect(r.carried).toEqual([]);
+});
+
+test("AS-022: a multi-range annotation with ANY segment in an edited block runs the matcher (C-005 straddle)", () => {
+  // Two segments: one in block-p-1, one in block-p-2. The patch edited ONLY block-p-1. The WHOLE
+  // annotation must run the matcher (NOT deterministic carry), even though its block-p-2 segment
+  // is in an unchanged block. Proof: block-p-1's segment text was replaced → the whole annotation
+  // orphans (all-or-nothing, AS-018). A deterministic carry would have kept it byte-identical.
+  const multi: Anchor = {
+    blockId: "block-p-1",
+    textSnippet: "one",
+    offset: 0,
+    length: 3,
+    segments: [
+      { blockId: "block-p-1", textSnippet: "one", offset: 0, length: 3 },
+      { blockId: "block-p-2", textSnippet: "two", offset: 0, length: 3 },
+    ],
+  };
+  // New doc: block-p-1 text is now "ZZZ" (segment "one" gone) — the matcher orphans the whole anno.
+  const newDoc = doc(["ZZZ", "two", "three"]);
+  const r = reanchorForVersion({
+    annotations: [{ id: "a-multi", anchor: multi }],
+    newContentHtml: newDoc,
+    versionId: "doc:2",
+    changedBlockIds: ["block-p-1"], // only p-1 edited; p-2 segment is untouched
+  });
+  expect(r.detached.map((d) => d.id)).toEqual(["a-multi"]); // matcher ran → orphaned (straddle).
+  expect(r.carried).toEqual([]);
+});
+
+test("AS-022: a multi-range annotation with ALL segments in untouched blocks carries deterministically", () => {
+  // Complement of the straddle rule: when NO segment is in an edited block, the whole multi-range
+  // annotation carries deterministically, byte-identical, with no matcher (block-p-3 was edited).
+  const multi: Anchor = {
+    blockId: "block-p-1",
+    textSnippet: "one",
+    offset: 0,
+    length: 3,
+    segments: [
+      { blockId: "block-p-1", textSnippet: "one", offset: 0, length: 3 },
+      { blockId: "block-p-2", textSnippet: "two", offset: 0, length: 3 },
+    ],
+  };
+  // New doc replaces block-p-1 AND block-p-2 text — a matcher would orphan; deterministic carry
+  // keeps the anchor identical because neither p-1 nor p-2 is in the changed set.
+  const newDoc = doc(["ZZZ", "WWW", "edited-three"]);
+  const r = reanchorForVersion({
+    annotations: [{ id: "a-multi", anchor: multi }],
+    newContentHtml: newDoc,
+    versionId: "doc:2",
+    changedBlockIds: ["block-p-3"], // neither p-1 nor p-2 edited
+  });
+  expect(r.detached).toEqual([]);
+  expect(r.carried).toHaveLength(1);
+  expect(r.carried[0]!.anchor).toEqual(multi); // byte-identical → matcher skipped for all segments.
+});

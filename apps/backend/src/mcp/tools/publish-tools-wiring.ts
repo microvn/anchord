@@ -128,6 +128,8 @@ export function createMcpPatchDocumentPorts(deps: {
     version: number;
     content: string;
     kind: "html" | "markdown" | "image";
+    /** S-004/C-004: forwarded to the job so untouched-block annotations carry deterministically. */
+    changedBlockIds?: string[];
   }) => Promise<unknown> | unknown;
 }): PatchDocumentPorts {
   return {
@@ -196,6 +198,8 @@ export function createPublishToolsForDb(deps: {
     content: string;
     /** Doc kind — drives renderForAnchoring inside the job (markdown→HTML before the matcher). */
     kind: "html" | "markdown" | "image";
+    /** S-004/C-004: present only for a patch — the edited block-ids (the update path omits it). */
+    changedBlockIds?: string[];
   }) => Promise<unknown> | unknown;
 }): Record<string, ToolDef> {
   return publishTools({

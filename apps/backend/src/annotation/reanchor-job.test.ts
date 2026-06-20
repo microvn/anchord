@@ -225,6 +225,48 @@ test("regression: a markdown doc's new version carries an unchanged-text annotat
   expect(summary.detached).toBe(0);
 });
 
+// ===========================================================================
+// mcp-patch-document:S-004 / C-004/C-005 — the JOB threads the patch's changed-block set into the
+// pure matcher. The deterministic-carry behaviour itself is unit-tested in reanchor.test.ts; these
+// prove the job wires `changedBlockIds` end-to-end (present → carry off-block; absent → full matcher).
+// ===========================================================================
+
+test("AS-019: job threads changedBlockIds → annotation on an untouched block carries (no matcher)", async () => {
+  // The new content's block-p-5 text is REPLACED so a real matcher would orphan the annotation;
+  // because block-p-5 is NOT in the patch's changed set, it must carry byte-identical (matcher skipped).
+  const p5Anchor: Anchor = { blockId: "block-p-5", textSnippet: "intro five", offset: 0, length: 10 };
+  const apply = applyRepo();
+  const led = ledger();
+  const newContent = doc(["a", "b", "c", "d", "XXXXXXXXXX", "f", "Payment expires after 24h"]);
+  const summary = await runReanchorForNewVersion(
+    { annotations: reader([{ id: "a-p5", anchor: p5Anchor }]), apply: apply.repo, ledger: led.repo },
+    { docId: "doc_1", versionId: "doc_1:2", content: newContent, kind: "html", changedBlockIds: ["block-h2-1"] },
+  );
+  // Carried with the original anchor (matcher skipped), not detached.
+  expect(apply.detached).toEqual([]);
+  expect(apply.carried.map((c) => c.id)).toEqual(["a-p5"]);
+  expect(apply.carried[0]!.anchor).toEqual(p5Anchor);
+  expect(summary).toMatchObject({ total: 1, carried: 1, detached: 0 });
+  expect(led.persisted.map((e) => e.status)).toEqual(["carried"]); // C-012: carried entry still ledgered.
+});
+
+test("AS-021: job with NO changedBlockIds runs the FULL matcher (whole-doc update — no regression)", async () => {
+  // Identical setup to AS-019 but WITHOUT changedBlockIds → the whole-doc path. block-p-5's text
+  // was replaced, so the full matcher orphans it (a deterministic carry would have kept it).
+  const p5Anchor: Anchor = { blockId: "block-p-5", textSnippet: "intro five", offset: 0, length: 10 };
+  const apply = applyRepo();
+  const led = ledger();
+  const newContent = doc(["a", "b", "c", "d", "XXXXXXXXXX", "f", "Payment expires after 24h"]);
+  const summary = await runReanchorForNewVersion(
+    { annotations: reader([{ id: "a-p5", anchor: p5Anchor }]), apply: apply.repo, ledger: led.repo },
+    { docId: "doc_1", versionId: "doc_1:2", content: newContent, kind: "html" /* no changedBlockIds */ },
+  );
+  // Full matcher ran → orphaned (the deterministic-carry path was NOT taken).
+  expect(apply.carried).toEqual([]);
+  expect(apply.detached).toEqual(["a-p5"]);
+  expect(summary).toMatchObject({ total: 1, carried: 0, detached: 1 });
+});
+
 test("C-012: edge — a doc with zero annotations does no work and never alerts", async () => {
   const apply = applyRepo();
   const led = ledger();
