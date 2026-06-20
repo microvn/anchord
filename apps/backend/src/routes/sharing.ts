@@ -56,6 +56,8 @@ import { createShareStateRepo } from "../sharing/share-state-repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
 import { createLoadShareConfig } from "../sharing/resolve-doc-role-repo";
 import { MailQueue, type MailTransport } from "../auth/mail-queue";
+import { notifyOnInvited, type NotifyRepo } from "../notify/notify";
+import { createNotifyRepo } from "../notify/repo";
 import type { DB } from "../db/client";
 
 // ── Zod request schemas ─────────────────────────────────────────────────────
@@ -101,6 +103,12 @@ export interface SharingRoutesDeps {
   /** invite.ts ports — injectable for tests; built from `db`/mail in prod. */
   findUserByEmail?: (email: string) => { id: string } | null;
   enqueueInvite?: (msg: EnqueuedInvite) => void;
+  /**
+   * notifications-email S-005 (AS-010): the in-app notify repo used to write the invitee's
+   * `invited` row when an EXISTING account is invited. Optional: built from `db` when omitted;
+   * absent (no `db`, no inject) → the invite still works, just no in-app notice (tests).
+   */
+  notifyRepo?: NotifyRepo;
   /** Resolves the better-auth session → actor; gates every route (401 if none). */
   resolveSession: SessionResolver;
   /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
@@ -164,6 +172,20 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
       : deps.db
         ? createEnqueueInvite(new MailQueue(), noopTransport(), inviteSecret)
         : need("enqueueInvite"));
+
+  // S-005 (AS-010): the in-app `invited` notifier for the account-exists branch. Built from the
+  // notify repo (injected, or from `db`). Absent → no in-app notice (route tests without `db`).
+  // `invited` is low-signal so the notify path enqueues NO email — but the MailEnqueuer port is
+  // still required, so we hand it a no-op enqueuer (it is never called for a low-signal type).
+  const notifyRepo = deps.notifyRepo ?? (deps.db ? createNotifyRepo(deps.db) : undefined);
+  const notifyInvited = notifyRepo
+    ? async (userId: string, refId: string): Promise<void> => {
+        await notifyOnInvited(
+          { refId, inviteeUserId: userId },
+          { repo: notifyRepo, mail: { enqueue: () => "noop" } },
+        );
+      }
+    : undefined;
 
   /** Resolve :slug → a visible DocLookup or throw 404 (existence-hiding, C-006). */
   async function loadVisibleDoc(slug: string, userId: string) {
@@ -281,6 +303,8 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
               findUserByEmail: () => account,
               members: docMemberRepo,
               enqueueInvite,
+              // S-005 (AS-010): in-app notice to a bound invitee (account-exists branch only).
+              notifyInvited,
             };
             const result = await inviteByEmail(
               {

@@ -88,6 +88,14 @@ export interface InviteDeps {
   members: DocMemberRepo;
   /** Enqueue the notify/invite mail (real transport injected at the edge; see mail-*). */
   enqueueInvite(msg: EnqueuedInvite): void;
+  /**
+   * notifications-email S-005 (AS-010): fire the IN-APP `invited` notice to a bound invitee
+   * account. Called ONLY on the account-exists branch (a resolvable userId) — the pending
+   * branch has no account to attach a row to, so it never calls this. Best-effort: the invite
+   * flow awaits it but swallows a throw (C-007 — a failing notify must not fail the invite).
+   * Optional: omit (the route wires the real notifyOnInvited; unit fakes record/throw).
+   */
+  notifyInvited?(userId: string, refId: string): Promise<void> | void;
 }
 
 export interface InviteInput {
@@ -134,6 +142,17 @@ export async function inviteByEmail(input: InviteInput, deps: InviteDeps): Promi
       status: "active",
     });
     deps.enqueueInvite({ kind: "active", email, inviteId: activeRow.id });
+    // S-005 (AS-010): in-app notice to the bound invitee account — IN-APP ONLY (the transactional
+    // invite mail above is the SEPARATE high-signal channel). Best-effort (C-007): a throwing notify
+    // must NOT fail the invite, which has already persisted. The pending branch never reaches here
+    // (no account → no userId → no in-app row).
+    if (deps.notifyInvited) {
+      try {
+        await deps.notifyInvited(account.id, input.docId);
+      } catch {
+        // swallowed — the active row + invite mail already succeeded; notify is post-commit.
+      }
+    }
     return { status: "active", role: input.role, id: activeRow.id };
   }
 

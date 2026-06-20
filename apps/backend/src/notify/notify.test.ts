@@ -9,6 +9,7 @@ import {
   notifyOnSuggestionDecided,
   notifyOnResolved,
   notifyOnDetached,
+  notifyOnInvited,
   isEmailEligible,
   buildAnnotationDeepLink,
   buildEmailBody,
@@ -943,5 +944,69 @@ describe("notifyOnDetached (ONE grouped row per author, in-app ONLY — C-006 lo
   test("C-007b: detached + resolved are NOT email-eligible (low-signal channel confirmed)", () => {
     expect(isEmailEligible("resolved")).toBe(false);
     expect(isEmailEligible("detached")).toBe(false);
+  });
+});
+
+// notifications-email S-005 — notify the invitee on being added (AS-010 / C-005 / C-006 / C-007).
+// `invited` is LOW-SIGNAL → IN-APP ONLY, ZERO notify-email. The recipient is the single bound
+// invitee userId resolved at invite time; a pending invite (no userId) never reaches here.
+describe("notifyOnInvited (invitee in-app row — in-app only, low-signal)", () => {
+  test("AS-010: an invited account-holder gets ONE in-app `invited` row, NO email", async () => {
+    const repo = fakeRepo({});
+    const mail = fakeMail();
+
+    const result = await notifyOnInvited({ refId: "doc_1", inviteeUserId: "dev-user" }, { repo, mail });
+
+    // ONE in-app row, typed `invited`, pointing at the doc (refId).
+    expect(repo.inserted).toEqual([{ userId: "dev-user", type: "invited", refId: "doc_1" }]);
+    expect(result).toEqual({ recipients: ["dev-user"], inAppSent: 1, emailsSent: 0 });
+    // C-006: invited is low-signal → ZERO notify-email enqueued by the notify path.
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-006: `invited` is NOT email-eligible (low-signal channel confirmed)", () => {
+    expect(isEmailEligible("invited")).toBe(false);
+  });
+
+  test("AS-010 (pending nuance): a null invitee userId → NO in-app row (no account to attach to)", async () => {
+    const repo = fakeRepo({});
+    const mail = fakeMail();
+
+    const result = await notifyOnInvited({ refId: "doc_1", inviteeUserId: null }, { repo, mail });
+
+    expect(repo.inserted).toHaveLength(0);
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-005: a duplicate dispatch for the same invitee still writes ONE row per call (single recipient)", async () => {
+    const repo = fakeRepo({});
+    const mail = fakeMail();
+
+    const result = await notifyOnInvited({ refId: "doc_1", inviteeUserId: "dev-user" }, { repo, mail });
+
+    // The recipient set is a single id — deliverToRecipients dedups, so one row, never spam.
+    expect(result.recipients).toEqual(["dev-user"]);
+    expect(result.inAppSent).toBe(1);
+  });
+
+  test("C-007: a throwing repo is swallowed (best-effort) — the invite is never failed by notify", async () => {
+    const logged: unknown[] = [];
+    const mail = fakeMail();
+    const repo: NotifyRepo = {
+      async listParticipantIds() { return []; },
+      async getDocOwnerId() { return null; },
+      async getUserEmail() { return null; },
+      async insertNotification() { throw new Error("db boom"); },
+    };
+
+    const result = await notifyOnInvited(
+      { refId: "doc_1", inviteeUserId: "dev-user" },
+      { repo, mail, logError: (_m, e) => logged.push(e) },
+    );
+
+    // Swallowed: returns the empty result, logs once, never throws.
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(logged).toHaveLength(1);
   });
 });

@@ -7,6 +7,7 @@ import {
   type InviteDeps,
 } from "./invite";
 import { activatePendingInvites } from "../auth/invite";
+import { notifyOnInvited, type NotifyRepo, type MailEnqueuer } from "../notify/notify";
 
 // Sharing S-003: an owner invites by email + role + message. An existing account is
 // granted the role immediately (ACTIVE doc_members row) + notified; an email with no
@@ -180,3 +181,147 @@ test("AS-007: email match is normalized (lowercase + trim) when finding the acco
 function rowId(f: { store: ReturnType<typeof createFakeDocMemberStore> }): string {
   return f.store.rows()[0].id;
 }
+
+// ── notifications-email S-005 — notify the invitee on being added (AS-010) ──
+// The invite flow fires the IN-APP `invited` notify ONLY on the account-exists branch
+// (a resolvable userId). The pending branch (no account → null userId) fires NO notify.
+// notify is best-effort: a throwing notify must never fail the invite.
+
+// setup variant that captures notifyInvited calls (the in-app dispatch hook).
+function setupNotify(opts: { existingEmails?: string[]; notifyThrows?: boolean } = {}) {
+  const store = createFakeDocMemberStore();
+  const accounts = new Map<string, { id: string }>();
+  let seq = 0;
+  for (const e of opts.existingEmails ?? []) {
+    accounts.set(e.trim().toLowerCase(), { id: `user_${++seq}` });
+  }
+  const enqueued: Array<{ kind: "active" | "pending"; email: string; inviteId: string }> = [];
+  const notified: Array<{ userId: string; refId: string }> = [];
+  const deps: InviteDeps = {
+    findUserByEmail(email) {
+      return accounts.get(email.trim().toLowerCase()) ?? null;
+    },
+    members: store,
+    enqueueInvite(msg) {
+      enqueued.push(msg);
+    },
+    async notifyInvited(userId, refId) {
+      if (opts.notifyThrows) throw new Error("notify boom");
+      notified.push({ userId, refId });
+    },
+  };
+  return { store, deps, enqueued, notified, accounts };
+}
+
+test("AS-010: invite an EXISTING account → ONE in-app `invited` dispatch for the bound invitee userId", async () => {
+  const f = setupNotify({ existingEmails: ["dev@acme.com"] });
+
+  const out = await inviteByEmail(
+    { docId: "doc-1", email: "dev@acme.com", role: "editor", invitedBy: "owner-1" },
+    f.deps,
+  );
+
+  expect(out.status).toBe("active");
+  // The in-app notify fired ONCE, to the bound account userId, referencing the doc.
+  expect(f.notified).toEqual([{ userId: "user_1", refId: "doc-1" }]);
+  // The pre-existing transactional invite mail still fires (separate channel — not removed).
+  expect(f.enqueued).toEqual([{ kind: "active", email: "dev@acme.com", inviteId: f.store.rows()[0].id }]);
+});
+
+test("AS-010 (pending nuance): invite an email with NO account → NO in-app dispatch (no userId)", async () => {
+  const f = setupNotify(); // no accounts
+
+  const out = await inviteByEmail(
+    { docId: "doc-1", email: "bob@x.com", role: "editor", invitedBy: "owner-1" },
+    f.deps,
+  );
+
+  expect(out.status).toBe("pending");
+  // No account → no resolvable userId → NO in-app notify row.
+  expect(f.notified).toHaveLength(0);
+  // The transactional pending invite mail still fires unchanged.
+  expect(f.enqueued).toEqual([{ kind: "pending", email: "bob@x.com", inviteId: f.store.rows()[0].id }]);
+});
+
+test("AS-010 (self-invite): inviting one's own account still fires the in-app dispatch (no special-case)", async () => {
+  const f = setupNotify({ existingEmails: ["owner@me.com"] });
+
+  const out = await inviteByEmail(
+    { docId: "doc-1", email: "owner@me.com", role: "commenter", invitedBy: "user_1" },
+    f.deps,
+  );
+
+  // Reasonable behavior: the flow does not crash; the bound account gets a row (no self-guard here).
+  expect(out.status).toBe("active");
+  expect(f.notified).toEqual([{ userId: "user_1", refId: "doc-1" }]);
+});
+
+test("C-007: a THROWING notifyInvited never fails the invite (best-effort) — active row still created", async () => {
+  const f = setupNotify({ existingEmails: ["dev@acme.com"], notifyThrows: true });
+
+  const out = await inviteByEmail(
+    { docId: "doc-1", email: "dev@acme.com", role: "editor", invitedBy: "owner-1" },
+    f.deps,
+  );
+
+  // Invite SUCCEEDS despite the notify throwing — the active row + transactional mail persist.
+  expect(out).toMatchObject({ status: "active", role: "editor" });
+  expect(f.store.rows()[0].status).toBe("active");
+  expect(f.enqueued).toHaveLength(1);
+});
+
+test("AS-010 (back-compat): an invite with NO notifyInvited hook still works (optional dep)", async () => {
+  const f = setup({ existingEmails: ["dev@acme.com"] }); // base setup — no notifyInvited
+
+  const out = await inviteByEmail(
+    { docId: "doc-1", email: "dev@acme.com", role: "editor", invitedBy: "owner-1" },
+    f.deps,
+  );
+
+  expect(out.status).toBe("active");
+  expect(f.store.rows()).toHaveLength(1);
+});
+
+// Surface-level test: drive the REAL notifyOnInvited against a recording NotifyRepo through
+// the real inviteByEmail wiring (the in-app channel end-to-end, no mocked notify body).
+test("AS-010 (surface): inviteByEmail wired to the REAL notifyOnInvited writes ONE in-app `invited` row, NO email", async () => {
+  const store = createFakeDocMemberStore();
+  const accounts = new Map([["dev@acme.com", { id: "dev-user" }]]);
+
+  const inserted: Array<{ userId: string; type: string; refId: string }> = [];
+  const mailSent: unknown[] = [];
+  const notifyRepo: NotifyRepo = {
+    async listParticipantIds() { return []; },
+    async getDocOwnerId() { return null; },
+    async getUserEmail() { return null; },
+    async insertNotification(input) {
+      inserted.push({ userId: input.userId, type: input.type, refId: input.refId });
+      return { id: `n_${inserted.length}` };
+    },
+  };
+  const notifyMail: MailEnqueuer = {
+    enqueue(msg) {
+      mailSent.push(msg);
+      return "m_1";
+    },
+  };
+
+  const deps: InviteDeps = {
+    findUserByEmail: (email) => accounts.get(email.trim().toLowerCase()) ?? null,
+    members: store,
+    enqueueInvite() {},
+    // The real production wiring: the hook drives notifyOnInvited with the real ports.
+    notifyInvited: (userId, refId) =>
+      notifyOnInvited({ refId, inviteeUserId: userId }, { repo: notifyRepo, mail: notifyMail }).then(() => undefined),
+  };
+
+  const out = await inviteByEmail(
+    { docId: "doc-1", email: "dev@acme.com", role: "editor", invitedBy: "owner-1" },
+    deps,
+  );
+
+  expect(out.status).toBe("active");
+  // REAL notify wrote exactly one in-app row, typed `invited`, NO email enqueued (low-signal).
+  expect(inserted).toEqual([{ userId: "dev-user", type: "invited", refId: "doc-1" }]);
+  expect(mailSent).toHaveLength(0);
+});

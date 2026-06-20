@@ -582,6 +582,57 @@ export async function notifyOnDetached(
   }
 }
 
+export interface NotifyOnInvitedInput {
+  /**
+   * The deep-link ref for the in-app row — the doc (or workspace) the invitee was added to. The
+   * `invited` row points at the resource the invite grants access to, not at any annotation.
+   */
+  refId: string;
+  /**
+   * The invitee's account user id, or null when the invite has NO resolvable account (a PENDING
+   * invite to an email with no account yet). A null invitee writes NOTHING — there is no account to
+   * attach an in-app row to; the transactional invite EMAIL (a separate pre-existing channel) is the
+   * only thing a pending invitee receives. This is the crux of S-005's nuance.
+   */
+  inviteeUserId: string | null;
+}
+
+/**
+ * S-005 — notify the INVITEE on being added to a doc/workspace: ONE in-app row to the bound
+ * invitee account (AS-010). IN-APP ONLY — `invited` is LOW-SIGNAL (C-006), so NO email is ever
+ * enqueued by the notify path (the transactional invite email is a SEPARATE pre-existing channel —
+ * this never sends or removes it). Invite ACCEPTANCE raises NO notification (GAP-006: the
+ * `invite_accepted` type does not exist).
+ *
+ * The recipient is the single invitee userId resolved SERVER-side at invite time (C-001). A null
+ * invitee (a PENDING invite to an account-less email) yields an empty recipient set → no row — the
+ * in-app channel needs an account to attach to. At most one recipient, so dedup (C-005) is a no-op,
+ * but it routes through the same deliverToRecipients stage as the other events.
+ *
+ * BEST-EFFORT / POST-COMMIT (C-007): runs AFTER the doc_members row persists; the whole pass is
+ * wrapped so a throwing repo is logged and swallowed — the invite is never turned into a 500 because
+ * notify failed.
+ */
+export async function notifyOnInvited(
+  input: NotifyOnInvitedInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { refId, inviteeUserId } = input;
+  // C-006: forced LOW-SIGNAL — `invited` is in-app only regardless of any deps.type override.
+  const type: NotificationType = "invited";
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    // null invitee (pending, no account) → no recipient (no in-app row to attach).
+    const recipients = inviteeUserId != null ? [inviteeUserId] : [];
+    return await deliverToRecipients(refId, recipients, type, deps);
+  } catch (err) {
+    log("notifyOnInvited failed (best-effort, invite already persisted)", err);
+    return empty;
+  }
+}
+
 /**
  * Shared per-recipient channel send (C-005/C-006/C-012/C-013): for each recipient write ONE
  * in-app row (always — the durable channel) and, for a high-signal type only, enqueue ONE
