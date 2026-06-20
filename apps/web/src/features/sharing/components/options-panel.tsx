@@ -1,11 +1,12 @@
 import type { AccessControls } from "@/features/sharing/hooks/use-access-controls";
 
-// OptionsPanel (sharing-permissions-ui S-002) — the "Options" tab of the ShareDialog. Holds the two
-// secondary toggles: guest commenting (gated to link, C-001) and the owner-only "editors can change
-// sharing" toggle (C-003). Link protection (password / expiry / view-limit) used to live here too,
-// but it moved to the Sharing tab inline under the access choice (AS-005) so the public-share flow
-// costs no extra clicks. All state + writes live in the shared `useAccessControls` hook (so they
-// share one PUT …/access with the access level on the Sharing tab); this panel only reads `controls`.
+// OptionsPanel (sharing-permissions-ui S-002) — the "Options" tab of the ShareDialog. Holds the
+// owner-only "editors can change sharing" toggle (C-003). (The guest-commenting toggle was removed
+// 2026-06-20: a commenter+ link role IS the grant for guests — Google-Docs model — so there is no
+// separate toggle.) Link protection (password / expiry / view-limit) used to live here too, but it
+// moved to the Sharing tab inline under the access choice (AS-005) so the public-share flow costs no
+// extra clicks. All state + writes live in the shared `useAccessControls` hook (so they share one
+// PUT …/access with the access level on the Sharing tab); this panel only reads `controls`.
 
 function ToggleRow({
   sectionTestid,
@@ -61,21 +62,10 @@ export function OptionsPanel({
 }: {
   controls: AccessControls;
 }) {
-  const { isLink, isOwner, guestCommenting, editorsCanShare, saving, toggleGuest, toggleEditorsCanShare } = controls;
+  const { isOwner, editorsCanShare, saving, toggleEditorsCanShare } = controls;
 
   return (
     <div data-testid="share-options" className="flex flex-col gap-4 pt-1">
-      {/* Guest commenting — ENABLED only for anyone-with-link (C-001). */}
-      <ToggleRow
-        sectionTestid="share-sec-guest"
-        toggleTestid="share-guest-toggle"
-        title="Allow guest commenting"
-        desc={isLink ? "Link visitors can comment without an account." : "Available only for Anyone with link."}
-        on={guestCommenting}
-        disabled={!isLink || saving}
-        onToggle={toggleGuest}
-      />
-
       {/* Editors can change sharing — owner-editable only (C-003); read-only for an editor. */}
       {isOwner ? (
         <ToggleRow

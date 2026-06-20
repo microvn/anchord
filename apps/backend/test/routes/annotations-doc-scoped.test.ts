@@ -7,13 +7,14 @@
 //   POST  /api/docs/:slug/annotations/:id/comments  → comment/reply (session OR guest)
 //   PATCH /api/docs/:slug/annotations/:id/resolution → resolve/reopen
 // All gated by the single resolveAccess (session OPTIONAL, no requireWorkspaceMember),
-// existence-hiding to 404 on no-access. Guest writes additionally require guest commenting
-// on (C-005), are rate-limited per IP+doc (C-008), carry a server-enforced guest marker and
-// reject a name colliding with an active member (C-009).
+// existence-hiding to 404 on no-access. A guest write is authorized purely by the doc's
+// LINK ROLE (commenter+ on anyone_with_link — no separate guest-commenting toggle,
+// Google-Docs model, reversal 2026-06-20); it is rate-limited per IP+doc (C-008), carries a
+// server-enforced guest marker and rejects a name colliding with an active member (C-009).
 //
-// Exercises the HTTP glue only — fake repos + fake resolveSession + fake resolveAccess +
-// fake loadShareConfig (+ the S-004 seams: rateLimit, isActiveMemberName) injected so
-// route→service runs without Postgres.
+// Exercises the HTTP glue only — fake repos + fake resolveSession + fake resolveAccess
+// (+ the S-004 seams: rateLimit, isActiveMemberName) injected so route→service runs
+// without Postgres.
 
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
@@ -24,7 +25,6 @@ import type { AccessResult } from "../../src/sharing/resolve-access";
 import type { DocLookup, DocLookupRepo } from "../../src/routes/versions";
 import type {
   AnnotationLookupRepo,
-  LoadShareConfig,
   CommentRateLimiter,
   IsActiveMemberName,
 } from "../../src/routes/annotations";
@@ -217,10 +217,20 @@ function fakeMail(): MailEnqueuer & { sent: { to: string }[] } {
   };
 }
 
-const guestOn: LoadShareConfig = async () => ({ guestCommentingEnabled: true });
-const guestOff: LoadShareConfig = async () => ({ guestCommentingEnabled: false });
 const allowAll: CommentRateLimiter = async () => ({ allowed: true });
 const noMemberCollision: IsActiveMemberName = async () => false;
+
+// Reversal 2026-06-20: an anon's authorization is the LINK ROLE (no guest toggle). These
+// access resolvers stand in for an anyone_with_link doc whose link role grants the anon a
+// commenter (can comment) or a viewer (cannot) — replacing the old guestOn/guestOff toggle.
+const linkCommenter = async (_docId: string, viewer: Viewer): Promise<AccessResult> => ({
+  role: viewer.kind === "user" ? "commenter" : "commenter",
+  canView: true,
+});
+const linkViewer = async (_docId: string, viewer: Viewer): Promise<AccessResult> => ({
+  role: viewer.kind === "user" ? "commenter" : "viewer",
+  canView: true,
+});
 
 function buildApp(opts: {
   resolveSession?: SessionResolver;
@@ -237,7 +247,6 @@ function buildApp(opts: {
   deleteRepo?: ReturnType<typeof fakeDeleteRepo>;
   restoreRepo?: ReturnType<typeof fakeRestoreRepo>;
   annotationLookupRepo?: AnnotationLookupRepo;
-  loadShareConfig?: LoadShareConfig;
   rateLimitComment?: CommentRateLimiter;
   isActiveMemberName?: IsActiveMemberName;
   notify?: { repo: NotifyRepo; mail: MailEnqueuer };
@@ -269,7 +278,6 @@ function buildApp(opts: {
       resolveWorkspaceRole: async () => "member",
       resolveDocRole,
       resolveAccess: opts.resolveAccess ?? defaultAccess,
-      loadShareConfig: opts.loadShareConfig ?? guestOff,
       rateLimitComment: opts.rateLimitComment ?? allowAll,
       isActiveMemberName: opts.isActiveMemberName ?? noMemberCollision,
       ...(opts.notify ? { notify: opts.notify } : {}),
@@ -401,23 +409,26 @@ describe("AS-001 / C-018: a commented annotation is ONE atomic create via the do
     expect(ar.calls.inserts).toHaveLength(0);
   });
 
-  test("S-007: a GUEST create-with-comment on a guest-OFF doc → 401, no annotation created", async () => {
+  test("AS-016 (reversal 2026-06-20): a GUEST create-with-comment on an anyone_with_link + VIEWER link → 403, no annotation created (link role is the gate, not a toggle)", async () => {
+    // The guest-commenting toggle is gone. A guest's write is authorized purely by the LINK
+    // ROLE: a viewer-level link cannot comment, so the create's role gate refuses it (403) —
+    // there is no toggle to consult.
     const ar = fakeAnnotationRepo();
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOff, annotationRepo: ar });
+    const app = buildApp({ resolveSession: noSession, resolveAccess: linkViewer, annotationRepo: ar });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations", {
         method: "POST",
         body: JSON.stringify({ anchor: TEXT_ANCHOR, comment: { body: "hi", guestName: "Sam" } }),
       }),
     );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
     expect(ar.calls.inserts).toHaveLength(0);
   });
 
   test("AS-022: a GUEST create-with-comment over the rate limit → 429, no annotation created", async () => {
     const ar = fakeAnnotationRepo();
     const overLimit: CommentRateLimiter = async () => ({ allowed: false });
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, annotationRepo: ar, rateLimitComment: overLimit });
+    const app = buildApp({ resolveSession: noSession, annotationRepo: ar, rateLimitComment: overLimit });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations", {
         method: "POST",
@@ -431,7 +442,7 @@ describe("AS-001 / C-018: a commented annotation is ONE atomic create via the do
   test("AS-023: a GUEST create-with-comment whose name collides with an active member → 400, no annotation created", async () => {
     const ar = fakeAnnotationRepo();
     const collides: IsActiveMemberName = async () => true;
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, annotationRepo: ar, isActiveMemberName: collides });
+    const app = buildApp({ resolveSession: noSession, annotationRepo: ar, isActiveMemberName: collides });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations", {
         method: "POST",
@@ -442,9 +453,11 @@ describe("AS-001 / C-018: a commented annotation is ONE atomic create via the do
     expect(ar.calls.inserts).toHaveLength(0);
   });
 
-  test("S-007: a GUEST create-with-comment on a guest-ON doc → 201, stored with the guest name + null authorId", async () => {
+  test("AS-017 (reversal 2026-06-20, the bug fix): a GUEST create-with-comment on an anyone_with_link + COMMENTER link → 201, stored with guest name + null authorId — NO toggle required", async () => {
+    // Regression for the live guest-can't-comment bug: an anon on a commenter-level link can
+    // now comment with NO guest-commenting toggle precondition — the link role IS the grant.
     const ar = fakeAnnotationRepo();
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, annotationRepo: ar });
+    const app = buildApp({ resolveSession: noSession, resolveAccess: linkCommenter, annotationRepo: ar });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations", {
         method: "POST",
@@ -466,7 +479,6 @@ describe("annotation-create-version-pin S-001: a GUEST stale create is refused t
     // anyone-with-link + guest commenting ON; the doc's current version is 5, the guest rendered 4.
     const app = buildApp({
       resolveSession: noSession,
-      loadShareConfig: guestOn,
       annotationRepo: ar,
       annotationLookupRepo: fakeAnnotationLookupRepo(undefined, 5),
     });
@@ -490,7 +502,7 @@ describe("annotation-create-version-pin S-001: a GUEST stale create is refused t
 describe("AS-018 / C-005 / C-009: guest comment with a name on anyone_with_link + guest-on", () => {
   test("AS-018: anon guest comment → 201, attributed to the guest name AND marked guest server-side (authorId null)", async () => {
     const gr = fakeGuestCommentRepo();
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, guestCommentRepo: gr });
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations/ann_1/comments", {
         method: "POST",
@@ -506,7 +518,7 @@ describe("AS-018 / C-005 / C-009: guest comment with a name on anyone_with_link 
 
   test("C-005: an anon write to a guest-on doc requires NO session and still admits (anyone_with_link)", async () => {
     const gr = fakeGuestCommentRepo();
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, guestCommentRepo: gr });
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations/ann_1/comments", {
         method: "POST",
@@ -517,19 +529,21 @@ describe("AS-018 / C-005 / C-009: guest comment with a name on anyone_with_link 
   });
 });
 
-// ── AS-019 / C-005: guest comment refused when guest commenting is OFF ────────
-describe("AS-019 / C-005: guest comment refused when guest commenting is off", () => {
-  test("AS-019: anon comment on a guest-OFF doc → refused (401), no comment created", async () => {
+// ── AS-017 (reversal 2026-06-20): a guest REPLY needs no toggle — link role is the grant ──
+describe("AS-017: a guest reply on an anyone_with_link doc is created without any guest-commenting toggle", () => {
+  test("AS-017: anon reply with a name + body → 201, stored as a guest comment (authorId null) — the bug fix, no toggle precondition", async () => {
     const gr = fakeGuestCommentRepo();
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOff, guestCommentRepo: gr });
+    const app = buildApp({ resolveSession: noSession, resolveAccess: linkCommenter, guestCommentRepo: gr });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations/ann_1/comments", {
         method: "POST",
         body: JSON.stringify({ body: "hi", guestName: "Sam" }),
       }),
     );
-    expect(res.status).toBe(401);
-    expect(gr.calls.inserts).toHaveLength(0);
+    expect(res.status).toBe(201);
+    expect(gr.calls.inserts).toHaveLength(1);
+    expect(gr.calls.inserts[0]?.guestName).toBe("Sam");
+    expect(gr.calls.inserts[0]?.authorId).toBeNull(); // server-enforced guest marker
   });
 });
 
@@ -569,7 +583,7 @@ describe("AS-022 / C-008 / C-013: anonymous comment writes are rate-limited (key
   test("AS-022: an anon comment past the per-IP/per-doc rate limit → 429, no comment created", async () => {
     const gr = fakeGuestCommentRepo();
     const overLimit: CommentRateLimiter = async () => ({ allowed: false });
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, guestCommentRepo: gr, rateLimitComment: overLimit });
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, rateLimitComment: overLimit });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations/ann_1/comments", {
         method: "POST",
@@ -586,7 +600,7 @@ describe("AS-022 / C-008 / C-013: anonymous comment writes are rate-limited (key
       seen.push({ key });
       return { allowed: true };
     };
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, rateLimitComment: limiter });
+    const app = buildApp({ resolveSession: noSession, rateLimitComment: limiter });
     await app.handle(
       req("/api/docs/doc-one/annotations/ann_1/comments", {
         method: "POST",
@@ -604,7 +618,6 @@ describe("AS-022 / C-008 / C-013: anonymous comment writes are rate-limited (key
     const overLimit: CommentRateLimiter = async () => ({ allowed: false });
     const app = buildApp({
       resolveSession: noSession,
-      loadShareConfig: guestOn,
       rateLimitComment: overLimit,
       notify: { repo: notifyRepo, mail },
     });
@@ -625,7 +638,6 @@ describe("AS-022 / C-008 / C-013: anonymous comment writes are rate-limited (key
     const mail = fakeMail();
     const app = buildApp({
       resolveSession: noSession,
-      loadShareConfig: guestOn,
       rateLimitComment: allowAll,
       notify: { repo: notifyRepo, mail },
     });
@@ -666,7 +678,7 @@ describe("AS-023 / C-009 / C-014: a guest cannot impersonate a member or the doc
   test("AS-023: a guest name colliding with an active member's display name → rejected (no comment created)", async () => {
     const gr = fakeGuestCommentRepo();
     const collides: IsActiveMemberName = async (_docId, name) => name.trim().toLowerCase() === "alice chen";
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, guestCommentRepo: gr, isActiveMemberName: collides });
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, isActiveMemberName: collides });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations/ann_1/comments", {
         method: "POST",
@@ -680,7 +692,7 @@ describe("AS-023 / C-009 / C-014: a guest cannot impersonate a member or the doc
   test("AS-023: a non-colliding guest name is accepted AND still marked guest server-side (authorId null)", async () => {
     const gr = fakeGuestCommentRepo();
     const collides: IsActiveMemberName = async (_docId, name) => name.trim().toLowerCase() === "alice chen";
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn, guestCommentRepo: gr, isActiveMemberName: collides });
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, isActiveMemberName: collides });
     const res = await app.handle(
       req("/api/docs/doc-one/annotations/ann_1/comments", {
         method: "POST",
@@ -817,7 +829,6 @@ describe("AS-012 / C-006: delete is session-required — an unauthenticated/gues
     // delete is session-required: refused 401, BEFORE resolving author_id / role.
     const app = buildApp({
       resolveSession: noSession,
-      loadShareConfig: guestOn,
       annotationLookupRepo: lookupWithAuthor(null),
       deleteRepo: dr,
     });
@@ -966,7 +977,6 @@ describe("AS-016 / C-007: restore a soft-deleted annotation — author or owner,
     const rr = fakeRestoreRepo();
     const app = buildApp({
       resolveSession: noSession,
-      loadShareConfig: guestOn,
       annotationLookupRepo: lookupWithAuthor(null, "anyone_with_link", new Date("2026-06-16T00:00:00.000Z")),
       restoreRepo: rr,
     });

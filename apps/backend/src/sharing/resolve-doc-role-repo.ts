@@ -124,26 +124,28 @@ async function generalAccessAdmits(
 }
 
 /**
- * Build the concrete `loadShareConfig`. Reads the doc's share_links row for the two
- * per-doc toggles the route clusters gate on:
- *   - guest_commenting → annotation-core's guest-comment seam; no row → OFF.
+ * Build the concrete `loadShareConfig`. Reads the doc's share_links row for the
+ * per-doc toggle the sharing routes gate on:
  *   - editors_can_share (C-015) → the sharing routes' manage-sharing gate; no row →
  *     ON (the default — editors can share until an owner turns it off; a doc with no
  *     share_links row yet behaves as the default-on column would).
+ *
+ * NOTE (sharing reversal 2026-06-20): the guest-commenting toggle is GONE (Google-Docs
+ * model — an anon comments via the link role, no separate flag). The `share_links`
+ * `guest_commenting` column is left in place (dropping it needs a migration) but is no
+ * longer read or written anywhere.
  */
 export function createLoadShareConfig(
   db: DB,
-): (docId: string) => Promise<{ guestCommentingEnabled: boolean; editorsCanShare: boolean }> {
+): (docId: string) => Promise<{ editorsCanShare: boolean }> {
   return async (docId: string) => {
     const [row] = await db
       .select({
-        guestCommenting: shareLinks.guestCommenting,
         editorsCanShare: shareLinks.editorsCanShare,
       })
       .from(shareLinks)
       .where(eq(shareLinks.docId, docId));
     return {
-      guestCommentingEnabled: row?.guestCommenting ?? false,
       editorsCanShare: row?.editorsCanShare ?? true,
     };
   };

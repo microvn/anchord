@@ -59,7 +59,6 @@ export interface ShareLink {
 export interface ShareState {
   level: GeneralAccessLevel;
   role: ShareRole;
-  guestCommenting: boolean;
   /** owner-only editable; drives the EDITOR manage-eligibility (C-002 / S-001 AS-004). */
   editorsCanShare: boolean;
   people: SharePerson[];
@@ -91,13 +90,13 @@ export function isForbidden(error: unknown): boolean {
   );
 }
 
-/** The general-access write payload (S-002). `level` + `role` are always sent; `guestCommenting`
- *  (only meaningful for anyone-with-link, C-001) and `editorsCanShare` (owner-only, C-003) are
- *  optional — only included when the corresponding control is the one being changed. */
+/** The general-access write payload (S-002). `level` + `role` are always sent; `editorsCanShare`
+ *  (owner-only, C-003) is optional — only included when that control is the one being changed.
+ *  (No guest-commenting field — a commenter+ link role IS the grant for guests, reversal
+ *  2026-06-20.) */
 export interface SetAccessInput {
   level: GeneralAccessLevel;
   role: ShareRole;
-  guestCommenting?: boolean;
   editorsCanShare?: boolean;
 }
 
@@ -105,11 +104,10 @@ export interface SetAccessInput {
 export interface AccessResult {
   level: GeneralAccessLevel;
   role: ShareRole;
-  guestCommenting: boolean;
   editorsCanShare: boolean;
 }
 
-/** PUT /api/w/:workspaceId/docs/:slug/access — set general access + role + guest + editors
+/** PUT /api/w/:workspaceId/docs/:slug/access — set general access + role + editors
  *  (sharing-permissions-ui S-002; backend sharing-permissions:S-001). The backend re-authorizes
  *  and 403s a refused write; the caller rolls back optimistically on `error` (C-005). */
 export function setAccess(

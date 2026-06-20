@@ -3,9 +3,10 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 
 // sharing-permissions-ui S-002 — the access-controls mutation engine (lifted from AccessSection so
 // the controls can span two tabs but share ONE PUT …/access). This unit-tests the mutation logic:
-// AS-005 (level change fires the write), AS-006 (refused write rolls back + toast), AS-008 (guest
-// gated to link + sends guestCommenting), AS-009 (editors owner-only + omitted for an editor), and
-// the leave-link-forces-guest-off invariant (C-001).
+// AS-005 (level change fires the write), AS-006 (refused write rolls back + toast), AS-009 (editors
+// owner-only + omitted for an editor). The guest-commenting toggle was REMOVED 2026-06-20 (a
+// commenter+ link role IS the guest grant — no toggle), so the access write no longer carries
+// guestCommenting.
 
 import * as sharingClient from "@/features/sharing/services/client";
 
@@ -15,8 +16,8 @@ mock.module("@/features/sharing/services/client", () => ({ ...sharingClient, set
 const toastError = mock(() => {});
 mock.module("sonner", () => ({ toast: Object.assign(mock(() => {}), { success: mock(() => {}), error: toastError }) }));
 
-const OK = { level: "anyone_with_link" as const, role: "commenter" as const, guestCommenting: false, editorsCanShare: false };
-const RESTRICTED = { level: "restricted" as const, role: "viewer" as const, guestCommenting: false, editorsCanShare: false, people: [], link: { hasPassword: false, url: "x" } };
+const OK = { level: "anyone_with_link" as const, role: "commenter" as const, editorsCanShare: false };
+const RESTRICTED = { level: "restricted" as const, role: "viewer" as const, editorsCanShare: false, people: [], link: { hasPassword: false, url: "x" } };
 
 const { useAccessControls } = await import("@/features/sharing/hooks/use-access-controls");
 
@@ -46,17 +47,11 @@ describe("useAccessControls", () => {
     expect(result.current.level).toBe("restricted"); // reverted
   });
 
-  it("AS-008: guest is gated to anyone-with-link, then sends guestCommenting:true once enabled", async () => {
+  it("reversal 2026-06-20: the access write never carries a guestCommenting field", async () => {
     const { result } = setup();
-    // restricted → toggleGuest is a no-op (no write)
-    act(() => result.current.toggleGuest());
-    expect(setAccess).not.toHaveBeenCalled();
-    // go to link, then enable guest
     act(() => result.current.chooseLevel("anyone_with_link"));
-    await waitFor(() => expect(result.current.isLink).toBe(true));
-    setAccess.mockClear();
-    act(() => result.current.toggleGuest());
-    await waitFor(() => expect(setAccess).toHaveBeenLastCalledWith("ws", "doc", expect.objectContaining({ guestCommenting: true })));
+    await waitFor(() => expect(setAccess).toHaveBeenCalled());
+    expect(setAccess.mock.calls[0]?.[2]).not.toHaveProperty("guestCommenting");
   });
 
   it("AS-009: editorsCanShare is owner-only — sent for owner, omitted for editor", async () => {
@@ -86,10 +81,4 @@ describe("useAccessControls", () => {
     );
   });
 
-  it("C-001: leaving anyone-with-link forces guest commenting off", async () => {
-    const linkOn = { ...RESTRICTED, level: "anyone_with_link" as const, guestCommenting: true };
-    const { result } = setup(linkOn, "owner");
-    act(() => result.current.chooseLevel("restricted"));
-    await waitFor(() => expect(setAccess).toHaveBeenLastCalledWith("ws", "doc", expect.objectContaining({ level: "restricted", guestCommenting: false })));
-  });
 });

@@ -9,8 +9,9 @@
 // password_hash except inside the != null derivation.
 //
 // Defaults mirror the gate/loader conventions: no share_links row yet → role "viewer"
-// (the column default), editors_can_share ON (default), guest OFF, no password/expiry/
-// view-limit, view_count 0 (matches createLoadShareConfig + setLinkControls).
+// (the column default), editors_can_share ON (default), no password/expiry/view-limit,
+// view_count 0 (matches createLoadShareConfig + setLinkControls). (No guest-commenting
+// field — guest access is decided by the link role, sharing reversal 2026-06-20.)
 
 import { eq } from "drizzle-orm";
 import { docs, shareLinks, docMembers, user } from "../db/schema";
@@ -33,7 +34,6 @@ export function createShareStateRepo(db: DB): ShareStateRepo {
       const [link] = await db
         .select({
           role: shareLinks.role,
-          guestCommenting: shareLinks.guestCommenting,
           editorsCanShare: shareLinks.editorsCanShare,
           passwordHash: shareLinks.passwordHash,
           expiresAt: shareLinks.expiresAt,
@@ -69,7 +69,6 @@ export function createShareStateRepo(db: DB): ShareStateRepo {
       return {
         level: doc?.generalAccess ?? "restricted",
         role: link?.role ?? "viewer",
-        guestCommenting: link?.guestCommenting ?? false,
         editorsCanShare: link?.editorsCanShare ?? true,
         people,
         link: {

@@ -8,8 +8,8 @@
 // test/integration/sharing-routes.itest.ts.
 //
 // AS map (sharing-permissions):
-//   AS-001  PUT access (anyone_with_link + commenter) → 200 { level, role, guestCommenting }
-//   AS-003  PUT access guest-commenting on restricted → 400 VALIDATION_ERROR
+//   AS-001  PUT access (anyone_with_link + commenter) → 200 { level, role, editorsCanShare }
+//           (the commenter+ link role IS the guest grant — no toggle, reversal 2026-06-20)
 //   AS-018  PUT access invalid role → 400 VALIDATION_ERROR
 //   AS-007  POST invites, existing account → 201 { status: "active" }
 //   AS-008  POST invites, no account → 201 { status: "pending" } + enqueue
@@ -75,13 +75,13 @@ function fakeShareRepo() {
   return { repo, calls };
 }
 
-// AS-025 fixture: anyone-with-link/commenter, guest ON, editors_can_share ON, one
-// ACTIVE + one PENDING invite, a password-protected link with expiry/view controls.
+// AS-025 fixture: anyone-with-link/commenter (the commenter+ link role IS the guest grant —
+// no separate toggle, reversal 2026-06-20), editors_can_share ON, one ACTIVE + one PENDING
+// invite, a password-protected link with expiry/view controls.
 // AS-026: the repo shape carries hasPassword (a boolean) only — never a hash.
 const SHARE_STATE_ROW: ShareStateRow = {
   level: "anyone_with_link",
   role: "commenter",
-  guestCommenting: true,
   editorsCanShare: true,
   people: [
     { id: "m-active", email: "active@acme.com", name: "Active Person", role: "editor", status: "active" },
@@ -137,13 +137,13 @@ function buildApp(opts: {
 }
 
 describe("PUT /api/docs/:slug/access (S-001)", () => {
-  test("AS-001: owner sets anyone_with_link + commenter → 200 { level, role, guestCommenting }", async () => {
+  test("AS-001: owner sets anyone_with_link + commenter → 200 { level, role, editorsCanShare } (commenter link IS the guest grant, no toggle)", async () => {
     const share = fakeShareRepo();
     const app = buildApp({ shareRepo: share.repo });
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter", guestCommenting: true }),
+        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
       }),
     );
     expect(res.status).toBe(200);
@@ -151,11 +151,12 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     expect(json.data).toEqual({
       level: "anyone_with_link",
       role: "commenter",
-      guestCommenting: true,
       editorsCanShare: true,
     });
+    // No guest-commenting field is persisted or echoed (reversal 2026-06-20).
+    expect(json.data).not.toHaveProperty("guestCommenting");
     expect(share.calls).toHaveLength(1);
-    expect(share.calls[0]?.guestCommenting).toBe(true);
+    expect(share.calls[0]).not.toHaveProperty("guestCommenting");
   });
 
   test("AS-018: invalid role → 400 VALIDATION_ERROR (no persist)", async () => {
@@ -173,18 +174,9 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     expect(share.calls).toHaveLength(0);
   });
 
-  test("AS-003: guest commenting on restricted → 400 VALIDATION_ERROR", async () => {
-    const app = buildApp({});
-    const res = await app.handle(
-      req("/api/w/ws_1/docs/doc-one/access", {
-        method: "PUT",
-        body: JSON.stringify({ level: "restricted", role: "viewer", guestCommenting: true }),
-      }),
-    );
-    expect(res.status).toBe(400);
-    const json = (await res.json()) as any;
-    expect(json.error.code).toBe("VALIDATION_ERROR");
-  });
+  // AS-003 (guest-on-restricted → 400) was REMOVED from the spec on 2026-06-20: there is no
+  // guest-commenting toggle, so there is no guest-on-restricted combination to reject. Guest
+  // access is decided by the link role alone (a commenter+ link on anyone_with_link).
 
   test("AS-014: editor on a VISIBLE doc with editors_can_share ON → 200 ALLOWED", async () => {
     const share = fakeShareRepo();
@@ -458,17 +450,18 @@ describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
 });
 
 describe("GET /api/w/:workspaceId/docs/:slug/share (S-006 — read share state)", () => {
-  test("AS-025: owner reads full share state → level, role, guestCommenting, editorsCanShare, people[], link controls", async () => {
+  test("AS-025: owner reads full share state → level, role, editorsCanShare, people[], link controls (no guestCommenting field)", async () => {
     const app = buildApp({ resolveDocRole: asOwner });
     const res = await app.handle(req("/api/w/ws_1/docs/doc-one/share"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     const d = json.data;
-    // AS-025.T1 level · T2 role · T3 guestCommenting · T4 editorsCanShare
+    // AS-025.T1 level · T2 role · T3 editorsCanShare
     expect(d.level).toBe("anyone_with_link");
     expect(d.role).toBe("commenter");
-    expect(d.guestCommenting).toBe(true);
     expect(d.editorsCanShare).toBe(true);
+    // No guest-commenting field is returned (reversal 2026-06-20).
+    expect(d).not.toHaveProperty("guestCommenting");
     // AS-025.T5 people[] — each with member id, email/name, role, active|pending
     expect(d.people).toHaveLength(2);
     expect(d.people[0]).toEqual({

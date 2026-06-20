@@ -1,13 +1,13 @@
 // Share service (sharing S-001): an owner sets a doc's general-access level + the
-// role granted to anyone-with-link, and toggles guest commenting on/off.
+// role granted to anyone-with-link.
 //
-// AS-001: anyone-with-link + commenter → setting saved (level + role).
+// AS-001: anyone-with-link + commenter → setting saved (level + role). The commenter+
+//         link role IS the grant for guests — there is NO separate guest-commenting
+//         toggle (Google-Docs model, sharing reversal 2026-06-20).
 // AS-002: restricted → only invitees get in (link-but-not-invited denied). The
 //         actual outsider-denied / outsider-gets-commenter ENFORCEMENT is S-005's
 //         role logic + the /d/:slug gate (integration); here we assert the SETTING
 //         is persisted correctly.
-// AS-003 / C-003: guest commenting is accepted ONLY when level = anyone_with_link;
-//         on restricted (or anyone_in_workspace) it is rejected with a domain error.
 // C-001: one general-access config per doc (unique docId on share_links); the link
 //        controls (password/expiry/view-limit, S-004) attach to that same row but
 //        are independent of, and untouched by, this setting.
@@ -26,12 +26,11 @@ export type ShareRole = (typeof shareRole.enumValues)[number];
 
 const SHARE_ROLES: readonly ShareRole[] = ["viewer", "commenter", "editor"];
 
-/** Thrown when a requested setting violates a sharing rule (C-003 / role validation / C-015). */
+/** Thrown when a requested setting violates a sharing rule (role validation / C-015). */
 export class ShareRejected extends Error {
   constructor(
     message: string,
     readonly code:
-      | "guest_commenting_requires_link"
       | "invalid_role"
       | "toggle_owner_only",
   ) {
@@ -43,8 +42,6 @@ export class ShareRejected extends Error {
 export interface GeneralAccessInput {
   level: GeneralAccessLevel;
   role: ShareRole;
-  /** Default false. Only accepted when level === "anyone_with_link" (C-003). */
-  guestCommenting?: boolean;
   /**
    * The owner-controlled `editors_can_share` toggle (C-015). Optional: when omitted
    * the stored value is left untouched (defaults true on the first set). When present
@@ -59,7 +56,6 @@ export interface ResolvedShareSetting {
   docId: string;
   level: GeneralAccessLevel;
   role: ShareRole;
-  guestCommenting: boolean;
   editorsCanShare: boolean;
 }
 
@@ -67,17 +63,16 @@ export interface ResolvedShareSetting {
 export interface ShareRepo {
   /**
    * Persist docs.general_access = level AND upsert the doc's single share_links row
-   * (role, guestCommenting, and `editorsCanShare` when present) atomically. Returns the
-   * stored setting. The unique docId (C-001) means this is an upsert keyed on docId,
-   * never a second row. `editorsCanShare` is OPTIONAL on the write: when undefined the
-   * stored toggle is left untouched (default true on first insert).
+   * (role, and `editorsCanShare` when present) atomically. Returns the stored setting.
+   * The unique docId (C-001) means this is an upsert keyed on docId, never a second row.
+   * `editorsCanShare` is OPTIONAL on the write: when undefined the stored toggle is left
+   * untouched (default true on first insert).
    */
   setGeneralAccess(
     docId: string,
     setting: {
       level: GeneralAccessLevel;
       role: ShareRole;
-      guestCommenting: boolean;
       editorsCanShare?: boolean;
     },
   ): Promise<ResolvedShareSetting>;
@@ -88,16 +83,18 @@ function isShareRole(role: string): role is ShareRole {
 }
 
 /**
- * Set a doc's general-access level, its anyone-with-link role, the guest-comment
- * toggle, and (owner-only) the editors_can_share toggle. Validates BEFORE the repo is
- * touched, so a rejected setting never persists:
+ * Set a doc's general-access level, its anyone-with-link role, and (owner-only) the
+ * editors_can_share toggle. Validates BEFORE the repo is touched, so a rejected setting
+ * never persists:
  *   - role must be one of viewer | commenter | editor (owner is not a link role).
- *   - C-003 GUARD: guestCommenting === true is accepted ONLY when level is
- *     "anyone_with_link"; on any other level it throws ShareRejected (reject-with-
- *     clear-error, not silent-force-false).
  *   - C-015 GUARD: changing `editorsCanShare` requires `actorIsOwner` — an editor
  *     managing sharing may NOT flip the toggle, even when it is on. Omitting
  *     `editorsCanShare` leaves the toggle untouched (an editor's normal path).
+ *
+ * NOTE (sharing reversal 2026-06-20): there is NO guest-commenting toggle. A commenter+
+ * link role IS the grant for guests (Google-Docs model), so guest access is decided by
+ * the link role alone, not a separate flag here.
+ *
  * Returns the resolved setting the repo persisted.
  */
 export async function setGeneralAccess(
@@ -107,20 +104,11 @@ export async function setGeneralAccess(
   ctx: { actorIsOwner: boolean } = { actorIsOwner: false },
 ): Promise<ResolvedShareSetting> {
   const { level, role } = input;
-  const guestCommenting = input.guestCommenting ?? false;
 
   if (!isShareRole(role)) {
     throw new ShareRejected(
       `Invalid share role "${role}": must be one of ${SHARE_ROLES.join(", ")}`,
       "invalid_role",
-    );
-  }
-
-  // C-003 / AS-003: guest commenting only when anyone-with-link.
-  if (guestCommenting && level !== "anyone_with_link") {
-    throw new ShareRejected(
-      `Guest commenting can only be enabled when general-access is "anyone_with_link" (got "${level}")`,
-      "guest_commenting_requires_link",
     );
   }
 
@@ -137,7 +125,6 @@ export async function setGeneralAccess(
   return repo.setGeneralAccess(docId, {
     level,
     role,
-    guestCommenting,
     editorsCanShare: input.editorsCanShare,
   });
 }

@@ -8,16 +8,19 @@ import {
   type ShareRole,
 } from "./share";
 
-// Sharing S-001: an owner sets general-access level + anyone-with-link role and
-// toggles guest commenting.
+// Sharing S-001: an owner sets general-access level + anyone-with-link role.
 //
-// UNIT tests of the validation / C-003 guard LOGIC against an in-memory fake
-// ShareRepo (mirrors publish's fakeRepo + version's VersionRepo pattern). They
-// assert the SETTING is persisted correctly (level + role + guestCommenting). The
-// actual "outsider gets commenter access" / "stranger denied" ENFORCEMENT is
-// S-005's role logic + the /d/:slug gate (integration) — NOT asserted here. The
-// real Drizzle upsert (docs.general_access + the unique-docId share_links row in
-// one transaction) is integration-verified-later.
+// UNIT tests of the role validation + the owner-only editors_can_share guard (C-015)
+// against an in-memory fake ShareRepo (mirrors publish's fakeRepo + version's
+// VersionRepo pattern). They assert the SETTING is persisted correctly (level + role).
+// The actual "outsider gets commenter access" / "stranger denied" ENFORCEMENT is S-005's
+// role logic + the /d/:slug gate (integration) — NOT asserted here. The real Drizzle
+// upsert (docs.general_access + the unique-docId share_links row in one transaction) is
+// integration-verified-later.
+//
+// NOTE (sharing reversal 2026-06-20): there is NO guest-commenting toggle. A commenter+
+// link role IS the grant for guests (Google-Docs model), so the old AS-003/C-003
+// guest-on-restricted guard is GONE — `setGeneralAccess` no longer takes guestCommenting.
 
 // In-memory fake: one share_links-style row per doc (keyed on docId — enforces the
 // C-001 single-config invariant) + the doc's general_access level. Exposes ONLY
@@ -53,12 +56,10 @@ test("AS-001: set anyone-with-link + commenter saves the setting (level + role)"
   // The SETTING is what S-001 owns; outsider→commenter enforcement is S-005/integration.
   expect(out.level).toBe("anyone_with_link");
   expect(out.role).toBe("commenter");
-  expect(out.guestCommenting).toBe(false); // not requested → defaults false
   expect(f.rows.get("doc-1")).toEqual({
     docId: "doc-1",
     level: "anyone_with_link",
     role: "commenter",
-    guestCommenting: false,
     editorsCanShare: true, // default on (C-015) when not set
   });
 });
@@ -75,33 +76,20 @@ test("AS-002: set restricted persists restricted level (invitees-only; link-not-
   expect(f.rows.get("doc-1")?.level).toBe("restricted");
 });
 
-test("AS-003 / C-003: guest commenting on a restricted doc is rejected (toggle unavailable until anyone-with-link)", async () => {
+test("AS-001 (reversal 2026-06-20): a commenter+ link role is the grant for guests — NO separate guest-commenting toggle is accepted", async () => {
   const f = fakeRepo();
 
-  // restricted + guestCommenting → rejected with a clear domain error.
-  await expect(
-    setGeneralAccess("doc-1", { level: "restricted", role: "commenter", guestCommenting: true }, f.repo),
-  ).rejects.toThrow(ShareRejected);
-  // Nothing persisted — guard runs BEFORE the repo is touched.
-  expect(f.rows.has("doc-1")).toBe(false);
-
-  // anyone_in_workspace is also not anyone-with-link → still rejected.
-  await expect(
-    setGeneralAccess(
-      "doc-1",
-      { level: "anyone_in_workspace", role: "commenter", guestCommenting: true },
-      f.repo,
-    ),
-  ).rejects.toThrow(/anyone_with_link/);
-
-  // The OTHER direction: anyone-with-link + guestCommenting → accepted & persisted.
-  const ok = await setGeneralAccess(
+  // The setting no longer carries any guest field; setting anyone_with_link + commenter is
+  // the entire guest grant. (TypeScript would reject a `guestCommenting` field at compile
+  // time — the toggle no longer exists on GeneralAccessInput.)
+  const out = await setGeneralAccess(
     "doc-1",
-    { level: "anyone_with_link", role: "commenter", guestCommenting: true },
+    { level: "anyone_with_link", role: "commenter" },
     f.repo,
   );
-  expect(ok.guestCommenting).toBe(true);
-  expect(f.rows.get("doc-1")?.guestCommenting).toBe(true);
+  expect(out.role).toBe("commenter");
+  expect(out).not.toHaveProperty("guestCommenting");
+  expect(f.rows.get("doc-1")).not.toHaveProperty("guestCommenting");
 });
 
 test("C-001: one general-access config per doc — re-setting upserts the same row, link controls independent", async () => {
@@ -117,7 +105,6 @@ test("C-001: one general-access config per doc — re-setting upserts the same r
     docId: "doc-1",
     level: "anyone_with_link",
     role: "editor",
-    guestCommenting: false,
     editorsCanShare: true,
   });
   // Link controls (password/expiry/view-limit, S-004) attach to this same row but

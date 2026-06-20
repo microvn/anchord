@@ -183,9 +183,13 @@ export function ViewerScreen() {
       // Feeds the member-only, workspace-addressed Share dialog + Version history; null/anon → hidden.
       workspaceId={doc.doc.workspaceId ?? null}
       canCompose={canComment(doc.doc.effectiveRole)}
-      // S-005: a logged-out guest session (consumed from the read side) → the composer shows the
-      // GuestNameField + name-required gate; the rail badges the guest comment (C-010).
-      guest={doc.doc.guest === true}
+      // S-005 / AS-016/AS-017 (sharing reversal 2026-06-20): a logged-out (anon) session whose
+      // effective LINK ROLE is commenter+ is a guest commenter — the composer shows the
+      // GuestNameField + name-required gate and the rail badges the guest comment (C-010). Derived
+      // from the role the doc read already returns (NOT the never-emitted `doc.guest` flag — the
+      // old keying was the live bug: a guest on anyone-with-link/commenter never got the composer).
+      // There is no separate guest-commenting toggle; the link role IS the grant.
+      guest={!signedIn && canComment(doc.doc.effectiveRole)}
       // S-003 (AS-029): an anonymous visitor → the top bar shows a Sign in CTA + hides session-only
       // chrome (Share / account menu). signedIn comes from the resolved session, not the doc.
       anonymous={!signedIn}

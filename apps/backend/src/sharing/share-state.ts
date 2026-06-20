@@ -6,9 +6,10 @@
 // The three management routes (PUT access / POST invites / PUT link) are write-only;
 // this is the matching READ surface (sharing-permissions-ui:GAP-003).
 //
-// AS-025: returns level, role, guestCommenting, editorsCanShare, the people list
-//         (email/name, role, active|pending), and the link controls (expiresAt,
-//         viewLimit, viewCount, url, and WHETHER a password is set).
+// AS-025: returns level, role, editorsCanShare, the people list (email/name, role,
+//         active|pending), and the link controls (expiresAt, viewLimit, viewCount, url,
+//         and WHETHER a password is set). No guest-commenting field — guest access is
+//         decided by the commenter+ link role (Google-Docs model, reversal 2026-06-20).
 // AS-026 / C-016: the stored password NEVER leaves the server — only a boolean
 //         `hasPassword` (derived from password_hash != null) is exposed; the hash is
 //         not part of the repo's read shape at all.
@@ -42,7 +43,6 @@ export interface ShareLinkState {
 export interface ShareState {
   level: GeneralAccessLevel;
   role: ShareRole;
-  guestCommenting: boolean;
   editorsCanShare: boolean;
   people: SharePerson[];
   link: ShareLinkState;
@@ -64,7 +64,6 @@ export interface ShareStateRow {
   level: GeneralAccessLevel;
   /** From the share_links row; defaults to "viewer" when no link row exists yet. */
   role: ShareRole;
-  guestCommenting: boolean;
   editorsCanShare: boolean;
   people: SharePerson[];
   link: {
@@ -96,7 +95,6 @@ export async function readShareState(
   return {
     level: row.level,
     role: row.role,
-    guestCommenting: row.guestCommenting,
     editorsCanShare: row.editorsCanShare,
     people: row.people,
     viewerRole,

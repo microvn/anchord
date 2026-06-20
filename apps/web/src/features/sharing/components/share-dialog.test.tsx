@@ -27,7 +27,6 @@ mock.module("sonner", () => ({ toast: Object.assign(mock(() => {}), { success: m
 const RESTRICTED_OWNER_STATE = {
   level: "restricted" as const,
   role: "viewer" as const,
-  guestCommenting: false,
   editorsCanShare: false,
   people: [
     { userId: "u-own", email: "owner@acme.com", name: "Owner Olu", role: "owner" as const, status: "active" as const },
@@ -39,7 +38,6 @@ const RESTRICTED_OWNER_STATE = {
 const LINK_STATE = {
   level: "anyone_with_link" as const,
   role: "commenter" as const,
-  guestCommenting: true,
   editorsCanShare: false,
   people: [
     { userId: "u-own", email: "owner@acme.com", name: "Owner Olu", role: "owner" as const, status: "active" as const },
@@ -171,10 +169,11 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     expect(screen.getByTestId("share-link-url")).toHaveTextContent("/d/web-core?k=9f2a");
     expect(screen.getByTestId("share-link-password")).toHaveAttribute("data-on", "1");
 
-    // OPTIONS tab: guest on, editors reflected
+    // OPTIONS tab: no guest-commenting toggle (removed 2026-06-20 — link role is the grant);
+    // editors-can-share reflected.
     await userEvent.click(screen.getByTestId("share-tab-options"));
-    expect(await screen.findByTestId("share-guest-toggle")).toHaveAttribute("data-on", "1");
-    expect(screen.getByTestId("share-editors-can-share-toggle")).toHaveAttribute("data-on", "0");
+    expect(await screen.findByTestId("share-editors-can-share-toggle")).toHaveAttribute("data-on", "0");
+    expect(screen.queryByTestId("share-guest-toggle")).not.toBeInTheDocument();
   });
 
   // C-002: the pure manage-eligibility gate (mirror of backend C-007).

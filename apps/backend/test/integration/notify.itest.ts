@@ -18,11 +18,9 @@ import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import { MailQueue } from "../../src/auth/mail-queue";
 import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
-import type { LoadShareConfig } from "../../src/routes/annotations";
 import { withMigratedDb, seedWorkspace, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
-const guestOn: LoadShareConfig = async () => ({ guestCommentingEnabled: true });
 
 describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
   let h: MigratedDb;
@@ -93,7 +91,6 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
         resolveDocRole: async () => "owner" as const,
         // S-001: single read gate admits the signed-in participants in these notify tests.
         resolveAccess: async () => ({ role: "owner" as const, canView: true }),
-        loadShareConfig: guestOn,
         notify: { mail },
       },
     });

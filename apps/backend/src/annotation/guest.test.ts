@@ -13,6 +13,11 @@ import { ANON_ANIMALS } from "../sharing/anon-identity";
 // null (AS-017), and any HTML in body/guest_name is sanitized inert with the name
 // length-capped (AS-019/C-008). Pure logic against a fake GuestCommentRepo (mirrors
 // reply.test.ts).
+//
+// NOTE (sharing reversal 2026-06-20): there is NO guest-commenting toggle. An anon on an
+// anyone_with_link + commenter+ doc is authorized to comment by the LINK ROLE alone (the
+// route gates that); createGuestComment no longer takes/checks a `guestCommentingEnabled`
+// flag, so there is no `guest_disabled` reason. This service only validates name + body.
 
 function fakeRepo(): GuestCommentRepo & { inserted: NewGuestComment[] } {
   const inserted: NewGuestComment[] = [];
@@ -40,7 +45,7 @@ test("AS-016: a logged-out viewer is assigned a random name (reuse generateAnonN
   }
 });
 
-test("AS-017 / C-007: guest comment stored with guest_name 'Lan', author_id empty, email optional-and-stored", async () => {
+test("AS-017: guest comment stored with guest_name 'Lan', author_id empty, email optional-and-stored — NO toggle required (link role is the grant)", async () => {
   const repo = fakeRepo();
   const res = await createGuestComment(
     {
@@ -48,7 +53,6 @@ test("AS-017 / C-007: guest comment stored with guest_name 'Lan', author_id empt
       guestName: "Lan",
       email: "lan@example.com",
       body: "looks good to me",
-      guestCommentingEnabled: true,
     },
     repo,
   );
@@ -65,7 +69,7 @@ test("AS-017 / C-007: guest comment stored with guest_name 'Lan', author_id empt
 test("AS-017: the email is OPTIONAL — a guest comment with no email still stores (guestEmail absent)", async () => {
   const repo = fakeRepo();
   const res = await createGuestComment(
-    { annotationId: "ann-1", guestName: "Lan", body: "no email here", guestCommentingEnabled: true },
+    { annotationId: "ann-1", guestName: "Lan", body: "no email here" },
     repo,
   );
   expect(res.created).toBe(true);
@@ -77,13 +81,13 @@ test("C-007: guest comments REQUIRE a name — empty / whitespace-only name is r
   const repo = fakeRepo();
 
   const empty = await createGuestComment(
-    { annotationId: "ann-1", guestName: "", body: "anon body", guestCommentingEnabled: true },
+    { annotationId: "ann-1", guestName: "", body: "anon body" },
     repo,
   );
   expect(empty).toEqual({ created: false, reason: "empty_name" });
 
   const ws = await createGuestComment(
-    { annotationId: "ann-1", guestName: "   \t ", body: "anon body", guestCommentingEnabled: true },
+    { annotationId: "ann-1", guestName: "   \t ", body: "anon body" },
     repo,
   );
   expect(ws).toEqual({ created: false, reason: "empty_name" });
@@ -91,14 +95,19 @@ test("C-007: guest comments REQUIRE a name — empty / whitespace-only name is r
   expect(repo.inserted).toHaveLength(0);
 });
 
-test("C-007: guest commenting disabled on the doc → rejected (guest_disabled), nothing persisted", async () => {
+test("AS-017: NO guest-commenting toggle exists — a valid guest comment is created without any toggle precondition (the bug fix)", async () => {
+  // Regression for the live bug: the guest comment used to be gated by a never-emitted toggle.
+  // createGuestComment now accepts only { annotationId, guestName, email?, body } — a valid name
+  // + body is created purely on its own merits (the route already authorized via the link role).
   const repo = fakeRepo();
   const res = await createGuestComment(
-    { annotationId: "ann-1", guestName: "Lan", body: "should not persist", guestCommentingEnabled: false },
+    { annotationId: "ann-1", guestName: "Sam", body: "I can comment as a guest now" },
     repo,
   );
-  expect(res).toEqual({ created: false, reason: "guest_disabled" });
-  expect(repo.inserted).toHaveLength(0);
+  expect(res).toEqual({ created: true, id: "c-1" });
+  expect(repo.inserted).toHaveLength(1);
+  expect(repo.inserted[0].guestName).toBe("Sam");
+  expect(repo.inserted[0].authorId).toBeNull(); // still a non-spoofable guest marker
 });
 
 test("AS-019 / C-008: HTML in the body renders inert — <img onerror> / <script> neutralized in the STORED value", async () => {
@@ -108,7 +117,6 @@ test("AS-019 / C-008: HTML in the body renders inert — <img onerror> / <script
       annotationId: "ann-1",
       guestName: "Lan",
       body: `<img src=x onerror=alert(1)> and <script>alert(2)</script> done`,
-      guestCommentingEnabled: true,
     },
     repo,
   );
@@ -131,7 +139,6 @@ test("AS-019 / C-008: HTML in the guest_name renders inert — tags stripped fro
       annotationId: "ann-1",
       guestName: `<img src=x onerror=alert(1)>Lan<script>x</script>`,
       body: "hi",
-      guestCommentingEnabled: true,
     },
     repo,
   );
@@ -146,7 +153,7 @@ test("AS-019 / C-008: HTML in the guest_name renders inert — tags stripped fro
 test("C-008: a name that is ONLY HTML/script (sanitizes to empty) is treated as missing → empty_name", async () => {
   const repo = fakeRepo();
   const res = await createGuestComment(
-    { annotationId: "ann-1", guestName: "<script>alert(1)</script>", body: "hi", guestCommentingEnabled: true },
+    { annotationId: "ann-1", guestName: "<script>alert(1)</script>", body: "hi" },
     repo,
   );
   expect(res).toEqual({ created: false, reason: "empty_name" });
@@ -157,7 +164,7 @@ test("AS-019 / C-008: an over-long guest_name is truncated to MAX_GUEST_NAME_LEN
   const repo = fakeRepo();
   const longName = "x".repeat(MAX_GUEST_NAME_LENGTH + 200);
   await createGuestComment(
-    { annotationId: "ann-1", guestName: longName, body: "hi", guestCommentingEnabled: true },
+    { annotationId: "ann-1", guestName: longName, body: "hi" },
     repo,
   );
   const stored = repo.inserted[0].guestName!;
@@ -168,7 +175,7 @@ test("AS-019 / C-008: an over-long guest_name is truncated to MAX_GUEST_NAME_LEN
 test("C-008: control characters are stripped from the guest_name (charset limit)", async () => {
   const repo = fakeRepo();
   await createGuestComment(
-    { annotationId: "ann-1", guestName: "La\x00n\x07\nh", body: "hi", guestCommentingEnabled: true },
+    { annotationId: "ann-1", guestName: "La\x00n\x07\nh", body: "hi" },
     repo,
   );
   const stored = repo.inserted[0].guestName!;
@@ -180,7 +187,7 @@ test("C-008: control characters are stripped from the guest_name (charset limit)
 test("AS-017: empty / whitespace-only body is rejected (empty_body), nothing persisted", async () => {
   const repo = fakeRepo();
   const res = await createGuestComment(
-    { annotationId: "ann-1", guestName: "Lan", body: "   \n ", guestCommentingEnabled: true },
+    { annotationId: "ann-1", guestName: "Lan", body: "   \n " },
     repo,
   );
   expect(res).toEqual({ created: false, reason: "empty_body" });

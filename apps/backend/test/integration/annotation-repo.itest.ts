@@ -330,7 +330,6 @@ describe.skipIf(!RUN)("annotation-core repos (real Postgres)", () => {
         guestName: "Visiting Otter",
         email: "otter@example.com",
         body: "a guest note",
-        guestCommentingEnabled: true,
       },
       guestRepo,
     );

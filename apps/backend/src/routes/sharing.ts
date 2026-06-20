@@ -8,8 +8,8 @@
 // service, and shape the response.
 //
 // Contract (sharing-permissions ## API — all gated by the manage-sharing gate, C-007):
-//   GET  /api/w/:wid/docs/:slug/share → S-006 AS-025/026/027 200 { level, role, guestCommenting, editorsCanShare, people[], link{...} }
-//   PUT  /api/docs/:slug/access  → S-001 AS-001/002/003/018  200 { level, role, guestCommenting }
+//   GET  /api/w/:wid/docs/:slug/share → S-006 AS-025/026/027 200 { level, role, editorsCanShare, people[], link{...} }
+//   PUT  /api/docs/:slug/access  → S-001 AS-001/002/018      200 { level, role, editorsCanShare }
 //   POST /api/docs/:slug/invites → S-003 AS-007/008          201 { status } active|pending
 //   PUT  /api/docs/:slug/link    → S-004 AS-009..021         200 { link controls }
 //   PATCH  /api/w/:wid/docs/:slug/members/:memberId → S-007 AS-028/031/032 200 { role }
@@ -65,7 +65,6 @@ const accessBodySchema = z.object({
   // `role` shape is validated loosely here (string) so an invalid value (AS-018)
   // surfaces as the service's ShareRejected → 400, matching the contract's wording.
   role: z.string(),
-  guestCommenting: z.boolean().optional(),
   // C-015/AS-022: owner-only toggle. Present → the actor wants to change it; a non-owner
   // sending it is 403 (gated below), an owner's change threads through to the service.
   editorsCanShare: z.boolean().optional(),
@@ -123,8 +122,7 @@ export interface SharingRoutesDeps {
   /**
    * Reads the doc's per-doc share toggles — the manage-sharing gate needs
    * `editorsCanShare` (C-007). Optional: built from `db` when omitted. Tests inject a
-   * fake. (Same shape annotation-core's loadShareConfig returns — guestCommenting is
-   * also present but unused here.)
+   * fake.
    */
   loadShareConfig?: (docId: string) => Promise<{ editorsCanShare: boolean }>;
   /** Access deps for `canViewDoc` (existence-hiding). */
@@ -223,7 +221,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
         return readShareState(doc.id, params.slug, shareStateRepo(), viewerRole);
       })
 
-      // ── PUT /api/docs/:slug/access — S-001 (general access + link role + guest) ──
+      // ── PUT /api/docs/:slug/access — S-001 (general access + link role) ──
       .group("", (app) =>
         app
           .use(withValidation(accessBodySchema))
@@ -245,7 +243,6 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
                   level: body.level,
                   // role validity (AS-018) is the service's guard → ShareRejected → 400.
                   role: body.role as never,
-                  guestCommenting: body.guestCommenting,
                   editorsCanShare: body.editorsCanShare,
                 },
                 shareRepo,
@@ -254,11 +251,10 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
               return {
                 level: result.level,
                 role: result.role,
-                guestCommenting: result.guestCommenting,
                 editorsCanShare: result.editorsCanShare,
               };
             } catch (err) {
-              // AS-018 invalid role + AS-003 guest-on-restricted → 400 VALIDATION_ERROR.
+              // AS-018 invalid role → 400 VALIDATION_ERROR.
               if (err instanceof ShareRejected) throw new ValidationError(err.message);
               throw err;
             }

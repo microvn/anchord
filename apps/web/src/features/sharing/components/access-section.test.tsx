@@ -20,11 +20,11 @@ mock.module("sonner", () => ({
   toast: Object.assign(mock(() => {}), { success: mock(() => {}), error: toastError }),
 }));
 
-const OK_RESULT = { level: "anyone_with_link" as const, role: "commenter" as const, guestCommenting: false, editorsCanShare: false };
+const OK_RESULT = { level: "anyone_with_link" as const, role: "commenter" as const, editorsCanShare: false };
 const RESTRICTED_STATE = {
   level: "restricted" as const,
   role: "viewer" as const,
-  guestCommenting: false,
+ 
   editorsCanShare: false,
   people: [],
   link: { hasPassword: false, url: "anchord.local/d/web-core" },

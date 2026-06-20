@@ -15,14 +15,12 @@ import { annotations, comments, docs, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
-import type { LoadShareConfig } from "../../src/routes/annotations";
 import { withMigratedDb, seedWorkspace, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
 const member: SessionResolver = async () => ({ userId: "u_itest" });
 const noSession: SessionResolver = async () => null;
 const asMember: WorkspaceRoleResolver = async () => "member";
-const guestOn: LoadShareConfig = async () => ({ guestCommentingEnabled: true });
 
 describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
   let h: MigratedDb;
@@ -61,7 +59,6 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
         viewer.kind === "user"
           ? { role: "owner" as const, canView: true }
           : { role: "commenter" as const, canView: true },
-      loadShareConfig: guestOn,
     };
     app = createApp({ dbCheck: async () => {}, annotations: base });
     // A second app whose session resolver returns null → drives the guest path.

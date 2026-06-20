@@ -34,7 +34,6 @@ mock.module("sonner", () => ({
 const STATE = {
   level: "anyone_with_link" as const,
   role: "commenter" as const,
-  guestCommenting: false,
   editorsCanShare: false,
   people: [
     { id: "m-own", userId: "u-own", email: "owner@acme.com", name: "Owner Olu", role: "owner" as const, status: "active" as const },

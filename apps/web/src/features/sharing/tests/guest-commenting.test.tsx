@@ -8,7 +8,9 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 // enabled) gets a random session display name + a Rename control (AS-009), must enter a name to
 // send (email optional, AS-010/AS-011), and every untrusted string (body + guest name) renders
 // inert + the name is length-limited (AS-012). A guest comment is visibly attributed as a guest
-// (C-010). The FE CONSUMES a `guest` flag from the read side; it does NOT own the sharing toggle.
+// (C-010). Reversal 2026-06-20: the FE derives guest mode from `!signedIn && canComment(role)` (the
+// commenter+ link role IS the grant — no toggle, no `doc.guest` flag); these tests drive it via the
+// session (anon for guests, signed-in for the member case).
 
 const okEnv = (body: unknown) => ({ data: { success: true, data: body }, error: null });
 const okRead = (body: unknown) => ({ data: body, error: null });
@@ -40,7 +42,21 @@ mock.module("@/features/viewer/services/client", () => ({
   createAnnotation,
   addComment,
   setResolution: mock(async () => ({ data: { success: true, data: { status: "resolved" } }, error: null })),
+  // bun mock.module binds ALL exports at load — viewer-screen now imports these, so the partial
+  // client mock must carry them or the module link fails (the file errored in isolation otherwise).
+  deleteAnnotation: mock(async () => ({ data: { success: true, data: { deleted: true } }, error: null })),
+  restoreAnnotation: mock(async () => ({ data: { success: true, data: { restored: true } }, error: null })),
+  dismissAnnotation: mock(async () => ({ data: { success: true, data: { dismissed: true } }, error: null })),
+  reattachAnnotation: mock(async () => ({ data: { success: true, data: { isOrphaned: false } }, error: null })),
   canComment,
+}));
+
+// Reversal 2026-06-20: "guest" is now derived from `!signedIn && canComment(role)`, NOT a doc flag.
+// So a guest case needs an ANON session and the member case (C-007) needs a SIGNED-IN one. A mutable
+// `session` lets each test set its identity; default is anon (the guest cases).
+let session: { user: { id: string; name: string } } | null = null;
+mock.module("@/lib/api/auth-client", () => ({
+  useSession: () => ({ data: session, isPending: false }),
 }));
 
 const toastError = mock(() => {});
@@ -77,8 +93,10 @@ beforeEach(() => {
   createAnnotation.mockClear();
   addComment.mockClear();
   toastError.mockClear();
-  // A guest session: anyone-with-link + guest commenting enabled, no account. The read side
-  // surfaces `guest: true` on the doc payload; the FE consumes it (does NOT own the toggle).
+  // Default: an ANON (logged-out) session. Reversal 2026-06-20 — the composer's guest mode is
+  // derived from `!signedIn && canComment(effectiveRole)` (commenter+ link role IS the grant), NOT
+  // a never-emitted `doc.guest` flag. So a guest case = no session + a commenter effective role.
+  session = null;
   docResponse = okEnv({
     doc: {
       title: "Spec",
@@ -87,7 +105,6 @@ beforeEach(() => {
       status: "live",
       generalAccess: "anyone-with-link",
       effectiveRole: "commenter",
-      guest: true,
     },
     content: MD,
   });
@@ -284,6 +301,9 @@ describe("Guest commenting S-005", () => {
   });
 
   it("C-007: a logged-in (non-guest) session shows NO guest name field and Send only needs a body", async () => {
+    // A SIGNED-IN member → `!signedIn` is false → guest mode off (no GuestNameField), even though
+    // the effective role is commenter (the role authorizes commenting, the session identifies them).
+    session = { user: { id: "u-mara", name: "Mara" } };
     docResponse = okEnv({
       doc: {
         title: "Spec",
@@ -292,7 +312,6 @@ describe("Guest commenting S-005", () => {
         status: "live",
         generalAccess: "restricted",
         effectiveRole: "commenter",
-        guest: false,
       },
       content: MD,
     });

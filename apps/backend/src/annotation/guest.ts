@@ -64,24 +64,23 @@ export interface CreateGuestCommentInput {
   /** Optional — stored verbatim-ish if supplied, never required (AS-017). */
   email?: string;
   body: string;
-  /**
-   * Whether the doc has guest commenting enabled. The toggle itself lives in
-   * sharing-permissions — this only consumes the resolved boolean; if false the
-   * comment is rejected (do not rebuild the toggle here).
-   */
-  guestCommentingEnabled: boolean;
 }
 
 export type CreateGuestCommentResult =
   | { created: true; id: string }
-  | { created: false; reason: "guest_disabled" | "empty_name" | "empty_body" };
+  | { created: false; reason: "empty_name" | "empty_body" };
 
 /**
  * Create a guest comment (S-007). Stored with `guest_name` set and `author_id` NULL
  * (AS-017); `email` is optional and stored on the row only when given.
  *
+ * Authorization (Google-Docs model, sharing-permissions reversal 2026-06-20): there is
+ * NO separate guest-commenting toggle — an anon caller is admitted to this path purely
+ * by the doc's LINK ROLE (commenter+ on an anyone_with_link doc; the link role IS the
+ * grant). The route gates that before calling here, so this service no longer takes or
+ * checks a `guestCommentingEnabled` flag.
+ *
  * Guards:
- *  - guestCommentingEnabled false → rejected (C-007 — the doc must allow it).
  *  - empty/whitespace-only name (after sanitize) → rejected: guest comments REQUIRE a
  *    name (C-007).
  *  - empty/whitespace-only body → rejected (mirrors addReply — no empty content).
@@ -94,12 +93,7 @@ export async function createGuestComment(
   input: CreateGuestCommentInput,
   repo: GuestCommentRepo,
 ): Promise<CreateGuestCommentResult> {
-  const { annotationId, guestName, email, body, guestCommentingEnabled } = input;
-
-  // C-007: the doc must have guest commenting turned on.
-  if (!guestCommentingEnabled) {
-    return { created: false, reason: "guest_disabled" };
-  }
+  const { annotationId, guestName, email, body } = input;
 
   // C-007: a guest comment REQUIRES a name. Clean first so an HTML-only / control-only
   // name (which sanitizes to empty) is correctly rejected, not stored as blank.

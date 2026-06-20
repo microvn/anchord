@@ -211,17 +211,6 @@ export function createIsActiveMemberName(db: DB): IsActiveMemberName {
 }
 
 /**
- * GUEST-COMMENTING TOGGLE SEAM (sharing-permissions cluster).
- *
- * Whether a doc allows guest commenting (anyone-with-link sub-toggle) lives in the
- * share config (`share_links.guest_commenting`). The concrete resolver lands with
- * the sharing routes; until then this is an injectable PORT — a fake in tests, a
- * conservative real default wired in index.ts. Returning `false` means guest
- * commenting is off → a guest (no session) comment is rejected (400).
- */
-export type LoadShareConfig = (docId: string) => Promise<{ guestCommentingEnabled: boolean }>;
-
-/**
  * doc-access-routing S-004 / C-008: per-IP + per-doc rate limiter for the ANONYMOUS
  * comment write surface. Keyed on a string the route builds from the caller IP and the
  * parent doc id, so a flood from one source on one doc is throttled independently. Returns
@@ -271,8 +260,6 @@ export interface AnnotationsRoutesDeps {
    * stub that let any logged-in user pass (AS-007). `(docId, viewer) → { role, canView }`.
    */
   resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
-  /** Guest-commenting toggle resolver (the sharing seam — see LoadShareConfig). */
-  loadShareConfig: LoadShareConfig;
   /**
    * doc-access-routing S-004 / C-008 (AS-022): per-IP+per-doc rate limiter applied to the
    * ANONYMOUS comment write surface. OMIT to disable throttling (allow-all) — keeps the
@@ -787,8 +774,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     return { isOrphaned: false };
   }
 
-  // S-003 reply (session) OR S-007 guest (no session). The guest path requires a
-  // name + the doc's guest-commenting toggle; the service sanitizes body+name (C-008).
+  // S-003 reply (session) OR S-007 guest (no session). The guest path requires a name and
+  // is authorized purely by the doc's link role (commenter+ on anyone_with_link — no
+  // separate guest toggle, Google-Docs model); the service sanitizes body+name (C-008).
   async function commentHandler({ params, request, validBody, set }: any) {
     const body = validBody as z.infer<typeof replySchema>;
     const actor: Actor | null = await deps.resolveSession(request.headers);
@@ -853,22 +841,19 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       });
     }
 
-    const { guestCommentingEnabled } = await deps.loadShareConfig(parent.docId);
+    // No guest-commenting toggle (Google-Docs model, sharing reversal 2026-06-20): the anon
+    // reply reached this path on an anyone_with_link + commenter+ doc — the link role IS the
+    // grant. The service only validates the name + body now.
     const result = await createGuestComment(
       {
         annotationId: params.id,
         guestName: body.guestName ?? "",
         email: body.guestEmail,
         body: body.body,
-        guestCommentingEnabled,
       },
       guestCommentRepo,
     );
     if (!result.created) {
-      // Guest commenting off + no session → the caller is unauthenticated for this action.
-      if (result.reason === "guest_disabled") {
-        throw new UnauthenticatedError("Guest commenting is not enabled; sign in to comment");
-      }
       if (result.reason === "empty_name") throw new ValidationError("guestName is required", { field: "guestName" });
       throw new ValidationError("body must not be empty", { field: "body" });
     }
@@ -885,8 +870,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   // no requireSession / requireWorkspaceMember gate. Each resolves the session itself
   // (anon → guest), gates the parent doc with the single resolveAccess (existence-hiding
   // 404), and resolves the WRITE role server-side — for a user via resolveDocRole, for an
-  // anon via the access result's link role (C-005: an anon may write only on an
-  // anyone_with_link doc with guest commenting on, where the link role is commenter+).
+  // anon via the access result's link role (C-005: an anon may write on an
+  // anyone_with_link doc whose link role is commenter+ — the link role IS the grant, no
+  // separate guest-commenting toggle, Google-Docs model).
 
   /** The effective write-role for a viewer on a doc: a user's doc role, or an anon's
    *  link role from the access decision (null → viewer, least privilege). */
@@ -911,19 +897,15 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
 
     // C-018: a GUEST (no session) create carrying a comment must clear the SAME guest guards the
     // standalone guest-comment path enforced before the comment rode the create — the rate-limit
-    // (C-008/AS-022), the guest-commenting toggle (S-007), and the member-name impersonation guard
-    // (C-009/AS-023). These run BEFORE the atomic write so a refused guard never persists a row.
+    // (C-008/AS-022) and the member-name impersonation guard (C-009/AS-023). These run BEFORE the
+    // atomic write so a refused guard never persists a row. There is NO guest-commenting toggle
+    // (Google-Docs model, sharing reversal 2026-06-20): the anon write was already authorized by the
+    // doc's LINK ROLE (writeRole(anon) → the link role; commenter+ passes the create's role gate).
     if (!actor && body.comment != null) {
       // C-008 (AS-022): throttle the anon write surface per IP + per doc BEFORE any work.
       const limit = await rateLimitComment(`${clientIp(request)}:${doc.id}`);
       if (!limit.allowed) {
         throw new RateLimitedError("Too many comments — slow down and try again shortly");
-      }
-      // S-007: guest commenting must be enabled on the doc; else the anon caller is unauthenticated
-      // for this action (mirrors the guest reply path).
-      const { guestCommentingEnabled } = await deps.loadShareConfig(doc.id);
-      if (!guestCommentingEnabled) {
-        throw new UnauthenticatedError("Guest commenting is not enabled; sign in to comment");
       }
       // C-009 (AS-023): a guest whose typed name collides with an ACTIVE member's display name on
       // this doc is rejected, so the guest cannot read AS that member (the guest marker — author_id
@@ -1036,8 +1018,9 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     .group("", (g) => g.use(withValidation(replySchema)).post("/api/w/:workspaceId/annotations/:id/comments", commentHandler))
     // doc-access-routing S-004: the DOC-ADDRESSED, session-OPTIONAL routes the slug-only
     // viewer (S-003) calls — gated by resolveAccess, NO requireWorkspaceMember. A guest may
-    // write on an anyone_with_link + guest-on doc (C-005); anon writes are rate-limited
-    // (C-008) and guest-name impersonation is rejected (C-009) inside commentHandler.
+    // write on an anyone_with_link doc whose link role is commenter+ (C-005, no separate
+    // toggle); anon writes are rate-limited (C-008) and guest-name impersonation is rejected
+    // (C-009) inside commentHandler.
     .group("", (a) => a.use(withValidation(createAnnotationSchema)).post("/api/docs/:slug/annotations", docCreateAnnotationHandler))
     .get("/api/docs/:slug/annotations", docListAnnotationsHandler)
     .group("", (a) => a.use(withValidation(replySchema)).post("/api/docs/:slug/annotations/:id/comments", commentHandler))

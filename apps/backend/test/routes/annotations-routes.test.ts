@@ -3,9 +3,13 @@
 // Exercise the HTTP GLUE only — envelope + auth gate + Zod validation + the
 // existence-hiding (C-006/AS-021) and capability (403) gates + the annotation
 // services — via app.handle(Request)→Response. Fake repos + a fake resolveSession
-// + a fake resolveDocRole + a fake loadShareConfig are injected so route→service
+// + a fake resolveDocRole + a fake resolveAccess are injected so route→service
 // runs without Postgres; the real-DB path is covered by
 // test/integration/annotation-routes.itest.ts.
+//
+// NOTE (sharing reversal 2026-06-20): there is NO guest-commenting toggle — a guest write is
+// authorized by the doc's LINK ROLE (commenter+ on anyone_with_link), so the routes no longer
+// take a `loadShareConfig`.
 //
 // AS map (annotation-core):
 //   AS-001/003  POST annotations → 201 { annotationId } (text anchor)
@@ -25,7 +29,7 @@ import type { Role } from "../../src/sharing/roles";
 import type { Viewer } from "../../src/sharing/access";
 import type { AccessResult } from "../../src/sharing/resolve-access";
 import type { DocLookup, DocLookupRepo } from "../../src/routes/versions";
-import type { AnnotationLookupRepo, LoadShareConfig } from "../../src/routes/annotations";
+import type { AnnotationLookupRepo } from "../../src/routes/annotations";
 import type { AnnotationRepo, AnnotationRow, NewAnnotation, ViewerComment } from "../../src/annotation/annotation";
 import type { CommentRepo, CommentRow, NewComment } from "../../src/annotation/reply";
 import type { GuestCommentRepo, NewGuestComment } from "../../src/annotation/guest";
@@ -212,9 +216,6 @@ function fakeAnnotationLookupRepo(opts: {
   };
 }
 
-const guestOn: LoadShareConfig = async () => ({ guestCommentingEnabled: true });
-const guestOff: LoadShareConfig = async () => ({ guestCommentingEnabled: false });
-
 function buildApp(opts: {
   resolveSession?: SessionResolver;
   resolveDocRole?: (docId: string, userId: string) => Promise<Role | null>;
@@ -231,7 +232,6 @@ function buildApp(opts: {
   resolutionRepo?: ReturnType<typeof fakeResolutionRepo>;
   suggestionRepo?: ReturnType<typeof fakeSuggestionRepo>;
   annotationLookupRepo?: AnnotationLookupRepo;
-  loadShareConfig?: LoadShareConfig;
   dismissReattachRepo?: ReturnType<typeof fakeDismissReattachRepo>;
 }) {
   const resolveDocRole = opts.resolveDocRole ?? asOwner;
@@ -262,7 +262,6 @@ function buildApp(opts: {
       resolveWorkspaceRole: async () => "member",
       resolveDocRole,
       resolveAccess: opts.resolveAccess ?? defaultAccess,
-      loadShareConfig: opts.loadShareConfig ?? guestOff,
     },
   });
 }
@@ -512,7 +511,6 @@ describe("annotation-actions S-001: the creator identity is persisted at create"
     const app = buildApp({
       resolveSession: noSession,
       annotationRepo: ar,
-      loadShareConfig: guestOn,
       resolveAccess: async () => ({ role: "commenter", canView: true }),
     });
     const res = await app.handle(
@@ -744,7 +742,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
   test("AS-008: a guest reply (no session) records the guest name and no account author", async () => {
     // Anonymous guest "Lan" on a guest-commenting doc → guest_name set, author_id null.
     const gr = fakeGuestCommentRepo();
-    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, loadShareConfig: guestOn });
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr });
     const res = await app.handle(
       req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "guest note", guestName: "Lan" }) }),
     );
@@ -771,7 +769,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
 
   test("AS-017: guest comment (no session) with name + email → 201", async () => {
     const gr = fakeGuestCommentRepo();
-    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, loadShareConfig: guestOn });
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr });
     const res = await app.handle(
       req("/api/w/ws_1/annotations/ann_1/comments", {
         method: "POST",
@@ -786,7 +784,7 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
 
   test("AS-019: guest body sanitized inert (script stripped)", async () => {
     const gr = fakeGuestCommentRepo();
-    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr, loadShareConfig: guestOn });
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr });
     await app.handle(
       req("/api/w/ws_1/annotations/ann_1/comments", {
         method: "POST",
@@ -798,19 +796,24 @@ describe("POST /api/annotations/:id/comments (S-003 reply / S-007 guest)", () =>
   });
 
   test("guest comment missing name → 400", async () => {
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOn });
+    const app = buildApp({ resolveSession: noSession });
     const res = await app.handle(
       req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi" }) }),
     );
     expect(res.status).toBe(400);
   });
 
-  test("guest comment when guest commenting disabled → 401", async () => {
-    const app = buildApp({ resolveSession: noSession, loadShareConfig: guestOff });
+  test("AS-017 (reversal 2026-06-20): a guest comment needs NO toggle — anon with a name + body → 201 (the bug fix)", async () => {
+    // The guest-commenting toggle is gone: a guest reply is created on its own merits (the link
+    // role authorized the open). The old "guest disabled → 401" path no longer exists.
+    const gr = fakeGuestCommentRepo();
+    const app = buildApp({ resolveSession: noSession, guestCommentRepo: gr });
     const res = await app.handle(
       req("/api/w/ws_1/annotations/ann_1/comments", { method: "POST", body: JSON.stringify({ body: "hi", guestName: "Fox" }) }),
     );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(201);
+    expect(gr.calls.inserts[0]?.guestName).toBe("Fox");
+    expect(gr.calls.inserts[0]?.authorId).toBeNull();
   });
 
   test("comment on no-access parent doc → 404 (existence-hiding)", async () => {

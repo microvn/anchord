@@ -2,8 +2,9 @@ import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-// sharing-permissions-ui S-002 — the Options tab UI: guest commenting (gated to anyone-with-link,
-// C-001 / AS-008) and editors-can-share (owner-editable / read-only for an editor, C-003 / AS-009).
+// sharing-permissions-ui S-002 — the Options tab UI: editors-can-share (owner-editable /
+// read-only for an editor, C-003 / AS-009). The guest-commenting toggle was REMOVED 2026-06-20
+// (a commenter+ link role IS the guest grant — Google-Docs model — so there is no toggle).
 // Link protection moved to the Sharing tab (inline under access, AS-005) — covered by
 // share-dialog.test + link-controls.test, not here. The mutation logic is unit-tested in
 // use-access-controls.test; here we assert the rendered controls + that a toggle drives the write.
@@ -15,9 +16,9 @@ const setLinkControls = mock(async () => ({ data: { hasPassword: true, url: "x" 
 mock.module("@/features/sharing/services/client", () => ({ ...sharingClient, setAccess, setLinkControls }));
 mock.module("sonner", () => ({ toast: Object.assign(mock(() => {}), { success: mock(() => {}), error: mock(() => {}) }) }));
 
-const OK = { level: "anyone_with_link" as const, role: "commenter" as const, guestCommenting: false, editorsCanShare: false };
+const OK = { level: "anyone_with_link" as const, role: "commenter" as const, editorsCanShare: false };
 const LINK = { hasPassword: false, url: "anchord.local/d/web-core" };
-const base = (over = {}) => ({ level: "restricted" as const, role: "viewer" as const, guestCommenting: false, editorsCanShare: false, people: [], link: LINK, ...over });
+const base = (over = {}) => ({ level: "restricted" as const, role: "viewer" as const, editorsCanShare: false, people: [], link: LINK, ...over });
 
 const { OptionsPanel } = await import("@/features/sharing/components/options-panel");
 const { useAccessControls } = await import("@/features/sharing/hooks/use-access-controls");
@@ -33,22 +34,12 @@ beforeEach(() => {
 });
 
 describe("sharing-permissions-ui S-002 — Options tab", () => {
-  it("AS-008: guest toggle is disabled (with the gated hint) off anyone-with-link", () => {
-    render(<Harness initial={base({ level: "restricted" })} />);
-    expect(screen.getByTestId("share-guest-toggle")).toBeDisabled();
-    expect(screen.getByTestId("share-sec-guest")).toHaveTextContent(/available only for anyone with link/i);
-    // link protection no longer lives here — it moved to the Sharing tab (AS-005).
-    expect(screen.queryByTestId("share-sec-link")).not.toBeInTheDocument();
-  });
-
-  it("AS-008: on anyone-with-link the guest toggle is enabled and sends guestCommenting:true", async () => {
+  it("reversal 2026-06-20: there is NO guest-commenting toggle in the Options tab", () => {
     render(<Harness initial={base({ level: "anyone_with_link" })} />);
-    const guest = screen.getByTestId("share-guest-toggle");
-    expect(guest).not.toBeDisabled();
-    await userEvent.click(guest);
-    await waitFor(() =>
-      expect(setAccess).toHaveBeenLastCalledWith("ws", "doc", expect.objectContaining({ guestCommenting: true })),
-    );
+    expect(screen.queryByTestId("share-guest-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("share-sec-guest")).not.toBeInTheDocument();
+    // link protection no longer lives here either — it moved to the Sharing tab (AS-005).
+    expect(screen.queryByTestId("share-sec-link")).not.toBeInTheDocument();
   });
 
   it("AS-009: editors-can-share is an editable toggle for the owner and sends editorsCanShare", async () => {

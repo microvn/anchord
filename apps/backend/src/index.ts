@@ -130,7 +130,8 @@ const sharingAccessDeps = {
 // replaced with the CONCRETE Drizzle resolvers:
 //   - resolveDocRole: real effective-role over invited (active doc_members) + link
 //     (share_links.role when general-access admits) roles. Highest wins (C-002).
-//   - loadShareConfig: reads share_links.guest_commenting.
+//   - loadShareConfig: reads share_links.editors_can_share (the manage-sharing gate).
+//     (Guest commenting is no longer a toggle — Google-Docs model, reversal 2026-06-20.)
 //
 // OWNER-SOURCE SEAM CLOSED (auth-routes S-002, C-003): S-001 added `docs.owner_id`
 // (the authenticated publisher), so "is this user the owner" is now resolvable. We wire
@@ -275,7 +276,6 @@ const app = createApp({
     resolveWorkspaceRole,
     resolveDocRole: sharedResolveDocRole,
     resolveAccess: sharedResolveAccess,
-    loadShareConfig: concreteLoadShareConfig,
     // doc-access-routing S-004: the anon comment write surface. rateLimitComment throttles
     // anonymous writes per IP+doc (C-008/AS-022) — a refused write 429s AND skips the reply
     // mail dispatch (no flood). isActiveMemberName rejects a guest name colliding with an
