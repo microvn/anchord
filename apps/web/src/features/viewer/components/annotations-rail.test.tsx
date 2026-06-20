@@ -206,6 +206,9 @@ describe("AnnotationsRail S-003", () => {
     });
 
     await renderViewer();
+    // C-009 (2026-06-21): Resolved is hidden by DEFAULT — enable it so the resolved styling is assertable.
+    await openFilter();
+    await userEvent.click(screen.getByTestId("facet-status-resolved"));
 
     const resolved = screen.getByTestId("annotations-rail").querySelector('[data-anno-thread="a3"]') as HTMLElement;
     expect(resolved.getAttribute("data-resolved")).toBe("true");
@@ -343,35 +346,33 @@ describe("AnnotationsRail S-003", () => {
     await screen.findByTestId("filter-popover");
   }
 
-  it("AS-022: the Filter popover lists both axes with counts, all selected by default; rail shows all 23", async () => {
+  it("AS-022: the Filter popover lists both axes; Type all-selected, Status defaults to Open only (Resolved hidden)", async () => {
     annoResponse = ok({ items: set23() });
     await renderViewer();
 
-    // The rail shows all 23 anchored threads (none orphaned in this set).
-    expect(screen.getAllByTestId("thread-card")).toHaveLength(23);
-    // Header reads the full total while the filter is at default (not narrowed).
-    expect(screen.getByTestId("rail-showing")).toHaveTextContent("23");
+    // By DEFAULT Resolved is OFF → the rail shows only the 20 open threads (3 resolved hidden).
+    expect(screen.getAllByTestId("thread-card")).toHaveLength(20);
+    // Default is the baseline (not a narrowing): header shows the visible (open) count, control inactive.
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("20");
+    expect(screen.getByTestId("filter-control").getAttribute("data-active")).toBeNull();
 
     await openFilter();
 
-    // Status axis: Open 20 · Resolved 3 (whole-doc per-facet totals while both axes full).
+    // Status axis counts are scoped to the active Type (all) → whole-doc Open 20 · Resolved 3
+    // (the Resolved facet still LISTS its count even though it's deselected).
     expect(screen.getByTestId("facet-status-open")).toHaveTextContent("20");
     expect(screen.getByTestId("facet-status-resolved")).toHaveTextContent("3");
-    // Type axis: Markup 2 · Comment 18 · Redline 2 · Label 1.
+    // Type axis counts are scoped to the active Status ({open}) → open-only: Markup 2 · Comment 17 ·
+    // Redline 1 · Label 0 (C-010 dynamic counts: the resolved comment/redline/label drop out).
     expect(screen.getByTestId("facet-type-markup")).toHaveTextContent("2");
-    expect(screen.getByTestId("facet-type-comment")).toHaveTextContent("18");
-    expect(screen.getByTestId("facet-type-redline")).toHaveTextContent("2");
-    expect(screen.getByTestId("facet-type-label")).toHaveTextContent("1");
+    expect(screen.getByTestId("facet-type-comment")).toHaveTextContent("17");
+    expect(screen.getByTestId("facet-type-redline")).toHaveTextContent("1");
+    expect(screen.getByTestId("facet-type-label")).toHaveTextContent("0");
 
-    // Every facet selected by default.
-    for (const id of [
-      "facet-status-open",
-      "facet-status-resolved",
-      "facet-type-markup",
-      "facet-type-comment",
-      "facet-type-redline",
-      "facet-type-label",
-    ]) {
+    // Default selection: Open + every Type selected; Resolved DEselected.
+    expect(screen.getByTestId("facet-status-open").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("facet-status-resolved").getAttribute("aria-pressed")).toBe("false");
+    for (const id of ["facet-type-markup", "facet-type-comment", "facet-type-redline", "facet-type-label"]) {
       expect(screen.getByTestId(id).getAttribute("aria-pressed")).toBe("true");
     }
     // The old single-axis chips are gone.
@@ -423,8 +424,7 @@ describe("AnnotationsRail S-003", () => {
     const view = screen.getByTestId("markdown-view");
 
     await openFilter();
-    // Narrow Status to only Open: deselect Resolved.
-    await userEvent.click(screen.getByTestId("facet-status-resolved"));
+    // Status is already Open-only by default (Resolved off, C-009) — no click needed there.
     // Narrow Type to only Redline: deselect Markup, Comment, Label.
     await userEvent.click(screen.getByTestId("facet-type-markup"));
     await userEvent.click(screen.getByTestId("facet-type-comment"));
@@ -500,26 +500,29 @@ describe("AnnotationsRail S-003", () => {
     expect(view.querySelector('[data-anno="comment-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
   });
 
-  it("AS-027: the header shows how much is showing and Reset clears the filter", async () => {
+  it("AS-027: the header shows how much is showing and Reset returns to the default view", async () => {
     annoResponse = ok({ items: set23() });
     await renderViewer();
 
     await openFilter();
-    // Narrow so exactly 4 of 23 match: Status stays all (Open + Resolved); Type = Markup(2) +
-    // Redline(2) by deselecting Comment + Label → 2 + 2 = 4 anchored threads.
+    // From the default (Status Open-only), narrow Type to Markup + Redline by deselecting Comment +
+    // Label. Open-scoped matches: Markup 2 (open) + Redline 1 (open; the resolved redline is excluded
+    // by the default Open-only status) = 3 anchored threads.
     await userEvent.click(screen.getByTestId("facet-type-comment")); // off
-    await userEvent.click(screen.getByTestId("facet-type-label")); // off → Markup(2)+Redline(2)=4
+    await userEvent.click(screen.getByTestId("facet-type-label")); // off → open Markup(2)+Redline(1)=3
 
-    // While narrowed: header reads "showing 4 of 23" and the Filter control reads active.
-    expect(screen.getByTestId("rail-showing")).toHaveTextContent("showing 4 of 23");
+    // While deviated from the default: header reads "showing 3 of 23" and the Filter control reads active.
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("showing 3 of 23");
     expect(screen.getByTestId("filter-control").getAttribute("data-active")).toBe("true");
 
-    // Reset → every facet selected again; header shows the full total; Filter reads inactive.
+    // Reset → back to the DEFAULT baseline (Open-only, all Types) — NOT all-selected. Resolved stays OFF.
     await userEvent.click(screen.getByTestId("filter-reset"));
-    for (const id of ["facet-type-comment", "facet-type-label", "facet-status-open", "facet-status-resolved"]) {
+    for (const id of ["facet-type-comment", "facet-type-label", "facet-status-open"]) {
       expect(screen.getByTestId(id).getAttribute("aria-pressed")).toBe("true");
     }
-    expect(screen.getByTestId("rail-showing")).toHaveTextContent("23");
+    expect(screen.getByTestId("facet-status-resolved").getAttribute("aria-pressed")).toBe("false");
+    // Header shows the visible open count (20), Filter reads inactive (this is the baseline).
+    expect(screen.getByTestId("rail-showing")).toHaveTextContent("20");
     expect(screen.getByTestId("filter-control").getAttribute("data-active")).toBeNull();
   });
 

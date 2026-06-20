@@ -17,8 +17,8 @@ import { AnnotationsRail } from "./annotations-rail";
 import {
   type StatusFacet,
   type TypeFacet,
-  ALL_STATUS,
-  ALL_TYPE,
+  DEFAULT_STATUS,
+  DEFAULT_TYPE,
   statusFacet,
   typeFacet,
   isShown,
@@ -961,8 +961,10 @@ function useAnnotations(
   // drives BOTH the rail thread list AND the in-text mark dimming. Both axes all-selected by default.
   // Toggling a facet OFF hides its threads + dims their marks; the detached section is unaffected
   // (C-004). A thread shows iff its status facet AND its type facet are both selected (AND across).
-  const [activeStatus, setActiveStatus] = useState<ReadonlySet<StatusFacet>>(ALL_STATUS);
-  const [activeType, setActiveType] = useState<ReadonlySet<TypeFacet>>(ALL_TYPE);
+  // C-009 (2026-06-21): the rail filter DEFAULT hides Resolved — Status starts at {Open} only, Type
+  // all-selected. Resolved threads surface only when the reviewer enables the Resolved facet.
+  const [activeStatus, setActiveStatus] = useState<ReadonlySet<StatusFacet>>(DEFAULT_STATUS);
+  const [activeType, setActiveType] = useState<ReadonlySet<TypeFacet>>(DEFAULT_TYPE);
   const toggleStatus = useCallback((f: StatusFacet) => {
     setActiveStatus((prev) => {
       const next = new Set(prev);
@@ -981,8 +983,9 @@ function useAnnotations(
   }, []);
   // S-007 (AS-027): Reset re-selects every facet on both axes.
   const resetFilter = useCallback(() => {
-    setActiveStatus(ALL_STATUS);
-    setActiveType(ALL_TYPE);
+    // Reset returns to the DEFAULT baseline (Open-only, all types) — NOT all-selected (C-011).
+    setActiveStatus(DEFAULT_STATUS);
+    setActiveType(DEFAULT_TYPE);
   }, []);
   // S-007 (AS-028): acting on a filtered-out annotation must re-activate BOTH its facets (status AND
   // type) so it matches again — never a dead no-op. Used by the click-on-mark + rail-thread focus

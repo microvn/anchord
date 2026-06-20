@@ -1,7 +1,14 @@
+# Snapshot: annotation-core-ui
+**Date:** 2026-06-21
+**Ref:** --
+**Reason:** M4 (AS-022/AS-027 Then changed) + M6 (C-009/C-011 changed) — the rail filter DEFAULT drops Resolved: Status defaults to {Open} only (resolved hidden until enabled); the default becomes the baseline for Reset + the active-filter signal.
+
+---
+
 # Spec: annotation-core-ui
 
 **Created:** 2026-06-11
-**Last updated:** 2026-06-21
+**Last updated:** 2026-06-18
 **Status:** Draft
 
 ## Overview
@@ -33,8 +40,7 @@ No persistent data — a client. Reads (TanStack Query, keyed by `docSlug`):
   comment `{ id, parentId, authorName|guestName, body, createdAt }`.
 Client state: active TOC section, focused annotation id, rail-visible / drawer-open, theme, the two
 filter facet-sets (which Status facets {Open, Resolved} and which Type facets {Markup, Comment,
-Redline, Label} are selected — Type all-selected by default, Status defaults to Open only so Resolved
-is hidden until enabled), filter-popover open/closed.
+Redline, Label} are selected — all selected by default), filter-popover open/closed.
 
 ## Prerequisites (backend — build-blockers, not gaps)
 
@@ -292,15 +298,15 @@ kind=delete), Label (`label` set), Comment (plain), Markup (the teal catch-all, 
 - `parallel_safe:` false
 - `files:` `apps/web/src/features/viewer/components/annotations-rail.tsx` (Filter control + filtered list + no-match/header), a new `apps/web/src/features/viewer/components/filter-popover.tsx` (the two-axis popover / mobile bottom-sheet), `apps/web/src/features/viewer/components/viewer-screen.tsx` (two facet-sets lifted + mark-dim wiring), the in-text mark path (markdown light-DOM placer + HTML sandbox-bridge placer — the "filtered" flag rides the same channel as resolved/redline/stale)
 - `autonomous:` true
-- `verify:` open a doc with a mix of types/statuses → the Filter popover lists Status (Open/Resolved) + Type (Markup/Comment/Redline/Label) with counts; by default Resolved is OFF (the rail shows only open threads, the control reads inactive). Enable Resolved → resolved threads appear + control reads active. Deselect every Type but Redline → the rail shows only open redlines and dims the rest; the header reads "showing N of <total>"; Reset returns to the default (Open only, all types).
+- `verify:` open a doc with a mix of types/statuses → the Filter popover lists Status (Open/Resolved) + Type (Markup/Comment/Redline/Label) with counts, all selected; deselect every Type but Redline and every Status but Open → the rail shows only open redlines and dims the rest; the header reads "showing N of <total>"; Reset returns to all.
 
 **Acceptance Scenarios:**
 
-AS-022: The Filter popover lists both axes with counts; Type all-selected, Status defaults to Open only
+AS-022: The Filter popover lists both axes with counts, all selected by default
 - **Given:** a doc with 23 active annotations (Open 20 / Resolved 3; Comment 18 / Markup 2 / Redline 2 / Label 1)
 - **When:** I open the rail's Filter control
-- **Then:** a popover shows two facet groups — Status (Open · Resolved) and Type (Markup · Comment · Redline · Label) — each facet an icon + its count; by DEFAULT every Type facet is selected but in Status only Open is selected (Resolved is OFF) — so the rail shows the 20 open threads and the 3 resolved are hidden until the reviewer enables Resolved; the Filter control reads inactive at this default (it is the baseline, not a narrowing)
-- **Data:** 23 active: status 20/3, type 18/2/2/1 → default view shows the 20 open
+- **Then:** a popover shows two facet groups — Status (Open · Resolved) and Type (Markup · Comment · Redline · Label) — each facet an icon + its count; every facet is selected by default and the rail shows all 23 threads
+- **Data:** 23 active: status 20/3, type 18/2/2/1
 
 AS-023: Deselecting a Type facet filters the rail and dims those marks
 - **Given:** the Filter popover open with all facets selected
@@ -326,11 +332,11 @@ AS-026: With an axis fully deselected the rail shows a distinct no-match state
 - **Then:** the rail body shows a "no annotations match the filter" state — visibly distinct from the empty-doc "no annotations yet" state — and no highlights are emphasized
 - **Data:** Type={} on the 23-annotation doc
 
-AS-027: The header shows how much is showing and Reset returns to the default view
-- **Given:** the reviewer has deviated from the default so 4 of 23 threads match (e.g. enabled Resolved then narrowed Type)
+AS-027: The header shows how much is showing and Reset clears the filter
+- **Given:** a filter is applied so 4 of 23 threads match
 - **When:** I look at the rail header, then choose Reset in the popover
-- **Then:** while the selection differs from the default the header reads "showing 4 of 23" and the Filter control reads active; after Reset the selection returns to the DEFAULT (Status = Open only, every Type selected) — NOT to all-selected — so the rail shows the 20 open threads again, the header shows the default total (20 of 23, with the control reading inactive because this is the baseline)
-- **Data:** deviated to 4/23, then Reset → back to the 20 open (default)
+- **Then:** while narrowed the header reads "showing 4 of 23" and the Filter control reads active; after Reset every facet is selected again, the header returns to the full total (23), and the Filter control reads inactive
+- **Data:** narrowed to 4/23, then Reset
 
 AS-028: Acting on a filtered-out highlight or thread re-activates both its facets
 - **Given:** a filter hides a particular open redline (its highlight dimmed in the doc)
@@ -375,9 +381,7 @@ AS-028: Acting on a filtered-out highlight or thread re-activates both its facet
   (no label, no suggestion); Markup = the teal catch-all (e.g. a replace-suggestion). "Suggestion" is
   NOT a status facet (the earlier single-axis design is superseded) — suggestions surface under the
   Redline / Markup type facets. A thread is SHOWN iff its status facet is selected AND its type facet
-  is selected (OR within an axis, AND across axes). The DEFAULT selection is the baseline: Type
-  defaults to all-selected, but Status defaults to Open ONLY (Resolved OFF) — so resolved threads are
-  hidden from the rail (and their marks dimmed) until the reviewer enables Resolved. Toggling a
+  is selected (OR within an axis, AND across axes); both axes default to all-selected. Toggling a
   facet OFF hides its group from the rail and dims its in-text highlights; re-selecting restores both.
   An `isOrphaned`/detached annotation is counted into its status/type facets and still appears in the
   separate detached section, which renders regardless of filter state (C-004). When ANY axis has no
@@ -390,11 +394,9 @@ AS-028: Acting on a filtered-out highlight or thread re-activates both its facet
   never hidden. (With both axes fully selected the counts equal the whole-doc per-facet totals.) (AS-025)
 - C-011: The filter is presented in a popover opened from the rail's Filter control (a bottom-sheet on
   tablet/mobile per C-005). Facet toggles apply LIVE (the rail + marks update immediately, no explicit
-  Apply); Reset returns to the DEFAULT (Status = Open only, Type all-selected) — NOT to all-selected.
-  The "active" signal is measured against the DEFAULT, not against all-selected: while the selection
-  differs from the default the rail header reads "showing X of N" and the Filter control reads active;
-  at the default it reads inactive and the header shows the default total (the open count). Enabling
-  Resolved (or any deviation) flips the control to active. (AS-022, AS-027)
+  Apply); Reset re-selects every facet. While the selection is narrowed (not all-selected) the rail
+  header reads "showing X of N" and the Filter control reads active; at all-selected it reads inactive
+  and the header shows the full total. (AS-022, AS-027)
 
 ## Linked Fields
 
@@ -555,4 +557,3 @@ No bloat — each AS traces to one stated atom.
 | 2026-06-17 | Live badge = share state (Major, M5+M6, snapshot 2026-06-17-core-ui-live-badge): AS-012 Given/Then — the Live badge is shown when the doc is SHARED (general access beyond restricted), matching the dashboard list, NOT when merely published; + AS-020 (restricted doc → no Live badge, reads Draft); + C-007. Pins the fix for the list/detail status mismatch (commit 3f75006: viewer-top-bar isLive ← generalAccess, not status). | -- |
 | 2026-06-18 | Rail completeness + status chips (Major, M1+M6, snapshot 2026-06-18-core-ui-rail-chips): S-003 + AS-021 (rail loads the COMPLETE active set; total = dashboard count — pins the 23-vs-20 mismatch on calendar-integration-foundations); + S-007 status chips (AS-022..026: Open·Resolved·Suggestion icon+count, multi-toggle, filter rail + dim marks, no-match state, focus-reactivates); + C-008 (complete-set read), C-009 (chip partition + filter); + GAP-007 (backend/FE: viewer read must deliver the complete set, not page 1; MCP pull-annotations likewise); Data Model client-state += status filters; UI Notes RailHeader = StatusChip×3. Source: docs/explore/annotation-rail-completeness.md + clarify 2026-06-18. | -- |
 | 2026-06-18 | Two-axis rail filter (Major, M4+M6, snapshot 2026-06-18-core-ui-2axis-filter): S-007 reworked from single-axis status chips → a **two-axis Filter popover** — Status {Open, Resolved} × Type {Markup, Comment, Redline, Label}; AS-022..026 rewritten + AS-027 (header "showing X/N" + Reset) + AS-028 (re-activate both facets); C-009 reworked (orthogonal axes, OR-within/AND-across, "Suggestion" dropped from status → Redline/Markup type, Type from the mark-hue partition); + C-010 (dynamic facet counts), + C-011 (popover/bottom-sheet, apply-live, Reset, header signal); Data Model client-state += type facet-set + popover open; UI Notes RailHeader → FilterControl + FilterPopover. Supersedes the just-built single-axis chips (commit a45f087 → rebuild S-007). Source: session design 2026-06-18 ("lọc theo type" + "lọc theo 2 trục"). | -- |
-| 2026-06-21 | Major (M4+M6, snapshot 2026-06-21-core-ui-filter-default): the rail filter DEFAULT drops Resolved — Status now defaults to {Open} only (Type stays all-selected), so resolved threads are hidden + their marks dimmed until the reviewer enables Resolved. The DEFAULT becomes the baseline: Reset returns to it (Open-only, all types), and the "active filter" signal is measured against the default (so the control reads inactive on load, flips active when Resolved is enabled or the selection otherwise deviates). AS-022 + AS-027 Then rewritten; C-009 + C-011 reworded; Overview client-state + verify updated. No AS added. | -- |

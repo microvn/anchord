@@ -1,12 +1,13 @@
 import { useState } from "react";
+import { Filter } from "lucide-react";
 import { Icon } from "@/components/icon";
 import { ThreadCard, DetachedCard } from "./thread-card";
 import { FilterPopover } from "./filter-popover";
 import {
   type StatusFacet,
   type TypeFacet,
-  ALL_STATUS,
-  ALL_TYPE,
+  DEFAULT_STATUS,
+  DEFAULT_TYPE,
   isShown,
   statusCounts as computeStatusCounts,
   typeCounts as computeTypeCounts,
@@ -35,8 +36,8 @@ export function AnnotationsRail({
   unplaceableIds,
   currentUserId,
   isOwner,
-  activeStatus = ALL_STATUS,
-  activeType = ALL_TYPE,
+  activeStatus = DEFAULT_STATUS,
+  activeType = DEFAULT_TYPE,
   onToggleStatus,
   onToggleType,
   onResetFilter,
@@ -139,9 +140,10 @@ export function AnnotationsRail({
         <span className="text-[13px] font-semibold text-ink">Annotations</span>
         {!isEmpty && (
           <>
-            {/* C-011: "showing X of N" while narrowed; just the total when the filter is inactive. */}
+            {/* C-011: "showing X of N" while the selection differs from the default; just the visible
+                count at the default baseline (which itself hides Resolved, so it's the open count). */}
             <span data-testid="rail-showing" className="font-mono text-[11px] text-subtle">
-              {filterActive ? `showing ${showing} of ${total}` : total}
+              {filterActive ? `showing ${showing} of ${total}` : showing}
             </span>
             <button
               type="button"
@@ -152,15 +154,17 @@ export function AnnotationsRail({
               data-active={filterActive ? "true" : undefined}
               aria-label={filterActive ? "Filter (active)" : "Filter"}
               onClick={() => setFilterOpen((o) => !o)}
+              // Mirrors the project-detail browse filter trigger (docs/doc-filter-bar.tsx): an h-8
+              // rounded-md pill, funnel icon, accent-soft when active / sunken when idle.
               className={[
-                "ml-auto inline-flex items-center gap-1 rounded-[6px] border px-2 py-1 text-[11px] font-semibold transition-colors",
+                "ml-auto inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-[11px] text-[13px] font-medium transition-colors",
                 filterActive
-                  ? "border-accent/40 bg-accent-soft text-accent"
-                  : "border-line bg-transparent text-subtle hover:text-ink",
+                  ? "border-accent/40 bg-accent-soft text-ink"
+                  : "border-line bg-sunken text-muted hover:text-ink",
               ].join(" ")}
             >
-              <Icon name="list" size={12} />
-              <span>Filter</span>
+              <Filter size={12} />
+              Filter
             </button>
             {filterOpen && (
               <FilterPopover

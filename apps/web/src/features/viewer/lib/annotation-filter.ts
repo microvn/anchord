@@ -39,6 +39,13 @@ export function typeFacet(a: Facetable): TypeFacet {
 export const ALL_STATUS: ReadonlySet<StatusFacet> = new Set<StatusFacet>(["open", "resolved"]);
 export const ALL_TYPE: ReadonlySet<TypeFacet> = new Set<TypeFacet>(["markup", "comment", "redline", "label"]);
 
+// The DEFAULT (baseline) selection (C-009, 2026-06-21): Type defaults to all-selected, but Status
+// defaults to Open ONLY — resolved threads are hidden (and their marks dimmed) until the reviewer
+// enables Resolved. Reset returns here, and `isFilterActive` measures deviation from HERE (not from
+// all-selected), so the control reads inactive on the default view.
+export const DEFAULT_STATUS: ReadonlySet<StatusFacet> = new Set<StatusFacet>(["open"]);
+export const DEFAULT_TYPE: ReadonlySet<TypeFacet> = ALL_TYPE;
+
 export const STATUS_ORDER: StatusFacet[] = ["open", "resolved"];
 export const TYPE_ORDER: TypeFacet[] = ["markup", "comment", "redline", "label"];
 
@@ -80,11 +87,18 @@ export function typeCounts(
   return counts;
 }
 
-// Are BOTH axes fully selected? → the filter is INACTIVE (header reads the full total, Filter control
-// reads inactive). Any facet off → the filter is narrowed/active (C-011).
+function sameFacets<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
+// Is the selection at its DEFAULT baseline? → the filter is INACTIVE (header reads the default total,
+// Filter control reads inactive). Any deviation from the default (e.g. enabling Resolved, dropping a
+// Type) → the filter is active (C-011, 2026-06-21 — measured vs DEFAULT, not vs all-selected).
 export function isFilterActive(
   activeStatus: ReadonlySet<StatusFacet>,
   activeType: ReadonlySet<TypeFacet>,
 ): boolean {
-  return activeStatus.size < ALL_STATUS.size || activeType.size < ALL_TYPE.size;
+  return !sameFacets(activeStatus, DEFAULT_STATUS) || !sameFacets(activeType, DEFAULT_TYPE);
 }
