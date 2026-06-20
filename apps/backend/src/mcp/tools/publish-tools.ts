@@ -346,7 +346,8 @@ export function patchDocumentHandler(
     // Patch supports markdown (S-002) + html (S-003). Image has no addressable text body.
     if (doc.kind === "image") {
       throw new McpToolError(
-        `anchord_patch_document does not support image documents (doc kind '${doc.kind}')`,
+        `anchord_patch_document cannot patch image documents (doc kind '${doc.kind}') — ` +
+          `use anchord_update_document to replace the whole document`,
       );
     }
 

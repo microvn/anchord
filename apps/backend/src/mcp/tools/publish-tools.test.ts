@@ -709,6 +709,31 @@ describe("AS-024: a patch addressing a non-patchable block is rejected", () => {
   });
 });
 
+// ── AS-025: patch on an IMAGE doc → refused (out of scope) ───────────────────
+describe("AS-025: a patch on an image document is refused", () => {
+  test("AS-025: image doc → refused pointing to anchord_update_document, no new version", async () => {
+    const fk = fakePatch({
+      docs: { doc_img: { kind: "image", version: 2, content: "photo.png" } },
+      roles: { "doc_img:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    let err: unknown;
+    try {
+      await tool(
+        { docId: "doc_img", expectedVersion: 2, edits: [{ blockId: "block-p-1", find: "x", replace: "y" }] },
+        ctx(),
+      );
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(McpToolError);
+    expect((err as Error).message).toMatch(/image/i); // refused because the doc is an image
+    expect((err as Error).message).toMatch(/anchord_update_document/); // directs to the whole-doc fallback
+    expect(fk.store.doc_img!.version).toBe(2); // no new version appended
+    expect(fk.reanchorFired).toHaveLength(0); // no re-anchor fired
+  });
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 // S-003 — anchord_patch_document on an HTML doc (block-addressed innerHTML splice)
 // ════════════════════════════════════════════════════════════════════════════
