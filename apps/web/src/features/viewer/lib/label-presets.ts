@@ -34,7 +34,7 @@ export interface LabelPreset {
  * DEFAULT_LABEL_PRESETS exactly — the server validates a submitted label against that set (AS-014).
  */
 export const LABEL_PRESETS: readonly LabelPreset[] = [
-  { id: "looks-good", text: "Looks good", icon: "check", color: "#3f7a52", emoji: "👍" },
+  { id: "looks-good", text: "Looks good", icon: "star", color: "#3f7a52" },
   { id: "clarify-this", text: "Clarify this", icon: "search", color: "#3a6ea5" },
   { id: "missing-overview", text: "Missing overview", icon: "docs", color: "#7a5a9e" },
   { id: "verify-this", text: "Verify this", icon: "shield", color: "#0b6b73" },

@@ -213,7 +213,7 @@ describe("Read-path render fidelity (S-006) — marks + rail from the annotation
     expect(within(card).getByTestId("type-badge-delete")).toHaveTextContent(/delete/i);
   });
 
-  it("AS-010 (read): the SERVED like's rail card shows the 👍 \"Looks good\" label line", async () => {
+  it("AS-010 (read): the SERVED like's rail card shows the Star \"Looks good\" label line", async () => {
     await renderViewer();
     const card = await waitFor(() => {
       const el = screen.getByTestId("annotations-rail").querySelector('[data-anno-thread="lk-read"]') as HTMLElement | null;
@@ -222,7 +222,8 @@ describe("Read-path render fidelity (S-006) — marks + rail from the annotation
     });
     const line = within(card).getByTestId("label-line");
     expect(line).toHaveTextContent("Looks good");
-    expect(line).toHaveTextContent("👍");
+    // the Like glyph is now the Star line icon (no emoji) — assert the rendered svg, not a 👍 char.
+    expect(line.querySelector("svg")).not.toBeNull();
     expect(line.getAttribute("data-label")).toBe("looks-good");
   });
 

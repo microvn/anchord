@@ -7,11 +7,13 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 // annotation-core-ui-types-modes S-003 — Like: mark a selection "looks good".
 //
 // Two test surfaces, both deterministic:
-//   1. ThreadCard (rendered directly): the 👍 "Looks good" label line that pairs to a signal
+//   1. ThreadCard (rendered directly): the Star-icon "Looks good" label line that pairs to a signal
 //      annotation carrying label="looks-good" (AS-010 card), and the inert label-text render (C-006).
+//      (The Like glyph is the lucide Star line icon now — it replaced the 👍 emoji so the type reads
+//      identically in the toolbar, popover, and rail.)
 //   2. ViewerScreen (the create flow): select → Like → the composer opens pre-filled "Looks good"
 //      (editable) → on send a createAnnotation carrying label="looks-good" + its root comment, with
-//      the optimistic 👍 row + highlight (AS-010 create); a refused write rolls the optimistic
+//      the optimistic Star-icon row + highlight (AS-010 create); a refused write rolls the optimistic
 //      highlight + row back (AS-011 / C-007.T2).
 //
 // C-003: every annotation has a root comment; for Like the body is pre-filled from the type text
@@ -42,13 +44,14 @@ function renderCard(annotation: ViewerAnnotation, props: Partial<Parameters<type
 }
 
 describe("Like ThreadCard (S-003)", () => {
-  it("AS-010: a signal annotation with label=looks-good renders a 👍 \"Looks good\" row paired to its thread", () => {
+  it("AS-010: a signal annotation with label=looks-good renders the Star icon + \"Looks good\" row paired to its thread", () => {
     renderCard(likeAnno());
     const card = screen.getByTestId("thread-card");
     const line = within(card).getByTestId("label-line");
-    // The label line reads as the Like preset (👍 + "Looks good").
+    // The label line reads as the Like preset: the Star line icon (lucide Star — replaced the 👍 emoji
+    // so the Like glyph matches the toolbar/popover) + "Looks good".
     expect(line).toHaveTextContent("Looks good");
-    expect(line).toHaveTextContent("👍");
+    expect(line.querySelector("svg")).not.toBeNull(); // the Star icon renders as an svg, not an emoji char
     expect(line.getAttribute("data-label")).toBe("looks-good");
     // C-003: it still carries a root comment (its authored thread), pre-filled from the type text.
     expect(card).toHaveTextContent("Looks good");
