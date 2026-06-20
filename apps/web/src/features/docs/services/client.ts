@@ -54,6 +54,24 @@ export function fetchProjectDocs(
   >;
 }
 
+/**
+ * GET /api/w/:workspaceId/docs?page=&limit= — the workspace-wide docs read (S-008). Returns, in
+ * ONE response, a PAGE of the access-filtered doc union (each annotated with `projectId` +
+ * `projectName`), every active project with its accessible-doc count (`docCount`), the workspace
+ * total, and the page summary. Retires the old N+1 fan-out (1 projects read + 1 per project).
+ */
+export function fetchWorkspaceDocs(
+  workspaceId: string,
+  page?: number,
+  limit?: number,
+): Promise<EdenResult<unknown>> {
+  const q: Record<string, string> = {};
+  if (page != null) q.page = String(page);
+  if (limit != null) q.limit = String(limit);
+  const query = Object.keys(q).length ? { query: q } : undefined;
+  return treaty.api.w({ workspaceId }).docs.get(query) as Promise<EdenResult<unknown>>;
+}
+
 /** POST /api/w/:workspaceId/projects — create a project (any member, C-002). */
 export function createProject(workspaceId: string, name: string): Promise<EdenResult<unknown>> {
   return treaty.api.w({ workspaceId }).projects.post({ name }) as Promise<EdenResult<unknown>>;

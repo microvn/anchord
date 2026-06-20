@@ -3,7 +3,12 @@ import { toApiError, type ApiError } from "@/lib/api/api-error";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { queryKeys } from "@/features/workspaces/lib/query-keys";
-import { fetchProjects, fetchProjectDocs, searchDocs } from "@/features/docs/services/client";
+import {
+  fetchProjects,
+  fetchProjectDocs,
+  fetchWorkspaceDocs,
+  searchDocs,
+} from "@/features/docs/services/client";
 import type { DocRow, ProjectRow, SearchResultRow } from "@/features/docs/types";
 
 // Browse data hooks for the workspace-project surfaces. Keyed by workspaceId (GAP-001) so
@@ -200,54 +205,48 @@ export function useProjectDocs(workspaceId: string, projectId: string) {
 }
 
 export interface WorkspaceDocs {
-  /** Active projects, each annotated with its browse-visible doc count. */
+  /** Active projects, each annotated with its WHOLE-workspace accessible-doc count. */
   projects: ProjectRow[];
-  /** Every browse-visible doc across the workspace, annotated with its project name. */
+  /** One PAGE of the browse-visible doc union, each annotated with its project name. */
   docs: DocRow[];
+  /** The page summary — `total` is the workspace-wide accessible doc count (not page-scoped). */
+  pagination?: PaginationMeta;
+}
+
+/** The raw shape the workspace-wide read returns (GET …/docs → { docs, projects, pagination }). */
+interface WorkspaceDocsResult {
+  docs: (ProjectDocsResult["docs"][number] & { projectId?: string; projectName?: string })[];
+  projects: ProjectRow[];
+  pagination?: PaginationMeta;
 }
 
 /**
- * The workspace-wide docs view: fetch projects, then the COMPLETE docs for each project, then join.
- * One composed query so the dashboard stat row + All-docs grid read a single cache slice keyed by
- * workspaceId. The All-docs screen paginates this complete union client-side (S-008); the sidebar
- * and home tile read its counts, so this must stay the COMPLETE set (page through `hasNext`), never
- * a 20-row first page. Per-project counts are derived here from each project's accessible total.
+ * The workspace-wide docs view: ONE backend read (S-008) returns the requested page of the
+ * access-filtered doc union (each doc annotated with its project name), every active project with
+ * its WHOLE-workspace accessible-doc count, and the page summary — replacing the old N+1 fan-out
+ * (1 projects read + 1 read per project). `page` is part of the query key, so each page is its own
+ * cache entry; the All-docs grid pages server-side 1:1 (one server page = one grid page). Counts
+ * (the all-docs total, project-card counts, sidebar badge) come from `pagination.total` +
+ * `projects[].docCount`, NOT `docs.length` (which is now just one page).
  */
-export function useWorkspaceDocs(workspaceId: string) {
+export function useWorkspaceDocs(workspaceId: string, page = 1) {
   return useQuery<WorkspaceDocs, ApiError>({
-    queryKey: queryKeys.docs(workspaceId),
+    queryKey: [...queryKeys.docs(workspaceId), "page", page] as const,
     retry: (failureCount, error) => !error?.isUnauthenticated && failureCount < 1,
     queryFn: async (): Promise<WorkspaceDocs> => {
-      const { items: projects } = await fetchAllPages<ProjectRow>(async (page, limit) => {
-        const res = unwrapEnvelope<ProjectsResult>(await fetchProjects(workspaceId, false, page, limit));
-        if (res.error) throw toApiError(res.error);
-        return { items: res.data?.projects ?? [], pagination: res.data?.pagination };
-      });
-      const active = projects.filter((p) => !p.archived);
-
-      const perProject = await Promise.all(
-        active.map(async (p) => {
-          const { items, total } = await fetchAllPages<ProjectDocsResult["docs"][number]>(
-            async (page, limit) => {
-              const res = unwrapEnvelope<ProjectDocsResult>(
-                await fetchProjectDocs(workspaceId, p.id, page, limit),
-              );
-              if (res.error) throw toApiError(res.error);
-              return { items: res.data?.docs ?? [], pagination: res.data?.pagination };
-            },
-          );
-          const docs: DocRow[] = items.map((d) => ({
-            ...d,
-            projectId: p.id,
-            projectName: p.name,
-          }));
-          return { project: { ...p, docCount: total }, docs };
-        }),
+      const res = unwrapEnvelope<WorkspaceDocsResult>(
+        await fetchWorkspaceDocs(workspaceId, page, DOCS_PAGE_SIZE),
       );
-
+      if (res.error) throw toApiError(res.error);
+      const docs: DocRow[] = (res.data?.docs ?? []).map((d) => ({
+        ...d,
+        projectId: d.projectId,
+        projectName: d.projectName,
+      }));
       return {
-        projects: perProject.map((x) => x.project),
-        docs: perProject.flatMap((x) => x.docs),
+        projects: res.data?.projects ?? [],
+        docs,
+        pagination: res.data?.pagination,
       };
     },
   });

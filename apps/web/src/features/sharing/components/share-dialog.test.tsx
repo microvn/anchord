@@ -195,6 +195,7 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
   mock.module("@/features/docs/services/client", () => ({
     moveDoc: mock(async () => env({})),
     copyDoc: mock(async () => env({})),
+    fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   }));
 
   it("AS-019: the ⋯ Share item shows UNCONDITIONALLY (no manager effectiveRole); Share opens the dialog for that doc", async () => {

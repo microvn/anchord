@@ -55,6 +55,7 @@ const deleteProject = mock(async () => env({ id: "p-scratch", deleted: true }));
 mock.module("@/features/docs/services/client", () => ({
   fetchProjects,
   fetchProjectDocs,
+  fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   createProject: mock(async () => env({})),
   searchDocs: mock(async () => env({ results: [] })),
   publishDoc: mock(async () => env({ docId: "d1", slug: "s1", url: "/d/s1" })),

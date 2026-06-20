@@ -18,7 +18,7 @@ import {
   type ProjectRepo,
   type ProjectRow,
 } from "../../src/workspace/projects";
-import type { ProjectsRouteRepo, ProjectDocRow } from "../../src/workspace/repo";
+import type { ProjectsRouteRepo, ProjectDocRow, WorkspaceDocRow } from "../../src/workspace/repo";
 import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
 
 const WS = "ws_1";
@@ -80,6 +80,9 @@ function fakeRepo(seed: ProjectRow[] = []) {
 function fakeCtx(opts: {
   invited?: Set<string>;
   docs?: Map<string, ProjectDocRow[]>;
+  /** S-008: the union of browse docs across the workspace's active projects (each row carries
+   *  its projectId + projectName). The route access-filters + pages + counts over this. */
+  workspaceDocs?: WorkspaceDocRow[];
 }): ProjectsRouteRepo {
   return {
     async isInvited(docId, userId) {
@@ -87,6 +90,9 @@ function fakeCtx(opts: {
     },
     async docsInProject(projectId) {
       return opts.docs?.get(projectId) ?? [];
+    },
+    async workspaceDocs() {
+      return opts.workspaceDocs ?? [];
     },
   };
 }
@@ -437,6 +443,153 @@ describe("/api/projects pagination (workspace-project S-007)", () => {
     expect(page2.data.pagination).toMatchObject({ total: 22, hasNext: false });
 
     // Existence-hiding holds across BOTH pages: no restricted doc's bytes appear anywhere.
+    const raw = JSON.stringify(page1) + JSON.stringify(page2);
+    expect(raw).not.toContain("secret");
+    expect(raw).not.toContain("Secret ");
+  });
+});
+
+// S-008: GET /api/w/:id/docs — the workspace-wide docs read returns, in ONE response, a PAGE of
+// the access-filtered doc union (each annotated with project name), every active project with its
+// accessible-doc count, the workspace total, and the page summary. Access filtering (C-003) runs
+// BEFORE paging AND counting. Default page size 20, cap 100. Retires the FE N+1 fan-out.
+describe("/api/w/:id/docs workspace-wide read (workspace-project S-008)", () => {
+  // Build a browse doc in a given project, accessible by default (anyone_in_workspace).
+  const wDoc = (
+    n: number,
+    projectId: string,
+    projectName: string,
+    over: Partial<WorkspaceDocRow> = {},
+  ): WorkspaceDocRow => ({
+    id: `d${n}`,
+    slug: `doc-${n}`,
+    title: `Doc ${n}`,
+    kind: "markdown",
+    ownerId: "u_a",
+    generalAccess: "anyone_in_workspace",
+    latestVersion: 1,
+    annotationCount: 0,
+    ownerName: "Alice",
+    createdAt: new Date("2026-06-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    projectId,
+    projectName,
+    ...over,
+  });
+
+  test("AS-023: returns one page of the accessible union, each doc carrying its project name + a total summary", async () => {
+    // 12 docs across 3 projects; page size 18 → all 12 fit one page.
+    const f = fakeRepo([
+      { id: "pA", workspaceId: WS, name: "Alpha", ownerId: "u_a", isDefault: false, archivedAt: null },
+      { id: "pB", workspaceId: WS, name: "Beta", ownerId: "u_a", isDefault: false, archivedAt: null },
+      { id: "pC", workspaceId: WS, name: "Gamma", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const union: WorkspaceDocRow[] = [
+      ...Array.from({ length: 5 }, (_, i) => wDoc(i + 1, "pA", "Alpha")),
+      ...Array.from({ length: 4 }, (_, i) => wDoc(i + 6, "pB", "Beta")),
+      ...Array.from({ length: 3 }, (_, i) => wDoc(i + 10, "pC", "Gamma")),
+    ];
+    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({ workspaceDocs: union }));
+    const res = await app.handle(req("GET", "/api/w/ws_1/docs?limit=18"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.docs).toHaveLength(12);
+    // Each doc carries its project name (joined in the union read).
+    const byId = (id: string) => json.data.docs.find((d: any) => d.id === id);
+    expect(byId("d1").projectName).toBe("Alpha");
+    expect(byId("d6").projectName).toBe("Beta");
+    expect(byId("d10").projectName).toBe("Gamma");
+    expect(byId("d1").projectId).toBe("pA");
+    expect(json.data.pagination).toMatchObject({
+      page: 1,
+      limit: 18,
+      total: 12,
+      totalPages: 1,
+      hasNext: false,
+      hasPrevious: false,
+    });
+  });
+
+  test("AS-024: the same response carries per-project docCount + workspace total, from the one read", async () => {
+    const f = fakeRepo([
+      { id: "pA", workspaceId: WS, name: "Alpha", ownerId: "u_a", isDefault: false, archivedAt: null },
+      { id: "pB", workspaceId: WS, name: "Beta", ownerId: "u_a", isDefault: false, archivedAt: null },
+      { id: "pC", workspaceId: WS, name: "Gamma", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const union: WorkspaceDocRow[] = [
+      ...Array.from({ length: 5 }, (_, i) => wDoc(i + 1, "pA", "Alpha")),
+      ...Array.from({ length: 4 }, (_, i) => wDoc(i + 6, "pB", "Beta")),
+      ...Array.from({ length: 3 }, (_, i) => wDoc(i + 10, "pC", "Gamma")),
+    ];
+    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({ workspaceDocs: union }));
+    const res = await app.handle(req("GET", "/api/w/ws_1/docs?limit=18"));
+    const json = (await res.json()) as any;
+    const count = (id: string) => json.data.projects.find((p: any) => p.id === id)?.docCount;
+    expect(count("pA")).toBe(5);
+    expect(count("pB")).toBe(4);
+    expect(count("pC")).toBe(3);
+    expect(json.data.pagination.total).toBe(12);
+    // The total equals the sum of the per-project counts (one read, consistent).
+    const sum = json.data.projects.reduce((a: number, p: any) => a + p.docCount, 0);
+    expect(sum).toBe(12);
+  });
+
+  test("AS-025: a later page returns its slice; requested page size honored up to cap 100", async () => {
+    // 40 accessible docs in one project; page size 18 → page 3 = docs 37..40.
+    const f = fakeRepo([
+      { id: "pA", workspaceId: WS, name: "Alpha", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const union = Array.from({ length: 40 }, (_, i) => wDoc(i + 1, "pA", "Alpha"));
+    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({ workspaceDocs: union }));
+
+    const res = await app.handle(req("GET", "/api/w/ws_1/docs?page=3&limit=18"));
+    const json = (await res.json()) as any;
+    expect(json.data.docs.map((d: any) => d.id)).toEqual(["d37", "d38", "d39", "d40"]);
+    expect(json.data.pagination).toMatchObject({ page: 3, limit: 18, total: 40, hasNext: false });
+
+    // A page size over the cap is CLAMPED to 100, never an error (pagination.ts lenient rule).
+    const capped = await app.handle(req("GET", "/api/w/ws_1/docs?limit=500"));
+    const cappedJson = (await capped.json()) as any;
+    expect(cappedJson.status ?? capped.status).toBe(200);
+    expect(cappedJson.data.pagination.limit).toBe(100);
+    expect(cappedJson.data.docs).toHaveLength(40); // all 40 fit under the 100 cap
+  });
+
+  test("AS-026: access filtering before paging/counting — out-of-access docs absent from page, total, AND per-project counts", async () => {
+    // 50 docs: 22 accessible (anyone_in_workspace), 28 restricted with u_x uninvited → filtered out.
+    // pA: 12 accessible + 18 restricted. pB: 10 accessible + 10 restricted.
+    const f = fakeRepo([
+      { id: "pA", workspaceId: WS, name: "Alpha", ownerId: "u_a", isDefault: false, archivedAt: null },
+      { id: "pB", workspaceId: WS, name: "Beta", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const restricted = (n: number, p: string, name: string): WorkspaceDocRow =>
+      wDoc(n, p, name, {
+        id: `secret${n}`,
+        slug: `secret-${n}`,
+        title: `Secret ${n}`,
+        generalAccess: "restricted",
+      });
+    const union: WorkspaceDocRow[] = [
+      ...Array.from({ length: 12 }, (_, i) => wDoc(i + 1, "pA", "Alpha")),
+      ...Array.from({ length: 18 }, (_, i) => restricted(i + 100, "pA", "Alpha")),
+      ...Array.from({ length: 10 }, (_, i) => wDoc(i + 13, "pB", "Beta")),
+      ...Array.from({ length: 10 }, (_, i) => restricted(i + 200, "pB", "Beta")),
+    ];
+    const app = buildApp(asUser("u_x"), f.repo, fakeCtx({ workspaceDocs: union }));
+
+    const page1 = (await (await app.handle(req("GET", "/api/w/ws_1/docs?limit=20"))).json()) as any;
+    // Total reflects only the 22 accessible docs, never 50.
+    expect(page1.data.pagination).toMatchObject({ total: 22, totalPages: 2, hasNext: true });
+    expect(page1.data.docs).toHaveLength(20);
+    // Per-project counts reflect only accessible docs (pA 12, pB 10) — never the raw 30/20.
+    const count = (id: string) => page1.data.projects.find((p: any) => p.id === id)?.docCount;
+    expect(count("pA")).toBe(12);
+    expect(count("pB")).toBe(10);
+
+    const page2 = (await (await app.handle(req("GET", "/api/w/ws_1/docs?page=2&limit=20"))).json()) as any;
+    expect(page2.data.docs).toHaveLength(2);
+
+    // Existence-hiding across BOTH pages: no restricted doc's bytes appear anywhere.
     const raw = JSON.stringify(page1) + JSON.stringify(page2);
     expect(raw).not.toContain("secret");
     expect(raw).not.toContain("Secret ");

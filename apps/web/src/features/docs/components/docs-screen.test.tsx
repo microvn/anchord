@@ -25,14 +25,20 @@ mock.module("@/features/workspaces/services/client", () => ({
   rejectInvitation: mock(async () => env({})),
 }));
 
-let projects: unknown;
-const docsByProject: Record<string, unknown> = {};
-const fetchProjects = mock(async () => projects);
-const defaultProjectDocs = async (_w: string, id: string) => docsByProject[id];
-const fetchProjectDocs = mock(defaultProjectDocs);
+// S-008: DocsScreen reads the SINGLE workspace-docs endpoint (fetchWorkspaceDocs), paging
+// SERVER-SIDE — one read per grid page. `workspaceDocs` is the default page-1 envelope; tests that
+// exercise paging install a page-aware mock implementation. fetchProjects/fetchProjectDocs are still
+// declared (process-global mock surface) but useWorkspaceDocs no longer calls them — AS-027 asserts
+// fetchProjectDocs is NEVER called.
+let workspaceDocs: unknown;
+const fetchProjects = mock(async () => env({ projects: [] }));
+const defaultWorkspaceDocs = async (_w: string, _page = 1, _limit = 18) => workspaceDocs;
+const fetchProjectDocs = mock(async () => env({ docs: [] }));
+const fetchWorkspaceDocs = mock(defaultWorkspaceDocs);
 mock.module("@/features/docs/services/client", () => ({
   fetchProjects,
   fetchProjectDocs,
+  fetchWorkspaceDocs,
   createProject: mock(async () => env({})),
   // The project-mutation thunks are included so this process-global mock.module does not
   // UNDER-shadow the real client for sibling test files that use them (bun mock.module is
@@ -84,18 +90,41 @@ const docRow = (d: Record<string, unknown>) => ({
   generalAccess: "anyone_in_workspace",
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
+  projectId: "p1",
+  projectName: "web-core",
   ...d,
 });
 
-beforeEach(() => {
-  fetchProjectDocs.mockImplementation(defaultProjectDocs);
-  projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
-  docsByProject.p1 = env({
-    docs: [
-      docRow({ id: "d1", slug: "spec", title: "Web-core spec", kind: "markdown" }),
-      docRow({ id: "d2", slug: "rfc", title: "Publish RFC", kind: "html" }),
-    ],
+/** Build the workspace-docs envelope: a page of docs + per-project docCount + a pagination total. */
+function wsDocs(
+  docs: Record<string, unknown>[],
+  opts: { total?: number; page?: number; limit?: number; projects?: Record<string, unknown>[] } = {},
+) {
+  const total = opts.total ?? docs.length;
+  const limit = opts.limit ?? 18;
+  const page = opts.page ?? 1;
+  return env({
+    docs,
+    projects: opts.projects ?? [{ id: "p1", name: "web-core", isDefault: true, archived: false, docCount: total }],
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNext: page * limit < total,
+      hasPrevious: page > 1,
+    },
   });
+}
+
+beforeEach(() => {
+  fetchWorkspaceDocs.mockImplementation(defaultWorkspaceDocs);
+  fetchProjectDocs.mockClear();
+  fetchWorkspaceDocs.mockClear();
+  workspaceDocs = wsDocs([
+    docRow({ id: "d1", slug: "spec", title: "Web-core spec", kind: "markdown" }),
+    docRow({ id: "d2", slug: "rfc", title: "Publish RFC", kind: "html" }),
+  ]);
 });
 
 describe("workspace-project S-003 — All-docs browser", () => {
@@ -124,13 +153,11 @@ describe("workspace-project S-003 — All-docs browser", () => {
 describe("workspace-project-browse S-002 — faceted filter on All-docs", () => {
   beforeEach(() => {
     // A mix: a live markdown (spec), a live html (rfc), a draft restricted markdown (draft-md).
-    docsByProject.p1 = env({
-      docs: [
-        docRow({ id: "d1", slug: "spec", title: "Web-core spec", kind: "markdown" }),
-        docRow({ id: "d2", slug: "rfc", title: "Publish RFC", kind: "html" }),
-        docRow({ id: "d3", slug: "draft-md", title: "Draft MD", kind: "markdown", status: "draft", generalAccess: "restricted" }),
-      ],
-    });
+    workspaceDocs = wsDocs([
+      docRow({ id: "d1", slug: "spec", title: "Web-core spec", kind: "markdown" }),
+      docRow({ id: "d2", slug: "rfc", title: "Publish RFC", kind: "html" }),
+      docRow({ id: "d3", slug: "draft-md", title: "Draft MD", kind: "markdown", status: "draft", generalAccess: "restricted" }),
+    ]);
   });
 
   it("AS-005: the Filter popover lists the four facet groups (all selected) with NO search box; bar has Sort + grid/list", async () => {
@@ -209,13 +236,11 @@ describe("workspace-project-browse S-003 — sort on All-docs", () => {
   beforeEach(() => {
     // Updated order (desc) is webhook, auth, calendar — deliberately NOT alphabetical, so the
     // Title sort visibly reorders.
-    docsByProject.p1 = env({
-      docs: [
-        docRow({ id: "d1", slug: "webhook", title: "Webhook", updatedAt: "2026-06-18T00:00:00.000Z" }),
-        docRow({ id: "d2", slug: "auth", title: "Auth", updatedAt: "2026-06-10T00:00:00.000Z" }),
-        docRow({ id: "d3", slug: "calendar", title: "Calendar", updatedAt: "2026-06-01T00:00:00.000Z" }),
-      ],
-    });
+    workspaceDocs = wsDocs([
+      docRow({ id: "d1", slug: "webhook", title: "Webhook", updatedAt: "2026-06-18T00:00:00.000Z" }),
+      docRow({ id: "d2", slug: "auth", title: "Auth", updatedAt: "2026-06-10T00:00:00.000Z" }),
+      docRow({ id: "d3", slug: "calendar", title: "Calendar", updatedAt: "2026-06-01T00:00:00.000Z" }),
+    ]);
   });
 
   it("AS-012: the default order is most-recently-updated first", async () => {
@@ -236,19 +261,19 @@ describe("workspace-project-browse S-003 — sort on All-docs", () => {
   });
 });
 
-// ── S-008 pagination ────────────────────────────────────────────────────────
-// The All-docs browse is the workspace-wide UNION of access-filtered docs (no per-project
-// route exists in anchord). The backend paginates each project-docs read; the union is fetched
-// COMPLETE (paging hasNext) so counts stay correct, then sliced into pages of 20 client-side.
-// AS-021/022/023/026 assert the numbered control over that accessible union.
+// ── S-008 — single workspace-docs read, server-side paging ────────────────────
+// The All-docs browse reads the workspace-wide UNION from the ONE backend endpoint
+// (fetchWorkspaceDocs), paging SERVER-SIDE: the screen's page drives the read (limit =
+// DOCS_PAGE_SIZE = 18), so one server page fills one grid page exactly. The total + per-project
+// counts come from the same read. AS-027 asserts the read happens ONCE on load (no per-project
+// fan-out) and once more per page change.
 
-// 45 docs in one project, returned as paginated pages of 20 (total=45, hasNext until page 3).
+// One server page of `total` docs at size `limit`, each carrying its project annotation so the
+// faceted filter's default-all selection keeps every doc.
 function pageOfDocs(page: number, limit: number, total: number) {
   const start = (page - 1) * limit;
   const docs = Array.from({ length: Math.max(0, Math.min(limit, total - start)) }, (_, i) => {
     const n = start + i + 1;
-    // status/generalAccess so the faceted filter's default-all selection keeps every doc; no
-    // timestamps → the default Updated-desc sort is an all-tie (stable), preserving doc-1..N order.
     return {
       id: `d${n}`,
       slug: `doc-${n}`,
@@ -256,10 +281,13 @@ function pageOfDocs(page: number, limit: number, total: number) {
       kind: "markdown",
       status: "live",
       generalAccess: "anyone_in_workspace",
+      projectId: "p1",
+      projectName: "web-core",
     };
   });
   return env({
     docs,
+    projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false, docCount: total }],
     pagination: {
       page,
       limit,
@@ -271,12 +299,10 @@ function pageOfDocs(page: number, limit: number, total: number) {
   });
 }
 
-describe("workspace-project-ui S-008 — All-docs pagination", () => {
-  it("AS-021: a doc list of 45 shows the first 18 docs (full grid) and a 3-page numbered control", async () => {
-    projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
-    // The backend hands the complete 45-doc set; the doc grid slices at DOCS_PAGE_SIZE=18 client-side.
-    fetchProjectDocs.mockImplementation(
-      async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 45),
+describe("workspace-project S-008 — single workspace-docs read, server-side paging", () => {
+  it("AS-025: a 45-doc workspace shows the first 18 (full grid) and a 3-page numbered control", async () => {
+    fetchWorkspaceDocs.mockImplementation(
+      async (_w: string, page = 1, limit = 18) => pageOfDocs(page, limit, 45),
     );
 
     render(<App />);
@@ -284,34 +310,36 @@ describe("workspace-project-ui S-008 — All-docs pagination", () => {
     expect(await screen.findByTestId("doc-card-doc-1")).toBeInTheDocument();
     expect(screen.getByTestId("doc-card-doc-18")).toBeInTheDocument();
     expect(screen.queryByTestId("doc-card-doc-19")).not.toBeInTheDocument();
-    // A numbered control reflecting 3 pages (45 / 18 = 18/18/9).
+    // A numbered control reflecting 3 pages (45 / 18 = 18/18/9), from pagination.totalPages.
     expect(screen.getByTestId("pagination")).toBeInTheDocument();
     expect(screen.getByTestId("pagination-page-3")).toBeInTheDocument();
     expect(screen.queryByTestId("pagination-page-4")).not.toBeInTheDocument();
   });
 
-  it("AS-022: navigating to the last page shows docs 37–45 and disables Next", async () => {
-    projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
-    fetchProjectDocs.mockImplementation(
-      async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 45),
+  it("AS-025: navigating to the last page issues one more read for that page (docs 37–45), Next disabled", async () => {
+    fetchWorkspaceDocs.mockImplementation(
+      async (_w: string, page = 1, limit = 18) => pageOfDocs(page, limit, 45),
     );
     const user = userEvent.setup();
 
     render(<App />);
     await screen.findByTestId("doc-card-doc-1");
+    fetchWorkspaceDocs.mockClear();
     await user.click(screen.getByTestId("pagination-page-3"));
 
-    // Last page (3) shows 37..45 (page size 18); Next is disabled.
+    // Page 3 (server) shows 37..45; Next is disabled. One more read was issued for page 3.
     expect(await screen.findByTestId("doc-card-doc-37")).toBeInTheDocument();
     expect(screen.getByTestId("doc-card-doc-45")).toBeInTheDocument();
     expect(screen.queryByTestId("doc-card-doc-36")).not.toBeInTheDocument();
     expect(screen.getByTestId("pagination-next")).toBeDisabled();
+    // The page change drove exactly one more workspace-docs read, requesting page 3.
+    expect(fetchWorkspaceDocs).toHaveBeenCalledTimes(1);
+    expect(fetchWorkspaceDocs.mock.calls[0]?.[1]).toBe(3);
   });
 
-  it("AS-023: a 7-doc list fits one page and shows no pagination control", async () => {
-    projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
-    fetchProjectDocs.mockImplementation(
-      async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 7),
+  it("AS-023: a 7-doc workspace fits one page and shows no pagination control", async () => {
+    fetchWorkspaceDocs.mockImplementation(
+      async (_w: string, page = 1, limit = 18) => pageOfDocs(page, limit, 7),
     );
 
     render(<App />);
@@ -321,16 +349,30 @@ describe("workspace-project-ui S-008 — All-docs pagination", () => {
   });
 
   it("AS-026: the page count uses pagination.total (accessible only), never the raw doc count", async () => {
-    projects = env({ projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }] });
-    // 22 accessible docs (the backend already dropped the 18 inaccessible ones) → total: 22.
-    fetchProjectDocs.mockImplementation(
-      async (_w: string, _id: string, page = 1, limit = 20) => pageOfDocs(page, limit, 22),
+    // 22 accessible docs (the backend already dropped the inaccessible ones) → total: 22.
+    fetchWorkspaceDocs.mockImplementation(
+      async (_w: string, page = 1, limit = 18) => pageOfDocs(page, limit, 22),
     );
 
     render(<App />);
     await screen.findByTestId("doc-card-doc-1");
-    // 22 accessible at page-size 18 → exactly 2 pages (18 + 4), never 3 (and never 40-based).
+    // 22 accessible at page-size 18 → exactly 2 pages (18 + 4), never 3.
     expect(screen.getByTestId("pagination-page-2")).toBeInTheDocument();
     expect(screen.queryByTestId("pagination-page-3")).not.toBeInTheDocument();
+  });
+
+  it("AS-027: loads grid + counts from the ONE fetchWorkspaceDocs read; never fetchProjectDocs per project", async () => {
+    fetchWorkspaceDocs.mockImplementation(
+      async (_w: string, page = 1, limit = 18) => pageOfDocs(page, limit, 7),
+    );
+
+    render(<App />);
+    // The grid renders from the single read.
+    expect(await screen.findByTestId("doc-card-doc-1")).toBeInTheDocument();
+    // EXACTLY one workspace-docs read on load (page 1) — not 1 + N per-project reads.
+    expect(fetchWorkspaceDocs).toHaveBeenCalledTimes(1);
+    expect(fetchWorkspaceDocs.mock.calls[0]?.[1]).toBe(1);
+    // The retired fan-out: fetchProjectDocs is NEVER called by the All-docs view.
+    expect(fetchProjectDocs).not.toHaveBeenCalled();
   });
 });

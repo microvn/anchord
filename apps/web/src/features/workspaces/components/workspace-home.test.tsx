@@ -30,22 +30,47 @@ mock.module("@/features/workspaces/services/client", () => ({
 }));
 
 // ---- features/docs/client (projects + docs + search + publish) ----
-let projects: unknown;
-const docsByProject: Record<string, unknown> = {};
-const fetchProjects = mock(async () => projects);
-const fetchProjectDocs = mock(async (_w: string, projectId: string) => docsByProject[projectId]);
+// S-008: WorkspaceHome reads the SINGLE workspace-docs endpoint (fetchWorkspaceDocs) — one page of
+// the doc union + per-project docCount + the workspace `pagination.total`. We mock that one thunk;
+// fetchProjects/fetchProjectDocs stay declared (process-global mock surface) but are no longer
+// called by useWorkspaceDocs.
+let workspaceDocs: unknown;
+const fetchProjects = mock(async () => env({ projects: [] }));
+const fetchProjectDocs = mock(async () => env({ docs: [] }));
+const fetchWorkspaceDocs = mock(async () => workspaceDocs);
 const createProject = mock(async () => env({ id: "p-new", name: "new" }));
 const searchDocs = mock(async () => env({ results: [] }));
 const publishDoc = mock(async () => env({ docId: "d1", slug: "s1", url: "/d/s1" }));
 mock.module("@/features/docs/services/client", () => ({
   fetchProjects,
   fetchProjectDocs,
+  fetchWorkspaceDocs,
   createProject,
   searchDocs,
   publishDoc,
   moveDoc: mock(async () => env({ docId: "d1", slug: "s1", projectId: "p1" })),
   copyDoc: mock(async () => env({ docId: "d2", slug: "s2", projectId: "p1" })),
 }));
+
+/** Build the workspace-docs envelope: docs page + per-project docCount + a pagination total. */
+function wsDocs(
+  docs: Record<string, unknown>[],
+  projects: { id: string; name: string; isDefault: boolean; archived: boolean; docCount: number }[],
+  total = docs.length,
+) {
+  return env({
+    docs,
+    projects,
+    pagination: {
+      page: 1,
+      limit: 18,
+      total,
+      totalPages: Math.ceil(total / 18),
+      hasNext: total > 18,
+      hasPrevious: false,
+    },
+  });
+}
 
 const { WorkspaceHome } = await import("@/features/workspaces/components/workspace-home");
 const { WorkspaceRouteGuard } = await import("@/features/workspaces/components/active-workspace");
@@ -76,6 +101,7 @@ function App({ role = "admin" as "admin" | "member" }) {
 beforeEach(() => {
   fetchProjects.mockClear();
   fetchProjectDocs.mockClear();
+  fetchWorkspaceDocs.mockClear();
   fetchMembers.mockClear();
   members = env({
     members: [
@@ -87,22 +113,19 @@ beforeEach(() => {
 });
 
 describe("workspace-project S-003 — workspace dashboard", () => {
-  it("renders the stat counts and recent docs from mocked data", async () => {
-    projects = env({
-      projects: [
-        { id: "p1", name: "web-core", isDefault: true, archived: false },
-        { id: "p2", name: "render-publish", isDefault: false, archived: false },
+  it("renders the stat counts and recent docs from the one workspace-docs read", async () => {
+    workspaceDocs = wsDocs(
+      [
+        { id: "d1", slug: "web-core-spec", title: "Web-core behavior contract", kind: "markdown", projectId: "p1", projectName: "web-core" },
+        { id: "d2", slug: "auth-flows", title: "Auth & invite flows", kind: "markdown", projectId: "p1", projectName: "web-core" },
+        { id: "d3", slug: "rfc", title: "Render + publish pipeline RFC", kind: "html", projectId: "p2", projectName: "render-publish" },
       ],
-    });
-    docsByProject.p1 = env({
-      docs: [
-        { id: "d1", slug: "web-core-spec", title: "Web-core behavior contract", kind: "markdown" },
-        { id: "d2", slug: "auth-flows", title: "Auth & invite flows", kind: "markdown" },
+      [
+        { id: "p1", name: "web-core", isDefault: true, archived: false, docCount: 2 },
+        { id: "p2", name: "render-publish", isDefault: false, archived: false, docCount: 1 },
       ],
-    });
-    docsByProject.p2 = env({
-      docs: [{ id: "d3", slug: "rfc", title: "Render + publish pipeline RFC", kind: "html" }],
-    });
+      3,
+    );
 
     render(<App />);
 
@@ -124,16 +147,15 @@ describe("workspace-project S-003 — workspace dashboard", () => {
   });
 
   it("AS-020/C-006: the overview tile is labelled 'Annotations' and sums per-doc annotationCount (12)", async () => {
-    projects = env({
-      projects: [{ id: "p1", name: "web-core", isDefault: true, archived: false }],
-    });
-    docsByProject.p1 = env({
-      docs: [
-        { id: "d1", slug: "a", title: "A", kind: "markdown", annotationCount: 5 },
-        { id: "d2", slug: "b", title: "B", kind: "markdown", annotationCount: 4 },
-        { id: "d3", slug: "c", title: "C", kind: "markdown", annotationCount: 3 },
+    workspaceDocs = wsDocs(
+      [
+        { id: "d1", slug: "a", title: "A", kind: "markdown", annotationCount: 5, projectId: "p1", projectName: "web-core" },
+        { id: "d2", slug: "b", title: "B", kind: "markdown", annotationCount: 4, projectId: "p1", projectName: "web-core" },
+        { id: "d3", slug: "c", title: "C", kind: "markdown", annotationCount: 3, projectId: "p1", projectName: "web-core" },
       ],
-    });
+      [{ id: "p1", name: "web-core", isDefault: true, archived: false, docCount: 3 }],
+      3,
+    );
 
     render(<App />);
 
@@ -146,10 +168,11 @@ describe("workspace-project S-003 — workspace dashboard", () => {
   });
 
   it("a workspace with zero docs shows the EmptyState (not a doc list)", async () => {
-    projects = env({
-      projects: [{ id: "p1", name: "default", isDefault: true, archived: false }],
-    });
-    docsByProject.p1 = env({ docs: [] });
+    workspaceDocs = wsDocs(
+      [],
+      [{ id: "p1", name: "default", isDefault: true, archived: false, docCount: 0 }],
+      0,
+    );
 
     render(<App />);
 

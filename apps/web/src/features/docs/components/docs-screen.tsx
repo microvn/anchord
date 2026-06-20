@@ -23,27 +23,27 @@ import { NoResultsState } from "@/components/no-results-state";
 
 export function DocsScreen() {
   const { workspace } = useActiveWorkspace();
-  const query = useWorkspaceDocs(workspace.id);
   const [page, setPage] = useState(1);
+  // S-008: the grid pages SERVER-SIDE — one workspace-docs read per page (the server `limit` is
+  // DOCS_PAGE_SIZE, so one server page fills one grid page exactly). The screen's `page` drives
+  // the read; total pages come from the server `pagination`, not a client-side slice.
+  const query = useWorkspaceDocs(workspace.id, page);
 
-  const allDocs = query.data?.docs ?? [];
+  const pageDocsRaw = query.data?.docs ?? [];
   const projects = query.data?.projects ?? [];
+  const total = query.data?.pagination?.total ?? pageDocsRaw.length;
+  const totalPages = query.data?.pagination?.totalPages ?? Math.ceil(total / DOCS_PAGE_SIZE);
 
-  // S-002/S-003: the shared faceted filter + sort engine. `visible` is filtered THEN sorted.
-  const browse = useDocBrowse(allDocs);
+  // S-002/S-003: the shared faceted filter + sort engine, applied to the SERVER page (the filter
+  // narrows/sorts within the current page; the numbered nav pages the whole accessible union).
+  const browse = useDocBrowse(pageDocsRaw);
   const filtered = browse.visible;
-  const totalPages = Math.ceil(filtered.length / DOCS_PAGE_SIZE);
-  // Clamp the page when the set shrinks (filter change, deletions) so a stale page never strands
-  // the user on an empty slice.
+  // Clamp the page when the set shrinks (deletions) so a stale page never strands the user.
   useEffect(() => {
     if (page > totalPages && totalPages >= 1) setPage(totalPages);
   }, [page, totalPages]);
-  // Reset to page 1 whenever the filter/sort changes the visible set.
-  useEffect(() => {
-    setPage(1);
-  }, [filtered.length, browse.sort]);
   const safePage = Math.min(page, Math.max(1, totalPages));
-  const pageDocs = filtered.slice((safePage - 1) * DOCS_PAGE_SIZE, safePage * DOCS_PAGE_SIZE);
+  const pageDocs = filtered;
 
   return (
     <section className="mx-auto max-w-[1100px] px-6 py-8" data-testid="docs-screen">
@@ -65,7 +65,7 @@ export function DocsScreen() {
         <Skeleton rows={5} />
       ) : query.isError ? (
         <ErrorState message={query.error?.message} onRetry={() => void query.refetch()} />
-      ) : allDocs.length === 0 ? (
+      ) : total === 0 ? (
         <EmptyState
           title="No docs yet"
           description="Docs arrive when you publish from the CLI or MCP. Start one here to get going."

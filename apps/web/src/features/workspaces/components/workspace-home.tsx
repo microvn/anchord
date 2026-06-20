@@ -29,16 +29,22 @@ export function WorkspaceHome() {
   // The members directory is admin-only on the backend; only fetch it when we can read it.
   const membersQuery = useMembers(workspace.id);
 
+  // S-008: useWorkspaceDocs returns ONE server page (updated-desc) + workspace-wide counts.
   const docs = docsQuery.data?.docs ?? [];
   const projects = docsQuery.data?.projects ?? [];
+  // The Docs count is the WHOLE-workspace accessible total (pagination.total), NOT docs.length —
+  // which is now just one page. Per-project counts ride on projects[].docCount (same one read).
+  const totalDocs = docsQuery.data?.pagination?.total ?? docs.length;
   const memberCount = isAdmin ? membersQuery.data?.members?.length : undefined;
 
   const stats: { k: string; v: string }[] = [
-    { k: "Docs", v: docsQuery.isPending ? "—" : String(docs.length) },
+    { k: "Docs", v: docsQuery.isPending ? "—" : String(totalDocs) },
     { k: "Projects", v: docsQuery.isPending ? "—" : String(projects.length) },
     { k: "Members", v: memberCount == null ? "—" : String(memberCount) },
-    // Annotations sum the per-doc active-annotation count the docs-list endpoint returns
-    // (workspace-project-ui S-007 / C-006 — the review unit, not the raw comment total).
+    // Annotations sum the per-doc active-annotation count over the current page (the workspace
+    // read returns active-annotation counts per doc, workspace-project-ui S-007 / C-006). Note:
+    // with server-side paging this sums the loaded page, not the whole workspace — the endpoint
+    // exposes no workspace-wide annotation total. The dashboard's recent view reads page 1.
     {
       k: "Annotations",
       v: docsQuery.isPending ? "—" : String(docs.reduce((a, d) => a + (d.annotationCount ?? 0), 0)),

@@ -25,6 +25,7 @@ const publishDoc = mock(async () => env({ docId: "d1", slug: "new-doc", url: "/d
 mock.module("@/features/docs/services/client", () => ({
   fetchProjects: mock(async () => env({ projects: projectsList })),
   fetchProjectDocs: mock(async () => env({ docs: [] })),
+  fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   createProject: mock(async () => env({})),
   searchDocs: mock(async () => env({ results: [] })),
   publishDoc,

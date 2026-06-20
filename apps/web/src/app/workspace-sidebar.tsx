@@ -30,14 +30,20 @@ export function WorkspaceSidebar({ dataTestId }: { dataTestId?: string }) {
   const base = workspaceId ? `/w/${workspaceId}` : "/";
 
   // The RECENT group + total-docs badge. Only fetch once we know which workspace we're in.
-  const docsQuery = useWorkspaceDocs(workspaceId ?? "");
-  const allDocs = workspaceId ? (docsQuery.data?.docs ?? []) : [];
-  const recentDocs = allDocs.slice(0, RECENT_LIMIT).map((d) => ({
+  // S-008: useWorkspaceDocs returns ONE server page (updated-desc) + a workspace-wide total. The
+  // RECENT list reads the first page (already most-recent-first); the badge reads pagination.total
+  // (the WHOLE-workspace accessible count), NOT docs.length (now just one page).
+  const docsQuery = useWorkspaceDocs(workspaceId ?? "", 1);
+  const pageDocs = workspaceId ? (docsQuery.data?.docs ?? []) : [];
+  const recentDocs = pageDocs.slice(0, RECENT_LIMIT).map((d) => ({
     slug: d.slug,
     title: d.title,
     icon: (FORMAT_META[d.kind] ?? FORMAT_META.markdown).icon,
   }));
-  const totalDocs = workspaceId && !docsQuery.isPending ? allDocs.length : undefined;
+  const totalDocs =
+    workspaceId && !docsQuery.isPending
+      ? (docsQuery.data?.pagination?.total ?? pageDocs.length)
+      : undefined;
 
   return (
     <>

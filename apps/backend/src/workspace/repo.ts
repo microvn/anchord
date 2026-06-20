@@ -145,6 +145,12 @@ export interface ProjectDocRow {
   updatedAt: Date;
 }
 
+/** A browse doc row annotated with the active project it belongs to (S-008 workspace-wide read). */
+export interface WorkspaceDocRow extends ProjectDocRow {
+  projectId: string;
+  projectName: string;
+}
+
 /**
  * Workspace-context reads the projects route group still needs after the multi-workspace
  * conversion (workspaces S-006): the per-doc individual invite (active doc_members) and
@@ -155,6 +161,14 @@ export interface ProjectDocRow {
 export interface ProjectsRouteRepo {
   isInvited(docId: string, userId: string): Promise<boolean>;
   docsInProject(projectId: string): Promise<ProjectDocRow[]>;
+  /**
+   * S-008: every browse doc across the workspace's ACTIVE (non-archived) projects, in ONE
+   * pass — each row joined to its project name, ordered most-recently-updated first (the
+   * browse order). No per-project loop: a single query joins docs → active projects (+ the
+   * browse correlated subqueries) so the route does access-filter + page + count over the
+   * union. Out-of-access filtering (C-003) is applied by the route, NOT here.
+   */
+  workspaceDocs(workspaceId: string): Promise<WorkspaceDocRow[]>;
 }
 
 export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
@@ -199,6 +213,52 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
         .leftJoin(user, eq(user.id, docs.ownerId))
         .where(eq(docs.projectId, projectId));
       // Drizzle returns the count/max as strings from postgres.js — coerce to number.
+      return rows.map((r) => ({
+        ...r,
+        latestVersion: Number(r.latestVersion),
+        annotationCount: Number(r.annotationCount),
+      }));
+    },
+    async workspaceDocs(workspaceId): Promise<WorkspaceDocRow[]> {
+      // ONE pass over the union: join docs → their ACTIVE project (in this workspace), with
+      // the SAME browse correlated subqueries as docsInProject. No per-project query — the
+      // inner join to projects (archived_at IS NULL, workspace_id =) restricts to the
+      // workspace's active projects and supplies the project name in the same row. Ordered
+      // updated-desc, id-desc (stable) so the union page mirrors the browse order.
+      const latestVersion = sql<number>`coalesce((
+        select max(${docVersions.version}) from ${docVersions}
+        where ${docVersions.docId} = ${docs.id}
+      ), 0)`;
+      const annotationCount = sql<number>`coalesce((
+        select count(*) from ${annotations}
+        where ${annotations.docId} = ${docs.id}
+          and ${annotations.deletedAt} is null
+          and ${annotations.dismissedAt} is null
+      ), 0)`;
+      const rows = await db
+        .select({
+          id: docs.id,
+          slug: docs.slug,
+          title: docs.title,
+          kind: docs.kind,
+          ownerId: docs.ownerId,
+          generalAccess: docs.generalAccess,
+          latestVersion,
+          annotationCount,
+          ownerName: user.name,
+          createdAt: docs.createdAt,
+          updatedAt: docs.updatedAt,
+          projectId: projects.id,
+          projectName: projects.name,
+        })
+        .from(docs)
+        .innerJoin(
+          projects,
+          and(eq(projects.id, docs.projectId), isNull(projects.archivedAt)),
+        )
+        .leftJoin(user, eq(user.id, docs.ownerId))
+        .where(eq(projects.workspaceId, workspaceId))
+        .orderBy(sql`${docs.updatedAt} desc`, sql`${docs.id} desc`);
       return rows.map((r) => ({
         ...r,
         latestVersion: Number(r.latestVersion),

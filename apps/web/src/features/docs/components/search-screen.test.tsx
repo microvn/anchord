@@ -39,6 +39,7 @@ const PROJECTS = [
 mock.module("@/features/docs/services/client", () => ({
   fetchProjects: mock(async () => env({ projects: PROJECTS })),
   fetchProjectDocs: mock(async () => env({ docs: [] })),
+  fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   createProject: mock(async () => env({})),
   renameProject: mock(async () => env({})),
   archiveProject: mock(async () => env({})),
