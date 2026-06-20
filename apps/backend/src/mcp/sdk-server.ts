@@ -69,6 +69,23 @@ const TOOL_META: Record<string, ToolMeta> = {
       content: z.string(),
     },
   },
+  anchord_patch_document: {
+    description:
+      "Edit specific blocks of a markdown document by block-addressed find/replace edits — " +
+      "faster than re-emitting the whole doc and preserves annotations. Version-pinned + " +
+      "all-or-nothing. Falls back to anchord_update_document for whole-doc rewrites.",
+    inputSchema: {
+      docId: z.string(),
+      expectedVersion: z.number(),
+      edits: z.array(
+        z.object({
+          blockId: z.string(),
+          find: z.string(),
+          replace: z.string(),
+        }),
+      ),
+    },
+  },
   // ── read (docs:read) ──────────────────────────────────────────────────────
   anchord_list_documents: {
     description: "List documents accessible to the token in its workspace (paginated).",

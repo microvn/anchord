@@ -154,3 +154,164 @@ function htmlAddressableBlocks(html: string): AddressableBlock[] {
     sourceText: innerHTML,
   }));
 }
+
+// ── Block-addressed markdown patch (mcp-patch-document S-002) ─────────────────
+//
+// A patch is a set of `{ blockId, find, replace }` edits. The server locates each
+// addressed block's MARKDOWN SOURCE range (the same `token.map` line-range mapping the
+// read tool uses for `sourceText`), finds `find` LITERALLY (never regex, C-001) WITHIN
+// that source slice only, splices `find`→`replace`, reassembles the full source, and
+// re-renders. The whole patch is ATOMIC (C-002): every edit must validate (block patchable,
+// find present + unique) before ANY splice lands. After splicing, a STRUCTURAL guard (C-008)
+// recomputes the ordered block-id list on the NEW source and refuses if it differs from the
+// old — a text edit may not add/remove/reorder blocks.
+
+/** One literal find→replace edit addressed to a block (C-001). `replace` may be empty (deletion). */
+export interface BlockEdit {
+  blockId: string;
+  find: string;
+  replace: string;
+}
+
+/** Thrown by `patchMarkdownSource` when the patch is refused; the message surfaces to the agent. */
+export class MarkdownPatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MarkdownPatchError";
+  }
+}
+
+/**
+ * Build `blockId → [startLine, endLine)` for every PATCHABLE markdown block (the same
+ * per-tag counter + `token.map` resolution `markdownSourceById` uses). A block with no
+ * resolvable source range (table cells carry `map=null`; a raw `html_block` produces no
+ * `block-*` id here yet renders a real element) is absent from the map → non-patchable
+ * (AS-024). Two identical source blocks disambiguate by their distinct line ranges.
+ */
+function markdownBlockRanges(markdownSource: string): Map<string, [number, number]> {
+  const out = new Map<string, [number, number]>();
+  if (!markdownSource || markdownSource.trim().length === 0) return out;
+
+  const tokens = md.parse(markdownSource, {});
+  const counters = new Map<string, number>();
+
+  for (const t of tokens) {
+    if (t.nesting !== 1) continue;
+    const tag = (t.tag || "").toLowerCase();
+    if (!BLOCK_TAG_SET.has(tag)) continue;
+
+    const n = (counters.get(tag) ?? 0) + 1;
+    counters.set(tag, n);
+    const blockId = `block-${tag}-${n}`;
+
+    // Fail-closed: no source-line range (td/th carry map=null) ⇒ non-patchable.
+    if (!t.map) continue;
+    const [start, end] = t.map;
+    if (start == null || end == null || end <= start) continue;
+    out.set(blockId, [start, end]);
+  }
+  return out;
+}
+
+/** The ordered block-id list of rendered markdown — the structural-guard fingerprint (C-008). */
+function orderedMarkdownBlockIds(markdownSource: string): string[] {
+  return addressableBlocks(markdownSource, "markdown").map((b) => b.blockId);
+}
+
+/** Count non-overlapping LITERAL occurrences of `needle` in `haystack` (never regex — C-001). */
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0;
+  let count = 0;
+  let from = 0;
+  for (;;) {
+    const i = haystack.indexOf(needle, from);
+    if (i === -1) break;
+    count += 1;
+    from = i + needle.length;
+  }
+  return count;
+}
+
+/**
+ * Apply a set of block-addressed edits to a markdown document's SOURCE, returning the new
+ * source. ATOMIC (C-002): every edit is validated up front and the splice is computed on a
+ * copy; if ANY edit fails (non-patchable block / find absent / find ambiguous) the whole
+ * patch throws and the original source is untouched. After splicing, the STRUCTURAL guard
+ * (C-008) refuses any patch whose ordered block-id sequence changed.
+ *
+ * Edits are LITERAL find/replace within ONE block's source slice (never regex, C-001). Two
+ * edits addressing the same block are applied to that block's slice in order; an edit whose
+ * `find` becomes ambiguous/absent within its (possibly already-edited) slice is refused.
+ */
+export function patchMarkdownSource(markdownSource: string, edits: BlockEdit[]): string {
+  if (edits.length === 0) {
+    throw new MarkdownPatchError("a patch requires a non-empty edits array (at least one edit)");
+  }
+
+  const lines = markdownSource.split("\n");
+  const ranges = markdownBlockRanges(markdownSource);
+
+  // Work on a per-block slice string keyed by blockId, so multiple edits on one block compose.
+  const sliceById = new Map<string, string>();
+  const sliceText = (blockId: string): string => {
+    if (sliceById.has(blockId)) return sliceById.get(blockId)!;
+    const range = ranges.get(blockId)!;
+    const text = lines.slice(range[0], range[1]).join("\n");
+    sliceById.set(blockId, text);
+    return text;
+  };
+
+  for (const edit of edits) {
+    const range = ranges.get(edit.blockId);
+    if (!range) {
+      // AS-024 / AS-006: the block is non-patchable (no resolvable source) or not in the doc.
+      throw new MarkdownPatchError(
+        `block '${edit.blockId}' is not patchable (no editable source range) — ` +
+          `use anchord_update_document to replace the whole document instead`,
+      );
+    }
+    const current = sliceText(edit.blockId);
+    const occurrences = countOccurrences(current, edit.find);
+    if (occurrences === 0) {
+      // AS-006: find absent in the addressed block.
+      throw new MarkdownPatchError(
+        `find text was not found in block '${edit.blockId}'`,
+      );
+    }
+    if (occurrences > 1) {
+      // AS-007: find ambiguous — occurs more than once in the block.
+      throw new MarkdownPatchError(
+        `find text is ambiguous in block '${edit.blockId}' (occurs ${occurrences} times) — make it unique`,
+      );
+    }
+    // Splice the single occurrence (literal — split/join avoids regex special chars, C-001).
+    const idx = current.indexOf(edit.find);
+    sliceById.set(
+      edit.blockId,
+      current.slice(0, idx) + edit.replace + current.slice(idx + edit.find.length),
+    );
+  }
+
+  // Reassemble: replace each edited block's line range with its spliced slice (descending
+  // by start line so earlier splices don't shift later ranges).
+  const edited = [...sliceById.entries()]
+    .map(([blockId, text]) => ({ range: ranges.get(blockId)!, text }))
+    .sort((a, b) => b.range[0] - a.range[0]);
+  const outLines = [...lines];
+  for (const { range, text } of edited) {
+    outLines.splice(range[0], range[1] - range[0], ...text.split("\n"));
+  }
+  const newSource = outLines.join("\n");
+
+  // C-008 structural guard: the ordered block-id sequence must be identical before/after.
+  const before = orderedMarkdownBlockIds(markdownSource);
+  const after = orderedMarkdownBlockIds(newSource);
+  if (before.length !== after.length || before.some((id, i) => id !== after[i])) {
+    throw new MarkdownPatchError(
+      "patch changes the block structure (the ordered block-id sequence differs) — " +
+        "a text edit may not add, remove, or reorder blocks",
+    );
+  }
+
+  return newSource;
+}

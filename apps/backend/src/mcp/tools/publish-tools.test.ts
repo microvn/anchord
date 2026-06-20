@@ -12,11 +12,14 @@ import { describe, expect, test } from "bun:test";
 import {
   createDocumentHandler,
   updateDocumentHandler,
+  patchDocumentHandler,
   publishTools,
   McpToolError,
   type CreateDocumentPort,
   type UpdateDocumentPorts,
   type UpdateTargetDoc,
+  type PatchDocumentPorts,
+  type PatchTargetDoc,
 } from "./publish-tools";
 import {
   handleJsonRpc,
@@ -131,6 +134,48 @@ function fakeUpdate(opts: {
     },
   };
   return { ports, reanchorFired };
+}
+
+// ── patch fake: an in-memory versioned markdown/html store with the pin verified
+//    INSIDE the serialized append (C-003 — no lost update). ───────────────────
+function fakePatch(opts: {
+  docs: Record<string, { kind: "html" | "markdown" | "image"; version: number; content: string }>;
+  roles: Record<string, Role | null>; // keyed `${docId}:${userId}`
+}) {
+  const store = opts.docs;
+  const reanchorFired: { docId: string; version: number; content: string; kind: "html" | "markdown" | "image" }[] = [];
+
+  const ports: PatchDocumentPorts = {
+    async findDocById(docId): Promise<PatchTargetDoc | null> {
+      const d = store[docId];
+      return d ? { id: docId, kind: d.kind } : null;
+    },
+    async resolveRole(docId, userId): Promise<Role | null> {
+      return opts.roles[`${docId}:${userId}`] ?? null;
+    },
+    async getCurrentVersion(docId) {
+      const d = store[docId];
+      return d ? { version: d.version, content: d.content } : null;
+    },
+    async appendVersion(input) {
+      // C-003: the pin is verified INSIDE the serialized append step that reads the
+      // current version (advisory-lock semantics) — a stale pin is refused, never applied.
+      const d = store[input.docId]!;
+      const previousVersion = d.version;
+      if (input.expectedVersion !== previousVersion) {
+        throw new McpToolError(
+          `version conflict: expected ${input.expectedVersion} but document is at ${previousVersion} — re-read the document and retry`,
+        );
+      }
+      d.version = previousVersion + 1;
+      d.content = input.content;
+      return { version: d.version, previousVersion };
+    },
+    fireReanchor(input) {
+      reanchorFired.push(input);
+    },
+  };
+  return { ports, reanchorFired, store };
 }
 
 const rpc = (method: string, params?: Record<string, unknown>): JsonRpcRequest => ({
@@ -389,5 +434,252 @@ describe("C-002 / C-006 / C-009: publish tools through the MCP pipeline", () => 
     const { response } = await handleJsonRpc(deps, "rw", rpc("anchord_update_document", { docId: "ghost", content: "x" }));
     expect(response.error?.code).toBe(JSONRPC_INVALID_PARAMS);
     expect(response.error?.message).toContain("create_document");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// S-002 — anchord_patch_document (block-addressed markdown splice)
+// ════════════════════════════════════════════════════════════════════════════
+
+// A small markdown doc whose blocks are: block-h2-1="## Overview", block-p-1 (with
+// "draft" twice for the ambiguity case), block-h2-2="## Details". Built from real
+// markdown so the block-id mapping is the SAME one read_document/the splice use.
+const MD_DOC = "## Overview\n\nThe draft is a draft paragraph.\n\n## Details\n";
+const MD_TABLE_DOC = "Intro paragraph.\n\n| a | b |\n| - | - |\n| c | d |\n";
+
+// ── AS-005: single-block edit splices + appends a new version ────────────────
+describe("AS-005: anchord_patch_document splices one block and appends a new version", () => {
+  test("AS-005: splice (T1), new version + stable ids (T2), return shape (T3)", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    const res = await tool(
+      { docId: "doc_a", expectedVersion: 5, edits: [{ blockId: "block-h2-1", find: "## Overview", replace: "## Overview1" }] },
+      ctx(),
+    );
+    // T3: return shape
+    expect(res).toEqual({ docId: "doc_a", version: 6, previousVersion: 5 });
+    // T1: the addressed block's source is spliced "## Overview" → "## Overview1"
+    expect(fk.store.doc_a!.content).toContain("## Overview1");
+    expect(fk.store.doc_a!.content).not.toMatch(/## Overview(?!1)/); // old heading gone
+    // T1: the rest of the source is preserved verbatim
+    expect(fk.store.doc_a!.content).toContain("The draft is a draft paragraph.");
+    expect(fk.store.doc_a!.content).toContain("## Details");
+    // T2: a new version 6 was appended (previous 5 unchanged) + re-anchor fired (C-004)
+    expect(fk.store.doc_a!.version).toBe(6);
+    expect(fk.reanchorFired).toHaveLength(1);
+    expect(fk.reanchorFired[0]!.version).toBe(6);
+    expect(fk.reanchorFired[0]!.kind).toBe("markdown");
+  });
+});
+
+// ── AS-006: find absent (+ unknown blockId) → whole patch refused, no version ─
+describe("AS-006: a find that is absent rejects the whole patch", () => {
+  test("AS-006: find not present in the block → refused, no version, doc stays at 5", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_a", expectedVersion: 5, edits: [{ blockId: "block-h2-1", find: "## Summary", replace: "## Recap" }] }, ctx()),
+    ).rejects.toThrow(/not found|absent|could not (be )?locate/i);
+    expect(fk.store.doc_a!.version).toBe(5); // no new version
+    expect(fk.store.doc_a!.content).toBe(MD_DOC); // unchanged
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+
+  test("AS-006: a blockId not in the doc → find can't be located → refused, no version", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_a", expectedVersion: 5, edits: [{ blockId: "block-p-99", find: "x", replace: "y" }] }, ctx()),
+    ).rejects.toThrow(McpToolError);
+    expect(fk.store.doc_a!.version).toBe(5);
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-007: find ambiguous (>1× in block) → refused, no version ──────────────
+describe("AS-007: a find that is ambiguous rejects the whole patch", () => {
+  test("AS-007: find occurs twice in the block → refused, no version, doc stays at 5", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_a", expectedVersion: 5, edits: [{ blockId: "block-p-1", find: "draft", replace: "final" }] }, ctx()),
+    ).rejects.toThrow(/ambiguous|more than once|occurs \d+ times/i);
+    expect(fk.store.doc_a!.version).toBe(5);
+    expect(fk.store.doc_a!.content).toBe(MD_DOC);
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-008: multi-edit [valid, absent] → atomic, NEITHER applied ─────────────
+describe("AS-008: a multi-edit patch with one bad edit applies none (atomic)", () => {
+  test("AS-008: one valid + one absent-find → whole patch refused, no partial write, no version", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool(
+        {
+          docId: "doc_a",
+          expectedVersion: 5,
+          edits: [
+            { blockId: "block-h2-1", find: "## Overview", replace: "## Overview1" }, // valid
+            { blockId: "block-h2-2", find: "## Missing", replace: "## Nope" }, // absent
+          ],
+        },
+        ctx(),
+      ),
+    ).rejects.toThrow(McpToolError);
+    // NEITHER edit applied: the valid one must NOT have landed (no partial write).
+    expect(fk.store.doc_a!.content).toBe(MD_DOC);
+    expect(fk.store.doc_a!.version).toBe(5);
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-009: stale expectedVersion → refused inside the serialized append ─────
+describe("AS-009: a stale version pin is rejected", () => {
+  test("AS-009: doc at 6, pin 5 → refused with re-read guidance, no apply, stays 6", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 6, content: MD_DOC } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_a", expectedVersion: 5, edits: [{ blockId: "block-h2-1", find: "## Overview", replace: "## Overview1" }] }, ctx()),
+    ).rejects.toThrow(/version conflict|re-read|expected 5/i);
+    expect(fk.store.doc_a!.version).toBe(6); // still 6, no apply
+    expect(fk.store.doc_a!.content).toBe(MD_DOC);
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-010: empty edits[] → refused (non-empty required) ─────────────────────
+describe("AS-010: an empty edit list is rejected", () => {
+  test("AS-010: edits: [] → refused with a non-empty reason, no version", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_a", expectedVersion: 5, edits: [] }, ctx()),
+    ).rejects.toThrow(/non-empty|at least one edit|empty/i);
+    expect(fk.store.doc_a!.version).toBe(5);
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-011: read-only token (no docs:write) → refused, NO side effect ────────
+describe("AS-011: a read-only token cannot patch", () => {
+  test("AS-011: docs:read-only token → scope gate refuses, no version appended", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u": "editor" },
+    });
+    const tokens = fakeTokens({ ro: { id: "t1", userId: "u", workspaceId: "W", scopes: ["docs:read"] } });
+    const deps: McpServerDeps = {
+      tokens,
+      rateLimiter: new McpRateLimiter(),
+      tools: { ...baselineTools(), ...publishTools({ create: fakeCreate().port, update: fakeUpdate({ docs: {}, roles: {} }).ports, patch: fk.ports }) },
+    };
+    const { response } = await handleJsonRpc(
+      deps,
+      "ro",
+      rpc("anchord_patch_document", { docId: "doc_a", expectedVersion: 5, edits: [{ blockId: "block-h2-1", find: "## Overview", replace: "## Overview1" }] }),
+    );
+    expect(response.error?.code).toBe(MCP_FORBIDDEN_SCOPE);
+    expect(fk.store.doc_a!.version).toBe(5); // scope gate is BEFORE the handler
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-012: cross-workspace token (doc in W2, token in W1) → refused ─────────
+describe("AS-012: a cross-workspace token cannot patch", () => {
+  test("AS-012: token bound to W1 patching a W2 doc → refused (no role in W1), no version", async () => {
+    // The workspace gate is the role resolution scoped to the token's workspace:
+    // resolveRole keys on `${docId}:${userId}` and only the W2-scoped grant exists,
+    // so a W1-acting token resolves to no role and is refused (mirrors update's gate).
+    const fk = fakePatch({
+      docs: { doc_w2: { kind: "markdown", version: 3, content: MD_DOC } },
+      roles: {}, // the token (acting in W1) has no role on the W2 doc
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_w2", expectedVersion: 3, edits: [{ blockId: "block-h2-1", find: "## Overview", replace: "## Overview1" }] }, ctx({ workspaceId: "W1" })),
+    ).rejects.toThrow(McpToolError);
+    expect(fk.store.doc_w2!.version).toBe(3);
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-013: non-editor role (commenter) → refused (editor+ required) ─────────
+describe("AS-013: a non-editor role cannot patch", () => {
+  test("AS-013: commenter (below editor) → refused, no version", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u_c": "commenter" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_a", expectedVersion: 5, edits: [{ blockId: "block-h2-1", find: "## Overview", replace: "## Overview1" }] }, ctx({ userId: "u_c" })),
+    ).rejects.toThrow(McpToolError);
+    expect(fk.store.doc_a!.version).toBe(5);
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-014: replace that changes the ordered block-id sequence → refused ─────
+describe("AS-014: a replacement that changes the block set is rejected (structural guard)", () => {
+  test("AS-014: replace introduces a new heading (splits the block) → structural refusal, no version", async () => {
+    const fk = fakePatch({
+      docs: { doc_a: { kind: "markdown", version: 5, content: MD_DOC } },
+      roles: { "doc_a:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    // Replacing the paragraph text with text that contains a blank line + a new heading
+    // splits block-p-1 into (p + h-?) — the ordered block-id sequence changes.
+    await expect(
+      tool(
+        {
+          docId: "doc_a",
+          expectedVersion: 5,
+          edits: [{ blockId: "block-p-1", find: "The draft is a draft paragraph.", replace: "First line.\n\n## Injected heading" }],
+        },
+        ctx(),
+      ),
+    ).rejects.toThrow(/structural|block (set|sequence) changed|changes the block/i);
+    expect(fk.store.doc_a!.version).toBe(5);
+    expect(fk.store.doc_a!.content).toBe(MD_DOC);
+    expect(fk.reanchorFired).toHaveLength(0);
+  });
+});
+
+// ── AS-024: patch addressing a NON-PATCHABLE block (table cell) → refused ─────
+describe("AS-024: a patch addressing a non-patchable block is rejected", () => {
+  test("AS-024: block-td-1 (read returned WITHOUT sourceText) → not-patchable refusal pointing to update", async () => {
+    const fk = fakePatch({
+      docs: { doc_t: { kind: "markdown", version: 2, content: MD_TABLE_DOC } },
+      roles: { "doc_t:u_owner": "editor" },
+    });
+    const tool = patchDocumentHandler(fk.ports);
+    await expect(
+      tool({ docId: "doc_t", expectedVersion: 2, edits: [{ blockId: "block-td-1", find: "c", replace: "C" }] }, ctx()),
+    ).rejects.toThrow(/not patchable|anchord_update_document/i);
+    expect(fk.store.doc_t!.version).toBe(2);
+    expect(fk.reanchorFired).toHaveLength(0);
   });
 });

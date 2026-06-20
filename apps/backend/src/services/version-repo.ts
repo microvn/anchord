@@ -127,3 +127,62 @@ export async function appendVersionTx(
     return { docId, version, previousVersion };
   });
 }
+
+/**
+ * Thrown by `appendVersionTxPinned` when the caller's `expectedVersion` no longer matches the
+ * doc's current max version read UNDER the advisory lock — an optimistic-concurrency conflict
+ * (mcp-patch-document C-003 / AS-009). Surfaces to the agent as a version-conflict tool error.
+ */
+export class VersionConflictError extends Error {
+  constructor(
+    public readonly expectedVersion: number,
+    public readonly currentVersion: number | null,
+  ) {
+    super(
+      `version conflict: expected ${expectedVersion} but document is at ${currentVersion ?? 0} — ` +
+        `re-read the document and retry`,
+    );
+    this.name = "VersionConflictError";
+  }
+}
+
+/**
+ * Append a new version like `appendVersionTx`, but with a HARD version pin verified INSIDE the
+ * same per-doc-serialized step (mcp-patch-document C-003): the current max is read under the
+ * advisory lock, and if it differs from `expectedVersion` the tx aborts with a
+ * VersionConflictError — so a patch built against a now-stale version is refused, never applied
+ * on top (no lost update, AS-009).
+ */
+export async function appendVersionTxPinned(
+  db: DB,
+  docId: string,
+  expectedVersion: number,
+  content: string,
+  contentHash: string,
+  publishedBy: string | null = null,
+  kind?: VersionKind,
+): Promise<{ docId: string; version: number; previousVersion: number | null }> {
+  const extractedText = kind ? extractText(content, kind) : null;
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${docId}, 0))`);
+
+    const [row] = await tx
+      .select({ max: max(docVersions.version) })
+      .from(docVersions)
+      .where(eq(docVersions.docId, docId));
+    const previousVersion = row?.max ?? null;
+
+    // C-003: the pin is checked AFTER acquiring the lock + reading the current version, so a
+    // concurrent publish that landed between the agent's read and this patch is detected here.
+    if (previousVersion !== expectedVersion) {
+      throw new VersionConflictError(expectedVersion, previousVersion);
+    }
+
+    const version = (previousVersion ?? 0) + 1;
+    await tx
+      .insert(docVersions)
+      .values({ docId, version, content, contentHash, publishedBy, extractedText });
+
+    return { docId, version, previousVersion };
+  });
+}

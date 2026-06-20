@@ -23,6 +23,7 @@
 
 import type { ToolContext, ToolDef } from "../server";
 import { can, type Role } from "../../sharing/roles";
+import { patchMarkdownSource, MarkdownPatchError, type BlockEdit } from "../../render/markdown";
 
 /** Thrown by a tool when the request is rejected — the pipeline maps it to a JSON-RPC error. */
 export class McpToolError extends Error {
@@ -221,17 +222,176 @@ export function updateDocumentTool(ports: UpdateDocumentPorts): ToolDef {
   return { requiredScope: "docs:write", handler: updateDocumentHandler(ports) };
 }
 
+// ── anchord_patch_document (S-002 — AS-005…AS-014/AS-024, C-001..C-004/C-006/C-008) ─
+//
+// A block-addressed patch: version-pinned `{ blockId, find, replace }` edits spliced into
+// the addressed block's MARKDOWN SOURCE, appending a new immutable version WITHOUT the agent
+// re-emitting the whole doc. The whole-doc `anchord_update_document` STAYS the fallback. The
+// splice + ambiguity + structural guard live in render/markdown.ts (`patchMarkdownSource`);
+// this handler owns the authz gate (C-006), atomic validation (C-002), and the hard version
+// pin verified INSIDE the serialized append (C-003).
+
+/** What the patch tool returns to the agent (AS-005.T3). */
+export interface PatchDocumentResult {
+  docId: string;
+  version: number;
+  previousVersion: number | null;
+}
+
+/** A doc as the patch tool needs to gate + splice it: id + kind (markdown vs html). */
+export interface PatchTargetDoc {
+  id: string;
+  kind: "html" | "markdown" | "image";
+}
+
 /**
- * The two publish tools as a registry fragment, ready to spread into the server's tool
+ * The patch ports — authorization + current-content read + the pinned serialized append, each
+ * a single injectable seam reusing the EXISTING services (fake-repo testable, no DB).
+ */
+export interface PatchDocumentPorts {
+  /** Resolve a doc by id, or null when it does not exist. */
+  findDocById(docId: string): Promise<PatchTargetDoc | null>;
+  /** The token-owner's effective role on the doc (resolveAccess), or null. editor+ required (C-006). */
+  resolveRole(docId: string, userId: string): Promise<Role | null>;
+  /** The doc's CURRENT version + raw content (the markdown source to splice). null if absent. */
+  getCurrentVersion(docId: string): Promise<{ version: number; content: string } | null>;
+  /**
+   * Append a new immutable version. The HARD version pin (C-003) MUST be verified INSIDE this
+   * per-doc-serialized step (advisory lock + UNIQUE(doc_id,version) — appendVersionTx) that
+   * reads the current version: if `expectedVersion` != the version read under the lock, throw
+   * (no lost update, AS-009). Returns the new + previous version.
+   */
+  appendVersion(input: {
+    docId: string;
+    content: string;
+    publishedBy: string;
+    kind: "html" | "markdown" | "image";
+    expectedVersion: number;
+  }): Promise<{ version: number; previousVersion: number | null }>;
+  /**
+   * FIRE the existing re-anchor seam (annotation-core:S-005, async, idempotent) — identical to
+   * the whole-doc update path (C-004). Not awaited; fired only when previousVersion != null.
+   */
+  fireReanchor?(input: {
+    docId: string;
+    version: number;
+    content: string;
+    kind: "html" | "markdown" | "image";
+  }): void;
+}
+
+/** Parse + validate the `edits[]` param into typed BlockEdits (C-001: non-empty, literal strings). */
+function parseEdits(raw: unknown): BlockEdit[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    // AS-010: an empty (or non-array) edit list is refused.
+    throw new McpToolError("'edits' is required and must be a non-empty array of { blockId, find, replace }");
+  }
+  return raw.map((e, i) => {
+    if (typeof e !== "object" || e === null) {
+      throw new McpToolError(`edits[${i}] must be an object { blockId, find, replace }`);
+    }
+    const rec = e as Record<string, unknown>;
+    const blockId = asString(rec.blockId, `edits[${i}].blockId`);
+    // find/replace are LITERAL strings (never regex, C-001). find must be non-empty; replace
+    // MAY be empty (a deletion) as long as the block set stays unchanged (C-008).
+    const find = asString(rec.find, `edits[${i}].find`);
+    if (typeof rec.replace !== "string") {
+      throw new McpToolError(`edits[${i}].replace must be a string`);
+    }
+    return { blockId, find, replace: rec.replace };
+  });
+}
+
+/**
+ * Build the `anchord_patch_document` tool. Order (C-001/C-002/C-006): validate params →
+ * resolve target → editor+ gate → read current content → splice (atomic, structural guard) →
+ * append with the pin verified in the serialized step → fire re-anchor → return.
+ */
+export function patchDocumentHandler(
+  ports: PatchDocumentPorts,
+): (params: Record<string, unknown>, ctx: ToolContext) => Promise<PatchDocumentResult> {
+  return async function handler(params, ctx): Promise<PatchDocumentResult> {
+    const docId = asString(params.docId, "docId");
+    if (typeof params.expectedVersion !== "number" || !Number.isInteger(params.expectedVersion)) {
+      throw new McpToolError("'expectedVersion' is required and must be an integer");
+    }
+    const expectedVersion = params.expectedVersion;
+    const edits = parseEdits(params.edits); // AS-010: rejects empty before any work.
+
+    const doc = await ports.findDocById(docId);
+    if (!doc) {
+      throw new McpToolError(
+        `document '${docId}' not found — use anchord_create_document to create a new document`,
+      );
+    }
+
+    // C-006: editor+ required (AS-013). A W1 token never resolves a role on W2 content, so the
+    // same gate covers the cross-workspace case (AS-012).
+    const role = await ports.resolveRole(docId, ctx.userId);
+    if (role === null || !can(role, "edit")) {
+      throw new McpToolError(
+        `not permitted to patch document '${docId}' (editor rights required)`,
+      );
+    }
+
+    const current = await ports.getCurrentVersion(docId);
+    if (!current) {
+      throw new McpToolError(`document '${docId}' has no current version to patch`);
+    }
+
+    // Patch is markdown-only in S-002 (html patch is S-003). Guard explicitly.
+    if (doc.kind !== "markdown") {
+      throw new McpToolError(
+        `anchord_patch_document supports markdown documents in this version (doc kind '${doc.kind}')`,
+      );
+    }
+
+    // C-002 atomic splice + C-008 structural guard. A MarkdownPatchError (find absent/ambiguous,
+    // non-patchable block, structural change) is mapped to McpToolError → NO version appended.
+    let newContent: string;
+    try {
+      newContent = patchMarkdownSource(current.content, edits);
+    } catch (e) {
+      if (e instanceof MarkdownPatchError) throw new McpToolError(e.message);
+      throw e;
+    }
+
+    // C-003: append with the pin verified INSIDE the per-doc-serialized step (no lost update).
+    const { version, previousVersion } = await ports.appendVersion({
+      docId,
+      content: newContent,
+      publishedBy: ctx.userId,
+      kind: doc.kind,
+      expectedVersion,
+    });
+
+    // C-004: fire re-anchor async AFTER the version is committed (only when there is prior content).
+    if (ports.fireReanchor && previousVersion !== null) {
+      ports.fireReanchor({ docId, version, content: newContent, kind: doc.kind });
+    }
+
+    return { docId, version, previousVersion };
+  };
+}
+
+/** The `anchord_patch_document` ToolDef (scope-gated docs:write — C-006/mcp-roundtrip C-009). */
+export function patchDocumentTool(ports: PatchDocumentPorts): ToolDef {
+  return { requiredScope: "docs:write", handler: patchDocumentHandler(ports) };
+}
+
+/**
+ * The publish tools as a registry fragment, ready to spread into the server's tool
  * map (`{ ...baselineTools(), ...publishTools(deps) }`). Tool names are `anchord_*`
  * (C — avoids collisions when an agent mounts several MCP servers).
  */
 export function publishTools(deps: {
   create: CreateDocumentPort;
   update: UpdateDocumentPorts;
+  patch?: PatchDocumentPorts;
 }): Record<string, ToolDef> {
   return {
     anchord_create_document: createDocumentTool(deps.create),
     anchord_update_document: updateDocumentTool(deps.update),
+    ...(deps.patch ? { anchord_patch_document: patchDocumentTool(deps.patch) } : {}),
   };
 }

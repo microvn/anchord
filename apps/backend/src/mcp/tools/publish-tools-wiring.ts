@@ -17,7 +17,10 @@ import type { DB } from "../../db/client";
 import { publishDoc } from "../../publish/service";
 import { createDocRepo } from "../../publish/repo";
 import { createPublishProjectResolver } from "../../workspace/repo";
-import { appendVersionTx } from "../../services/version-repo";
+import { appendVersionTx, appendVersionTxPinned, VersionConflictError } from "../../services/version-repo";
+import { docVersions } from "../../db/schema";
+import { desc } from "drizzle-orm";
+import { McpToolError } from "./publish-tools";
 import type { Viewer } from "../../sharing/access";
 import type { AccessResult } from "../../sharing/resolve-access";
 import type { Role } from "../../sharing/roles";
@@ -26,6 +29,8 @@ import {
   type CreateDocumentPort,
   type UpdateDocumentPorts,
   type UpdateTargetDoc,
+  type PatchDocumentPorts,
+  type PatchTargetDoc,
 } from "./publish-tools";
 import type { ToolDef } from "../server";
 
@@ -109,6 +114,71 @@ export function createMcpUpdateDocumentPorts(deps: {
   };
 }
 
+/**
+ * Concrete patch ports (mcp-patch-document S-002). resolveAccess is the authz gate (C-006);
+ * getCurrentVersion reads the doc's latest content (the markdown source to splice);
+ * appendVersionTxPinned verifies the version pin INSIDE the serialized append (C-003) and
+ * fires the same re-anchor seam as update (C-004). The splice itself is in the pure handler.
+ */
+export function createMcpPatchDocumentPorts(deps: {
+  db: DB;
+  resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
+  reanchorOnNewVersion?: (input: {
+    docId: string;
+    version: number;
+    content: string;
+    kind: "html" | "markdown" | "image";
+  }) => Promise<unknown> | unknown;
+}): PatchDocumentPorts {
+  return {
+    async findDocById(docId: string): Promise<PatchTargetDoc | null> {
+      const [row] = await deps.db
+        .select({ id: docs.id, kind: docs.kind })
+        .from(docs)
+        .where(eq(docs.id, docId))
+        .limit(1);
+      return row ?? null;
+    },
+    async resolveRole(docId: string, userId: string): Promise<Role | null> {
+      const viewer: Viewer = { kind: "user", userId };
+      const { role } = await deps.resolveAccess(docId, viewer);
+      return role;
+    },
+    async getCurrentVersion(docId: string) {
+      const [row] = await deps.db
+        .select({ version: docVersions.version, content: docVersions.content })
+        .from(docVersions)
+        .where(eq(docVersions.docId, docId))
+        .orderBy(desc(docVersions.version))
+        .limit(1);
+      return row ?? null;
+    },
+    async appendVersion(input) {
+      const contentHash = sha256Hex(input.content);
+      try {
+        const { version, previousVersion } = await appendVersionTxPinned(
+          deps.db,
+          input.docId,
+          input.expectedVersion,
+          input.content,
+          contentHash,
+          input.publishedBy,
+          input.kind,
+        );
+        return { version, previousVersion };
+      } catch (e) {
+        // C-003: a stale pin surfaces to the agent as a version-conflict tool error (AS-009).
+        if (e instanceof VersionConflictError) throw new McpToolError(e.message);
+        throw e;
+      }
+    },
+    fireReanchor(input) {
+      if (!deps.reanchorOnNewVersion) return;
+      void Promise.resolve(deps.reanchorOnNewVersion(input)).catch(() => {});
+    },
+  };
+}
+
 function sha256Hex(text: string): string {
   const hasher = new Bun.CryptoHasher("sha256");
   hasher.update(new TextEncoder().encode(text));
@@ -131,6 +201,11 @@ export function createPublishToolsForDb(deps: {
   return publishTools({
     create: createMcpCreateDocumentPort(deps.db),
     update: createMcpUpdateDocumentPorts({
+      db: deps.db,
+      resolveAccess: deps.resolveAccess,
+      reanchorOnNewVersion: deps.reanchorOnNewVersion,
+    }),
+    patch: createMcpPatchDocumentPorts({
       db: deps.db,
       resolveAccess: deps.resolveAccess,
       reanchorOnNewVersion: deps.reanchorOnNewVersion,
