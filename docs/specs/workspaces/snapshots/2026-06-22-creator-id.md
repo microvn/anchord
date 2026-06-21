@@ -1,7 +1,14 @@
+# Snapshot: workspaces
+**Date:** 2026-06-22
+**Ref:** workspaces.creator_id + auto-default naming
+**Reason:** M6 + M4 — +creator_id (data model + migration); auto-default named "<creator>'s workspace"; bootstrap serves creator
+
+---
+
 # Spec: workspaces
 
 **Created:** 2026-06-09
-**Last updated:** 2026-06-22
+**Last updated:** 2026-06-21
 **Status:** Draft
 **Snapshot limit:** 8
 
@@ -17,12 +24,8 @@ per-doc sharing in `sharing-permissions`. The frontend is a sibling spec `worksp
 
 ## Data Model
 
-- **workspaces**: `id`, `name`, `slug` (unique), `creator_id` → user (the account that created
-  this workspace; `on delete set null` so the workspace survives the creator's deletion),
-  `created_at`. Many rows (was 1). No instance-level admin — each workspace has its own admin via
-  membership. `creator_id` is BOTH the "is this workspace mine" signal (creator_id === me) and a
-  durable record of who created it (tracking) — it replaces inferring "my own default" from
-  name+role, which mislabelled a default I was merely made admin of as also "mine".
+- **workspaces**: `id`, `name`, `slug` (unique), `created_at`. Many rows (was 1). No
+  instance-level admin — each workspace has its own admin via membership.
 - **workspace_members**: `workspace_id` → workspaces, `user_id` → user, `role`
   (**admin | member** — UNCHANGED from the existing enum; no migration), `created_at`. Unique
   on (workspace_id, user_id). A user holds rows in many workspaces with per-workspace roles.
@@ -36,34 +39,29 @@ per-doc sharing in `sharing-permissions`. The frontend is a sibling spec `worksp
 - **Migration note:** the single-row setup guard +
   `POST /api/setup` are removed (replaced by auto-create-on-signup, S-001). Existing built
   single-workspace code is reworked (see What Already Exists).
-- **Migration note (creator_id, 2026-06-22):** add `workspaces.creator_id`; backfill each existing
-  row to its earliest-joined admin member (the de-facto creator); rename existing auto-created
-  workspaces still literally named "default" to "<creator display name>'s workspace" so the
-  duplicate-"default" collision is cleared. Rows with no resolvable creator keep `creator_id` null.
 
 ## Stories
 
 ### S-001: A new account gets its own workspace (P0)
 
-**Description:** As a new user, when I sign up I get my own workspace named after me ("<my display
-name>'s workspace") with me as its admin and recorded as its creator, plus a default project — I do
-not join anyone else's workspace.
-**Source:** product owner model item 1 (each account auto-creates its own default workspace; no auto-join); 2026-06-22 — name it after the creator + record creator_id (fixes indistinguishable duplicate "default" workspaces).
+**Description:** As a new user, when I sign up I get my own workspace (named "default") with
+me as its admin and a default project — I do not join anyone else's workspace.
+**Source:** product owner model item 1 (each account auto-creates its own default workspace; no auto-join).
 
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
 - `files:` unknown (better-auth `onUserCreated` hook → create personal workspace + default project; remove `POST /api/setup`)
 - `autonomous:` checkpoint
-- `verify:` sign up a fresh user "Dung" → a workspace named "Dung's workspace" exists with them as admin, with creator recorded as them, + a default project; a second sign-up gets a separate workspace named after that user, not the first user's.
+- `verify:` sign up a fresh user → a workspace named "default" exists with them as admin + a default project; a second sign-up gets a separate workspace, not the first user's.
 
 **Acceptance Scenarios:**
 
-AS-001: Signing up creates the user's own workspace, named after them, recording them as creator
-- **Given:** a new person "Dung" with no account
+AS-001: Signing up creates the user's own workspace as admin
+- **Given:** a new person with no account
 - **When:** they sign up (and verify)
-- **Then:** a workspace named "Dung's workspace" is created with them as its admin AND recorded as its creator, plus a default project in it
-- **Data:** new user "Dung" → workspace "Dung's workspace"
+- **Then:** a workspace named "default" is created with them as its admin, plus a default project in it
+- **Data:** new user "Dung"
 
 AS-002: A new account does not auto-join an existing workspace as a member
 - **Given:** other workspaces already exist
@@ -86,10 +84,10 @@ workspace I own; a non-admin cannot rename.
 
 **Acceptance Scenarios:**
 
-AS-003: Creating a workspace makes me its admin and records me as creator
+AS-003: Creating a workspace makes me its admin
 - **Given:** I am signed in
 - **When:** I create a workspace named "Acme"
-- **Then:** the workspace exists with me as its admin, recorded as its creator, and appears in my list of workspaces
+- **Then:** the workspace exists with me as its admin and appears in my list of workspaces
 - **Data:** name "Acme"
 
 AS-004: A workspace admin renames the workspace
@@ -119,11 +117,11 @@ one, and I switch the active workspace; each workspace's data is isolated to its
 
 **Acceptance Scenarios:**
 
-AS-006: My workspace list shows every workspace I belong to with my role and who created each
-- **Given:** I created "Dung's workspace" and am also an admin of Lan's "Lan's workspace"
+AS-006: My workspace list shows every workspace I belong to with my role
+- **Given:** I own "default" and am a member of someone else's "default" (now "Acme")
 - **When:** the app loads my bootstrap
-- **Then:** both workspaces are listed, each with my role, its stored name, and its creator identity (so the consumer can tell the one I created — `creator === me` — from one I was merely added to, even when I am admin of both), and the active workspace is indicated
-- **Data:** creator of one, admin-but-not-creator of another
+- **Then:** both workspaces are listed, each with my role and the creating admin's display name (so two "default"s disambiguate, e.g. "My default" vs "Lan's default"), and the active workspace is indicated
+- **Data:** admin of one, member of another
 
 AS-007: Workspace data is scoped to the active workspace
 - **Given:** I belong to "default" and "Acme", each with its own projects/docs
@@ -302,9 +300,8 @@ AS-020: A workspace member reaches that workspace's anyone_in_workspace docs
 
 ## Constraints & Invariants
 
-- C-001: Each account auto-gets one workspace on sign-up, named "<the creator's display name>'s
-  workspace", recording that account as both its `creator` and its admin, plus a default project;
-  sign-up never joins an existing workspace. (AS-001, AS-002)
+- C-001: Each account auto-gets one workspace named "default" (the creator = admin) + a default
+  project on sign-up; sign-up never joins an existing workspace. (AS-001, AS-002)
 - C-002: A caller accesses a workspace's data ONLY as a member of that workspace; every
   **workspace-management** data API (members, projects, search, invites) is scoped to a
   workspace the caller belongs to (cross-tenant isolation), and `isWorkspaceMember`/access
@@ -394,12 +391,10 @@ invite + accept/reject landing). This backend spec names no components; see `wor
   `workspace_members` tables (already multi-ready) and builds invite/switch/role ourselves — NOT
   better-auth's organization plugin (which would force migrating off the built, tested tables).
   (Decided 2026-06-09.) Source: researched org-plugin-vs-custom decision.
-- GAP-002 (status: resolved → C-001 + AS-006; SUPERSEDED 2026-06-22): originally the auto-workspace
-  stored name stayed "default" and the switcher disambiguated by qualifying with the creating admin's
-  display name ("My default" / "Lan's default"). Superseded: the auto-workspace is now NAMED after the
-  creator ("<name>'s workspace", C-001) and carries `creator_id`; the bootstrap (AS-006) serves the
-  creator identity so the consumer marks "mine" by `creator === me`, not by name+role (which
-  mislabelled two "default"s as both "My Default"). Source: model item 1 + 2026-06-22 fix.
+- GAP-002 (status: resolved → AS-006 + workspaces-ui): the stored auto-workspace name stays
+  "default"; the switcher disambiguates by qualifying it with the creating admin's display name
+  ("My default" / "Lan's default") — the bootstrap (AS-006) serves the admin display name per
+  workspace; the rendering is `workspaces-ui`'s. (Decided 2026-06-09.) Source: model item 1.
 - GAP-003 (status: resolved → AS-021): the per-workspace member-list read is now S-005 AS-021
   (the admin's members surface: active members + pending invites). (Decided 2026-06-09.)
 - GAP-004 (status: resolved → sharing-permissions): the unified most-permissive
@@ -431,10 +426,8 @@ over-target AS, AS-021 (the admin's member-list read), also stands. No bloat —
   workspace it creates, as admin; it never adds the user to an existing workspace as a member.
 - **Tenancy = custom tables, not the better-auth org plugin** (GAP-001): keep the built, multi-ready
   `workspaces`/`workspace_members`; build invite/switch/role ourselves.
-- **Auto-workspace named after its creator + creator_id** (GAP-002, revised 2026-06-22): the
-  auto-created workspace is named "<creator's display name>'s workspace" and stores `creator_id`;
-  "mine" is `creator === me`. (Supersedes the earlier "stored name stays 'default', qualified by
-  admin display name" — that produced indistinguishable duplicate "My Default" labels.)
+- **"default" name disambiguated by admin** (GAP-002): stored name stays "default"; the switcher
+  shows it qualified with the creating admin's display name.
 - **`resolveDocPermission` owned by sharing-permissions** (GAP-004): most-permissive across
   workspace-role + per-doc ACL; this spec supplies workspace membership/role.
 - **Signup is open**: each new user gets their own isolated workspace and reaches others only by
@@ -462,4 +455,3 @@ over-target AS, AS-021 (the admin's member-list read), also stands. No bloat —
 | 2026-06-14 | Major (M6): amend C-002/C-005 — carve doc-centric read+write out of path-tenancy (doc-addressed, gated by resolveAccess); System Impact note on S-006 superseded for those resources. Snapshot 2026-06-14.md | doc-access-routing GAP-002 |
 | 2026-06-21 | Major (M1+M6) — unified invite flow: S-004 + AS-022 (public validate → workspace + invited email + accountExists), AS-023 (expired/used/tampered → uniform not-found), AS-024 (accept-as-new-user → verified account + session + join, no mail step), AS-025 (create path refused when account exists); C-004 amended for the token-authorized + new-user auto-verify carve-out (invite-accept path only); S-004 → checkpoint; +Spec Sizing Notes (25 AS). Snapshot 2026-06-21-invite-validate-newuser.md; rotated out 2026-06-10.md. | unified invite design |
 | 2026-06-21 | Major (M1) — added AS-026 (admin revokes a pending invite → status revoked, admin-authorized, workspace-scoped, pending-only); `revoked` added to the AS-023 not-found set; C-003 coverage +AS-026. Producer for the existing FE workspaces-ui:AS-017 (revoke had no backend AS — built + specced from the 404 fix). Snapshot 2026-06-21-2.md. | /mf-fix revoke 404 |
-| 2026-06-22 | Major (M6+M4) — +`workspaces.creator_id` (data model + migration: add col, backfill earliest-admin, rename literal "default" autos to "<creator>'s workspace"); C-001 + S-001/AS-001 auto-create named "<creator>'s workspace" recording creator; AS-003 manual create records creator; AS-006 bootstrap serves creator identity (mark "mine" by creator===me, not name+role). Supersedes GAP-002's admin-qualified-"default" disambiguation. Snapshot 2026-06-22-creator-id.md. | two "My Default" bug |

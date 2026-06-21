@@ -1,7 +1,14 @@
+# Snapshot: workspaces-ui
+**Date:** 2026-06-22
+**Ref:** drop "My Default" label → stored name + creator-mark
+**Reason:** M4/M5 — AS-001 switcher label rule reworked: show stored name; "mine" from creator_id (not name+role)
+
+---
+
 # Spec: workspaces-ui
 
 **Created:** 2026-06-09
-**Last updated:** 2026-06-22
+**Last updated:** 2026-06-21
 **Status:** Draft
 **Snapshot limit:** 6
 
@@ -28,7 +35,7 @@ Query keys scoped by `workspaceId`.
 ### S-001: Switch the active workspace (P0)
 
 **Description:** As a user in several workspaces, I see them in a switcher (each shown by its
-stored name; the one I created is marked as mine via `creator === me`) and switch the active one,
+title-cased name; my own auto-created default reads "My Default") and switch the active one,
 which re-scopes the whole app.
 **Source:** workspaces:S-003 (AS-006 bootstrap list + role + active); researched path-scoping + query-key-by-workspace.
 
@@ -41,11 +48,11 @@ which re-scopes the whole app.
 
 **Acceptance Scenarios:**
 
-AS-001: The switcher lists my workspaces by stored name, marking the one I created
-- **Given:** I created "Dung's workspace", am an admin of Lan's "Lan's workspace", and also own a workspace I named "Hoang Nguyen"
+AS-001: The switcher lists my workspaces with the active one marked
+- **Given:** I own the auto-created "default" workspace and am a member of Lan's "default", and I also own a workspace named "hoang nguyen"
 - **When:** the app loads
-- **Then:** the switcher lists each workspace by its stored name as-is — NO "My Default" prefix hack and no admin-qualification; the workspace I created is marked as mine (derived from `creator === me` in the bootstrap, workspaces:AS-006), visibly distinct from one I'm only an admin/member of; the active workspace is marked
-- **Data:** created-by-me "Dung's workspace" → marked mine; admin-but-not-creator "Lan's workspace" → not marked mine; active → checkmark
+- **Then:** the switcher lists them, each labelled with its title-cased name ("default" → "Default", "hoang nguyen" → "Hoang Nguyen"); the ONE exception is my own auto-created default workspace, which reads "My Default" to mark it as my home — no other workspace is admin-qualified (the workspace I'm only a member of shows plain "Default"); the active workspace is marked
+- **Data:** owner-default → "My Default"; member-default → "Default"; owner "hoang nguyen" → "Hoang Nguyen"
 
 AS-002: Selecting a workspace switches the active scope
 - **Given:** I am viewing workspace "default"
@@ -214,10 +221,9 @@ AS-024: An invited email with no account creates the account inline and joins
 
 ## Constraints & Invariants
 
-- C-001: The switcher shows ONLY workspaces I belong to, each by its stored name, with the workspace
-  I created marked as mine (`creator === me`, never inferred from name+role); switching re-scopes the
-  whole app to the chosen workspace (the active workspace is the URL path, and data queries are keyed
-  by workspace so switching never shows another workspace's cached data). (AS-001, AS-002, AS-003)
+- C-001: The switcher shows ONLY workspaces I belong to, each labelled with its admin; switching
+  re-scopes the whole app to the chosen workspace (the active workspace is the URL path, and data
+  queries are keyed by workspace so switching never shows another workspace's cached data). (AS-001, AS-002, AS-003)
 - C-002: Member-management controls (invite / remove / change-role / rename) are shown only to a
   workspace admin; a non-admin sees a read-only view (or no manage affordance). (AS-006, AS-011)
 - C-003: Every workspace screen uses the DESIGN.md dark-operator system (teal-only accent) and is
@@ -234,10 +240,9 @@ AS-024: An invited email with no account creates the account inline and joins
 
 workspaces-ui is the **consumer**; `workspaces` (backend) is the producer.
 
-- `workspaces[]` `{id, name, role, creator}` + `activeWorkspaceId` — consumed by S-001 switcher
-  on the bootstrap (read on app load); `creator` drives the "mine" mark (`creator === me`). Produced
-  by `workspaces:S-003` (AS-006) on the bootstrap surface (persisted + served every load). ✔ surface
-  + lifecycle match. Seam: S-001's switcher renders against the real bootstrap (S-003 verify).
+- `workspaces[]` `{id, name, role, adminName}` + `activeWorkspaceId` — consumed by S-001 switcher
+  on the bootstrap (read on app load). Produced by `workspaces:S-003` (AS-006) on the bootstrap
+  surface (persisted + served every load). ✔.
 - create / rename — consumed by S-002; produced by `workspaces:S-002` (AS-003, AS-004). ✔.
 - `members[]` `{userId, email, role, status}` + invite / remove / change-role / revoke-invite —
   consumed by S-003 (AS-008 invite, AS-009 remove, AS-010 change-role, AS-017 revoke pending invite);
@@ -259,7 +264,7 @@ New surfaces (no prior explore sketch — workspace UI didn't exist under single
 `[N]`. DESIGN.md dark-operator; the switcher is low-contrast chrome (recedes). Mounts in the
 web-core `AppShell`. Precedence: AS / Constraints > Tree.
 
-- `WorkspaceSwitcher` `[N]` *(in the AppTopBar workspace-name slot)* → `WorkspaceMenuItem` *(stored name + "mine" mark when creator===me + active mark)* · `+ New workspace` → `CreateWorkspaceDialog`
+- `WorkspaceSwitcher` `[N]` *(in the AppTopBar workspace-name slot)* → `WorkspaceMenuItem` *(admin-qualified label + active mark)* · `+ New workspace` → `CreateWorkspaceDialog`
 - `CreateWorkspaceDialog` `[N]`: name field · create
 - `WorkspaceSettings` `[N]` *(admin-gated, C-002)*: `RenameField` · `MembersScreen`
   - `MembersScreen` `[N]`: `MemberList` → `MemberRow` *(avatar · name/email · `RoleDropdown` · remove · `PendingTag` for pending invites)* · `InviteRow` *(emailField · `RoleSelect` · invite — inline validation AS-012)* — *mobile: full-width; tap ≥40px*
@@ -309,4 +314,3 @@ web-core `AppShell`. Precedence: AS / Constraints > Tree.
 | 2026-06-21 | Major (M1+M5) — S-004 wrong-account invite is no longer a dead-end: AS-015 Then reworked (names both addresses; offers switch-account + back-to-workspaces); added AS-022 (switch-account → sign out + return to the invite via sign-in, web-core:AS-004). S-004 verify covers the signed-out→return path. Snapshot 2026-06-21-invite-switch-account.md. | /mf-fix Bug C |
 | 2026-06-21 | Major (M1+M6) — unified invite flow: S-004 landing made PUBLIC + state-branched; added AS-023 (existing account, signed out → sign-in-to-accept) + AS-024 (no account → create-account-and-join inline, no verify step); +C-005 (public token-addressed landing, branch by session+accountExists); S-004 → checkpoint; Linked Fields + UI Notes updated (`accountExists` validate + accept-as-new-user, both pinned w/ seam). Snapshot 2026-06-21-invite-states-3-4.md. | unified invite design |
 | 2026-06-21 | Minor — Linked Fields: pinned revoke-pending-invite (S-003 AS-017 consumer) to its now-built producer `workspaces:S-004 AS-026`; noted revoke targets the invitations surface, not member-remove (the 404 fix). | /mf-fix revoke 404 |
-| 2026-06-22 | Major (M4/M5) — AS-001 reworked: switcher shows each workspace by stored name, marks the one I created via `creator === me` (workspaces:AS-006), dropping the "My Default" prefix hack that mislabelled two "default"s as both "My Default"; C-001 reworded; Linked Field `adminName`→`creator`; UI Notes WorkspaceMenuItem = stored-name + mine-mark. Snapshot 2026-06-22-creator-id-ui.md. | two "My Default" bug |
