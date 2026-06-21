@@ -50,7 +50,11 @@ import { createShareRepo, rotateCapabilityToken } from "../sharing/share-repo";
 import { inviteByEmail, type DocMemberRepo, type EnqueuedInvite, type InviteDeps } from "../sharing/invite";
 import { createDocMemberRepo, findUserByEmail, createEnqueueInvite } from "../sharing/doc-member-repo";
 import { setPassword } from "../sharing/link-controls";
-import { setLinkControls } from "../sharing/link-controls-repo";
+import {
+  setLinkControls,
+  type LinkControlsUpdate,
+  type PersistedLinkControls,
+} from "../sharing/link-controls-repo";
 import { readShareState, type ShareStateRepo } from "../sharing/share-state";
 import { createShareStateRepo } from "../sharing/share-state-repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
@@ -84,11 +88,17 @@ const memberRoleBodySchema = z.object({
   role: z.enum(["viewer", "commenter", "editor"]),
 });
 
-const linkBodySchema = z.object({
-  password: z.string().optional(),
-  // ISO datetime string → Date; an invalid string is a 400 from Zod.
-  expiresAt: z.coerce.date().optional(),
-  viewLimit: z.number().int().positive().optional(),
+// S-004 (AS-009/010/011 set; clear via null — see C-001 "each control independently
+// clearable"). Each control is `.nullable().optional()`: omitted leaves it unchanged at
+// the call site (the handler only writes what the body carries), `null` CLEARS it. The FE
+// sends `null` to clear (apps/web/.../sharing/services/client.ts). `.nullable()` short-
+// circuits BEFORE coercion, so `expiresAt: null` stays null and is NEVER coerced to
+// `new Date(null)` (epoch-0, 1970-01-01) — a clear must not silently expire the link.
+export const linkBodySchema = z.object({
+  password: z.string().nullable().optional(),
+  // ISO datetime string → Date; an invalid string is a 400 from Zod. null clears (stays null).
+  expiresAt: z.coerce.date().nullable().optional(),
+  viewLimit: z.number().int().positive().nullable().optional(),
 });
 
 export interface SharingRoutesDeps {
@@ -133,6 +143,12 @@ export interface SharingRoutesDeps {
    * fake.
    */
   loadShareConfig?: (docId: string) => Promise<{ editorsCanShare: boolean }>;
+  /**
+   * S-004 link-controls persister. Optional: defaults to the real Drizzle `setLinkControls`
+   * over `db`. Tests inject a fake to assert the route maps cleared controls (null) through
+   * the handler without a real Postgres.
+   */
+  setLinkControls?: (docId: string, update: LinkControlsUpdate) => Promise<PersistedLinkControls>;
   /** Access deps for `canViewDoc` (existence-hiding). */
   accessDeps: AccessDeps;
   /** Mail wiring for the real enqueueInvite (prod). Omitted in tests (enqueueInvite injected). */
@@ -337,10 +353,13 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
               body.password != null && body.password.length > 0
                 ? await setPassword(body.password)
                 : null;
-            if (!deps.db) {
-              throw new Error("sharingRoutes link route requires `db` to persist controls");
-            }
-            const persisted = await setLinkControls(deps.db, doc.id, {
+            const persist =
+              deps.setLinkControls ??
+              (deps.db
+                ? (docId: string, update: LinkControlsUpdate) =>
+                    setLinkControls(deps.db!, docId, update)
+                : need("setLinkControls"));
+            const persisted = await persist(doc.id, {
               passwordHash,
               expiresAt: body.expiresAt ?? null,
               viewLimit: body.viewLimit ?? null,

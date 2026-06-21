@@ -28,6 +28,11 @@ import type { ShareRepo, ResolvedShareSetting } from "../../src/sharing/share";
 import { createFakeDocMemberStore } from "../../src/sharing/invite";
 import type { EnqueuedInvite } from "../../src/sharing/invite";
 import type { ShareStateRepo, ShareStateRow } from "../../src/sharing/share-state";
+import { linkBodySchema } from "../../src/routes/sharing";
+import type {
+  LinkControlsUpdate,
+  PersistedLinkControls,
+} from "../../src/sharing/link-controls-repo";
 
 const member: SessionResolver = async () => ({ userId: "u_owner" });
 const noSession: SessionResolver = async () => null;
@@ -119,6 +124,7 @@ function buildApp(opts: {
   enqueueInvite?: (msg: EnqueuedInvite) => void;
   members?: ReturnType<typeof createFakeDocMemberStore>;
   shareStateRepo?: ShareStateRepo;
+  setLinkControls?: (docId: string, update: LinkControlsUpdate) => Promise<PersistedLinkControls>;
 }) {
   return createApp({
     dbCheck: async () => {},
@@ -134,9 +140,33 @@ function buildApp(opts: {
       resolveDocRole: opts.resolveDocRole ?? asOwner,
       // Default toggle ON (the Google-Docs default) unless a test overrides it.
       loadShareConfig: opts.loadShareConfig ?? shareToggleOn,
+      setLinkControls: opts.setLinkControls,
       accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
     },
   });
+}
+
+/**
+ * In-memory link-controls persister mirroring the real Drizzle setLinkControls contract:
+ * stores exactly what the handler writes (passwordHash/expiresAt/viewLimit) and echoes it
+ * back, so a route test can assert the handler maps a CLEAR (null) all the way through
+ * without a real Postgres. Records the last update the handler asked for.
+ */
+function fakeLinkControls() {
+  const calls: LinkControlsUpdate[] = [];
+  const persist = async (
+    _docId: string,
+    update: LinkControlsUpdate,
+  ): Promise<PersistedLinkControls> => {
+    calls.push(update);
+    return {
+      passwordSet: update.passwordHash != null,
+      expiresAt: update.expiresAt,
+      viewLimit: update.viewLimit,
+      viewCount: 0,
+    };
+  };
+  return { persist, calls };
 }
 
 describe("PUT /api/docs/:slug/access (S-001)", () => {
@@ -449,6 +479,84 @@ describe("PUT /api/docs/:slug/link (S-004) — gate behaviour (no DB)", () => {
       req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 0 }) }),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+// S-004 (AS-009/010/011 + C-001 "each control independently clearable"). The FE sends
+// `null` to CLEAR a control. The schema must (a) ACCEPT null (not 400) and (b) pass
+// `expiresAt: null` through as null, NOT coerce it to new Date(null) = epoch-0
+// (1970-01-01), which would silently make "clear the expiry" mean "born expired".
+// Spec note (S1): the spec has no explicit "clear a link control" AS — tagged to the
+// S-004 controls (AS-009/010/011) + C-001 independence. The two defects below are
+// distinct: null→400 (password/viewLimit) and null→epoch (expiresAt coercion).
+describe("PUT /api/docs/:slug/link (S-004) — clear controls with null (AS-009/010/011, C-001)", () => {
+  describe("schema (linkBodySchema) — root cause", () => {
+    test("DEFECT-1: password:null & viewLimit:null must PARSE (not be rejected)", () => {
+      // RED before the fix: z.string().optional() / z.number().optional() reject null →
+      // .safeParse({ password: null, viewLimit: null }).success === false (→ route 400).
+      const parsed = linkBodySchema.safeParse({ password: null, viewLimit: null });
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.password).toBeNull();
+      expect(parsed.success && parsed.data.viewLimit).toBeNull();
+    });
+
+    test("DEFECT-2: expiresAt:null parses to null, NOT new Date(null) (epoch-0)", () => {
+      // RED before the fix: z.coerce.date() coerces null → new Date(null) = 1970-01-01
+      // (epoch-0), so a "clear" silently becomes an already-expired link.
+      const parsed = linkBodySchema.safeParse({ expiresAt: null });
+      expect(parsed.success).toBe(true);
+      const v = parsed.success ? parsed.data.expiresAt : undefined;
+      expect(v).toBeNull(); // NOT a Date
+      expect(v instanceof Date).toBe(false); // explicitly not new Date(null)
+    });
+  });
+
+  test("AS-009/010/011 (clear): PUT { password:null, expiresAt:null, viewLimit:null } → 200 + all cleared (no epoch)", async () => {
+    // RED before the fix: the schema rejects null → 400 VALIDATION_ERROR; the control can
+    // never be cleared. After: 200, and the handler maps each null straight through.
+    const link = fakeLinkControls();
+    const app = buildApp({ setLinkControls: link.persist });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/link", {
+        method: "PUT",
+        body: JSON.stringify({ password: null, expiresAt: null, viewLimit: null }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    // The persisted/echoed state is CLEARED — password not set, no expiry, no limit.
+    expect(json.data.passwordSet).toBe(false);
+    expect(json.data.expiresAt).toBeNull(); // NOT "1970-01-01T00:00:00.000Z"
+    expect(json.data.viewLimit).toBeNull();
+    // And the handler asked the persister to write nulls (never an epoch Date).
+    expect(link.calls).toHaveLength(1);
+    expect(link.calls[0]?.passwordHash).toBeNull();
+    expect(link.calls[0]?.expiresAt).toBeNull();
+    expect(link.calls[0]?.expiresAt instanceof Date).toBe(false);
+    expect(link.calls[0]?.viewLimit).toBeNull();
+  });
+
+  test("AS-009/010/011 (set — regression): a real password + future expiry + viewLimit still persists", async () => {
+    const link = fakeLinkControls();
+    const app = buildApp({ setLinkControls: link.persist });
+    const future = "2030-01-01T00:00:00.000Z";
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/link", {
+        method: "PUT",
+        body: JSON.stringify({ password: "s3cret", expiresAt: future, viewLimit: 25 }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.passwordSet).toBe(true);
+    expect(new Date(json.data.expiresAt).toISOString()).toBe(future);
+    expect(json.data.viewLimit).toBe(25);
+    // The handler hashed the password (argon2, not plaintext) and passed the real date through.
+    expect(link.calls[0]?.passwordHash).toBeTruthy();
+    expect(link.calls[0]?.passwordHash).not.toBe("s3cret");
+    expect(link.calls[0]?.expiresAt instanceof Date).toBe(true);
+    expect(link.calls[0]?.expiresAt?.toISOString()).toBe(future);
+    expect(link.calls[0]?.viewLimit).toBe(25);
   });
 });
 
