@@ -77,8 +77,11 @@ and carries a thread of **Comments**.
 - **Anchor type 2 — image region**: point/box in normalized coordinates.
 - **Roles** (per-doc, Google-Docs style): viewer / commenter / editor / owner.
 - **General access**: restricted / anyone-with-link / anyone-in-workspace. Guest
-  commenting (name + optional email, no account) is a sub-toggle of
-  anyone-with-link.
+  commenting has NO separate toggle (Google-Docs model, REVERSED 2026-06-20): an
+  anyone-with-link doc whose link role is commenter+ lets anyone with the link —
+  including no-account guests (name + optional email) — comment; the link role IS the
+  grant. (The old "guest commenting is a sub-toggle of anyone-with-link" is retired —
+  it was redundant with role and broke the common case by default. Do not relitigate.)
 - Auth (how you log in) is separate from roles/share (what you can do after).
   v0 auth: email+password, magic link, GitHub OAuth. OIDC/SAML SSO is the
   self-host advantage but lands v0.5+ — verify library support before committing.

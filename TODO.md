@@ -127,3 +127,35 @@ bridge is more secure than theirs — keep it. Adopt only the targeting/UX techn
 
 When picked up: `/mf-plan docs/specs/annotation-core/annotation-core-ui-suggest-image.md` to add
 pinpoint mode + Markup, fold in Redline=Suggest, drop Label; then `/mf-build`.
+
+---
+
+## Sidebar "Recent" should be per-user interaction recency, not workspace updated_at
+
+**Status:** deferred — needs spec first (`/mf-plan workspace-project` or a new recency spec).
+**Source:** session 2026-06-21 (sidebar `docs?page=1&limit=18` review — "recent phải dựa vào việc
+tương tác với doc chứ không phải get danh sách docs").
+
+The sidebar's **Recent** group is currently wrong-semantics: it's `useWorkspaceDocs` page 1 sorted
+by `docs.updated_at` desc = "docs most recently **edited** anywhere in the workspace" (by anyone,
+incl. an agent via MCP) — NOT "docs **I** recently opened/worked on". A real "Recent" is per-user
+interaction history, which the data model does not track today.
+
+Three directions (decide at pickup):
+
+- **A — true per-user Recent (the real fix):** track when each user last opens/views a doc
+  (`doc_views` / `last_viewed_at` per (user, doc)), write it on doc open, and the sidebar reads
+  "my most-recently-viewed docs". New data model + write-on-open + a per-user read endpoint. A real
+  feature → `/mf-plan`.
+- **B — relabel "Recently updated" (cheap-honest stopgap):** keep the current `updated_at`-desc list
+  but rename the group to "Recently updated" so the label matches what it shows. Zero new infra.
+  Ship this now if A is deferred, so the UI isn't lying. Defer A.
+- **C — Recent = my annotation activity:** docs where I recently created/edited an annotation
+  (reuse `annotations.author_id` + `updated_at` — per-user, no new view-tracking). Middle ground;
+  captures "worked on" but not "just viewed".
+
+Note: the sidebar's `docs?limit=18` read itself is fine (1 request, shares the cache key with the
+all-docs grid); only the **ordering/semantics** of what it labels "Recent" is the issue.
+
+When picked up: pick A / B / C, then `/mf-plan` (A or C = behavior + likely data-model change → new
+story/AS; B = relabel, a Minor UI-copy change). Recommended interim: ship B now, build A later.
