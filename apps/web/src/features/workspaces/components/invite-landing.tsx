@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { signOut, useSession } from "@/lib/api/auth-client";
+import { signOut, getSession } from "@/lib/api/auth-client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Brandmark } from "@/components/icon";
@@ -30,8 +30,6 @@ export function WorkspaceInviteLanding() {
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";
   const invitedEmail = params.get("email");
-  const { data: session } = useSession();
-  const sessionEmail = session?.user?.email ?? null;
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -40,9 +38,31 @@ export function WorkspaceInviteLanding() {
   const [rejected, setRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Decide the wrong-account branch from a FRESHLY fetched session, not the reactive useSession
+  // atom: that atom is per-tab and in-memory, so it goes stale when the account is switched in
+  // another tab (or via this page's own switch-account redirect). A stale tab would then wrongly
+  // show "this invite isn't for you" for the very account you just signed in as. getSession()
+  // reads the current cookie on mount. `undefined` = still checking (avoid a wrong-account flash).
+  const [sessionEmail, setSessionEmail] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    getSession()
+      .then((res) => {
+        if (!cancelled) setSessionEmail(res?.data?.user?.email ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setSessionEmail(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const checkingSession = sessionEmail === undefined;
+
   // AS-015: the signed-in account differs from the invited email → this invite is not for me.
   // No accept affordance is offered; I cannot join (case-insensitive compare).
   const wrongAccount =
+    !checkingSession &&
     !!invitedEmail &&
     !!sessionEmail &&
     invitedEmail.trim().toLowerCase() !== sessionEmail.trim().toLowerCase();
@@ -97,6 +117,16 @@ export function WorkspaceInviteLanding() {
       /* best-effort: even if the sign-out call fails, take them to sign in */
     }
     navigate(`/signin?redirect=${encodeURIComponent(inviteHref)}`);
+  }
+
+  if (checkingSession) {
+    return (
+      <AuthCenter>
+        <p data-testid="invite-checking" className="text-sm text-muted">
+          Loading…
+        </p>
+      </AuthCenter>
+    );
   }
 
   if (rejected) {

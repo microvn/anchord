@@ -13,8 +13,12 @@ let session: unknown = null;
 // useSession, or their imports crash with "Export named '…' not found". See [[bun-mockmodule-leak]].
 mock.module("@/lib/api/auth-client", () => ({
   useSession: () => ({ data: session, isPending: false }),
+  getSession: mock(async () => ({ data: session, error: null })),
   signOut: mock(async () => ({})),
   signIn: { email: mock(async () => ({})) },
+  signUp: { email: mock(async () => ({ data: {}, error: null })) },
+  sendVerificationEmail: mock(async () => ({ data: { status: true }, error: null })),
+  verifyEmail: mock(async () => ({ data: { status: true }, error: null })),
   authClient: {},
 }));
 

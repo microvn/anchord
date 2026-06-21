@@ -31,13 +31,23 @@ mock.module("@/features/workspaces/services/client", () => ({
   changeMemberRole: mock(async () => env({})),
 }));
 
-// Auth session — the signed-in email drives the AS-015 wrong-account check.
+// Auth session. `sessionEmail` is the (possibly STALE) reactive useSession atom; `freshSessionEmail`
+// is what getSession() reads from the current cookie on mount. The landing must decide off the FRESH
+// one. Default freshSessionEmail=null → getSession falls back to sessionEmail so legacy cases are unchanged.
 let sessionEmail = "bob@acme.com";
+let freshSessionEmail: string | null = null;
 const signOut = mock(async () => ({}));
 mock.module("@/lib/api/auth-client", () => ({
   useSession: () => ({ data: { user: { email: sessionEmail } }, isPending: false }),
+  getSession: mock(async () => {
+    const email = freshSessionEmail ?? sessionEmail;
+    return { data: email ? { user: { email } } : null, error: null };
+  }),
   signOut,
   signIn: { email: mock(async () => ({})) },
+  signUp: { email: mock(async () => ({ data: {}, error: null })) },
+  sendVerificationEmail: mock(async () => ({ data: { status: true }, error: null })),
+  verifyEmail: mock(async () => ({ data: { status: true }, error: null })),
   authClient: {},
 }));
 
@@ -80,6 +90,7 @@ beforeEach(() => {
   setActiveWorkspace.mockClear();
   signOut.mockClear();
   sessionEmail = "bob@acme.com";
+  freshSessionEmail = null;
 });
 
 const LINK = "/invite/workspace/inv-1?token=tok123&email=bob@acme.com";
@@ -104,6 +115,17 @@ describe("workspaces-ui S-004 — invite accept/reject landing", () => {
     await waitFor(() => expect(screen.getByTestId("invite-rejected")).toBeInTheDocument());
     expect(setActiveWorkspace).not.toHaveBeenCalled();
     expect(screen.queryByTestId("landed")).not.toBeInTheDocument();
+  });
+
+  it("Bug: a STALE reactive session is ignored — the wrong-account decision uses the freshly-fetched session", async () => {
+    // The tab's useSession atom is stale (left over as demo@ from before an account switch),
+    // but the current cookie (getSession) is the INVITED account. Must NOT show wrong-account.
+    sessionEmail = "demo@anchord.test"; // stale atom
+    freshSessionEmail = "bob@acme.com"; // current cookie = the invited address (LINK)
+    render(<App link={LINK} />);
+
+    expect(await screen.findByTestId("invite-accept")).toBeInTheDocument();
+    expect(screen.queryByTestId("invite-wrong-account")).not.toBeInTheDocument();
   });
 
   it("AS-015: an invite for a different account is refused (\"this invite isn't for you\")", async () => {
