@@ -16,8 +16,14 @@ import * as sharingClient from "@/features/sharing/services/client";
 
 const getShareState = mock(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
 // capability-share-link AS-027/AS-028: the in-session access write echoes the fresh capabilityUrl.
+// The mock returns the RAW api-core ENVELOPE ({success,data,…}) exactly as Eden delivers it — the
+// hook must `unwrapEnvelope` to reach capabilityUrl. A flat mock here hid the real bug (res.data was
+// the envelope, so res.data.capabilityUrl was undefined and the link never surfaced in-session).
 const setAccess = mock(async () => ({
-  data: { level: "anyone_with_link", role: "commenter", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
+  data: {
+    success: true,
+    data: { level: "anyone_with_link", role: "commenter", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
+  },
   error: null,
 }));
 

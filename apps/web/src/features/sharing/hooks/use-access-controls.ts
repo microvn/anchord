@@ -2,11 +2,13 @@ import { useState } from "react";
 import { toast } from "sonner";
 import {
   setAccess,
+  type AccessResult,
   type GeneralAccessLevel,
   type ShareRole,
   type ShareState,
 } from "@/features/sharing/services/client";
 import type { EffectiveRole } from "@/features/viewer/services/client";
+import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 
 // useAccessControls (sharing-permissions-ui S-002) — the shared access state + mutation engine for
 // the ShareDialog. Lifted out of AccessSection so the controls can live in DIFFERENT tabs (the
@@ -83,12 +85,17 @@ export function useAccessControls(
     setEditorsCanShare(next.editorsCanShare);
     setSaving(true);
     try {
-      const res = await setAccess(workspaceId, slug, {
-        level: next.level,
-        role: next.role,
-        // editors_can_share is owner-only — never send it for a non-owner (C-003).
-        ...(isOwner ? { editorsCanShare: next.editorsCanShare } : {}),
-      });
+      // The thunk returns the RAW Eden envelope; unwrap so `res.data` is the payload (not the
+      // `{success,data,…}` wrapper) — otherwise `res.data.capabilityUrl` is undefined and the
+      // in-session link never appears (AS-027). Same convention as the other sharing call sites.
+      const res = unwrapEnvelope<AccessResult>(
+        await setAccess(workspaceId, slug, {
+          level: next.level,
+          role: next.role,
+          // editors_can_share is owner-only — never send it for a non-owner (C-003).
+          ...(isOwner ? { editorsCanShare: next.editorsCanShare } : {}),
+        }),
+      );
       if (res.error || !res.data) {
         rollback(prev);
       } else {
