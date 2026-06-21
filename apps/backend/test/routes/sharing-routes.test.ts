@@ -93,6 +93,9 @@ const SHARE_STATE_ROW: ShareStateRow = {
     viewLimit: 50,
     viewCount: 7,
   },
+  // capability-share-link S-005: an anyone_with_link doc carries a capability token → the read
+  // surfaces it as the external /s/<token> link (AS-012).
+  capabilityToken: "Hk3vQ2pLm8rT5wXyZ0aBcD",
 };
 
 function fakeShareStateRepo(row: ShareStateRow = SHARE_STATE_ROW): ShareStateRepo {
@@ -482,6 +485,9 @@ describe("GET /api/w/:workspaceId/docs/:slug/share (S-006 — read share state)"
     expect(d.link.viewLimit).toBe(50);
     expect(d.link.viewCount).toBe(7);
     expect(d.link.url).toBe("/d/doc-one"); // shareable viewer path
+    // capability-share-link S-005 / AS-012: anyone_with_link → the external /s/<token> capability
+    // link, distinct from the in-app /d/<slug> address above.
+    expect(d.capabilityUrl).toBe("/s/Hk3vQ2pLm8rT5wXyZ0aBcD");
   });
 
   test("AS-026: the stored password is NEVER returned — only a hasPassword boolean, no hash", async () => {

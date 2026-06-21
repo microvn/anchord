@@ -31,6 +31,7 @@ import { AccessSection } from "./access-section";
 import { InviteRow } from "./invite-row";
 import { PeopleList } from "./people-list";
 import { LinkControls } from "./link-controls";
+import { CapabilityLinkRow } from "./capability-link-row";
 import { OptionsPanel } from "./options-panel";
 import { ShareLoadingSkeleton } from "./share-loading-skeleton";
 import { TabBar } from "@/components/ui/tabs";
@@ -307,8 +308,17 @@ function ShareSections({
                 tab) makes copying the link + setting password/expiry/view-limit zero extra clicks
                 for the public-share flow, the primary action once Anyone-with-link is on. */}
             {controls.isLink ? (
-              <section data-testid="share-sec-link-protection" className="flex flex-col gap-2">
-                <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">· Link</span>
+              <section data-testid="share-sec-link-protection" className="flex flex-col gap-3">
+                {/* S-005 (capability-share-link AS-012): the EXTERNAL capability link `/s/<token>` —
+                    the unguessable address an anonymous visitor opens. Surfaced ONLY when the read
+                    carried a capabilityUrl (anyone_with_link); for restricted / anyone_in_workspace
+                    the backend sends null → no capability row (AS-013). It sits ABOVE the in-app
+                    address + protection chips, with accent treatment, so the owner copies the right
+                    one (distinct from the in-app readable /d/<slug> address below). */}
+                {state.capabilityUrl ? (
+                  <CapabilityLinkRow capabilityUrl={state.capabilityUrl} />
+                ) : null}
+                <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">· Link · protection</span>
                 <LinkControls workspaceId={workspaceId} slug={slug} link={state.link} />
               </section>
             ) : null}

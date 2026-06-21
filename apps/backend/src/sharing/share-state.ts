@@ -47,6 +47,13 @@ export interface ShareState {
   people: SharePerson[];
   link: ShareLinkState;
   /**
+   * The EXTERNAL capability link (`/s/<token>`) — the unguessable, title-free address an anonymous
+   * visitor uses to reach the doc (capability-share-link S-005 / AS-012). Present ONLY when the doc
+   * is `anyone_with_link` (the only level that has a capability token); `null` for restricted /
+   * anyone_in_workspace (AS-013). Distinct from `link.url`, the in-app readable `/d/<slug>` address.
+   */
+  capabilityUrl: string | null;
+  /**
    * The CALLER's own effective role on this doc (owner/editor/commenter/viewer) — the same role
    * `requireManageSharing` resolved to gate the read. The dialog uses it for the owner-only gate
    * (C-003 editors_can_share) so that check works regardless of HOW the dialog was opened (the
@@ -72,6 +79,13 @@ export interface ShareStateRow {
     viewLimit: number | null;
     viewCount: number;
   };
+  /**
+   * The doc's current `share_links.capability_token`, or null when none. Set only while the doc is
+   * `anyone_with_link` (capability-share-link C-001/C-004); the aggregator turns it into the
+   * external `/s/<token>` link. The token is opaque — it is built purely from random bytes, so
+   * surfacing it to the OWNER's dialog leaks nothing about the doc (it IS the share secret).
+   */
+  capabilityToken: string | null;
 }
 
 /** Read port — the concrete Drizzle impl is share-state-repo.ts. */
@@ -105,10 +119,26 @@ export async function readShareState(
       viewCount: row.link.viewCount,
       url: shareUrl(slug),
     },
+    // AS-012/AS-013: the external capability link, present ONLY when a capability token exists
+    // (i.e. the doc is anyone_with_link). For restricted / anyone_in_workspace the repo reads a null
+    // token → null here, so the dialog shows no capability link.
+    capabilityUrl: capabilityShareUrl(row.capabilityToken),
   };
 }
 
 /** The shareable link to a doc — the trusted-origin viewer path (/d/:slug). */
 export function shareUrl(slug: string): string {
   return `/d/${encodeURIComponent(slug)}`;
+}
+
+/**
+ * The EXTERNAL capability link for a token — the `/s/<token>` address an anonymous visitor opens
+ * (capability-share-link S-005). Returns null when there is no token (the doc is not link-shared),
+ * so the share state carries `capabilityUrl: null` for restricted / anyone_in_workspace (AS-013).
+ * The token is already URL-safe base64url (no `+` `/` `=`), but encode defensively for symmetry
+ * with `shareUrl` — encoding a URL-safe token is a no-op, never a corruption.
+ */
+export function capabilityShareUrl(token: string | null): string | null {
+  if (!token) return null;
+  return `/s/${encodeURIComponent(token)}`;
 }

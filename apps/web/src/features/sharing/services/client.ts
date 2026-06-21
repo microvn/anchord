@@ -67,6 +67,11 @@ export interface ShareState {
    *  off this so it works from the docs-list entry too (which preloads no `effectiveRole`).
    *  Optional for back-compat with older reads / test fixtures. */
   viewerRole?: ShareRole | "owner";
+  /** the EXTERNAL capability link (`/s/<token>`) — the unguessable, title-free address an anonymous
+   *  visitor opens (capability-share-link S-005, backend AS-012). Present only when the doc is
+   *  anyone_with_link; null/absent for restricted / anyone_in_workspace (AS-013). Distinct from
+   *  `link.url`, the in-app readable `/d/<slug>` address. Optional for back-compat with older reads. */
+  capabilityUrl?: string | null;
 }
 
 /** GET /api/w/:workspaceId/docs/:slug/share — the dialog-open prefill read (S-001 AS-018). */

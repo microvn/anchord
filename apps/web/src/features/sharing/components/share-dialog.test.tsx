@@ -45,6 +45,21 @@ const LINK_STATE = {
     { email: "bob@x.com", role: "commenter" as const, status: "pending" as const },
   ],
   link: { hasPassword: true, expiresAt: "2026-07-01T00:00:00Z", viewLimit: 50, viewCount: 3, url: "/d/web-core?k=9f2a" },
+  // capability-share-link S-005: an anyone_with_link doc carries the external /s/<token> link.
+  capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD",
+};
+
+// AS-013 fixture: anyone_in_workspace — link section never shows, and crucially NO capability link
+// even if the level were link-shaped. (capabilityUrl absent — the backend sends null for non-link.)
+const WORKSPACE_STATE = {
+  level: "anyone_in_workspace" as const,
+  role: "viewer" as const,
+  editorsCanShare: false,
+  people: [
+    { userId: "u-own", email: "owner@acme.com", name: "Owner Olu", role: "owner" as const, status: "active" as const },
+  ],
+  link: { hasPassword: false, url: "/d/web-core" },
+  capabilityUrl: null,
 };
 
 const { ShareDialog } = await import("@/features/sharing/components/share-dialog");
@@ -185,6 +200,47 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     expect(canManageShare("commenter", true)).toBe(false);
     expect(canManageShare("viewer", true)).toBe(false);
     expect(canManageShare(undefined, true)).toBe(false); // absent → conservative
+  });
+});
+
+describe("capability-share-link S-005 — the Share box surfaces the capability link", () => {
+  it("AS-012: an anyone-with-link doc shows the capability /s/<token> link with a copy control, distinct from /d/<slug>", async () => {
+    getShareState.mockImplementation(async () => ({ data: LINK_STATE, error: null }));
+    renderDialog({ effectiveRole: "owner" });
+
+    await screen.findByTestId("share-sections");
+    // The EXTERNAL capability link is shown — the /s/<token> form, resolved absolute against origin.
+    const cap = await screen.findByTestId("share-capability-url");
+    expect(cap).toHaveTextContent("/s/Hk3vQ2pLm8rT5wXyZ0aBcD");
+    // It is presented as the external share link, DISTINCT from the in-app readable /d/<slug> address.
+    expect(cap).not.toHaveTextContent("/d/web-core");
+    expect(screen.getByTestId("share-link-url")).toHaveTextContent("/d/web-core?k=9f2a");
+
+    // A copy control sits with it and writes the absolute capability URL to the clipboard.
+    const writeText = mock(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await userEvent.click(screen.getByTestId("share-capability-copy"));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0]?.[0]).toContain("/s/Hk3vQ2pLm8rT5wXyZ0aBcD");
+  });
+
+  it("AS-013: a restricted doc shows NO capability link", async () => {
+    getShareState.mockImplementation(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
+    renderDialog({ effectiveRole: "owner" });
+
+    await screen.findByTestId("share-sections");
+    // Restricted → not link-shared → no capability link section at all.
+    expect(screen.queryByTestId("share-sec-capability-link")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("share-capability-url")).not.toBeInTheDocument();
+  });
+
+  it("AS-013: an anyone-in-workspace doc shows NO capability link", async () => {
+    getShareState.mockImplementation(async () => ({ data: WORKSPACE_STATE, error: null }));
+    renderDialog({ effectiveRole: "owner" });
+
+    await screen.findByTestId("share-sections");
+    expect(screen.queryByTestId("share-sec-capability-link")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("share-capability-url")).not.toBeInTheDocument();
   });
 });
 

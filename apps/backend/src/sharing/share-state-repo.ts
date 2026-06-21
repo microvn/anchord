@@ -39,6 +39,9 @@ export function createShareStateRepo(db: DB): ShareStateRepo {
           expiresAt: shareLinks.expiresAt,
           viewLimit: shareLinks.viewLimit,
           viewCount: shareLinks.viewCount,
+          // S-005: the capability token (the external /s/<token> link's secret). Set only while the
+          // doc is anyone_with_link; null otherwise (capability-share-link C-001/C-004).
+          capabilityToken: shareLinks.capabilityToken,
         })
         .from(shareLinks)
         .where(eq(shareLinks.docId, docId));
@@ -77,6 +80,7 @@ export function createShareStateRepo(db: DB): ShareStateRepo {
           viewLimit: link?.viewLimit ?? null,
           viewCount: link?.viewCount ?? 0,
         },
+        capabilityToken: link?.capabilityToken ?? null,
       };
     },
   };
