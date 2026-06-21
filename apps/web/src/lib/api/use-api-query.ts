@@ -46,6 +46,11 @@ export function useApiQuery<T>(
     meta?: Record<string, unknown>;
     refetchOnWindowFocus?: boolean;
     refetchInterval?: number;
+    // Override the global 30s staleTime for a SINGLE query. `staleTime: 0` makes the data stale
+    // immediately, so a query that toggles `enabled` (e.g. a modal's prefill read gated on `open`)
+    // REFETCHES every time it re-enables — the modal always shows current server state on reopen,
+    // never a 30s-cached snapshot from a previous open.
+    staleTime?: number;
   },
 ): UseQueryResult<T, ApiError> {
   return useQuery<T, ApiError>({
@@ -53,6 +58,7 @@ export function useApiQuery<T>(
     enabled: options?.enabled,
     refetchOnWindowFocus: options?.refetchOnWindowFocus,
     refetchInterval: options?.refetchInterval,
+    staleTime: options?.staleTime,
     // doc-access-routing S-003 / C-004: a query may carry `meta.viewerRead` so the shared
     // QueryCache onError (query-client.ts) can EXEMPT it from the global session-expiry bounce.
     // A doc-centric viewer read must never sign the user out / redirect to /signin (AS-014).

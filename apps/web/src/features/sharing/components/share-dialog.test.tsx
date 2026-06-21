@@ -126,6 +126,28 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     expect(screen.getByTestId("share-dialog")).toHaveTextContent(/share doc/i);
   });
 
+  it("AS-018: reopening the dialog REFETCHES current state (staleTime:0, not a 30s-cached snapshot)", async () => {
+    // Regression: a member role-change / remove updates local state + the server but NOT this query's
+    // cache. With the global 30s staleTime, closing + reopening within 30s re-served the STALE role
+    // (the "still Editor after switching to Viewer" bug). staleTime:0 forces a refetch on every reopen.
+    // A shared QueryClient with the GLOBAL 30s staleTime — only the dialog's per-query staleTime:0 can
+    // make the reopen refetch; if the override regresses, the second open serves cache → 1 call → fail.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+    });
+    const wrap = (open: boolean) => (
+      <QueryClientProvider client={qc}>
+        <ShareDialog open={open} onOpenChange={() => {}} workspaceId="ws-acme" slug="web-core" docTitle="Web-core spec" effectiveRole="owner" />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(wrap(true));
+    await screen.findByTestId("share-sections");
+    await waitFor(() => expect(getShareState).toHaveBeenCalledTimes(1));
+    rerender(wrap(false)); // Done → close
+    rerender(wrap(true)); // reopen → must refetch despite the 30s global staleTime
+    await waitFor(() => expect(getShareState).toHaveBeenCalledTimes(2));
+  });
+
   it("AS-002: ≤600 renders a full-screen sheet; ≥601 renders a centered modal", async () => {
     // ≥601 → modal
     Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 768 });

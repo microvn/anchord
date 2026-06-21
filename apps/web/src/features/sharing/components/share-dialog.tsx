@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -83,11 +84,14 @@ export function ShareDialog({
   // request under React StrictMode's double-invoke (no more two `/share` calls per open), (b) peels
   // the api-core envelope CENTRALLY (peelEnvelope), so `state.people` is the payload, not the
   // wrapper, and (c) reuses the normalized ApiError (status carries the 403 for the lazy gate). The
-  // read is `enabled` only while open; closing disables it and a re-open re-reads (staleTime 30s).
+  // read is `enabled` only while open. `staleTime: 0` so EVERY open refetches the current state
+  // (the global 30s staleTime would serve a stale snapshot: change a member's role / remove / invite
+  // in one open, hit Done, reopen within 30s → the old state. A member mutation updates local state +
+  // the server but not this cache, so the dialog must re-read on open to reflect the committed truth).
   const query = useApiQuery<ShareState>(
     ["share-state", workspaceId, slug],
     () => getShareState(workspaceId, slug),
-    { enabled: open },
+    { enabled: open, staleTime: 0 },
   );
   const state = query.data ?? null;
   const loading = open && query.isPending && query.fetchStatus !== "idle";
@@ -254,6 +258,20 @@ function ShareSections({
   // append a row + reconcile/rollback it (C-005), and S-006 can optimistically change a role / remove
   // a person + roll back a refused write.
   const [people, setPeople] = useState<SharePerson[]>(state.people);
+
+  // Keep the share-state query cache in sync with the optimistic `people` so REOPENING the dialog
+  // shows the committed roster instantly (no stale-then-refetch flash). A member role-change / remove
+  // updates this local state + the server, but the cached read still held the old roster — staleTime:0
+  // re-reads on reopen, yet for a beat the dialog renders the cached (stale) role before the refetch
+  // lands. Writing `people` back to the cache closes that gap: reopen seeds from a correct cache, and
+  // the refetch merely confirms it. On a refused write `people` rolls back, re-syncing the cache too.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    queryClient.setQueryData<ShareState>(["share-state", workspaceId, slug], (old) =>
+      old ? { ...old, people } : old,
+    );
+  }, [people, queryClient, workspaceId, slug]);
+
   const addOptimistic = (person: SharePerson) =>
     setPeople((prev) => [...prev.filter((p) => p.email !== person.email), person]);
   const reconcile = (email: string, status: SharePerson["status"], id: string) =>
