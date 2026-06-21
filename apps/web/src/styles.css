@@ -282,6 +282,29 @@ main[data-doc-width="focus"] .doc-prose {
   margin: 22px 0 8px;
   scroll-margin-top: 60px;
 }
+/* h4-h6 — Tailwind preflight collapses all headings to body size; restore a descending scale so deep
+   spec headings stay distinguishable (h6 reads as a small uppercase label). */
+.doc-prose h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 18px 0 6px;
+  scroll-margin-top: 60px;
+}
+.doc-prose h5 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0 6px;
+  scroll-margin-top: 60px;
+}
+.doc-prose h6 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 16px 0 6px;
+  scroll-margin-top: 60px;
+}
 .doc-prose p,
 .doc-prose ul,
 .doc-prose ol {
@@ -290,9 +313,21 @@ main[data-doc-width="focus"] .doc-prose {
   color: var(--ink);
   margin: 0 0 13px;
 }
+/* Tailwind preflight resets `ul,ol` to `list-style:none` — re-enable real markers inside the rendered
+   doc so a markdown list reads as a list (bullets / numbers), not bullet-less indented lines. */
 .doc-prose ul,
 .doc-prose ol {
   padding-left: 22px;
+  list-style-position: outside;
+}
+.doc-prose ul {
+  list-style-type: disc;
+}
+.doc-prose ul ul {
+  list-style-type: circle;
+}
+.doc-prose ol {
+  list-style-type: decimal;
 }
 .doc-prose li {
   margin: 0 0 5px;
@@ -311,6 +346,20 @@ main[data-doc-width="focus"] .doc-prose {
 }
 .doc-prose strong {
   font-weight: 600;
+}
+.doc-prose em,
+.doc-prose i {
+  font-style: italic;
+}
+.doc-prose del,
+.doc-prose s {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+/* Markdown images — clamp to the prose column so a large asset never overflows the page width. */
+.doc-prose img {
+  max-width: 100%;
+  height: auto;
 }
 .doc-prose code {
   font-family: var(--font-mono);
@@ -345,6 +394,40 @@ main[data-doc-width="focus"] .doc-prose {
   border: none;
   border-top: 1px solid var(--line);
   margin: 22px 0;
+}
+/* Markdown tables — bare <table> from the markdown render gets full borders + header tint + zebra so
+   columns never run together. `display:block; width:max-content; max-width:100%; overflow-x:auto` makes
+   a wide table scroll inside its own box instead of overflowing the prose column (GitHub's pattern). */
+.doc-prose table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  margin: 0 0 14px;
+}
+.doc-prose th,
+.doc-prose td {
+  border: 1px solid var(--line);
+  padding: 7px 11px;
+  text-align: left;
+  vertical-align: top;
+}
+.doc-prose th {
+  background: var(--elev);
+  font-weight: 600;
+  color: var(--ink);
+}
+/* The first column is almost always a short key/ID (C-001, a file path, a name). Keep it on one line so
+   the browser can't squeeze it to a sliver and break the token mid-word ("C-\n001"); a genuinely wide
+   table then scrolls horizontally (overflow-x above) instead of starving column 1. */
+.doc-prose th:first-child,
+.doc-prose td:first-child {
+  white-space: nowrap;
+}
+.doc-prose tbody tr:nth-child(even) td {
+  background: color-mix(in oklab, var(--elev) 45%, transparent);
 }
 
 /* anchored text-range highlight (S-003) — mirrors Anchord-Design `.anno`.
