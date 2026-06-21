@@ -40,7 +40,7 @@ import { enforceReadAccess } from "../http/access-result";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
 import { type Viewer, type GeneralAccessLevel } from "../sharing/access";
 import { type AccessResult } from "../sharing/resolve-access";
-import { ADMISSION_COOKIE_NAME } from "../sharing/capability-cookie";
+import { readAdmissionCookie } from "../sharing/capability-cookie";
 import { can, type Role } from "../sharing/roles";
 import {
   createAnnotation,
@@ -408,25 +408,6 @@ function toAnchor(input: z.infer<typeof createAnnotationSchema>["anchor"]): Anch
     return imageRegionAnchor(input.blockId, input.region as ImageRegion);
   }
   return input as Anchor;
-}
-
-/**
- * capability-share-link S-002 / C-006: extract the admission cookie VALUE from a request's
- * `Cookie` header, or undefined when absent. Minimal RFC-6265 split (no decode needed — the
- * cookie value is base64url + a dot, already URL-safe). The signature is verified downstream
- * by resolveAdmission; this only locates the named cookie.
- */
-function readAdmissionCookie(request: Request): string | undefined {
-  const header = request.headers.get("cookie");
-  if (!header) return undefined;
-  for (const part of header.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === ADMISSION_COOKIE_NAME) {
-      return part.slice(eq + 1).trim();
-    }
-  }
-  return undefined;
 }
 
 export function annotationsRoutes(deps: AnnotationsRoutesDeps) {

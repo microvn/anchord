@@ -32,6 +32,26 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  *  payload's docId binds it, so a visitor opening several docs simply re-redeems each. */
 export const ADMISSION_COOKIE_NAME = "anchord_cap";
 
+/**
+ * capability-share-link S-002 / C-006: extract the admission cookie VALUE from a request's
+ * `Cookie` header, or undefined when absent. Minimal RFC-6265 split (no decode needed — the
+ * cookie value is base64url + a dot, already URL-safe). The signature is verified downstream
+ * by resolveAdmission; this only locates the named cookie. Shared by every anon-reachable
+ * route that threads the cookie into its Viewer (annotations.ts AND viewer-doc.ts).
+ */
+export function readAdmissionCookie(request: Request): string | undefined {
+  const header = request.headers.get("cookie");
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === ADMISSION_COOKIE_NAME) {
+      return part.slice(eq + 1).trim();
+    }
+  }
+  return undefined;
+}
+
 /** Default absolute lifetime: 24h (Data Model / GAP-001). Capped at the link's own expiry
  *  by the caller (S-006) when that is sooner. */
 export const DEFAULT_ADMISSION_TTL_MS = 24 * 60 * 60 * 1000;

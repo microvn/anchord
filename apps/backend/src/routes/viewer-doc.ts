@@ -29,6 +29,7 @@ import { renderMarkdown } from "../render/markdown";
 import { injectBlockIds } from "../annotation/block-id";
 import { createLoadViewerDoc, type ViewerLoaderDeps, type ViewerDocPayload } from "../render/viewer-loaders";
 import type { Viewer } from "../sharing/access";
+import { readAdmissionCookie } from "../sharing/capability-cookie";
 
 /**
  * doc-access-routing S-002: resolve the viewer session OPTIONALLY from the raw Request.
@@ -171,9 +172,15 @@ export function docViewerRoutes(deps: DocViewerRoutesDeps) {
   // route never throws UnauthenticatedError, so the response for a no-access doc is the
   // same 404 whether the caller is signed in or not.
   const resolveViewer = async (request: Request): Promise<Viewer> => {
-    if (!deps.resolveViewerSession) return { kind: "anon" };
+    // C-006: an anon viewer carries its admission cookie so resolveAccess can validate it
+    // against the doc's current capability token (resolveAdmission) and admit at the link
+    // role — exactly as annotations.ts threads it for the anon annotation reads/writes. The
+    // SPA viewer loads this doc-read FIRST, so without the cookie an anon who redeemed a
+    // valid capability link would still 404 here (the S-002 C-006 fix had missed this seam).
+    const anonViewer = (): Viewer => ({ kind: "anon", admissionCookie: readAdmissionCookie(request) });
+    if (!deps.resolveViewerSession) return anonViewer();
     const session = await deps.resolveViewerSession(request);
-    return session ? { kind: "user", userId: session.userId } : { kind: "anon" };
+    return session ? { kind: "user", userId: session.userId } : anonViewer();
   };
 
   return apiEnvelope(new Elysia()).get("/api/docs/:slug", async ({ params, request }) => {
