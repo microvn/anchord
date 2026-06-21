@@ -24,6 +24,7 @@ mock.module("@/features/workspaces/services/client", () => ({
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),
   inviteMember: mock(async () => env({})),
   removeMember: mock(async () => env({})),
+  revokeInvitation: mock(async () => env({})),
   changeMemberRole: mock(async () => env({})),
   acceptInvitation: mock(async () => env({})),
   rejectInvitation: mock(async () => env({})),

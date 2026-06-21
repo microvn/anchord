@@ -3,7 +3,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useActiveWorkspace } from "./active-workspace";
 import { useMembers, useBootstrap } from "@/features/workspaces/hooks/use-bootstrap";
 import { RenameField } from "./rename-field";
-import { inviteMember, removeMember, changeMemberRole } from "@/features/workspaces/services/client";
+import {
+  inviteMember,
+  removeMember,
+  changeMemberRole,
+  revokeInvitation,
+} from "@/features/workspaces/services/client";
 import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { ErrorState } from "@/components/error-state";
 import { EmptyState } from "@/components/empty-state";
@@ -316,8 +321,10 @@ function InvitePendingRow({
   const queryClient = useQueryClient();
 
   async function onRevoke() {
-    // Revoke = remove the pending invite. The members endpoint refetch drops it from the list.
-    await removeMember(workspaceId, invitation.id);
+    // Revoke a PENDING invite via the invitations endpoint — NOT removeMember: an invitation
+    // id is not a membership id, so DELETE /members/:id 404s ("not a member"). The members
+    // refetch then drops the now-revoked invite from the pending list (AS-017).
+    await revokeInvitation(workspaceId, invitation.id);
     await queryClient.invalidateQueries({ queryKey: queryKeys.members(workspaceId) });
   }
 

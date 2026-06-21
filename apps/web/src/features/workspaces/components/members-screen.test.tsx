@@ -17,6 +17,7 @@ const inviteMember = mock(async (_w: string, email: string, role: string) =>
   env({ id: "inv-new", status: "pending", email, role }),
 );
 const removeMember = mock(async (_w: string, userId: string) => env({ userId, removed: true }));
+const revokeInvitation = mock(async (_w: string, _id: string) => env({ revoked: true }));
 const changeMemberRole = mock(async (_w: string, userId: string, role: string) =>
   env({ userId, role }),
 );
@@ -29,6 +30,7 @@ mock.module("@/features/workspaces/services/client", () => ({
   fetchMembers,
   inviteMember,
   removeMember,
+  revokeInvitation,
   changeMemberRole,
   setActiveWorkspace: mock(async () => env({})),
   createWorkspace: mock(async () => env({})),
@@ -77,6 +79,7 @@ beforeEach(() => {
   members = directory;
   inviteMember.mockClear();
   removeMember.mockClear();
+  revokeInvitation.mockClear();
   changeMemberRole.mockClear();
 });
 
@@ -163,11 +166,13 @@ describe("workspaces-ui S-003 — members screen", () => {
 
     // The ✕ opens a confirm dialog — it does NOT revoke on its own.
     await userEvent.click(screen.getByTestId("revoke-inv-eve"));
-    expect(removeMember).not.toHaveBeenCalled();
+    expect(revokeInvitation).not.toHaveBeenCalled();
 
-    // Only the "Revoke" action in the dialog runs the mutation (revoke reuses removeMember w/ the invite id).
+    // Only the "Revoke" action in the dialog runs the mutation. Revoke hits the invitations
+    // endpoint with the INVITE id — not removeMember (an invite id is not a membership id).
     await userEvent.click(await screen.findByTestId("revoke-confirm-inv-eve"));
-    expect(removeMember).toHaveBeenCalledWith("ws-acme", "inv-eve");
+    expect(revokeInvitation).toHaveBeenCalledWith("ws-acme", "inv-eve");
+    expect(removeMember).not.toHaveBeenCalled();
     // The pending invite disappears from the list.
     await waitFor(() => expect(screen.queryByTestId("invite-row-inv-eve")).not.toBeInTheDocument());
   });

@@ -8,6 +8,7 @@
 //   POST /api/workspaces/:id/invitations { email, role? } → 201 { id, status }          (S-004 AS-009/013, admin)
 //   POST /api/invitations/:id/accept { token }          → 200 { workspaceId, role }     (S-004 AS-010/012)
 //   POST /api/invitations/:id/reject { token }          → 200 { rejected: true }        (S-004 AS-011/012)
+//   DELETE /api/workspaces/:id/invitations/:invitationId → 200 { revoked: true }         (S-005 AS-017, admin)
 //
 // Identity (actor.userId + actor email) is SERVER-resolved (anti-forgery). The
 // admin check + email-match live in the tenancy service.
@@ -24,6 +25,7 @@ import {
   inviteToWorkspace,
   acceptInvitation,
   rejectInvitation,
+  revokeWorkspaceInvitation,
   TenancyRejected,
   type TenancyRepo,
 } from "../workspace/tenancy";
@@ -173,6 +175,20 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
       try {
         await rejectInvitation({ invitationId: params.id, token, actorEmail: me.email }, tenancyDeps);
         return { rejected: true };
+      } catch (err) {
+        if (err instanceof TenancyRejected) throw mapRejected(err);
+        throw err;
+      }
+    })
+    // DELETE /api/workspaces/:id/invitations/:invitationId — revoke a pending invite
+    // (admin-only, AS-017). Admin-authorized (not token-gated like reject); marks it revoked.
+    .delete("/api/workspaces/:id/invitations/:invitationId", async ({ params, actor }) => {
+      try {
+        await revokeWorkspaceInvitation(
+          { workspaceId: params.id, actorId: actor.userId, invitationId: params.invitationId },
+          tenancyDeps,
+        );
+        return { revoked: true };
       } catch (err) {
         if (err instanceof TenancyRejected) throw mapRejected(err);
         throw err;

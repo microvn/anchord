@@ -20,6 +20,7 @@ const setActiveWorkspace = mock(async (id: string) => env({ activeWorkspaceId: i
 mock.module("@/features/workspaces/services/client", () => ({
   acceptInvitation,
   rejectInvitation,
+  revokeInvitation: mock(async () => env({})),
   setActiveWorkspace,
   fetchBootstrap: mock(async () => env({ userId: "me", workspaces: [], activeWorkspaceId: null })),
   fetchMembers: mock(async () => env({ members: [], invitations: [] })),

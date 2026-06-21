@@ -90,5 +90,20 @@ export function rejectInvitation(invitationId: string, token: string): Promise<E
   >;
 }
 
+/**
+ * DELETE /api/workspaces/:id/invitations/:invitationId — admin revokes a PENDING invite
+ * (S-003, AS-017). Distinct from removeMember: a pending invite is NOT a membership row, so
+ * revoking it must hit the invitations endpoint, not /members/:userId (which 404s on an id
+ * that is an invitation, not a member).
+ */
+export function revokeInvitation(
+  workspaceId: string,
+  invitationId: string,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.workspaces({ id: workspaceId }).invitations({ invitationId }).delete() as Promise<
+    EdenResult<unknown>
+  >;
+}
+
 // Re-exported payload types so screens import them from one place alongside the thunks.
 export type { Bootstrap, MembersDirectory };

@@ -12,6 +12,7 @@ import {
   inviteToWorkspace,
   acceptInvitation,
   rejectInvitation,
+  revokeWorkspaceInvitation,
   removeWorkspaceMember,
   changeMemberRole,
   TenancyRejected,
@@ -260,6 +261,53 @@ test("AS-011 / C-004: rejecting an invite leaves no membership and marks it reje
   await rejectInvitation({ invitationId: inv.id, token: inv.token, actorEmail: "bob@acme.com" }, f.deps);
   expect(f.state.members.some((m) => m.userId === "u_bob")).toBe(false);
   expect(f.state.invitations[0]!.status).toBe("rejected");
+});
+
+test("AS-017: an admin revokes a pending invite → marked revoked and gone from the pending list", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace({ workspaceId: ws.id, actorId: "u_a", email: "bob@acme.com" }, f.deps);
+  await revokeWorkspaceInvitation({ workspaceId: ws.id, actorId: "u_a", invitationId: inv.id }, f.deps);
+  expect(f.state.invitations[0]!.status).toBe("revoked");
+  // The members surface lists only pending invites → the revoked one is gone.
+  const { invitations } = await listWorkspaceMembers({ workspaceId: ws.id, actorId: "u_a" }, f.deps);
+  expect(invitations.some((i) => i.id === inv.id)).toBe(false);
+});
+
+test("AS-017 / C-002: a non-admin cannot revoke an invite", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps);
+  await f.repo.addMember(ws.id, "u_bob", "member");
+  const inv = await inviteToWorkspace({ workspaceId: ws.id, actorId: "u_a", email: "eve@acme.com" }, f.deps);
+  await expect(
+    revokeWorkspaceInvitation({ workspaceId: ws.id, actorId: "u_bob", invitationId: inv.id }, f.deps),
+  ).rejects.toMatchObject({ code: "forbidden" });
+  expect(f.state.invitations[0]!.status).toBe("pending");
+});
+
+test("AS-017: revoking an invite that belongs to another workspace is refused (scoped)", async () => {
+  const f = fakeRepo();
+  const a = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps);
+  const b = await createWorkspace({ name: "Beta", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace({ workspaceId: b.id, actorId: "u_a", email: "bob@acme.com" }, f.deps);
+  // Revoke addressed to workspace A but the invite lives in B → not found (no cross-workspace revoke).
+  await expect(
+    revokeWorkspaceInvitation({ workspaceId: a.id, actorId: "u_a", invitationId: inv.id }, f.deps),
+  ).rejects.toMatchObject({ code: "not_found" });
+  expect(f.state.invitations[0]!.status).toBe("pending");
+});
+
+test("AS-017: revoking a non-pending invite is refused (not_pending)", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace({ workspaceId: ws.id, actorId: "u_a", email: "bob@acme.com" }, f.deps);
+  await acceptInvitation(
+    { invitationId: inv.id, token: inv.token, actorId: "u_bob", actorEmail: "bob@acme.com" },
+    f.deps,
+  );
+  await expect(
+    revokeWorkspaceInvitation({ workspaceId: ws.id, actorId: "u_a", invitationId: inv.id }, f.deps),
+  ).rejects.toMatchObject({ code: "not_pending" });
 });
 
 test("AS-012 / C-004: an invite used by a different email is refused (email must match); no membership", async () => {

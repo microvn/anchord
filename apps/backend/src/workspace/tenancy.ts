@@ -308,6 +308,30 @@ export async function rejectInvitation(
 }
 
 /**
+ * S-005 (AS-017 / C-002): revoke a PENDING invite (admin-only). Unlike reject (the invitee's
+ * own action, token-gated), revoke is the admin withdrawing an invite they sent — so it is
+ * authorized by workspace-admin, not the invite token. Marks the invitation `revoked` so it
+ * drops from the pending list (listInvitations is pending-only) and its link no longer accepts
+ * (acceptInvitation guards `status === pending`). Mirrors reject/accept (status transition, no
+ * row delete) and uses the pre-existing `revoked` enum value. Scoped to the workspace: an
+ * invitation belonging to another workspace is not_found (no cross-workspace revoke).
+ */
+export async function revokeWorkspaceInvitation(
+  input: { workspaceId: string; actorId: string; invitationId: string },
+  deps: TenancyDeps,
+): Promise<void> {
+  await requireAdmin(input.workspaceId, input.actorId, deps);
+  const inv = await deps.repo.findInvitation(input.invitationId);
+  if (!inv || inv.workspaceId !== input.workspaceId) {
+    throw new TenancyRejected("invitation not found", "not_found");
+  }
+  if (inv.status !== "pending") {
+    throw new TenancyRejected("invitation is not pending", "not_pending");
+  }
+  await deps.repo.setInvitationStatus(inv.id, "revoked");
+}
+
+/**
  * S-005 (AS-014/AS-017 / C-003): remove a member (admin-only). Deletes ONLY the
  * workspace_members row. Guards: the target must be a member (not_member); the SOLE
  * admin cannot be removed (sole_admin — the workspace must keep ≥1 admin, AS-016).
