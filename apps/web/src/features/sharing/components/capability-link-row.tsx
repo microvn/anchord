@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/icon";
 
@@ -19,7 +20,9 @@ function absoluteUrl(url: string): string {
   return new URL(url, window.location.origin).toString();
 }
 
-export function CapabilityLinkRow({ capabilityUrl }: { capabilityUrl: string }) {
+// Memoized: a single string prop, so it re-renders only when the capability URL itself changes
+// (not on every parent render driven by tab/access/people state).
+export const CapabilityLinkRow = memo(function CapabilityLinkRow({ capabilityUrl }: { capabilityUrl: string }) {
   const fullUrl = absoluteUrl(capabilityUrl);
 
   async function copy() {
@@ -32,11 +35,11 @@ export function CapabilityLinkRow({ capabilityUrl }: { capabilityUrl: string }) 
       <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">
         · External share link
       </span>
-      <div className="flex items-center gap-2 rounded-md border border-accent bg-accent-soft px-2.5 py-1.5">
+      <div className="flex items-center gap-2 rounded-md border border-line bg-sunken px-2.5 py-1.5">
         <Icon name="link" size={14} />
         <code
           data-testid="share-capability-url"
-          className="min-w-0 flex-1 truncate text-[12px] text-accent-ink"
+          className="min-w-0 flex-1 truncate text-[12px] text-ink"
         >
           {fullUrl}
         </code>
@@ -44,7 +47,7 @@ export function CapabilityLinkRow({ capabilityUrl }: { capabilityUrl: string }) 
           type="button"
           data-testid="share-capability-copy"
           onClick={() => void copy()}
-          className="inline-flex h-7 flex-none items-center gap-1 rounded-[6px] border border-accent bg-surface px-2 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-on-accent"
+          className="inline-flex h-7 flex-none items-center gap-1 rounded-[6px] border border-line px-2 text-[12px] font-medium text-accent transition-colors hover:text-accent-strong"
         >
           <Icon name="copy" size={13} /> Copy
         </button>
@@ -54,4 +57,4 @@ export function CapabilityLinkRow({ capabilityUrl }: { capabilityUrl: string }) 
       </span>
     </section>
   );
-}
+});

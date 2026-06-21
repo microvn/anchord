@@ -2,10 +2,11 @@ import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-// sharing-permissions-ui S-005 — Link controls. The sharing client (`setLinkControls`) is MOCKED so
-// the optimistic-then-revert path is deterministic. LinkControls is exercised directly: Copy writes
-// the URL to the clipboard + toasts (AS-015); setting a control sends ONLY that control + marks the
-// chip "set", others independent (AS-016/C-001); a refused write reverts the chip + errors (AS-017).
+// sharing-permissions-ui S-005 — Link protection chips. The sharing client (`setLinkControls`) is
+// MOCKED so the optimistic-then-revert path is deterministic. LinkControls is exercised directly:
+// setting a control sends ONLY that control + marks the chip "set", others independent (AS-016/C-001);
+// a refused write reverts the chip + errors (AS-017). (The copyable URL row was removed — the readable
+// /d/<slug> is not an external share link; the capability /s/<token> link lives in CapabilityLinkRow.)
 
 import * as sharingClient from "@/features/sharing/services/client";
 
@@ -37,19 +38,6 @@ function renderLink() {
 }
 
 describe("Sharing S-005 — link controls", () => {
-  it("AS-015: Copy writes the share URL to the clipboard and shows a toast", async () => {
-    const user = userEvent.setup();
-    renderLink();
-    await user.click(screen.getByTestId("share-link-copy"));
-    // happy-dom has a real in-memory clipboard — assert the URL round-trips through it as an
-    // ABSOLUTE link (origin + /d/:slug), never the bare relative path that can't be pasted.
-    await waitFor(async () => {
-      const copied = await navigator.clipboard.readText();
-      expect(copied).toMatch(/^https?:\/\/.+\/d\/web-core$/);
-    });
-    expect(toastSuccess).toHaveBeenCalled();
-  });
-
   it("AS-016 / C-001: setting the password sends ONLY that control and marks the chip set", async () => {
     const user = userEvent.setup();
     renderLink();

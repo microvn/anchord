@@ -1,15 +1,23 @@
 import { useState } from "react";
+import { format, startOfToday } from "date-fns";
 import { toast } from "sonner";
 import { Icon } from "@/components/icon";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Input } from "@/components/ui/input";
 import { setLinkControls, type ShareLink, type SetLinkInput } from "@/features/sharing/services/client";
 
-// LinkControls (sharing-permissions-ui S-005) — the Link section for an anyone-with-link doc:
-// the share URL + a Copy button (AS-015), and three INDEPENDENT chips (password / expiry /
-// view-limit, C-001). Clicking an unset chip reveals an inline editor; confirming optimistically
-// marks the chip "set" and sends ONLY that control to PUT /link; a refused/failed write reverts
-// the chip + shows an error (C-005/AS-017). Clicking a set chip clears that one control.
+// LinkControls (sharing-permissions-ui S-005) — the PROTECTION chips for the capability link:
+// three INDEPENDENT chips (password / expiry / view-limit, C-001) that gate the `/s/<token>`
+// capability link (S-006 enforces them at redeem). Clicking an unset chip reveals an inline editor;
+// confirming optimistically marks the chip "set" and sends ONLY that control to PUT /link; a
+// refused/failed write reverts the chip + shows an error (C-005/AS-017). Clicking a set chip clears
+// that one control.
 //
-// Shown only when general-access is anyone-with-link (C-007) — the parent gates rendering.
+// Rendered directly UNDER CapabilityLinkRow (the external `/s/<token>` link these controls protect),
+// only when general-access is anyone-with-link — the parent gates rendering. It no longer shows a
+// copyable URL: the in-app readable `/d/<slug>` address is NOT an external share link and surfacing
+// it competed with the capability link + leaked the guessable slug (capability-share-link C-009).
 
 type ChipKey = "password" | "expiry" | "limit";
 
@@ -17,15 +25,6 @@ interface ChipState {
   password: boolean;
   expiry: boolean;
   limit: boolean;
-}
-
-// The backend returns an origin-relative share path (`/d/:slug`) so it stays correct on any
-// self-host origin (it can't know the public hostname). Resolve it against the browser's origin
-// so the displayed + copied link is a pasteable absolute URL, not a bare `/d/:slug`.
-function absoluteShareUrl(url: string): string {
-  if (/^https?:\/\//i.test(url)) return url;
-  if (typeof window === "undefined") return url;
-  return new URL(url, window.location.origin).toString();
 }
 
 const CHIP_META: Record<ChipKey, { icon: string; label: string; placeholder: string; testid: string }> = {
@@ -48,15 +47,14 @@ export function LinkControls({
     expiry: link.expiresAt != null,
     limit: link.viewLimit != null,
   });
+  // The actual set VALUES, so a "set" chip shows WHAT it's set to (the expiry date, the view limit)
+  // — not a bare "· set". Password has no displayable value (it's hashed) → shown as "· on".
+  const [vals, setVals] = useState<{ expiry: string | null; limit: number | null }>({
+    expiry: link.expiresAt ?? null,
+    limit: link.viewLimit ?? null,
+  });
   const [editing, setEditing] = useState<ChipKey | null>(null);
   const [draft, setDraft] = useState("");
-
-  const fullUrl = absoluteShareUrl(link.url);
-
-  async function copy() {
-    await navigator.clipboard?.writeText(fullUrl);
-    toast.success("Link copied");
-  }
 
   // Build the single-control payload for a chip (C-001: only the changed control is sent).
   function payloadFor(key: ChipKey, value: string | null): SetLinkInput {
@@ -68,35 +66,33 @@ export function LinkControls({
   async function commit(key: ChipKey, value: string | null) {
     const set = value != null;
     const prev = chips[key];
-    // optimistic: reflect the new chip state immediately.
+    const prevVals = vals;
+    // optimistic: reflect the new chip state + its value immediately.
     setChips((c) => ({ ...c, [key]: set }));
+    if (key === "expiry") setVals((v) => ({ ...v, expiry: value }));
+    if (key === "limit") setVals((v) => ({ ...v, limit: value == null ? null : Number(value) }));
     setEditing(null);
     setDraft("");
     const res = await setLinkControls(workspaceId, slug, payloadFor(key, value));
     if (res.error || !res.data) {
-      // AS-017/C-005: revert the chip + error, no partial state.
+      // AS-017/C-005: revert the chip + its value + error, no partial state.
       setChips((c) => ({ ...c, [key]: prev }));
+      setVals(prevVals);
       toast.error("Couldn't update the link");
     }
   }
 
+  // The label of a SET chip — shows the value (expiry date / view limit), not a bare "· set".
+  function setLabel(key: ChipKey): string {
+    if (key === "password") return "Password · on";
+    if (key === "expiry") {
+      return vals.expiry ? `Expiry · ${format(new Date(vals.expiry), "MMM d, yyyy")}` : "Expiry · set";
+    }
+    return vals.limit != null ? `View limit · ${vals.limit}` : "View limit · set";
+  }
+
   return (
     <section data-testid="share-sec-link" className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2 rounded-md border border-line bg-sunken px-2.5 py-1.5">
-        <Icon name="link" size={14} />
-        <code data-testid="share-link-url" className="min-w-0 flex-1 truncate text-[12px] text-ink">
-          {fullUrl}
-        </code>
-        <button
-          type="button"
-          data-testid="share-link-copy"
-          onClick={() => void copy()}
-          className="inline-flex h-7 flex-none items-center gap-1 rounded-[6px] border border-line px-2 text-[12px] font-medium text-muted transition-colors hover:text-ink"
-        >
-          <Icon name="copy" size={13} /> Copy
-        </button>
-      </div>
-
       <div className="flex flex-wrap gap-1.5">
         {(Object.keys(CHIP_META) as ChipKey[]).map((key) => {
           const meta = CHIP_META[key];
@@ -119,14 +115,51 @@ export function LinkControls({
                 className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle transition-colors hover:text-ink data-[active=1]:border-accent data-[active=1]:bg-accent-soft data-[active=1]:text-accent-ink"
               >
                 <Icon name={meta.icon} size={12} />
-                {on ? `${meta.label} · set` : editing === key ? meta.label : `+ ${meta.label}`}
+                {on ? setLabel(key) : editing === key ? meta.label : `+ ${meta.label}`}
               </button>
             </span>
           );
         })}
       </div>
 
-      {editing && (
+      {/* Expiry uses a real date picker (shadcn Popover + Calendar) — no free-typed YYYY-MM-DD, and
+          past dates are disabled so an expiry can't be set already-in-the-past. Selecting a day
+          commits immediately (expiresAt as ISO; the backend coerces it). */}
+      {editing === "expiry" && (
+        <Popover
+          open
+          onOpenChange={(o) => {
+            if (!o) setEditing(null);
+          }}
+        >
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              data-testid="share-link-editor-expiry"
+              className="inline-flex h-8 items-center gap-2 self-start rounded-[6px] border border-line bg-surface px-2.5 text-[12.5px] text-subtle transition-colors hover:text-ink"
+            >
+              <Icon name="clock" size={13} />
+              {draft ? format(new Date(draft), "MMM d, yyyy") : "Pick a date"}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-auto p-0">
+            <Calendar
+              mode="single"
+              selected={draft ? new Date(draft) : undefined}
+              onSelect={(d) => {
+                if (d) {
+                  setDraft(d.toISOString());
+                  void commit("expiry", d.toISOString());
+                }
+              }}
+              disabled={{ before: startOfToday() }}
+              autoFocus
+            />
+          </PopoverContent>
+        </Popover>
+      )}
+
+      {editing && editing !== "expiry" && (
         <form
           data-testid={`share-link-editor-${editing}`}
           className="flex items-center gap-2"
@@ -135,14 +168,15 @@ export function LinkControls({
             if (draft.trim().length > 0) void commit(editing, draft.trim());
           }}
         >
-          <input
+          <Input
             data-testid="share-link-editor-input"
-            type={editing === "password" ? "password" : editing === "limit" ? "number" : "text"}
+            type={editing === "password" ? "password" : "number"}
+            min={editing === "limit" ? 1 : undefined}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder={CHIP_META[editing].placeholder}
             autoFocus
-            className="h-8 min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-2.5 text-[12.5px] text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+            className="h-8 flex-1 text-[12.5px]"
           />
           <button
             type="submit"

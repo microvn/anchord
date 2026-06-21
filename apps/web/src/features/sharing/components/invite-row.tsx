@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import { Icon } from "@/components/icon";
@@ -44,7 +45,10 @@ const inviteResolver: Resolver<InviteForm> = async (values) => {
 const ROLES: ShareRole[] = ["viewer", "commenter", "editor"];
 const roleLabel = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
 
-export function InviteRow({
+// Memoized: holds an RHF form (its own local state). Parent stabilizes workspaceId/slug (props) and
+// onOptimisticAdd/onReconcile/onRollback (useCallback), so it no longer re-renders the form on every
+// tab toggle / access change / people mutation in the dialog.
+export const InviteRow = memo(function InviteRow({
   workspaceId,
   slug,
   onOptimisticAdd,
@@ -159,4 +163,4 @@ export function InviteRow({
       )}
     </form>
   );
-}
+});

@@ -1,13 +1,13 @@
 # Spec: sharing-permissions
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-22
 **Status:** Draft
 
 ## Overview
 
 Google-Docs-style sharing model for a doc: 4 roles (viewer/commenter/editor/owner),
-3 general-access levels, anonymous viewing + guest commenting, invite by email
+3 general-access levels, anonymous viewing + guest commenting (a commenter+ link lets no-account guests comment — the link role is the grant, no separate toggle), invite by email
 (pending if no account yet), and link controls (password/expiry/view-limit).
 Decides "who can open the link, who can do what".
 
@@ -20,15 +20,17 @@ Decides "who can open the link, who can do what".
 - **share_links**: `doc_id`, `role` (for anyone-with-link), `password_hash` (nullable),
   `expires_at` (nullable), `view_limit` (nullable), `view_count`, `editors_can_share`
   (bool, default true — the owner-controlled toggle that lets editors manage sharing, Google-Docs style).
-- Guest commenting is a sub-toggle of anyone-with-link; `guest_name` on a comment lives in
-  `annotation-core`.
+- Guest commenting has NO separate toggle (Google-Docs model): an anyone-with-link doc whose link
+  role is commenter+ lets anyone with the link — including no-account guests — comment; the link
+  role IS the grant. `guest_name` on a comment lives in `annotation-core`.
 
 ## Stories
 
 ### S-001: Set general-access for a doc (P0)
 
 **Description:** As an owner, I set the general access level for a doc and its
-associated role, and toggle guest commenting on/off when opening it to anyone with the link.
+associated role; when set to anyone-with-link, the link role is the grant for everyone with the
+link including no-account guests (a commenter+ link lets guests comment — no separate guest toggle).
 **Source:** docs/explore/sharing-permissions.md#decisions (items 1, 2).
 
 **Execution:**
@@ -52,11 +54,6 @@ AS-002: Set restricted
 - **Then:** only specifically invited people get access; someone with the link but not invited is denied
 - **Data:** restricted
 
-AS-003: Guest commenting can only be enabled when anyone-with-link
-- **Given:** doc is set to restricted
-- **When:** owner tries to enable guest commenting
-- **Then:** the guest commenting toggle is unavailable until switching to anyone-with-link
-- **Data:** restricted → toggle disabled
 
 AS-018: An invalid general-access role is rejected
 - **Given:** owner opens the Share box and selects anyone-with-link
@@ -202,6 +199,12 @@ AS-021: An expired link is refused before any password check
 - **Then:** it is refused as expired without the password being prompted for or verified (expiry is checked before the password step)
 - **Data:** expired link with a password set
 
+AS-033: Setting a view limit starts a fresh viewing budget
+- **Given:** an anyone-with-link doc whose link has already been opened several times (a non-zero open count)
+- **When:** the owner sets or changes the link's view limit
+- **Then:** the open count resets to zero — the new limit is a fresh budget counted from that point, so a link is never instantly "no longer available" just because past opens already exceeded the newly-set number
+- **Data:** link opened 30 times, owner then sets view-limit = 20 → open count resets to 0, the link still opens (not treated as 30-over-20)
+
 ### S-005: Enforce role capabilities & precedence (P0)
 
 **Description:** As the system, I apply the correct capabilities per role and take the highest
@@ -249,7 +252,7 @@ AS-024: A viewer or commenter can never manage sharing
 ### S-006: Read sharing state for the Share dialog (P0)
 
 **Description:** As an owner (or an editor when `editors_can_share`), I read the doc's current
-sharing state so the Share box can show the live access level, role, guest-commenting,
+sharing state so the Share box can show the live access level, role,
 editors-can-share, the people list, and the link controls.
 **Source:** sharing-permissions-ui:GAP-003 (FE needs a read surface to prefill the dialog; the 3
 management routes are write-only).
@@ -266,10 +269,10 @@ management routes are write-only).
 **Acceptance Scenarios:**
 
 AS-025: Owner reads the current share state (happy path)
-- **Given:** a doc set anyone-with-link/commenter, guest-commenting on, one pending + one active
+- **Given:** a doc set anyone-with-link/commenter, one pending + one active
   invite, a password-protected link
 - **When:** the owner reads the doc's share state
-- **Then:** returns the general-access level, the associated link role, guest-commenting on/off,
+- **Then:** returns the general-access level, the associated link role,
   editors-can-share on/off, the list of invited people (each with their **member id**, email/name,
   role, and active|pending status — the member id lets the Share dialog target the change/remove
   member actions, S-007), the link controls (expiry, view limit, view count, and WHETHER a
@@ -350,7 +353,6 @@ AS-032: The owner cannot be role-changed or removed (error)
 - C-001: One general-access setting per doc; link controls (password/expiry/view-limit)
   attach to the link, independent of each other. (AS-001, AS-002, AS-009, AS-010, AS-011)
 - C-002: Highest role wins when access comes from multiple sources. (AS-013)
-- C-003: Guest commenting is only available when general-access = anyone-with-link. (AS-003)
 - C-004: anyone-with-link allows anonymous viewing without an account; assigns a random name, renameable. (AS-004, AS-005)
 - C-005: Expired link or over view-limit → stops working ("not available" page). Expiry boundary
   is inclusive of the instant: a link is valid up to and including its expiry instant and denied
@@ -363,7 +365,7 @@ AS-032: The owner cannot be role-changed or removed (error)
   (AS-014, AS-023, AS-024)
 - C-015: `editors_can_share` defaults to **on** (editors can share, matching Google Docs); only
   the owner may toggle it — an editor cannot change the toggle itself even when it is on. (AS-022)
-- C-008: view-limit counts TOTAL opens (not unique viewers). (AS-011)
+- C-008: view-limit counts TOTAL opens (not unique viewers); the open count resets to 0 when the owner sets or changes the limit — a fresh limit is a fresh budget (it does not carry over past opens). (AS-011, AS-033)
 - C-009: The three general-access levels are clearly distinct: restricted (invitees only) <
   anyone_in_workspace (every logged-in member, no anon/outsiders) <
   anyone_with_link (includes anon/outsiders). (AS-002, AS-004, AS-015)
@@ -396,7 +398,8 @@ names only. Dark-operator (`DESIGN.md`). Precedence: AS > Tree.
 
 - `ShareDialog` `[N]` *(modal; **full-screen sheet** ≤600)*
   - `GeneralAccessSegmented`: Restricted · AnyoneInWorkspace · AnyoneWithLink + `RoleDropdown`
-  - `GuestCommentingToggle` *(only enabled when AnyoneWithLink — C-003)*
+    *(the link role IS the grant — anyone with the link, incl. no-account guests, gets this role;
+    a commenter+ link lets guests comment, no separate toggle — Google-Docs model)*
   - `LinkRow`: urlField · CopyButton · `PasswordChip` · `ExpiryChip` · `ViewLimitChip` *(all optional)*
   - `InviteRow`: emailField · `RoleDropdown` · InviteButton *(pending if no account)*
   - `PeopleList` → `PersonRow`: `Avatar` · name · roleLabel · `PendingTag`
@@ -408,10 +411,10 @@ auth gate C-005, validation C-007). Sharing-management routes are owner-only (C-
 
 | Method · Path | Serves | Auth | Request | Success | Errors |
 |---|---|---|---|---|---|
-| `GET /api/w/:workspaceId/docs/:slug/share` | S-006 (AS-025/026/027) | session: owner, or editor when `editors_can_share` (C-007) | — | 200 `{ level, role, guestCommenting, editorsCanShare, people[]{ id, email, name?, role, status }, link{ hasPassword, expiresAt, viewLimit, viewCount, url }, viewerRole }` (`viewerRole` = the caller's own role on the doc, owner\|editor\|commenter\|viewer) | 403 FORBIDDEN (cannot-manage AS-027), 404 |
-| `PUT /api/w/:workspaceId/docs/:slug/access` | S-001 (AS-001/002/003/018/022) | session: owner, or editor when `editors_can_share` (C-007); `editors_can_share` toggle is owner-only (C-015) | `{ level, role, guestCommenting?, editorsCanShare? }` (Zod) | 200 `{ level, role, guestCommenting, editorsCanShare }` | 400 VALIDATION_ERROR (invalid role AS-018; guest-on-restricted AS-003), 403 FORBIDDEN (viewer AS-024; editor when toggle off AS-023), 404 |
+| `GET /api/w/:workspaceId/docs/:slug/share` | S-006 (AS-025/026/027) | session: owner, or editor when `editors_can_share` (C-007) | — | 200 `{ level, role, editorsCanShare, people[]{ id, email, name?, role, status }, link{ hasPassword, expiresAt, viewLimit, viewCount, url }, viewerRole }` (`viewerRole` = the caller's own role on the doc, owner\|editor\|commenter\|viewer) | 403 FORBIDDEN (cannot-manage AS-027), 404 |
+| `PUT /api/w/:workspaceId/docs/:slug/access` | S-001 (AS-001/002/018/022) | session: owner, or editor when `editors_can_share` (C-007); `editors_can_share` toggle is owner-only (C-015) | `{ level, role, editorsCanShare? }` (Zod) | 200 `{ level, role, editorsCanShare, capabilityUrl }` (`capabilityUrl` = `/s/<token>` when the new level is anyone_with_link, else null — linked field consumed by capability-share-link:S-005/AS-027 so the share box updates in-session) | 400 VALIDATION_ERROR (invalid role AS-018), 403 FORBIDDEN (viewer AS-024; editor when toggle off AS-023), 404 |
 | `POST /api/w/:workspaceId/docs/:slug/invites` | S-003 (AS-007/008) | session: owner, or editor when `editors_can_share` (C-007) | `{ email, role, message? }` (Zod) | 201 `{ status, id }` (`status` active\|pending; `id` = new doc_members row, for immediate change/remove) | 400, 403, 404 |
-| `PUT /api/w/:workspaceId/docs/:slug/link` | S-004 (AS-009/010/011/016/017/019/020/021) | session: owner, or editor when `editors_can_share` (C-007) | `{ password?, expiresAt?, viewLimit? }` (Zod) | 200 `{ link controls }` | 400, 403, 404 |
+| `PUT /api/w/:workspaceId/docs/:slug/link` | S-004 (AS-009/010/011/016/017/019/020/021/033) | session: owner, or editor when `editors_can_share` (C-007) | `{ password?, expiresAt?, viewLimit? }` (Zod) | 200 `{ link controls }` | 400, 403, 404 |
 | `PATCH /api/w/:workspaceId/docs/:slug/members/:memberId` | S-007 (AS-028/031/032) | session: owner, or editor when `editors_can_share` (C-007) | `{ role }` viewer\|commenter\|editor (Zod) | 200 `{ role }` | 400 VALIDATION_ERROR (owner/invalid role AS-032), 403 FORBIDDEN (cannot-manage AS-031), 404 |
 | `DELETE /api/w/:workspaceId/docs/:slug/members/:memberId` | S-007 (AS-029/030/031/032) | session: owner, or editor when `editors_can_share` (C-007) | — | 200 `{ removed: true }` | 403 FORBIDDEN (cannot-manage AS-031; owner-target AS-032), 404 |
 
@@ -429,7 +432,7 @@ prompts then verifies server-side (AS-009/016, rate-limited). Role capability + 
 - Repo greenfield. `docs.general_access` is defined in `render-publish`; this cluster adds
   doc_members/share_links + enforcement.
 - Cross-spec: gate the `/d/:slug` link access of `render-publish`/`versioning-diff`
-  by general-access; turn guest commenting on + who can comment/resolve in `annotation-core`.
+  by general-access; who can comment/resolve (incl. no-account guests on a commenter+ link) in `annotation-core`.
 - Risk: pending-invite depends on `auth` (activates at sign up). Password link hash
   uses better-auth's utility (`auth`).
 
@@ -455,7 +458,7 @@ prompts then verifies server-side (AS-009/016, rate-limited). Role capability + 
   share state. ✔ surface (invite create-response) + lifecycle (FE keeps it on the optimistic row
   for the dialog session) match. (The persisted `id` is also served on the `GET …/share` read,
   AS-025 — so a re-opened dialog still has it.)
-- **share-state read** (`GET …/share` → `{ level, role, guestCommenting, editorsCanShare,
+- **share-state read** (`GET …/share` → `{ level, role, editorsCanShare,
   people[], link{ hasPassword, expiresAt, viewLimit, viewCount, url }, viewerRole }`) — produced by
   S-006 (AS-025). Consumed by `sharing-permissions-ui` to PREFILL the ShareDialog on open. ✔ password
   exposed as a boolean only (C-016).
@@ -526,3 +529,6 @@ further. Flagged to the product owner 2026-06-13.
 | 2026-06-13 | Major: AS-025 Then + share `## API` row now carry each person's member `id` in people[], so FE S-006 can target PATCH/DELETE …/members/:id — closes sharing-permissions-ui S1 (linked-field gap) | snapshot 2026-06-13-2.md |
 | 2026-06-13 | Major: S-003 AS-007/AS-008 Then + `## API` `POST …/invites` now return the new member `id` (`201 { status, id }`) + Linked Field; lets `sharing-permissions-ui:S-006` (AS-022) change/remove a JUST-invited row without re-reading the share state. Closes the AS-022 gap (a freshly invited pending person had no id → Remove silently no-op'd) | snapshot 2026-06-13-3.md |
 | 2026-06-13 | Major: S-006 AS-025 Then + `## API` `GET …/share` now return `viewerRole` (the caller's own role, already resolved by the gate) + Linked Field; lets `sharing-permissions-ui:C-003` apply the owner-only editors-can-share gate from any dialog entry point (the docs-list ⋯ preloads no `effectiveRole`, so the owner saw it read-only there) | snapshot 2026-06-13-4.md |
+| 2026-06-20 | Major (snapshot 2026-06-20.md): DROP the guest-commenting sub-toggle (Google-Docs model) — anon-write is gated by link role ≥ commenter, not a separate toggle. Removed AS-003 + C-003 + the `guestCommenting` field from `GET …/share`, `PUT …/access`, the S-006 read AS, the ShareDialog UI, and the share-state Linked Field. Cascades: annotation-core drops the guestCommentingEnabled gate; CLAUDE.md domain note reversed. Fixes guest-can't-comment bug by construction. | -- |
+| 2026-06-22 | Major (snapshot 2026-06-22.md): setting/changing a link view limit resets the open count to 0 (fresh budget) — +AS-033 (S-004), C-008 extended, `PUT …/link` API row updated. Fixes a footgun found in dogfood: setLinkControls only updated password/expiry/viewLimit, never view_count, so a re-set limit could leave a link instantly exhausted by past opens. Scope: SET path only; rotate-resets-count left out of scope. | -- |
+| 2026-06-22 | Minor: `PUT …/access` response gains `capabilityUrl` (linked field for capability-share-link:S-005/AS-027 — share box surfaces the link in-session). Contract/doc row only; no behavior AS change here. | -- |

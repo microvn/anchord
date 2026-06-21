@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
@@ -272,40 +272,63 @@ function ShareSections({
     );
   }, [people, queryClient, workspaceId, slug]);
 
-  const addOptimistic = (person: SharePerson) =>
-    setPeople((prev) => [...prev.filter((p) => p.email !== person.email), person]);
-  const reconcile = (email: string, status: SharePerson["status"], id: string) =>
-    setPeople((prev) => prev.map((p) => (p.email === email ? { ...p, status, id } : p)));
-  const rollback = (email: string) => setPeople((prev) => prev.filter((p) => p.email !== email));
+  // These three feed the memoized InviteRow — stabilized with useCallback (functional updaters, so
+  // no `people` dependency) so InviteRow's RHF form doesn't re-render on every tab toggle / access
+  // change / people mutation in this parent.
+  const addOptimistic = useCallback(
+    (person: SharePerson) =>
+      setPeople((prev) => [...prev.filter((p) => p.email !== person.email), person]),
+    [],
+  );
+  const reconcile = useCallback(
+    (email: string, status: SharePerson["status"], id: string) =>
+      setPeople((prev) => prev.map((p) => (p.email === email ? { ...p, status, id } : p))),
+    [],
+  );
+  const rollback = useCallback(
+    (email: string) => setPeople((prev) => prev.filter((p) => p.email !== email)),
+    [],
+  );
 
   // S-006: change a member's role. Optimistically set the new role; on a refused write revert to the
   // prior role + toast (C-005). Targets the doc_members `id` (the PATCH route needs it — S1).
-  async function onChangeRole(person: SharePerson, role: ShareRole) {
-    if (person.role === role) return;
-    if (!person.id) return; // can't target the member without its id (Spec signal S1)
-    const prevRole = person.role;
-    setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, role } : p)));
-    const res = await changeMemberRole(workspaceId, slug, person.id, role);
-    if (res.error || !res.data) {
-      setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, role: prevRole } : p)));
-      toast.error("Couldn't change that person's role");
-    }
-  }
+  // Stabilized (functional updaters → no `people` dep) so the memoized PeopleList stays put across
+  // unrelated parent re-renders.
+  const onChangeRole = useCallback(
+    async (person: SharePerson, role: ShareRole) => {
+      if (person.role === role) return;
+      if (!person.id) return; // can't target the member without its id (Spec signal S1)
+      const prevRole = person.role;
+      setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, role } : p)));
+      const res = await changeMemberRole(workspaceId, slug, person.id, role);
+      if (res.error || !res.data) {
+        setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, role: prevRole } : p)));
+        toast.error("Couldn't change that person's role");
+      }
+    },
+    [workspaceId, slug],
+  );
 
   // S-006: remove a person (active member or pending invite). Optimistically drop the row; on a
-  // refused write restore it + toast (C-005). Targets the doc_members `id`.
-  async function onRemove(person: SharePerson) {
-    if (!person.id) return; // can't target the member without its id (Spec signal S1)
-    const snapshot = people;
-    setPeople((prev) => prev.filter((p) => p.id !== person.id));
-    const res = await removeMember(workspaceId, slug, person.id);
-    if (res.error || !res.data) {
-      setPeople(snapshot);
-      toast.error("Couldn't remove that person");
-    }
-  }
+  // refused write restore it + toast (C-005). Targets the doc_members `id`. `people` is in the deps
+  // (the snapshot is the live roster at fire time) — but the identity only changes when `people`
+  // changes, which is exactly when the memoized PeopleList re-renders anyway, so memoization is
+  // unaffected. Kept as a pure capture (no reducer side effects) for correctness under StrictMode.
+  const onRemove = useCallback(
+    async (person: SharePerson) => {
+      if (!person.id) return; // can't target the member without its id (Spec signal S1)
+      const snapshot = people;
+      setPeople((prev) => prev.filter((p) => p.id !== person.id));
+      const res = await removeMember(workspaceId, slug, person.id);
+      if (res.error || !res.data) {
+        setPeople(snapshot);
+        toast.error("Couldn't remove that person");
+      }
+    },
+    [people, workspaceId, slug],
+  );
 
-  const inviteeCount = people.filter((p) => p.role !== "owner").length;
+  const inviteeCount = useMemo(() => people.filter((p) => p.role !== "owner").length, [people]);
 
   return (
     <div data-testid="share-sections" className="flex flex-col gap-4 pt-1">

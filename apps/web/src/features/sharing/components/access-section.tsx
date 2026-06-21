@@ -26,7 +26,12 @@ const ROLE_OPTS: ShareRole[] = ["viewer", "commenter", "editor"];
 const roleLabel = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
 
 export function AccessSection({ controls }: { controls: AccessControls }) {
-  const { level, role, saving, chooseLevel, chooseRole } = controls;
+  const { level, role, saving, chooseLevel, chooseRole, editorsCanShare } = controls;
+  // Footgun guard: an anyone-with-link doc shared at the EDITOR role hands sharing control to
+  // whoever opens the link (an editor may manage sharing while editors_can_share is on — the
+  // default). Surface it so the choice is deliberate; the owner can drop the role or turn
+  // "Editors can change sharing" off (Options).
+  const editorLinkWarning = level === "anyone_with_link" && role === "editor" && editorsCanShare;
 
   return (
     <section data-testid="share-sec-access" className="flex flex-col gap-3">
@@ -99,6 +104,19 @@ export function AccessSection({ controls }: { controls: AccessControls }) {
           </SelectContent>
         </Select>
       </div>
+
+      {editorLinkWarning ? (
+        <p
+          data-testid="share-access-editor-warning"
+          className="flex items-start gap-1.5 text-[11.5px] text-subtle"
+        >
+          <Icon name="alert" size={13} />
+          <span>
+            Editors can change sharing — anyone who opens this link can manage who has access. Turn it
+            off under Options, or grant Commenter instead.
+          </span>
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -152,9 +152,9 @@ describe("doc-access-routing S-003 — public viewer for signed-out visitors", (
     render(<App />);
 
     const view = await screen.findByTestId("no-access-view");
-    // The signed-in variant — a plain "you don't have access" message, NOT a sign-in prompt.
+    // The signed-in variant — a plain "doc isn't available" message, NOT a sign-in prompt.
     expect(view).toHaveAttribute("data-variant", "no-access");
-    expect(screen.getByTestId("no-access-title")).toHaveTextContent(/don.t have access/i);
+    expect(screen.getByTestId("no-access-title")).toHaveTextContent(/isn.t available/i);
     expect(screen.queryByTestId("no-access-signin")).toBeNull();
     expect(bounced).toBe(false);
     // S-003 polish: the no-access state is a CLEAN standalone page — it must NOT mount the 3-pane

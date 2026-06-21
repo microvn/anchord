@@ -45,10 +45,10 @@ export function NoAccessView({
       {isSignin ? (
         <>
           <p data-testid="no-access-title" className="font-serif text-base text-ink">
-            Sign in to view this doc
+            Sign in to open this doc
           </p>
           <p className="text-sm text-muted">
-            This document is restricted. Signing in might give you access.
+            You may have access once you&rsquo;re signed in.
           </p>
           <Button
             type="button"
@@ -63,11 +63,15 @@ export function NoAccessView({
         </>
       ) : (
         <>
+          {/* Reused for BOTH a signed-in visitor with no access AND an anon visitor whose capability
+              link is unknown / expired / turned off — so the copy must NOT assume a session. Warm +
+              actionable, no status-code jargon. */}
           <p data-testid="no-access-title" className="font-serif text-base text-ink">
-            You don&rsquo;t have access
+            This doc isn&rsquo;t available
           </p>
           <p className="text-sm text-muted">
-            You&rsquo;re signed in, but this document isn&rsquo;t shared with your account.
+            The share link may have expired or been turned off, or you may not have access. Ask the
+            person who shared it to send you a new link.
           </p>
         </>
       )}

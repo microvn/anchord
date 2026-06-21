@@ -5,6 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { memo } from "react";
 import { Icon } from "@/components/icon";
 import { initials, avatarColor } from "@/lib/initials";
 import type { SharePerson, ShareRole } from "@/features/sharing/services/client";
@@ -24,7 +25,9 @@ import type { SharePerson, ShareRole } from "@/features/sharing/services/client"
 const ROLE_OPTS: ShareRole[] = ["viewer", "commenter", "editor"];
 const roleLabel = (role: string) => role.charAt(0).toUpperCase() + role.slice(1);
 
-export function PeopleList({
+// Memoized: presentational + props are stabilized by the parent (people is state identity;
+// onChangeRole/onRemove are useCallback) so it skips re-renders on tab toggle / access changes.
+export const PeopleList = memo(function PeopleList({
   people,
   onChangeRole,
   onRemove,
@@ -47,7 +50,7 @@ export function PeopleList({
       ))}
     </div>
   );
-}
+});
 
 function PersonRow({
   person,
