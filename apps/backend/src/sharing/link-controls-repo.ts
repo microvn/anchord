@@ -6,21 +6,25 @@
 // `WHERE view_count < view_limit RETURNING` shape makes the DB the arbiter — no
 // read-then-write race. Integration-verified in test/integration/share-link.itest.ts.
 
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { DB } from "../db/client";
 import { shareLinks } from "../db/schema";
 import { decideConsumeView, type ConsumeViewResult } from "./link-controls";
 
 /**
- * The persisted link controls an owner set (sharing S-004): the hashed password, the
- * expiry instant, and the total-opens limit. Each is independently clearable (null
- * removes that control); `passwordHash` is already argon2id-hashed by the caller
- * (setPassword) — this glue never sees the plaintext.
+ * A PARTIAL update of a doc's link controls (sharing S-004, C-001): the hashed password,
+ * the expiry instant, and the total-opens limit each attach to the link INDEPENDENTLY.
+ * Each field is three-state:
+ *   - key ABSENT (`undefined`) → that control is left UNCHANGED (the column is not written),
+ *   - key `null` → that control is CLEARED,
+ *   - key a value → that control is SET.
+ * `passwordHash` is already argon2id-hashed by the caller (setPassword) — this glue never
+ * sees the plaintext. Setting a non-null `viewLimit` also resets the open count (AS-033).
  */
 export interface LinkControlsUpdate {
-  passwordHash: string | null;
-  expiresAt: Date | null;
-  viewLimit: number | null;
+  passwordHash?: string | null;
+  expiresAt?: Date | null;
+  viewLimit?: number | null;
 }
 
 /** What the row stores back after the update (echoed to the API response). */
@@ -44,21 +48,55 @@ export async function setLinkControls(
   docId: string,
   update: LinkControlsUpdate,
 ): Promise<PersistedLinkControls> {
+  // Build the SET clause from ONLY the controls PRESENT in the update (C-001): an absent
+  // key leaves its column untouched; an explicit null clears it; a value sets it. On the
+  // INSERT branch (first-ever controls on a fresh link) absent keys fall to the column
+  // defaults (null / view_count 0).
+  const set: Record<string, unknown> = {};
+  const insertValues: Record<string, unknown> = { docId };
+  if ("passwordHash" in update) {
+    set.passwordHash = update.passwordHash ?? null;
+    insertValues.passwordHash = update.passwordHash ?? null;
+  }
+  if ("expiresAt" in update) {
+    set.expiresAt = update.expiresAt ?? null;
+    insertValues.expiresAt = update.expiresAt ?? null;
+  }
+  if ("viewLimit" in update) {
+    set.viewLimit = update.viewLimit ?? null;
+    insertValues.viewLimit = update.viewLimit ?? null;
+    // AS-033: SETTING a limit (non-null) starts a fresh viewing budget — reset the open
+    // count to 0. Clearing the limit (null) is NOT "setting a limit" → leave the count.
+    if (update.viewLimit != null) {
+      set.viewCount = 0;
+    }
+  }
+
+  // No controls present → nothing to write; just read the current row back (or defaults).
+  if (Object.keys(set).length === 0) {
+    const [existing] = await db
+      .select({
+        passwordHash: shareLinks.passwordHash,
+        expiresAt: shareLinks.expiresAt,
+        viewLimit: shareLinks.viewLimit,
+        viewCount: shareLinks.viewCount,
+      })
+      .from(shareLinks)
+      .where(eq(shareLinks.docId, docId));
+    return {
+      passwordSet: existing?.passwordHash != null,
+      expiresAt: existing?.expiresAt ?? null,
+      viewLimit: existing?.viewLimit ?? null,
+      viewCount: existing?.viewCount ?? 0,
+    };
+  }
+
   const [row] = await db
     .insert(shareLinks)
-    .values({
-      docId,
-      passwordHash: update.passwordHash,
-      expiresAt: update.expiresAt,
-      viewLimit: update.viewLimit,
-    })
+    .values(insertValues as typeof shareLinks.$inferInsert)
     .onConflictDoUpdate({
       target: shareLinks.docId,
-      set: {
-        passwordHash: update.passwordHash,
-        expiresAt: update.expiresAt,
-        viewLimit: update.viewLimit,
-      },
+      set,
     })
     .returning({
       passwordHash: shareLinks.passwordHash,

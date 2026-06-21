@@ -8,7 +8,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDocRepo } from "../../src/publish/repo";
 import { shareLinks } from "../../src/db/schema";
-import { tryConsumeView } from "../../src/sharing/link-controls-repo";
+import { setLinkControls, tryConsumeView } from "../../src/sharing/link-controls-repo";
+import { eq } from "drizzle-orm";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
@@ -83,5 +84,51 @@ describe.skipIf(!RUN)("share-link view-limit (real Postgres)", () => {
     const r3 = await tryConsumeView(h.db, docId);
     expect([r1.allowed, r2.allowed, r3.allowed]).toEqual([true, true, true]);
     expect(r3.allowed && r3.viewCount).toBe(3); // TOTAL opens, monotonic
+  });
+
+  test("C-001: setLinkControls applies a PARTIAL update — absent controls are untouched", async () => {
+    const docId = await newDoc(h);
+    const expiry = new Date("2030-01-01T00:00:00.000Z");
+    // Seed all three controls.
+    await setLinkControls(h.db, docId, {
+      passwordHash: "$argon2id$seeded",
+      expiresAt: expiry,
+      viewLimit: 50,
+    });
+    // Update ONLY viewLimit — password + expiry keys absent.
+    const persisted = await setLinkControls(h.db, docId, { viewLimit: 5 });
+    expect(persisted.passwordSet).toBe(true); // STILL set
+    expect(persisted.expiresAt?.toISOString()).toBe(expiry.toISOString()); // STILL set
+    expect(persisted.viewLimit).toBe(5);
+
+    // Clearing one control with null leaves the others intact.
+    const cleared = await setLinkControls(h.db, docId, { passwordHash: null });
+    expect(cleared.passwordSet).toBe(false); // CLEARED
+    expect(cleared.expiresAt?.toISOString()).toBe(expiry.toISOString()); // untouched
+    expect(cleared.viewLimit).toBe(5); // untouched
+  });
+
+  test("AS-033: setting a view limit resets the open count to 0 (fresh budget)", async () => {
+    const docId = await newDoc(h);
+    await newShareLink(h, docId, null);
+    // Open it 3× so view_count = 3.
+    await tryConsumeView(h.db, docId);
+    await tryConsumeView(h.db, docId);
+    await tryConsumeView(h.db, docId);
+    const [before] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, docId));
+    expect(before.viewCount).toBe(3);
+
+    // Setting a limit resets the open count.
+    const persisted = await setLinkControls(h.db, docId, { viewLimit: 20 });
+    expect(persisted.viewLimit).toBe(20);
+    expect(persisted.viewCount).toBe(0); // RESET
+    const [after] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, docId));
+    expect(after.viewCount).toBe(0);
+
+    // Clearing the limit (null) does NOT reset the count again.
+    await tryConsumeView(h.db, docId); // count → 1
+    const clearedLimit = await setLinkControls(h.db, docId, { viewLimit: null });
+    expect(clearedLimit.viewLimit).toBeNull();
+    expect(clearedLimit.viewCount).toBe(1); // left as-is
   });
 });

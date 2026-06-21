@@ -347,23 +347,26 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
             const body = validBody as z.infer<typeof linkBodySchema>;
             const doc = await loadVisibleDoc(params.slug, actor.userId);
             await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
-            // Hash the password (argon2id, C-010) before it ever touches the DB; an
-            // empty/omitted password clears it (null).
-            const passwordHash =
-              body.password != null && body.password.length > 0
-                ? await setPassword(body.password)
-                : null;
+            // C-001: build a PARTIAL update so each control is independent — only the
+            // controls PRESENT in the body are written; an ABSENT control is left
+            // unchanged, an explicit null (or "" for password) CLEARS it, a value SETS it.
+            const update: LinkControlsUpdate = {};
+            if (body.password !== undefined) {
+              // null or "" → clear (passwordHash null); a non-empty string → hash it
+              // (argon2id, C-010) before it ever touches the DB.
+              update.passwordHash =
+                body.password != null && body.password.length > 0
+                  ? await setPassword(body.password)
+                  : null;
+            }
+            if (body.expiresAt !== undefined) update.expiresAt = body.expiresAt;
+            if (body.viewLimit !== undefined) update.viewLimit = body.viewLimit;
             const persist =
               deps.setLinkControls ??
               (deps.db
-                ? (docId: string, update: LinkControlsUpdate) =>
-                    setLinkControls(deps.db!, docId, update)
+                ? (docId: string, u: LinkControlsUpdate) => setLinkControls(deps.db!, docId, u)
                 : need("setLinkControls"));
-            const persisted = await persist(doc.id, {
-              passwordHash,
-              expiresAt: body.expiresAt ?? null,
-              viewLimit: body.viewLimit ?? null,
-            });
+            const persisted = await persist(doc.id, update);
             return {
               passwordSet: persisted.passwordSet,
               expiresAt: persisted.expiresAt,

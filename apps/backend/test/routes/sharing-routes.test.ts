@@ -161,12 +161,53 @@ function fakeLinkControls() {
     calls.push(update);
     return {
       passwordSet: update.passwordHash != null,
-      expiresAt: update.expiresAt,
-      viewLimit: update.viewLimit,
+      expiresAt: update.expiresAt ?? null,
+      viewLimit: update.viewLimit ?? null,
       viewCount: 0,
     };
   };
   return { persist, calls };
+}
+
+/**
+ * A statefully-merging link-controls persister that mirrors the REAL Drizzle repo's
+ * partial-update contract (C-001 / AS-033): only the keys PRESENT in the update mutate
+ * their column; an absent key (`undefined`) leaves the column unchanged. Setting a
+ * non-null viewLimit resets viewCount to 0 (AS-033). Seeded with an initial row so a
+ * route test can assert that touching one control leaves the others intact.
+ */
+function statefulLinkControls(initial: {
+  passwordHash?: string | null;
+  expiresAt?: Date | null;
+  viewLimit?: number | null;
+  viewCount?: number;
+} = {}) {
+  const state = {
+    passwordHash: initial.passwordHash ?? null,
+    expiresAt: initial.expiresAt ?? null,
+    viewLimit: initial.viewLimit ?? null,
+    viewCount: initial.viewCount ?? 0,
+  };
+  const calls: LinkControlsUpdate[] = [];
+  const persist = async (
+    _docId: string,
+    update: LinkControlsUpdate,
+  ): Promise<PersistedLinkControls> => {
+    calls.push(update);
+    if ("passwordHash" in update) state.passwordHash = update.passwordHash ?? null;
+    if ("expiresAt" in update) state.expiresAt = update.expiresAt ?? null;
+    if ("viewLimit" in update) {
+      state.viewLimit = update.viewLimit ?? null;
+      if (update.viewLimit != null) state.viewCount = 0; // AS-033: fresh budget
+    }
+    return {
+      passwordSet: state.passwordHash != null,
+      expiresAt: state.expiresAt,
+      viewLimit: state.viewLimit,
+      viewCount: state.viewCount,
+    };
+  };
+  return { persist, calls, state };
 }
 
 describe("PUT /api/docs/:slug/access (S-001)", () => {
@@ -557,6 +598,81 @@ describe("PUT /api/docs/:slug/link (S-004) — clear controls with null (AS-009/
     expect(link.calls[0]?.expiresAt instanceof Date).toBe(true);
     expect(link.calls[0]?.expiresAt?.toISOString()).toBe(future);
     expect(link.calls[0]?.viewLimit).toBe(25);
+  });
+});
+
+describe("PUT /api/docs/:slug/link (S-004) — independent controls + view-limit reset (C-001, AS-033)", () => {
+  test("C-001: changing ONE control (viewLimit) leaves password + expiry intact", async () => {
+    // Seed: a link already has a password + a future expiry, no view limit.
+    const expiry = new Date("2030-01-01T00:00:00.000Z");
+    const link = statefulLinkControls({ passwordHash: "$argon2id$seeded", expiresAt: expiry });
+    const app = buildApp({ setLinkControls: link.persist });
+    // PUT only viewLimit — password/expiry are ABSENT, must NOT be touched.
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 5 }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.passwordSet).toBe(true); // STILL set
+    expect(new Date(json.data.expiresAt).toISOString()).toBe(expiry.toISOString()); // STILL set
+    expect(json.data.viewLimit).toBe(5);
+    // The handler must have sent a PARTIAL update — no passwordHash/expiresAt keys.
+    expect(link.calls).toHaveLength(1);
+    expect("passwordHash" in link.calls[0]!).toBe(false);
+    expect("expiresAt" in link.calls[0]!).toBe(false);
+    expect(link.state.passwordHash).toBe("$argon2id$seeded");
+    expect(link.state.expiresAt?.toISOString()).toBe(expiry.toISOString());
+  });
+
+  test("C-001: clearing ONE control with null (password) leaves expiry + viewLimit intact", async () => {
+    const expiry = new Date("2030-01-01T00:00:00.000Z");
+    const link = statefulLinkControls({
+      passwordHash: "$argon2id$seeded",
+      expiresAt: expiry,
+      viewLimit: 50,
+      viewCount: 3,
+    });
+    const app = buildApp({ setLinkControls: link.persist });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ password: null }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.passwordSet).toBe(false); // CLEARED
+    expect(new Date(json.data.expiresAt).toISOString()).toBe(expiry.toISOString()); // untouched
+    expect(json.data.viewLimit).toBe(50); // untouched
+    expect(json.data.viewCount).toBe(3); // untouched (clearing password is not a viewLimit set)
+    expect("passwordHash" in link.calls[0]!).toBe(true);
+    expect(link.calls[0]?.passwordHash).toBeNull();
+    expect("expiresAt" in link.calls[0]!).toBe(false);
+    expect("viewLimit" in link.calls[0]!).toBe(false);
+  });
+
+  test("AS-033: setting a view limit resets the open count to 0", async () => {
+    // A link opened 30× then given a limit of 20 must start a FRESH budget (count → 0).
+    const link = statefulLinkControls({ viewLimit: null, viewCount: 30 });
+    const app = buildApp({ setLinkControls: link.persist });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: 20 }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.viewLimit).toBe(20);
+    expect(json.data.viewCount).toBe(0); // RESET (was 30)
+    expect(link.state.viewCount).toBe(0);
+  });
+
+  test("AS-033 edge: clearing the view limit (null) does NOT reset the count", async () => {
+    const link = statefulLinkControls({ viewLimit: 10, viewCount: 10 });
+    const app = buildApp({ setLinkControls: link.persist });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/link", { method: "PUT", body: JSON.stringify({ viewLimit: null }) }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.viewLimit).toBeNull(); // no limit
+    expect(json.data.viewCount).toBe(10); // left as-is (clearing is not "setting a limit")
+    expect(link.state.viewCount).toBe(10);
   });
 });
 
