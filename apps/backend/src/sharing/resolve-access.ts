@@ -16,15 +16,16 @@
 //     already folds owner + active invited doc_members + link-role-when-admitted, and
 //     resolves anyone_in_workspace against the doc's own workspace (the cross-tenant
 //     guard, AS-005). So for a user, canView ⇔ resolveDocRole returns SOME role.
-//   - An ANONYMOUS caller has no userId, so `resolveDocRole` can't run. An anon may see
-//     only an anyone_with_link doc (C-005), where they get the link role. Every other
-//     general-access level denies anon (no role, no view) — existence-hiding upstream.
+//   - An ANONYMOUS caller has no userId, so `resolveDocRole` can't run. After
+//     capability-share-link S-003 (C-002) an anon reaches an anyone_with_link doc ONLY via a
+//     valid capability admission cookie (minted at /s/<token> redeem, S-002) — knowing the
+//     readable /d/:slug address is no longer enough. Without that cookie the anon is denied at
+//     every general-access level (no role, no view) — existence-hiding upstream.
 
 import { eq } from "drizzle-orm";
 import { docs, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
 import type { Role } from "./roles";
-import type { ShareRole } from "./share";
 import type { Viewer } from "./access";
 import { resolveAdmission } from "./capability-cookie";
 
@@ -60,8 +61,10 @@ export interface ResolveAccessDeps {
 /**
  * Build the single authoritative `resolveAccess(docId, viewer)` gate.
  *
- * Anon path: only an anyone_with_link doc admits an anon, at the link's role (C-005).
- * Every other level (or a missing doc / missing link row) → denied.
+ * Anon path (capability-share-link S-003 / C-002): an anon is admitted to an anyone_with_link
+ * doc ONLY with a valid capability admission cookie (bound to this doc + its current token), at
+ * the cookie's link role. No cookie (or any other general-access level / missing doc) → denied —
+ * the readable /d/:slug address is no longer an anonymous entry point.
  * User path: delegate to the authoritative `resolveDocRole`; a non-null role means view.
  */
 export function createResolveAccess(
@@ -70,32 +73,33 @@ export function createResolveAccess(
 ): (docId: string, viewer: Viewer) => Promise<AccessResult> {
   return async (docId, viewer): Promise<AccessResult> => {
     if (viewer.kind === "anon") {
-      // AS-004 / C-005: an anon may view ONLY an anyone_with_link doc, at the link role.
+      // capability-share-link S-003 / C-002: the readable /d/:slug address NO LONGER admits an
+      // anon just because the doc is anyone_with_link. An anonymous visitor reaches an
+      // anyone_with_link doc ONLY through a valid capability admission cookie (the path S-002
+      // minted at /s/<token> redeem). The old "admit-by-slug" branch is GONE (AS-007): knowing
+      // the readable address is not enough. (Before S-003 an anon with no cookie was admitted
+      // here whenever generalAccess === "anyone_with_link"; that is the behaviour this story
+      // removes — see resolve-access.test.ts AS-007 for the boundary regression test.)
       const [doc] = await db
         .select({ generalAccess: docs.generalAccess })
         .from(docs)
         .where(eq(docs.id, docId))
         .limit(1);
       if (!doc || doc.generalAccess !== "anyone_with_link") return DENIED;
-      // general_access = anyone_with_link IS the grant (AS-004/AS-010): anyone holding the
-      // link may view. The share_links.role refines WHICH role; absent a row, default to
-      // `viewer` (least-privilege admit) rather than failing closed — failing closed here
-      // would contradict "anyone with the link can view" whenever no explicit link role row
-      // has been written yet.
-      const [link] = await db
-        .select({ role: shareLinks.role, capabilityToken: shareLinks.capabilityToken })
-        .from(shareLinks)
-        .where(eq(shareLinks.docId, docId))
-        .limit(1);
 
-      // capability-share-link S-002 / C-006: when the anon carries a VALID admission cookie
-      // for THIS doc (bound to its docId + minted from its CURRENT capability token), admit
-      // at the COOKIE's link role. resolveAdmission does the cross-doc (AS-020) + stale-token
-      // (AS-021) binding against the live token; a forged/garbage/doc-B/no cookie returns
-      // null and falls through to the existing slug admit below. This is the production
+      // capability-share-link S-002 / C-006: the ONLY anon admit now. When the anon carries a
+      // VALID admission cookie for THIS doc (bound to its docId + minted from its CURRENT
+      // capability token), admit at the COOKIE's link role. resolveAdmission does the cross-doc
+      // (AS-020) + stale-token (AS-021) binding against the live token; a forged/garbage/doc-B/
+      // no cookie returns null → DENIED (no slug fallback any more). This is the production
       // consumer of resolveAdmission — it grants the cookie role on every anon-reachable
       // endpoint (the doc read AND the comment/resolve writes flow through this one gate).
       if (deps.secret && viewer.admissionCookie) {
+        const [link] = await db
+          .select({ capabilityToken: shareLinks.capabilityToken })
+          .from(shareLinks)
+          .where(eq(shareLinks.docId, docId))
+          .limit(1);
         const claims = resolveAdmission(
           viewer.admissionCookie,
           docId,
@@ -105,8 +109,8 @@ export function createResolveAccess(
         if (claims) return { role: claims.role as Role, canView: true };
       }
 
-      const role = (link ? (link.role as ShareRole) : "viewer") as Role;
-      return { role, canView: true };
+      // No valid admission cookie → the anon is refused at the readable address (AS-007 / C-002).
+      return DENIED;
     }
 
     // Logged-in: the authoritative resolver decides (owner/invited/workspace/link),
