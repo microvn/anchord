@@ -146,6 +146,14 @@ export const shareLinks = pgTable(
       .references(() => docs.id, { onDelete: "cascade" }),
     role: shareRole("role").notNull().default("viewer"),
     guestCommenting: boolean("guest_commenting").notNull().default(false),
+    // capability_token (capability-share-link S-001 / C-001): the high-entropy,
+    // crypto-random, URL-safe secret that addresses the doc at /s/<token> when general
+    // access is anyone_with_link. NULL when the doc is not link-shared (restricted /
+    // anyone_in_workspace). Set/cleared on the access transition (share-token.ts), never
+    // derived from the title. Globally UNIQUE — the partial unique index below is the hard
+    // guarantee behind the ~128-bit "globally unique" property (a null is exempt: a
+    // non-shared doc carries no token, and many nulls must coexist).
+    capabilityToken: text("capability_token"),
     // editors_can_share (sharing C-015 / AS-022): the owner-controlled toggle that
     // lets editors manage sharing (Google-Docs style). Default ON — editors can share
     // unless the owner turns it off. Only the OWNER may flip this; an editor managing
@@ -162,6 +170,14 @@ export const shareLinks = pgTable(
       .defaultNow()
       .$onUpdate(() => sql`now()`),
   },
+  (t) => [
+    // C-001: a capability token is globally unique. PARTIAL unique index (WHERE NOT
+    // NULL) so the many non-shared docs (token NULL) coexist while every minted token is
+    // unique. Portable: SQLite supports partial indexes too (memory: C-011 decision).
+    uniqueIndex("share_links_capability_token_idx")
+      .on(t.capabilityToken)
+      .where(sql`${t.capabilityToken} IS NOT NULL`),
+  ],
 );
 
 // doc_members (sharing S-003): per-doc membership granted by an email invite.
