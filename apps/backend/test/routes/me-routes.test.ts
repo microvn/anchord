@@ -42,8 +42,8 @@ function req(method: string, path: string, body?: unknown) {
 }
 
 const MINE: WorkspaceListItem[] = [
-  { id: "ws_own", name: "default", slug: "s1", role: "admin", adminName: "Me" },
-  { id: "ws_acme", name: "Acme", slug: "s2", role: "member", adminName: "Lan" },
+  { id: "ws_own", name: "Me's workspace", slug: "s1", role: "admin", adminName: "Me", creatorId: "u_me" },
+  { id: "ws_acme", name: "Acme", slug: "s2", role: "member", adminName: "Lan", creatorId: "u_lan" },
 ];
 
 describe("/api/me bootstrap route glue (workspaces S-003)", () => {

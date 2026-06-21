@@ -23,7 +23,7 @@ export function createTenancyRepo(db: DB): TenancyRepo {
     async createWorkspace(input) {
       const [ws] = await db
         .insert(workspaces)
-        .values({ name: input.name, slug: input.slug, settings: {} })
+        .values({ name: input.name, slug: input.slug, creatorId: input.creatorId, settings: {} })
         .returning({ id: workspaces.id, slug: workspaces.slug, name: workspaces.name });
       return ws!;
     },
@@ -57,6 +57,7 @@ export function createTenancyRepo(db: DB): TenancyRepo {
           name: workspaces.name,
           slug: workspaces.slug,
           role: workspaceMembers.role,
+          creatorId: workspaces.creatorId,
         })
         .from(workspaceMembers)
         .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
@@ -80,6 +81,7 @@ export function createTenancyRepo(db: DB): TenancyRepo {
           slug: w.slug,
           role: w.role as WorkspaceRole,
           adminName: admin?.name ?? null,
+          creatorId: w.creatorId ?? null,
         });
       }
       return result;

@@ -470,6 +470,10 @@ export const workspaces = pgTable("workspaces", {
   id: id(),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
+  // The account that created this workspace (workspaces:C-001/AS-006). Nullable + `set null`
+  // on the creator's deletion so the workspace survives. The consumer marks "mine" by
+  // creatorId === me (no longer inferred from name+role).
+  creatorId: text("creator_id").references(() => user.id, { onDelete: "set null" }),
   // jsonb (declared exception): { providers, defaultAccess, branding }.
   settings: jsonb("settings").notNull(),
   createdAt: createdAt(),

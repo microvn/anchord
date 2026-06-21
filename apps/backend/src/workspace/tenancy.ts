@@ -29,8 +29,10 @@ export interface WorkspaceListItem {
   slug: string;
   /** The caller's role in THIS workspace. */
   role: WorkspaceRole;
-  /** The creating admin's display name — so two "default"s disambiguate (GAP-002/AS-006). */
+  /** The creating admin's display name (legacy disambiguation aid; kept for back-compat). */
   adminName: string | null;
+  /** The account that created this workspace (AS-006). The consumer marks "mine" by creatorId === me. */
+  creatorId: string | null;
 }
 
 /** A pending/active member as the members surface lists it (S-005, AS-021). */
@@ -73,7 +75,7 @@ export class TenancyRejected extends Error {
  */
 export interface TenancyRepo {
   /** Insert a workspaces row; return its id/slug/name. */
-  createWorkspace(input: { name: string; slug: string }): Promise<{ id: string; slug: string; name: string }>;
+  createWorkspace(input: { name: string; slug: string; creatorId: string | null }): Promise<{ id: string; slug: string; name: string }>;
   /** Insert a workspace_members row (idempotent on (workspace,user)). */
   addMember(workspaceId: string, userId: string, role: WorkspaceRole): Promise<void>;
   /** Rename a workspace. */
@@ -161,7 +163,11 @@ export async function createOwnWorkspaceOnSignup(
   deps: TenancyDeps,
 ): Promise<{ workspaceId: string; role: WorkspaceRole }> {
   const slugGen = deps.slugGen ?? generateSlug;
-  const ws = await deps.repo.createWorkspace({ name: "default", slug: slugGen(`default-${userId}`) });
+  // Name the auto-workspace after its creator ("<display name>'s workspace") so two
+  // auto-created workspaces never read as indistinguishable "default"s; record the creator.
+  const owner = await deps.repo.userName(userId);
+  const name = owner ? `${owner}'s workspace` : "My workspace";
+  const ws = await deps.repo.createWorkspace({ name, slug: slugGen(`workspace-${userId}`), creatorId: userId });
   await deps.repo.addMember(ws.id, userId, "admin");
   await ensureDefaultProjectFor(ws.id, userId, deps);
   return { workspaceId: ws.id, role: "admin" };
@@ -177,7 +183,7 @@ export async function createWorkspace(
 ): Promise<{ id: string; name: string; slug: string; role: WorkspaceRole }> {
   const name = cleanName(input.name);
   const slugGen = deps.slugGen ?? generateSlug;
-  const ws = await deps.repo.createWorkspace({ name, slug: slugGen(name) });
+  const ws = await deps.repo.createWorkspace({ name, slug: slugGen(name), creatorId: input.actorId });
   await deps.repo.addMember(ws.id, input.actorId, "admin");
   await ensureDefaultProjectFor(ws.id, input.actorId, deps);
   return { id: ws.id, name: ws.name, slug: ws.slug, role: "admin" };

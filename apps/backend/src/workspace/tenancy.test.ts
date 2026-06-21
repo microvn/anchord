@@ -41,14 +41,14 @@ function fakeRepo(opts: { names?: Record<string, string> } = {}) {
   let wsN = 0;
   let invN = 0;
   const state = {
-    workspaces: [] as Array<{ id: string; name: string; slug: string }>,
+    workspaces: [] as Array<{ id: string; name: string; slug: string; creatorId: string | null }>,
     members: [] as Member[],
     invitations: [] as Invitation[],
     projects: [] as Array<{ workspaceId: string; ownerId: string; isDefault: boolean }>,
   };
   const repo: TenancyRepo = {
     async createWorkspace(input) {
-      const ws = { id: `ws_${++wsN}`, name: input.name, slug: input.slug };
+      const ws = { id: `ws_${++wsN}`, name: input.name, slug: input.slug, creatorId: input.creatorId ?? null };
       state.workspaces.push(ws);
       return ws;
     },
@@ -77,6 +77,7 @@ function fakeRepo(opts: { names?: Record<string, string> } = {}) {
             slug: ws.slug,
             role: m.role,
             adminName: admin ? (opts.names?.[admin.userId] ?? null) : null,
+            creatorId: ws.creatorId,
           };
         });
     },
@@ -147,12 +148,13 @@ function fakeRepo(opts: { names?: Record<string, string> } = {}) {
   return { repo, state, projectRepo, deps: { repo, projectRepo, slugGen: (n: string) => n, tokenGen: () => `tok_${invN + 1}` } };
 }
 
-test("AS-001: signing up creates the user's OWN workspace named 'default' as admin + a default project", async () => {
-  const f = fakeRepo();
+test("AS-001: signing up creates the user's OWN workspace named after them, recording them as creator", async () => {
+  const f = fakeRepo({ names: { u_dung: "Dung" } });
   const out = await createOwnWorkspaceOnSignup("u_dung", f.deps);
   expect(out.role).toBe("admin");
   expect(f.state.workspaces).toHaveLength(1);
-  expect(f.state.workspaces[0]!.name).toBe("default");
+  expect(f.state.workspaces[0]!.name).toBe("Dung's workspace");
+  expect(f.state.workspaces[0]!.creatorId).toBe("u_dung");
   expect(f.state.members).toEqual([
     expect.objectContaining({ userId: "u_dung", role: "admin" }),
   ]);
@@ -198,18 +200,26 @@ test("AS-005 / C-003: a non-admin cannot rename the workspace (admin only)", asy
   ).rejects.toMatchObject({ code: "forbidden" });
 });
 
-test("AS-006: my workspace list shows every workspace I belong to with my role + the creating admin's name", async () => {
-  const f = fakeRepo({ names: { u_lan: "Lan" } });
-  // I own my own default; I am a member of Lan's "Acme".
-  await createOwnWorkspaceOnSignup("u_me", f.deps); // ws_1, name "default", admin me
-  const lanWs = await createWorkspace({ name: "Acme", actorId: "u_lan" }, f.deps); // ws_2
+test("AS-006: my workspace list shows every workspace I belong to with my role + who created each", async () => {
+  const f = fakeRepo({ names: { u_me: "Me", u_lan: "Lan" } });
+  // I created my own workspace; I am a member of Lan's "Acme" (creator = Lan).
+  await createOwnWorkspaceOnSignup("u_me", f.deps); // ws_1, "Me's workspace", creator u_me
+  const lanWs = await createWorkspace({ name: "Acme", actorId: "u_lan" }, f.deps); // ws_2, creator u_lan
   await f.repo.addMember(lanWs.id, "u_me", "member");
   const mine = await listMyWorkspaces("u_me", f.deps);
   expect(mine).toHaveLength(2);
   const own = mine.find((w) => w.role === "admin")!;
   const lan = mine.find((w) => w.role === "member")!;
-  expect(own.name).toBe("default");
-  expect(lan.adminName).toBe("Lan"); // disambiguates the admin-qualified label
+  // The one I created is identifiable by creator === me; the other's creator is Lan.
+  expect(own.name).toBe("Me's workspace");
+  expect(own.creatorId).toBe("u_me");
+  expect(lan.creatorId).toBe("u_lan");
+});
+
+test("AS-003: creating a workspace records me as its creator", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps);
+  expect(f.state.workspaces.find((w) => w.id === ws.id)!.creatorId).toBe("u_a");
 });
 
 test("AS-008: listMyWorkspaces never includes a workspace I do not belong to", async () => {
