@@ -32,9 +32,10 @@ mock.module("@/features/workspaces/services/client", () => ({
 
 // Auth session — the signed-in email drives the AS-015 wrong-account check.
 let sessionEmail = "bob@acme.com";
+const signOut = mock(async () => ({}));
 mock.module("@/lib/api/auth-client", () => ({
   useSession: () => ({ data: { user: { email: sessionEmail } }, isPending: false }),
-  signOut: mock(async () => ({})),
+  signOut,
   signIn: { email: mock(async () => ({})) },
   authClient: {},
 }));
@@ -54,6 +55,7 @@ function App({ link }: { link: string }) {
         <Routes>
           <Route path="/invite/workspace/:invitationId" element={<WorkspaceInviteLanding />} />
           <Route path="/w/:workspaceId/*" element={<Landed />} />
+          <Route path="/signin" element={<Signin />} />
           <Route path="/" element={<div data-testid="home">home</div>} />
         </Routes>
       </MemoryRouter>
@@ -66,10 +68,16 @@ function Landed() {
   return <div data-testid="landed">{loc.pathname}</div>;
 }
 
+function Signin() {
+  const loc = useLocation();
+  return <div data-testid="signin">{loc.pathname + loc.search}</div>;
+}
+
 beforeEach(() => {
   acceptInvitation.mockClear();
   rejectInvitation.mockClear();
   setActiveWorkspace.mockClear();
+  signOut.mockClear();
   sessionEmail = "bob@acme.com";
 });
 
@@ -104,6 +112,24 @@ describe("workspaces-ui S-004 — invite accept/reject landing", () => {
     // The wrong-account message is shown and there is NO accept affordance — cannot join.
     expect(await screen.findByTestId("invite-wrong-account")).toHaveTextContent(/isn't for you/i);
     expect(screen.queryByTestId("invite-accept")).not.toBeInTheDocument();
+    expect(acceptInvitation).not.toHaveBeenCalled();
+  });
+
+  // Bug C: the wrong-account state must NOT be a dead-end. It offers a switch-account action
+  // that signs the wrong user out and routes to /signin, carrying the invite as ?redirect=…
+  // so the invitee can sign in with the right account and land back on this invite.
+  it("Bug C: wrong-account offers switch-account → sign out + /signin?redirect=<invite>", async () => {
+    sessionEmail = "eve@acme.com"; // signed in as the WRONG account
+    render(<App link={LINK} />);
+
+    await userEvent.click(await screen.findByTestId("invite-switch-account"));
+    expect(signOut).toHaveBeenCalled();
+    await waitFor(() => {
+      const echo = screen.getByTestId("signin");
+      const text = echo.textContent ?? "";
+      const redirect = new URLSearchParams(text.slice(text.indexOf("?"))).get("redirect");
+      expect(redirect).toBe(LINK);
+    });
     expect(acceptInvitation).not.toHaveBeenCalled();
   });
 });

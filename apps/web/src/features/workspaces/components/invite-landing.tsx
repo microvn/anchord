@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSession } from "@/lib/api/auth-client";
+import { signOut, useSession } from "@/lib/api/auth-client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Brandmark } from "@/components/icon";
@@ -34,6 +34,7 @@ export function WorkspaceInviteLanding() {
   const sessionEmail = session?.user?.email ?? null;
 
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [rejected, setRejected] = useState(false);
@@ -84,6 +85,20 @@ export function WorkspaceInviteLanding() {
     setBusy(false);
   }
 
+  // Bug C: the wrong-account state is not a dead-end. Sign the wrong user out, then route to
+  // /signin carrying THIS invite as ?redirect= so signing in with the invited account lands
+  // back here and can accept (the AuthGuard would otherwise bounce them off again).
+  async function onSwitchAccount() {
+    setBusy(true);
+    const inviteHref = `${location.pathname}${location.search}`;
+    try {
+      await signOut();
+    } catch {
+      /* best-effort: even if the sign-out call fails, take them to sign in */
+    }
+    navigate(`/signin?redirect=${encodeURIComponent(inviteHref)}`);
+  }
+
   if (rejected) {
     return (
       <AuthCenter>
@@ -98,12 +113,43 @@ export function WorkspaceInviteLanding() {
   if (wrongAccount) {
     return (
       <AuthCenter>
-        <p data-testid="invite-wrong-account" className="font-serif text-lg font-medium text-ink">
-          This invite isn't for you.
-        </p>
-        <p className="mt-1 text-sm text-muted">
-          It was sent to {invitedEmail}. Sign in with that account to accept it.
-        </p>
+        <Card className="px-7 py-8 text-center">
+          <div className="flex items-center justify-center gap-2.5">
+            <Brandmark size={22} />
+            <span className="font-serif text-[19px] tracking-tight text-ink">anchord</span>
+          </div>
+          <h1
+            data-testid="invite-wrong-account"
+            className="mt-3.5 font-serif text-[23px] font-medium tracking-tight text-ink"
+          >
+            This invite isn't for you.
+          </h1>
+          <p className="mt-2 text-sm text-muted">
+            It was sent to {invitedEmail}, but you're signed in as {sessionEmail}.
+          </p>
+
+          <div className="mt-[22px] flex flex-col gap-[9px]">
+            <Button
+              type="button"
+              size="lg"
+              data-testid="invite-switch-account"
+              disabled={busy}
+              onClick={() => void onSwitchAccount()}
+            >
+              Sign in as {invitedEmail}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="lg"
+              data-testid="invite-go-home"
+              disabled={busy}
+              onClick={() => navigate("/")}
+            >
+              Back to your workspaces
+            </Button>
+          </div>
+        </Card>
       </AuthCenter>
     );
   }
