@@ -86,7 +86,13 @@ export function createNotifyRepo(db: DB): NotifyRepo {
       // cast (which existed only while the DB enum was still `["reply"]`) is gone.
       const [row] = await db
         .insert(notifications)
-        .values({ userId: input.userId, type: input.type, refId: input.refId })
+        .values({
+          userId: input.userId,
+          type: input.type,
+          refId: input.refId,
+          // S-006: the triggering comment for a comment-type row (AS-027/AS-028); null otherwise.
+          commentId: input.commentId ?? null,
+        })
         .returning({ id: notifications.id });
       return { id: row.id };
     },

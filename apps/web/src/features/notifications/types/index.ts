@@ -22,6 +22,17 @@ export interface NotificationItem {
   read: boolean;
   createdAt: string;
   slug: string | null;
+  /**
+   * Panel enrichment (notifications-email S-006, all NULL-safe — C-014):
+   * - docTitle: the row's doc title (AS-026); null for a non-doc row (e.g. `invited`).
+   * - actorName: the triggering commenter's display name — member name or guest name (AS-027);
+   *   null for a non-comment row or a row whose comment was removed (AS-029).
+   * - snippet: a short excerpt of the triggering comment body (AS-028), IN-APP ONLY; null when no
+   *   resolvable comment. It is untrusted user text — render as inert React children, never as HTML.
+   */
+  docTitle?: string | null;
+  actorName?: string | null;
+  snippet?: string | null;
 }
 
 /** The paginated list payload (`{ items, pagination }`) the backend returns. */

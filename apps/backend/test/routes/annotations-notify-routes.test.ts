@@ -198,6 +198,29 @@ describe("POST /api/annotations/:id/comments dispatches thread-activity notify (
     expect(mail.sent.map((m) => m.to)).not.toContain("A@example.com");
   });
 
+  test("AS-027: the reply route threads the just-inserted comment id into each notification row", async () => {
+    // S-006 panel enrichment: the comment-create route passes the new comment id into the notify
+    // dispatch, which persists it as comment_id on every recipient's in-app row (so the read can
+    // join the actor + a body excerpt). The fake comment repo returns `c_1` for the reply insert.
+    const notifyRepo = fakeNotifyRepo({ participants: ["A", "B"], owner: "C" });
+    const mail = fakeMail();
+    const app = buildApp({ resolveSession: replierA, commentSeed: seed, notifyRepo, mail });
+
+    const res = await app.handle(
+      req("/api/w/ws_1/annotations/ann_1/comments", {
+        method: "POST",
+        body: JSON.stringify({ body: "A's reply", parentId: "root" }),
+      }),
+    );
+    const commentId = ((await res.json()) as any).data.commentId;
+    expect(res.status).toBe(201);
+    expect(commentId).toBeTruthy();
+    // Every stored row carries the triggering comment id (B + C rows) — non-null, equal to the
+    // just-inserted comment. This is what backs actorName + snippet on the read (AS-027/AS-028).
+    expect(notifyRepo.inserted.length).toBeGreaterThan(0);
+    expect(notifyRepo.inserted.every((n) => n.commentId === commentId)).toBe(true);
+  });
+
   test("AS-004: a TOP-LEVEL comment (no parentId) by a non-participant raises thread_activity, NOT new_feedback", async () => {
     // The drift-fix at the route seam: D posts a top-level comment on the EXISTING annotation;
     // participants {B} (read from the REAL notify repo), owner C. The route must dispatch

@@ -462,10 +462,13 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     docId: string,
     annotationId: string,
     actorUserId: string | null,
+    // S-006 (AS-027/AS-028): the just-inserted triggering comment id — stored on the in-app row
+    // so the panel can join the commenter's name + a body excerpt.
+    commentId: string | null,
   ) {
     if (!notifyDeps) return;
     await notifyOnThreadActivity(
-      { annotationId, actorUserId },
+      { annotationId, actorUserId, commentId },
       {
         ...notifyDeps,
         type: "thread_activity",
@@ -489,10 +492,13 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     docId: string,
     annotationId: string,
     actorUserId: string | null,
+    // S-006 (AS-027/AS-028): the create's opening comment id (null when the create had no comment)
+    // — stored on the in-app row to back the panel's actor name + body excerpt.
+    commentId: string | null,
   ) {
     if (!notifyDeps) return;
     await notifyOnNewFeedback(
-      { annotationId, actorUserId },
+      { annotationId, actorUserId, commentId },
       {
         ...notifyDeps,
         type: "new_feedback",
@@ -666,7 +672,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // notifications-email S-001 / C-004: a brand-new annotation is NEW FEEDBACK, not thread
     // activity — notify the doc owner + every editor (minus the actor, minus no-access), NOT
     // the reply path (which had only the creator as participant here → was a no-op anyway).
-    await dispatchNewFeedbackNotify(doc.id, result.id, actor.userId);
+    await dispatchNewFeedbackNotify(doc.id, result.id, actor.userId, result.commentId ?? null);
     set.status = 201;
     return { annotationId: result.id, ...(result.commentId != null ? { commentId: result.commentId } : {}) };
   }
@@ -936,7 +942,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       // owner (best-effort, post-commit) as `thread_activity` (C-004 — covers BOTH the reply and
       // the top-level-comment branch above; the top-level case no longer drifts onto new_feedback,
       // AS-004). The actor is the session user; they never notify themselves (notifyOnThreadActivity).
-      await dispatchThreadActivityNotify(parent.docId, params.id, actor.userId);
+      await dispatchThreadActivityNotify(parent.docId, params.id, actor.userId, result.id);
       set.status = 201;
       return { commentId: result.id };
     }
@@ -992,7 +998,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // account-holder participants + owner as `thread_activity`; the guest has no account, so the
     // actor is null → the guest is never a recipient (excluded automatically — and never IN the
     // participant set, since the repo lists account-holder author_ids only).
-    await dispatchThreadActivityNotify(parent.docId, params.id, null);
+    await dispatchThreadActivityNotify(parent.docId, params.id, null, result.id);
     set.status = 201;
     return { commentId: result.id };
   }
@@ -1084,7 +1090,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // notify the doc owner + every editor, minus the actor, minus no-access. A GUEST create
     // (actor null) still notifies owner + editors and excludes nobody (the guest has no
     // account, so is never a recipient anyway).
-    await dispatchNewFeedbackNotify(doc.id, result.id, actor?.userId ?? null);
+    await dispatchNewFeedbackNotify(doc.id, result.id, actor?.userId ?? null, result.commentId ?? null);
     set.status = 201;
     return { annotationId: result.id, ...(result.commentId != null ? { commentId: result.commentId } : {}) };
   }

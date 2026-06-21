@@ -34,6 +34,41 @@ export function summaryFor(type: NotificationType): string {
   return SUMMARY[type] ?? "New notification";
 }
 
+/** The comment-type rows whose summary can be enriched with an actor + doc title (AS-027). */
+const COMMENT_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
+  "reply",
+  "new_feedback",
+  "thread_activity",
+]);
+
+// Per-type enriched template for a comment-type row that carries an actor (AS-026/AS-027). `{actor}`
+// and `{title}` are filled from the row; `{title}` collapses to "a document" when the doc title is
+// absent (the actor still names who acted). Non-comment types never reach here.
+const ACTOR_TEMPLATE: Partial<Record<NotificationType, (actor: string, title: string) => string>> = {
+  reply: (a, t) => `${a} replied in ${t}`,
+  thread_activity: (a, t) => `${a} commented in ${t}`,
+  new_feedback: (a, t) => `${a} left feedback on ${t}`,
+};
+
+/**
+ * The row's headline summary. When a comment-type row carries an actor (AS-027), it reads
+ * "{actor} replied in {docTitle}" (the title collapses to "a document" when absent, AS-026/AS-029);
+ * otherwise — a non-comment row, or a comment-type row whose comment/doc is gone — it degrades to the
+ * generic per-type string (AS-029). Pure + null-safe (C-014); the snippet is rendered separately.
+ */
+export function summaryForItem(
+  item: Pick<NotificationItem, "type" | "actorName" | "docTitle">,
+): string {
+  const tmpl = COMMENT_TYPES.has(item.type) ? ACTOR_TEMPLATE[item.type] : undefined;
+  if (tmpl && item.actorName) {
+    return tmpl(item.actorName, item.docTitle || "a document");
+  }
+  // A doc-scoped non-comment row can still name its doc ("… in {title}") without an actor.
+  const base = summaryFor(item.type);
+  if (item.docTitle) return `${base} · ${item.docTitle}`;
+  return base;
+}
+
 /**
  * The in-app deep-link route for a notification, or null when it can't be built. The viewer reads
  * the `#annotation-:id` fragment on mount and scrolls/highlights that thread — same target as the

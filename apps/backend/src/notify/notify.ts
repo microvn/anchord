@@ -29,6 +29,13 @@ export interface NewNotification {
   type: NotificationType;
   /** Deep-link target — the annotation (thread) id that received the reply. */
   refId: string;
+  /**
+   * S-006 (AS-027/AS-028): the TRIGGERING comment id for a comment-type row
+   * (reply/new_feedback/thread_activity) — backs the panel's actorName + snippet via a read-side
+   * join. Null/undefined for non-comment types; persisted as NULL and set-null if the comment is
+   * later removed (C-014, the read then degrades to the generic per-type summary).
+   */
+  commentId?: string | null;
 }
 
 /**
@@ -150,6 +157,11 @@ export interface NotifyOnThreadActivityInput {
    * never a recipient anyway, so a null actor simply excludes nobody from the set (C-002/C-011).
    */
   actorUserId: string | null;
+  /**
+   * S-006 (AS-027/AS-028): the just-inserted triggering comment id — stored on each in-app row so
+   * the panel can join the commenter's display name + a body excerpt. The route has this in hand.
+   */
+  commentId?: string | null;
 }
 
 /** What a notify pass did — the recipients reached and rows/mails sent (for assertions/logs). */
@@ -262,7 +274,7 @@ export async function notifyOnThreadActivity(
   input: NotifyOnThreadActivityInput,
   deps: NotifyDeps,
 ): Promise<NotifyResult> {
-  const { annotationId, actorUserId } = input;
+  const { annotationId, actorUserId, commentId } = input;
   const type: NotificationType = deps.type ?? "thread_activity";
   const log = deps.logError ?? ((msg, err) => console.error(msg, err));
   const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
@@ -284,7 +296,7 @@ export async function notifyOnThreadActivity(
       recipients = candidates.filter((_, i) => checks[i]);
     }
 
-    return await deliverToRecipients(annotationId, recipients, type, deps);
+    return await deliverToRecipients(annotationId, recipients, type, deps, commentId);
   } catch (err) {
     // Post-commit best-effort: log and swallow so the comment still succeeds (C-004/C-007 intent
     // — notify must not block/fail the comment).
@@ -301,6 +313,12 @@ export interface NotifyOnNewFeedbackInput {
    * recipient and excludes nobody from the candidate set (C-002/C-011).
    */
   actorUserId: string | null;
+  /**
+   * S-006 (AS-027/AS-028): the triggering comment id (the create's initial comment) — stored on
+   * each in-app row so the panel can show the commenter + a body excerpt. Null when the create
+   * carried no comment (annotation without an opening comment), the read then degrades cleanly.
+   */
+  commentId?: string | null;
 }
 
 /**
@@ -321,7 +339,7 @@ export async function notifyOnNewFeedback(
   input: NotifyOnNewFeedbackInput,
   deps: NotifyDeps,
 ): Promise<NotifyResult> {
-  const { annotationId, actorUserId } = input;
+  const { annotationId, actorUserId, commentId } = input;
   const type: NotificationType = deps.type ?? "new_feedback";
   const log = deps.logError ?? ((msg, err) => console.error(msg, err));
   const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
@@ -342,7 +360,7 @@ export async function notifyOnNewFeedback(
       recipients = candidates.filter((_, i) => checks[i]);
     }
 
-    return await deliverToRecipients(annotationId, recipients, type, deps);
+    return await deliverToRecipients(annotationId, recipients, type, deps, commentId);
   } catch (err) {
     log("notifyOnNewFeedback failed (best-effort, annotation already persisted)", err);
     return empty;
@@ -645,6 +663,9 @@ async function deliverToRecipients(
   recipients: string[],
   type: NotificationType,
   deps: NotifyDeps,
+  // S-006: the triggering comment id for a comment-type row (AS-027/AS-028). Absent for the
+  // non-comment events (resolved/decided/detached/invited) → persisted NULL (C-014 degrade).
+  commentId?: string | null,
 ): Promise<NotifyResult> {
   // C-006: email is sent ONLY for a high-signal type. A low-signal event writes the in-app
   // row(s) and enqueues NO mail. Eligibility is derived from `type`, never a stored column.
@@ -656,7 +677,8 @@ async function deliverToRecipients(
   let emailsSent = 0;
   for (const userId of recipients) {
     // Channel 1 — in-app: one notification row per recipient (always, the durable channel).
-    await deps.repo.insertNotification({ userId, type, refId: annotationId });
+    // Carries the triggering comment id for comment-type rows (S-006) — null otherwise.
+    await deps.repo.insertNotification({ userId, type, refId: annotationId, commentId: commentId ?? null });
     inAppSent += 1;
 
     // Channel 2 — email: high-signal only (C-006); one mail per recipient that has an address.

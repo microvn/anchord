@@ -210,6 +210,9 @@ describe("PATCH /api/suggestions/:id dispatches suggestion_decided notify (S-003
     // emitted TYPE came through the route as suggestion_decided, ref = the suggestion's annotation id.
     expect(notifyRepo.inserted[0]?.type).toBe("suggestion_decided");
     expect(notifyRepo.inserted[0]?.refId).toBe("sug_accept");
+    // S-006 (AS-029): a NON-comment emit carries comment_id null — the panel then renders the
+    // generic per-type summary (no actor/snippet to join).
+    expect(notifyRepo.inserted[0]?.commentId ?? null).toBeNull();
     // ONE email, to Bob only — the high-signal channel; Owner excluded.
     expect(mail.sent.map((m) => m.to)).toEqual(["Bob@example.com"]);
     expect(mail.sent.map((m) => m.to)).not.toContain("Owner@example.com");

@@ -332,6 +332,18 @@ describe("buildAnnotationDeepLink (C-013: {APP_URL}/d/{slug}#annotation-{id})", 
     // Minimal: a short summary line + the link, nothing resembling embedded doc HTML.
     expect(body).not.toContain("<");
   });
+
+  test("AS-028 (email guard, C-012/C-014): the email body NEVER carries the comment snippet", () => {
+    // buildEmailBody takes only (type, deepLink) — it has no comment-body parameter, so the in-app
+    // snippet can never leak into email. Assert the actual comment text is absent from every body.
+    const snippet = "can we cap the partial refund at 50% of the original charge";
+    const link = "https://anchord.example.com/d/spec-v2#annotation-abc123";
+    for (const t of ["new_feedback", "thread_activity", "reply", "suggestion_decided"] as const) {
+      const body = buildEmailBody(t, link);
+      expect(body).not.toContain(snippet);
+      expect(body).not.toContain("refund");
+    }
+  });
 });
 
 describe("notifyOnThreadActivity parameterized by type (S-007 email/delivery seams)", () => {
@@ -958,7 +970,8 @@ describe("notifyOnInvited (invitee in-app row — in-app only, low-signal)", () 
     const result = await notifyOnInvited({ refId: "doc_1", inviteeUserId: "dev-user" }, { repo, mail });
 
     // ONE in-app row, typed `invited`, pointing at the doc (refId).
-    expect(repo.inserted).toEqual([{ userId: "dev-user", type: "invited", refId: "doc_1" }]);
+    // S-006: every row now carries comment_id — null for a non-comment type like `invited` (AS-029).
+    expect(repo.inserted).toEqual([{ userId: "dev-user", type: "invited", refId: "doc_1", commentId: null }]);
     expect(result).toEqual({ recipients: ["dev-user"], inAppSent: 1, emailsSent: 0 });
     // C-006: invited is low-signal → ZERO notify-email enqueued by the notify path.
     expect(mail.sent).toHaveLength(0);

@@ -68,6 +68,9 @@ function rowsFor(userId: string, n: number, opts: { read?: boolean } = {}): Stor
     read: opts.read ?? false,
     createdAt: new Date(2026, 0, 1, 0, 0, i), // ascending; index n999 is newest
     slug: `${userId}-doc-${i}`,
+    docTitle: null,
+    actorName: null,
+    snippet: null,
   }));
 }
 

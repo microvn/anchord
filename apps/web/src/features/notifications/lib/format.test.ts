@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { relativeTime, summaryFor, deepLinkFor } from "@/features/notifications/lib/format";
+import { relativeTime, summaryFor, summaryForItem, deepLinkFor } from "@/features/notifications/lib/format";
 
 // notifications-email S-006 — pure presentation helpers for the bell.
 
@@ -19,6 +19,28 @@ describe("notifications format helpers (S-006)", () => {
     }
     // Unknown future type falls back, never empty.
     expect(summaryFor("future_type" as never)).toBe("New notification");
+  });
+
+  it("AS-026/AS-027: summaryForItem interpolates the actor + doc title for a comment-type row", () => {
+    expect(
+      summaryForItem({ type: "thread_activity", actorName: "Mara", docTitle: "Refund Spec" }),
+    ).toBe("Mara commented in Refund Spec");
+    expect(summaryForItem({ type: "new_feedback", actorName: "Mara", docTitle: "Refund Spec" })).toBe(
+      "Mara left feedback on Refund Spec",
+    );
+    // AS-026: an actor but no doc title → the title collapses to "a document".
+    expect(summaryForItem({ type: "reply", actorName: "Mara", docTitle: null })).toBe(
+      "Mara replied in a document",
+    );
+  });
+
+  it("AS-029: summaryForItem degrades to the generic per-type summary without an actor", () => {
+    // A non-comment row → generic summary, no interpolation.
+    expect(summaryForItem({ type: "invited", actorName: null, docTitle: null })).toBe(summaryFor("invited"));
+    // A comment-type row whose comment is gone (no actor) → generic summary too (AS-029).
+    expect(summaryForItem({ type: "thread_activity", actorName: null, docTitle: null })).toBe(
+      summaryFor("thread_activity"),
+    );
   });
 
   it("AS-014.T2: deepLinkFor builds /d/:slug#annotation-:refId, null without a slug", () => {

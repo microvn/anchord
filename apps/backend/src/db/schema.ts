@@ -426,6 +426,11 @@ export const notifications = pgTable(
     type: notificationType("type").notNull(),
     // Deep-link target — the annotation (thread) id that received the reply.
     refId: text("ref_id").notNull(),
+    // notifications-email S-006 (AS-027/AS-028, panel enrichment 2026-06-21): the TRIGGERING
+    // comment for a comment-type row (reply/new_feedback/thread_activity). Set at emit; NULL for
+    // non-comment types and (via set-null) when the comment is later removed — the read then
+    // degrades to the generic per-type summary (C-014). The panel joins it for actorName + snippet.
+    commentId: text("comment_id").references(() => comments.id, { onDelete: "set null" }),
     read: boolean("read").notNull().default(false),
     createdAt: createdAt(),
   },

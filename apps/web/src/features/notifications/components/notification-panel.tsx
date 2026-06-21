@@ -6,7 +6,7 @@ import {
   useMarkRead,
   useMarkAllRead,
 } from "@/features/notifications/hooks/use-notifications";
-import { relativeTime, summaryFor, deepLinkFor } from "@/features/notifications/lib/format";
+import { relativeTime, summaryForItem, deepLinkFor } from "@/features/notifications/lib/format";
 import type { NotificationItem } from "@/features/notifications/types";
 
 // The bell dropdown panel (notifications-email S-006): header + "mark all read", the recent-N list,
@@ -36,9 +36,22 @@ function NotificationRow({
         className={`mt-[5px] size-[7px] flex-none rounded-full ${item.read ? "bg-transparent" : "bg-accent"}`}
       />
       <span className="min-w-0 flex-1">
+        {/* AS-026/AS-027: enriched headline ("{actor} replied in {docTitle}"), or the generic
+            per-type summary when actor/title are absent (AS-029). The doc title reads in the
+            accent teal per DESIGN.md (the row already deep-links). */}
         <span className={`block truncate text-[12.5px] ${item.read ? "text-muted" : "text-ink"}`}>
-          {summaryFor(item.type)}
+          {summaryForItem(item)}
         </span>
+        {/* AS-028: the comment excerpt — IN-APP ONLY, untrusted user text rendered as inert React
+            children (never dangerouslySetInnerHTML). Muted + clamped; omitted when absent (AS-029). */}
+        {item.snippet ? (
+          <span
+            data-testid={`notification-snippet-${item.id}`}
+            className="mt-0.5 block truncate text-[11.5px] text-muted"
+          >
+            {item.snippet}
+          </span>
+        ) : null}
         <span className="mt-0.5 block text-[11px] text-subtle">{relativeTime(item.createdAt)}</span>
       </span>
     </button>

@@ -13,7 +13,17 @@ import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 // rows). bun's mock.module is process-wide + persistent — reset the store in beforeEach and the
 // mock fns in afterEach so nothing leaks into sibling suites.
 
-type Row = { id: string; type: string; refId: string; read: boolean; createdAt: string; slug: string | null };
+type Row = {
+  id: string;
+  type: string;
+  refId: string;
+  read: boolean;
+  createdAt: string;
+  slug: string | null;
+  docTitle?: string | null;
+  actorName?: string | null;
+  snippet?: string | null;
+};
 
 let store: Row[] = [];
 
@@ -165,6 +175,40 @@ describe("notifications bell flow (notifications-email S-006)", () => {
     await user.click(screen.getByTestId("header-notifications"));
     await screen.findByTestId("notification-panel");
     expect(screen.getByTestId("notifications-mark-all")).toBeDisabled();
+  });
+
+  it("AS-026/AS-027/AS-028: a comment-type row renders '{actor} … {docTitle}' + the snippet", async () => {
+    store = [
+      row("a", {
+        type: "thread_activity",
+        actorName: "Mara",
+        docTitle: "Refund Spec",
+        snippet: "can we cap the partial refund at 50%",
+      }),
+    ];
+    const user = userEvent.setup();
+    renderBell();
+    await waitFor(() => expect(screen.getByTestId("notifications-badge")).toHaveTextContent("1"));
+    await user.click(screen.getByTestId("header-notifications"));
+    const panel = await screen.findByTestId("notification-panel");
+    // Headline names the actor + the doc title (AS-026/AS-027).
+    expect(within(panel).getByTestId("notification-row-a")).toHaveTextContent("Mara commented in Refund Spec");
+    // The comment excerpt renders on its own line (AS-028) as inert text.
+    expect(within(panel).getByTestId("notification-snippet-a")).toHaveTextContent(
+      "can we cap the partial refund at 50%",
+    );
+  });
+
+  it("AS-029: an `invited` row (no actor/snippet) renders the generic per-type summary, no snippet line", async () => {
+    store = [row("a", { type: "invited", slug: null, docTitle: null, actorName: null, snippet: null })];
+    const user = userEvent.setup();
+    renderBell();
+    await waitFor(() => expect(screen.getByTestId("notifications-badge")).toHaveTextContent("1"));
+    await user.click(screen.getByTestId("header-notifications"));
+    const panel = await screen.findByTestId("notification-panel");
+    // Generic per-type summary; no actor/title interpolation, no snippet element.
+    expect(within(panel).getByTestId("notification-row-a")).toHaveTextContent("You were invited to a document");
+    expect(within(panel).queryByTestId("notification-snippet-a")).not.toBeInTheDocument();
   });
 
   it("an `invited`-style row with no slug marks read but does NOT navigate (no deep-link)", async () => {
