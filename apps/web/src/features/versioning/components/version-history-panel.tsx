@@ -71,7 +71,9 @@ export function VersionHistoryPanel({
   // optimistic row (the only state change is the post-success refetch), so a failure leaves the
   // list untouched (AS-006 rollback = nothing to roll back). On 201 we toast and invalidate the
   // history (so the new current shows + olders remain) AND the viewer doc read (so the top bar's
-  // version refreshes — best-effort; the key mirrors viewer-screen's `["viewer-doc", ws, slug]`).
+  // version refreshes — best-effort; the key MUST match viewer-screen's actual read key
+  // `["viewer-doc", slug]` — slug-only, doc-addressed. A prior `["viewer-doc", ws, slug]` never
+  // matched (invalidateQueries is prefix-based), so the open viewer was not refreshed on restore).
   const restore = useMutation({
     mutationFn: async (version: number) => {
       const res = unwrapEnvelope<RestoreResult>(await restoreVersion(workspaceId, slug, version));
@@ -82,7 +84,7 @@ export function VersionHistoryPanel({
       toast(`Restored v${version} as a new version`);
       // S-005: the history cache is keyed by slug only (doc-addressed read).
       void queryClient.invalidateQueries({ queryKey: ["version-history", slug] });
-      void queryClient.invalidateQueries({ queryKey: ["viewer-doc", workspaceId, slug] });
+      void queryClient.invalidateQueries({ queryKey: ["viewer-doc", slug] });
     },
     onError: () => {
       toast.error("We couldn't restore this version.");
