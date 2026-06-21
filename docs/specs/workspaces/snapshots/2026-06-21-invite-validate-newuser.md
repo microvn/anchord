@@ -1,9 +1,15 @@
+# Snapshot: workspaces
+**Date:** 2026-06-21
+**Ref:** unified invite flow (validate + accept-as-new-user)
+**Reason:** M1 + M6 — added AS-022/023 (public validate + existence-hiding) + AS-024/025 (accept-as-new-user, auto-verify carve-out) + amended C-004
+
+---
+
 # Spec: workspaces
 
 **Created:** 2026-06-09
-**Last updated:** 2026-06-21
+**Last updated:** 2026-06-14
 **Status:** Draft
-**Snapshot limit:** 8
 
 ## Overview
 
@@ -130,21 +136,16 @@ AS-008: Accessing a workspace I do not belong to is refused
 
 ### S-004: Invite a member by email; accept or reject (P0)
 
-**Description:** As a workspace admin, I invite someone by email; they receive a link and open
-an accept/reject page. The link is validated without a session (returning the workspace, the
-invited email, and whether that email already has an account); on accept an already-signed-in
-matching user joins, an invited email with no account creates an account inline and joins (the
-invite proves the email — no separate verification), and a mismatched signed-in account is refused.
-An admin can also revoke a pending invite they sent (admin-authorized, not token-gated).
-**Source:** product owner model item 2 (invite via email → link → accept/reject + admin revoke); unified invite-flow design 2026-06-21 (validate + accept-as-new-user, best-practice across new / existing-not-signed-in / signed-in cases).
-**Applies Constraints:** C-003, C-004
+**Description:** As a workspace admin, I invite someone by email; they receive a link, open an
+accept/reject page, and on accept become a member; the invited email must match.
+**Source:** product owner model item 2 (invite via email → link → accept/reject).
 
 **Execution:**
 - `depends_on:` S-002
 - `parallel_safe:` false
-- `files:` unknown (workspace invitation create + email + public validate + accept/reject + accept-as-new-user endpoints)
-- `autonomous:` checkpoint
-- `verify:` admin invites bob@x.com → pending; validating the token (no session) returns the workspace + invited email + whether an account exists; bob (signed in, matching) accepts → member; an invited email with NO account submits name+password → account created (verified, no mail step) + signed in + member; an invited email that already has an account is refused the create path; reject → no membership; a mismatched signed-in email is refused; an expired/used token validates as a uniform not-found.
+- `files:` unknown (workspace invitation create + email + accept/reject endpoints)
+- `autonomous:` true
+- `verify:` admin invites bob@x.com → pending; bob opens the link → accept → bob is a member; reject → no membership; a mismatched email is refused.
 
 **Acceptance Scenarios:**
 
@@ -177,41 +178,6 @@ AS-013: Only an admin can invite
 - **When:** I try to invite someone
 - **Then:** the request is refused (admin only)
 - **Data:** member, not admin
-
-AS-022: Validating an invite link returns the workspace, invited email, and whether an account exists
-- **Given:** a pending invitation for `bob@acme.com` to "Acme"
-- **When:** the invite token is validated with no active session
-- **Then:** the response carries the workspace name "Acme", the invited email `bob@acme.com`, and whether an account already exists for `bob@acme.com`
-- **Data:** valid pending token, no session
-- **Setup:** one pending invitation; the validate path requires no membership and no session
-
-AS-023: An expired, used, revoked, or tampered token validates as a uniform not-found
-- **Given:** an invite token that is expired, already accepted, revoked, or tampered
-- **When:** it is validated
-- **Then:** a uniform not-found is returned, indistinguishable from a token that never existed (no reason leaked, existence-hiding — a revoked invite is not distinguishable from a non-existent one, so the revoked invitee learns nothing)
-- **Data:** expired / already-accepted / revoked / tampered token
-- **Setup:** an invitation whose status is not pending, plus a random non-existent token — both yield the same response
-
-AS-024: Accepting an invite for an email with no account creates a verified account and joins
-- **Given:** a pending invitation for `new@acme.com` to "Acme" and no account exists for `new@acme.com`
-- **When:** the invite is accepted with a name and a password (≥8) and no prior session
-- **Then:** an account is created for `new@acme.com` with its email treated as verified (the invite delivery proves ownership — no separate verification step), a session is established, `new@acme.com` becomes a member of "Acme", and the invitation is marked accepted
-- **Data:** new email `new@acme.com`, name + 8-char password, no prior account
-- **Setup:** pending invitation for an email that has no existing account
-
-AS-025: The create-account path is refused when an account already exists for the invited email
-- **Given:** a pending invitation for `bob@acme.com` and an account already exists for `bob@acme.com`
-- **When:** the create-account-and-accept path is attempted for that email
-- **Then:** it is refused (an account exists — sign in to accept instead); no duplicate account is created and no membership is granted
-- **Data:** invited email that already has an account
-- **Setup:** existing verified account `bob@acme.com` + a pending invitation to it
-
-AS-026: An admin revokes a pending invite
-- **Given:** I own "Acme" with a pending invitation for `eve@acme.com`
-- **When:** I revoke that invitation (admin action, not the invitee's token)
-- **Then:** the invitation is marked revoked and drops from the pending list; its link no longer accepts; no membership is granted. A non-admin attempting to revoke is refused; an invitation belonging to another workspace, or one that is not pending, is refused as not-found
-- **Data:** pending invite `eve@acme.com`; plus a non-admin actor and a cross-workspace id as the refusal cases
-- **Setup:** "Acme" with one pending invitation; revoke is authorized by workspace-admin (distinct from accept/reject, which are token-gated)
 
 ### S-005: Remove a member and change a member's role (P1)
 
@@ -305,14 +271,10 @@ AS-020: A workspace member reaches that workspace's anyone_in_workspace docs
   cross-tenant isolation against the doc's OWN workspace. The isolation guarantee (AS-018/019)
   still holds for both — by path for management APIs, by `resolveAccess` for doc-centric ones.
   (AS-007, AS-008, AS-018, AS-019, AS-020; doc-centric gating: doc-access-routing:AS-005/007/008)
-- C-003: Only an admin invites, removes, revokes invites, or changes member roles; a workspace
-  must always keep at least one admin (the last admin cannot be removed or demoted). (AS-005, AS-013, AS-016, AS-017, AS-026)
-- C-004: A workspace invite is by email and pending until acted on; reject leaves no membership.
-  Acceptance is authorized by the invite token bound to the invited email: for an already-signed-in
-  user the active session's email must match the invited email; for an invited email with no account,
-  accepting creates the account for that email and treats its email as verified — the invite delivery
-  proves ownership. This verification carve-out applies ONLY to the invite-accept path, never to
-  ordinary sign-up (which still requires verification). (AS-010, AS-011, AS-012, AS-024, AS-025)
+- C-003: Only an admin invites, removes, or changes member roles; a workspace must always keep
+  at least one admin (the last admin cannot be removed or demoted). (AS-005, AS-013, AS-016, AS-017)
+- C-004: A workspace invite is by email and pending until acted on; the accepting session's
+  email must match the invited email; reject leaves no membership. (AS-010, AS-011, AS-012)
 - C-005: The active-workspace scope is carried in the request path (`/api/w/:workspaceId/…`),
   not a single server-side "current workspace"; `session.activeWorkspaceId` is only the
   login-default landing target. **Exception (amended 2026-06-14, doc-access-routing):**
@@ -395,23 +357,12 @@ invite + accept/reject landing). This backend spec names no components; see `wor
   consuming `isWorkspaceMember(workspaceId, userId)` + the caller's workspace role from this
   spec. Composition: the max permission across workspace membership and any per-doc ACL; never
   double-gated (C-006). (Decided 2026-06-09.) Source: researched authz composition.
-- GAP-005 (status: open): the invited email already has an EXISTING but UNVERIFIED account
-  (signed up, never verified). The validate (AS-022) reports `accountExists`, so the FE routes to
-  "sign in to accept" (workspaces-ui:AS-023) — but sign-in is blocked until the account is verified
-  (auth requireEmailVerification). Should accepting a valid invite ALSO verify such an existing
-  unverified account (same proof-of-email logic as AS-024's carve-out)? Recommendation: yes — a
-  valid invite to that email proves ownership, so mark the existing account verified on accept.
-  Source: unified invite-flow edge — accountExists is true but unusable for sign-in.
 
 ## Spec Sizing Notes
 
-Stories=6 (≤7 ✓). AS=26 (over the 20 soft target, within the ≤30 range). The overage is
-concentrated in S-004, which owns the full invite lifecycle as one state machine (T5 — do not
-split): 10 AS for 10 atoms — invite (AS-009), accept-when-signed-in (AS-010), reject (AS-011),
-mismatched-signed-in refused (AS-012), only-admin (AS-013), validate-valid (AS-022),
-validate-invalid uniform-not-found (AS-023), accept-as-new-user (AS-024),
-create-path-refused-when-account-exists (AS-025), admin-revoke (AS-026). The earlier single
-over-target AS, AS-021 (the admin's member-list read), also stands. No bloat — each AS traces to one stated atom.
+Stories=6 (≤7 ✓). AS=21 (1 over the 20 soft target, within the ≤30 range). The single
+over-target AS is **AS-021** (the admin's member-list read) — a real, independently-assertable
+atom the members surface needs, not a G1 split. No bloat — each AS traces to one stated atom.
 
 ## Clarifications — 2026-06-09
 
@@ -446,5 +397,3 @@ over-target AS, AS-021 (the admin's member-list read), also stands. No bloat —
 | 2026-06-09 | Phase 3: AS-002 wording (admin-of-own vs member-of-others); +AS-021 member list; GAP-001..004 resolved (custom tables / admin-qualified name / member-list AS / sharing owns resolveDocPermission) | -- |
 | 2026-06-09 | Workspace role kept as `admin|member` (not owner) — no enum migration; "owner" reserved for the per-doc role; isWorkspaceAdmin override unchanged (scoped only) | -- |
 | 2026-06-14 | Major (M6): amend C-002/C-005 — carve doc-centric read+write out of path-tenancy (doc-addressed, gated by resolveAccess); System Impact note on S-006 superseded for those resources. Snapshot 2026-06-14.md | doc-access-routing GAP-002 |
-| 2026-06-21 | Major (M1+M6) — unified invite flow: S-004 + AS-022 (public validate → workspace + invited email + accountExists), AS-023 (expired/used/tampered → uniform not-found), AS-024 (accept-as-new-user → verified account + session + join, no mail step), AS-025 (create path refused when account exists); C-004 amended for the token-authorized + new-user auto-verify carve-out (invite-accept path only); S-004 → checkpoint; +Spec Sizing Notes (25 AS). Snapshot 2026-06-21-invite-validate-newuser.md; rotated out 2026-06-10.md. | unified invite design |
-| 2026-06-21 | Major (M1) — added AS-026 (admin revokes a pending invite → status revoked, admin-authorized, workspace-scoped, pending-only); `revoked` added to the AS-023 not-found set; C-003 coverage +AS-026. Producer for the existing FE workspaces-ui:AS-017 (revoke had no backend AS — built + specced from the 404 fix). Snapshot 2026-06-21-2.md. | /mf-fix revoke 404 |

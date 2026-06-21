@@ -1,9 +1,15 @@
+# Snapshot: workspaces-ui
+**Date:** 2026-06-21
+**Ref:** unified invite flow (states 3 + 4)
+**Reason:** M1 + M6 — added AS-023 (sign-in-to-accept) + AS-024 (new-user create-and-join inline) + C-005 (public token-addressed landing, branch by session+accountExists)
+
+---
+
 # Spec: workspaces-ui
 
 **Created:** 2026-06-09
 **Last updated:** 2026-06-21
 **Status:** Draft
-**Snapshot limit:** 6
 
 ## Overview
 
@@ -157,20 +163,16 @@ AS-017: Revoking a pending invite requires confirmation
 
 ### S-004: Accept or reject a workspace invite (P0)
 
-**Description:** As an invited person, I open the invite link on a public landing that adapts to
-my state: signed in with the matching email → accept (join + switch) or reject; signed in as a
-different account → refused with a switch-account path; signed out with an existing account →
-sign in to accept; signed out with no account → create my account inline and join (no separate
-sign-up page, no email-verification step — the invite proves my email).
-**Source:** workspaces:S-004 (AS-010 accept→member, AS-011 reject, AS-012 mismatched email, AS-022 validate, AS-024 accept-as-new-user); unified invite-flow design 2026-06-21.
-**Applies Constraints:** C-005
+**Description:** As an invited person, I open the invite link and accept (joining + switching to
+the workspace) or reject; an invite for a different account is refused.
+**Source:** workspaces:S-004 (AS-010 accept→member, AS-011 reject, AS-012 mismatched email).
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
-- `files:` unknown (`apps/web/` workspace-invite landing — moved OUTSIDE AuthGuard to a public token-addressed route; validate-driven state branch; inline create-account form)
-- `autonomous:` checkpoint
-- `verify:` a valid invite link (matching signed-in email) → accept joins + switches; reject leaves no membership; a mismatched account is refused but offered switch-account; signed out + the invited email already has an account → "sign in to accept" carrying the invite (web-core:AS-004); signed out + no account → the inline create form makes the account + joins + switches with no verify step.
+- `files:` unknown (`apps/web/` workspace-invite accept/reject landing)
+- `autonomous:` true
+- `verify:` opening a valid invite link (matching signed-in email) → accept joins + switches; reject leaves no membership; a mismatched account is refused but offered a switch-account path; opening the invite while signed out bounces to sign-in carrying the invite as a return target (web-core:AS-004) and returns there after signing in.
 
 **Acceptance Scenarios:**
 
@@ -198,20 +200,6 @@ AS-022: Switching to the invited account from the wrong-account state returns to
 - **Then:** I am signed out of `eve@acme.com` and sent to sign-in, which carries this invite as its return target (web-core:AS-004) so that signing in as `bob@acme.com` lands me back on the invite to accept it
 - **Data:** wrong-account refusal → switch-account action
 
-AS-023: An invited email that already has an account is offered sign-in-to-accept
-- **Given:** an invite for `bob@acme.com`, who already has an account, and I open the invite link with no active session
-- **When:** the landing loads (the invite token validates and reports an account exists for the invited email)
-- **Then:** I see "you already have an account — sign in to accept" and a sign-in action that carries this invite as its return target (web-core:AS-004); I am NOT shown a create-account form and NOT dropped on a generic sign-in dead-end
-- **Data:** existing account for the invited email, no session
-- **Setup:** a pending invite whose email already has an account
-
-AS-024: An invited email with no account creates the account inline and joins
-- **Given:** an invite for `new@acme.com`, which has no account, and I open the invite link with no active session
-- **When:** I enter my name and a password (≥8) on the landing's create-account form (the invited email is shown read-only) and submit
-- **Then:** my account is created for `new@acme.com` with no separate email-verification step, I am signed in, I become a member of the workspace, and the app switches into it
-- **Data:** new email, name + 8-char password, no prior account
-- **Setup:** a pending invite whose email has no account
-
 ## Constraints & Invariants
 
 - C-001: The switcher shows ONLY workspaces I belong to, each labelled with its admin; switching
@@ -223,11 +211,6 @@ AS-024: An invited email with no account creates the account inline and joins
   responsive (switcher + members screen reflow on tablet/mobile; tap targets ≥40px). (AS-001, AS-007; responsive/pixel visual is [→MANUAL], inheriting web-core's responsive shell + tokens)
 - C-004: Every destructive action (remove a member, revoke a pending invite) shows a confirmation
   dialog and only mutates on explicit confirm; cancelling leaves state unchanged. (AS-009, AS-016, AS-017)
-- C-005: The invite landing is a public, token-addressed route (reachable signed-out, like the
-  doc viewer outside AuthGuard) and NEVER bounces an invitee to a generic sign-in dead-end. It
-  branches by the active session and whether the invited email has an account: matching session →
-  accept/reject; wrong session → switch-account; no session + existing account → sign-in-to-accept
-  carrying the invite; no session + no account → create-account-and-join inline. (AS-013, AS-014, AS-015, AS-022, AS-023, AS-024)
 
 ## Linked Fields
 
@@ -237,19 +220,10 @@ workspaces-ui is the **consumer**; `workspaces` (backend) is the producer.
   on the bootstrap (read on app load). Produced by `workspaces:S-003` (AS-006) on the bootstrap
   surface (persisted + served every load). ✔.
 - create / rename — consumed by S-002; produced by `workspaces:S-002` (AS-003, AS-004). ✔.
-- `members[]` `{userId, email, role, status}` + invite / remove / change-role / revoke-invite —
-  consumed by S-003 (AS-008 invite, AS-009 remove, AS-010 change-role, AS-017 revoke pending invite);
+- `members[]` `{userId, email, role, status}` + invite / remove / change-role — consumed by S-003;
   produced by `workspaces:S-005` (AS-021 list) + `workspaces:S-004/S-005` (AS-009 invite, AS-014
-  remove, AS-015 change-role, AS-026 revoke). ✔. Revoke targets the invitations surface (an invite
-  id is not a membership id) — distinct from member-remove.
+  remove, AS-015 change-role). ✔.
 - invite accept / reject — consumed by S-004; produced by `workspaces:S-004` (AS-010/011/012). ✔.
-- `accountExists` (+ workspace name + invited email) — consumed by S-004 (AS-023/AS-024 branch) on
-  the invite-**validate** surface, read on the public landing BEFORE branching (no session). Produced
-  by `workspaces:S-004` (AS-022) on the validate surface. ✔ surface + lifecycle match. Seam: S-004's
-  `verify` exercises the FE branch against the REAL validate (not mocked).
-- create-account-and-join (accept-as-new-user) — consumed by S-004 (AS-024) on the landing's inline
-  create form. Produced by `workspaces:S-004` (AS-024) — creates a verified account + session +
-  membership in one call. ✔. Seam: S-004 `verify` runs the inline create against the real endpoint.
 
 ## UI Notes
 
@@ -261,11 +235,7 @@ web-core `AppShell`. Precedence: AS / Constraints > Tree.
 - `CreateWorkspaceDialog` `[N]`: name field · create
 - `WorkspaceSettings` `[N]` *(admin-gated, C-002)*: `RenameField` · `MembersScreen`
   - `MembersScreen` `[N]`: `MemberList` → `MemberRow` *(avatar · name/email · `RoleDropdown` · remove · `PendingTag` for pending invites)* · `InviteRow` *(emailField · `RoleSelect` · invite — inline validation AS-012)* — *mobile: full-width; tap ≥40px*
-- `WorkspaceInviteLanding` `[N]` *(PUBLIC route from the invite email, outside AuthGuard; validates the token then branches by session + accountExists — C-005)*
-  - `InviteAcceptCard` *(matching session → workspace name + inviter + Accept / Reject — AS-013/014)*
-  - `WrongAccountCard` *(wrong session → names both addresses + Sign in as invited + Back to workspaces — AS-015/022)*
-  - `SignInToAcceptCard` *(no session + existing account → "you already have an account" + Sign in carrying the invite — AS-023)*
-  - `CreateAccountAndJoinForm` *(no session + no account → invited email read-only + name + password → create & join, no verify step — AS-024)*
+- `WorkspaceInviteLanding` `[N]` *(route from the invite email: workspace name + inviter + Accept / Reject; wrong-account message AS-015)*
 
 ## What Already Exists
 
@@ -305,5 +275,3 @@ web-core `AppShell`. Precedence: AS / Constraints > Tree.
 | 2026-06-19 | Major (M5) — AS-001 switcher label rule reworked: drop admin-qualified "My <name>"/"<admin>'s <name>"; every workspace shows its title-cased name; ONLY the owner's auto-created "default" workspace reads "My Default". Breadcrumb (web-core AS-017) mirrors this label. Snapshot 2026-06-19-label.md. | -- |
 | 2026-06-10 | Major — added C-004 (confirm-before-destructive); AS-009 now via confirm; added AS-016 (cancel keeps member), AS-017 (revoke pending invite w/ confirm); S-003 scope adds revoke. Snapshot 2026-06-10.md | -- |
 | 2026-06-21 | Major (M1+M5) — S-004 wrong-account invite is no longer a dead-end: AS-015 Then reworked (names both addresses; offers switch-account + back-to-workspaces); added AS-022 (switch-account → sign out + return to the invite via sign-in, web-core:AS-004). S-004 verify covers the signed-out→return path. Snapshot 2026-06-21-invite-switch-account.md. | /mf-fix Bug C |
-| 2026-06-21 | Major (M1+M6) — unified invite flow: S-004 landing made PUBLIC + state-branched; added AS-023 (existing account, signed out → sign-in-to-accept) + AS-024 (no account → create-account-and-join inline, no verify step); +C-005 (public token-addressed landing, branch by session+accountExists); S-004 → checkpoint; Linked Fields + UI Notes updated (`accountExists` validate + accept-as-new-user, both pinned w/ seam). Snapshot 2026-06-21-invite-states-3-4.md. | unified invite design |
-| 2026-06-21 | Minor — Linked Fields: pinned revoke-pending-invite (S-003 AS-017 consumer) to its now-built producer `workspaces:S-004 AS-026`; noted revoke targets the invitations surface, not member-remove (the 404 fix). | /mf-fix revoke 404 |

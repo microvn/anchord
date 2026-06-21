@@ -1,14 +1,14 @@
 # Snapshot: workspaces-ui
-**Date:** 2026-06-10
-**Ref:** --
-**Reason:** M4 (AS-009 When changed — remove now via confirm), M6 (added C-004 confirm-before-destructive)
+**Date:** 2026-06-21
+**Ref:** /mf-fix Bug C (wrong-account invite dead-end)
+**Reason:** M1 + M5 — AS-015 Then changed (wrong-account no longer terminal) + AS-016 added (switch-account)
 
 ---
 
 # Spec: workspaces-ui
 
 **Created:** 2026-06-09
-**Last updated:** 2026-06-09
+**Last updated:** 2026-06-19
 **Status:** Draft
 
 ## Overview
@@ -33,8 +33,9 @@ Query keys scoped by `workspaceId`.
 
 ### S-001: Switch the active workspace (P0)
 
-**Description:** As a user in several workspaces, I see them in a switcher (each shown with its
-admin so two "default"s are distinct) and switch the active one, which re-scopes the whole app.
+**Description:** As a user in several workspaces, I see them in a switcher (each shown by its
+title-cased name; my own auto-created default reads "My Default") and switch the active one,
+which re-scopes the whole app.
 **Source:** workspaces:S-003 (AS-006 bootstrap list + role + active); researched path-scoping + query-key-by-workspace.
 
 **Execution:**
@@ -47,10 +48,10 @@ admin so two "default"s are distinct) and switch the active one, which re-scopes
 **Acceptance Scenarios:**
 
 AS-001: The switcher lists my workspaces with the active one marked
-- **Given:** I own "default" and am a member of Lan's "default"
+- **Given:** I own the auto-created "default" workspace and am a member of Lan's "default", and I also own a workspace named "hoang nguyen"
 - **When:** the app loads
-- **Then:** the switcher lists both, each labelled with its admin ("My default", "Lan's default"), and the active workspace is marked
-- **Data:** admin of one, member of another (two "default"s)
+- **Then:** the switcher lists them, each labelled with its title-cased name ("default" → "Default", "hoang nguyen" → "Hoang Nguyen"); the ONE exception is my own auto-created default workspace, which reads "My Default" to mark it as my home — no other workspace is admin-qualified (the workspace I'm only a member of shows plain "Default"); the active workspace is marked
+- **Data:** owner-default → "My Default"; member-default → "Default"; owner "hoang nguyen" → "Hoang Nguyen"
 
 AS-002: Selecting a workspace switches the active scope
 - **Given:** I am viewing workspace "default"
@@ -99,7 +100,8 @@ AS-006: A non-admin sees no rename control
 ### S-003: Manage workspace members (admin) (P0)
 
 **Description:** As a workspace admin, I open a members screen to see members and pending
-invites, invite by email, remove a member, and change a member's role; a non-admin cannot manage.
+invites, invite by email, remove a member, revoke a pending invite, and change a member's role;
+a non-admin cannot manage. Destructive actions (remove, revoke) ask for confirmation first.
 **Source:** workspaces:S-004 (invite AS-009, only-admin AS-013), S-005 (remove AS-014, change-role AS-015, non-admin AS-017, member-list AS-021).
 
 **Execution:**
@@ -123,9 +125,9 @@ AS-008: The admin invites a member by email
 - **Then:** a pending invite for `dev@acme.com` appears in the list
 - **Data:** email `dev@acme.com`
 
-AS-009: The admin removes a member
+AS-009: The admin removes a member after confirming
 - **Given:** Bob is a member of "Acme"
-- **When:** I remove Bob
+- **When:** I click remove on Bob and confirm in the dialog
 - **Then:** Bob disappears from the members list
 - **Data:** member Bob
 
@@ -146,6 +148,18 @@ AS-012: An invalid invite email is rejected before sending
 - **When:** I try to invite `not-an-email`
 - **Then:** I see an inline validation error and no invite is created
 - **Data:** malformed email
+
+AS-016: Cancelling the remove confirmation keeps the member
+- **Given:** Bob is a member of "Acme"
+- **When:** I click remove on Bob and choose Cancel in the confirmation dialog
+- **Then:** the dialog closes and Bob is still a member of "Acme"
+- **Data:** member Bob
+
+AS-017: Revoking a pending invite requires confirmation
+- **Given:** "Acme" has a pending invite for `eve@acme.com`
+- **When:** I click revoke on the invite and confirm in the dialog
+- **Then:** the pending invite for `eve@acme.com` disappears from the list
+- **Data:** pending invite `eve@acme.com`
 
 ### S-004: Accept or reject a workspace invite (P0)
 
@@ -189,6 +203,8 @@ AS-015: An invite for a different account is refused
   workspace admin; a non-admin sees a read-only view (or no manage affordance). (AS-006, AS-011)
 - C-003: Every workspace screen uses the DESIGN.md dark-operator system (teal-only accent) and is
   responsive (switcher + members screen reflow on tablet/mobile; tap targets ≥40px). (AS-001, AS-007; responsive/pixel visual is [→MANUAL], inheriting web-core's responsive shell + tokens)
+- C-004: Every destructive action (remove a member, revoke a pending invite) shows a confirmation
+  dialog and only mutates on explicit confirm; cancelling leaves state unchanged. (AS-009, AS-016, AS-017)
 
 ## Linked Fields
 
@@ -250,3 +266,5 @@ web-core `AppShell`. Precedence: AS / Constraints > Tree.
 | Date | Change | Ref |
 |------|--------|-----|
 | 2026-06-09 | Initial creation — FE multi-workspace (switcher, create/rename, members, invite-accept) | -- |
+| 2026-06-19 | Major (M5) — AS-001 switcher label rule reworked: drop admin-qualified "My <name>"/"<admin>'s <name>"; every workspace shows its title-cased name; ONLY the owner's auto-created "default" workspace reads "My Default". Breadcrumb (web-core AS-017) mirrors this label. Snapshot 2026-06-19-label.md. | -- |
+| 2026-06-10 | Major — added C-004 (confirm-before-destructive); AS-009 now via confirm; added AS-016 (cancel keeps member), AS-017 (revoke pending invite w/ confirm); S-003 scope adds revoke. Snapshot 2026-06-10.md | -- |
