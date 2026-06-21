@@ -67,6 +67,7 @@ function fakeShareRepo() {
         docId,
         ...setting,
         editorsCanShare: setting.editorsCanShare ?? true,
+        capabilityToken: setting.level === "anyone_with_link" ? "Hk3vQ2pLm8rT5wXyZ0aBcD" : null,
       };
       calls.push(resolved);
       return resolved;

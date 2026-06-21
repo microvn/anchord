@@ -180,6 +180,7 @@ export function createShareRepo(db: DB): ShareRepo {
           .returning({
             role: shareLinks.role,
             editorsCanShare: shareLinks.editorsCanShare,
+            capabilityToken: shareLinks.capabilityToken,
           });
 
         return {
@@ -187,6 +188,9 @@ export function createShareRepo(db: DB): ShareRepo {
           level: setting.level,
           role: row?.role ?? setting.role,
           editorsCanShare: row?.editorsCanShare ?? setting.editorsCanShare ?? true,
+          // The resulting token (minted/kept on anyone_with_link, cleared null otherwise — C-001).
+          // Fall back to the computed value so the result is correct even if RETURNING is empty.
+          capabilityToken: row?.capabilityToken ?? capabilityToken,
         };
       });
     },

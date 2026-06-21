@@ -36,7 +36,12 @@ function fakeRepo() {
       const prior = rows.get(docId);
       const editorsCanShare =
         setting.editorsCanShare ?? prior?.editorsCanShare ?? true;
-      const resolved: ResolvedShareSetting = { docId, ...setting, editorsCanShare };
+      const resolved: ResolvedShareSetting = {
+        docId,
+        ...setting,
+        editorsCanShare,
+        capabilityToken: setting.level === "anyone_with_link" ? "cap-token" : null,
+      };
       rows.set(docId, resolved);
       return resolved;
     },
@@ -61,6 +66,7 @@ test("AS-001: set anyone-with-link + commenter saves the setting (level + role)"
     level: "anyone_with_link",
     role: "commenter",
     editorsCanShare: true, // default on (C-015) when not set
+    capabilityToken: "cap-token",
   });
 });
 
@@ -106,6 +112,7 @@ test("C-001: one general-access config per doc — re-setting upserts the same r
     level: "anyone_with_link",
     role: "editor",
     editorsCanShare: true,
+    capabilityToken: "cap-token",
   });
   // Link controls (password/expiry/view-limit, S-004) attach to this same row but
   // are independent of the general-access setting — S-001 neither sets nor reads

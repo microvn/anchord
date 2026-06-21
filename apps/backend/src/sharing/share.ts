@@ -57,6 +57,13 @@ export interface ResolvedShareSetting {
   level: GeneralAccessLevel;
   role: ShareRole;
   editorsCanShare: boolean;
+  /**
+   * The doc's resulting capability token after the write (capability-share-link AS-027/AS-028):
+   * the freshly minted / kept token when level is `anyone_with_link`, or `null` when it was cleared
+   * (restricted / anyone_in_workspace). The route turns this into the external `/s/<token>` link so
+   * the Share dialog surfaces it IN-SESSION on an access change, without re-reading …/share.
+   */
+  capabilityToken: string | null;
 }
 
 /** Persistence port. The real implementation (repo.ts) is thin Drizzle glue. */

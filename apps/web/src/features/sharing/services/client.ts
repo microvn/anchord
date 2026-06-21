@@ -110,6 +110,12 @@ export interface AccessResult {
   level: GeneralAccessLevel;
   role: ShareRole;
   editorsCanShare: boolean;
+  /** the EXTERNAL capability link (`/s/<token>`) AFTER this write — present (a fresh token) when the
+   *  new level is anyone_with_link, null when it was cleared (restricted / anyone_in_workspace). The
+   *  dialog uses this as the single live source so the link surfaces on an in-session access change
+   *  without re-reading …/share (capability-share-link AS-027/AS-028; backend sharing-permissions
+   *  PUT /access). Optional for back-compat with older responses. */
+  capabilityUrl?: string | null;
 }
 
 /** PUT /api/w/:workspaceId/docs/:slug/access — set general access + role + editors

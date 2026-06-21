@@ -15,10 +15,16 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import * as sharingClient from "@/features/sharing/services/client";
 
 const getShareState = mock(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
+// capability-share-link AS-027/AS-028: the in-session access write echoes the fresh capabilityUrl.
+const setAccess = mock(async () => ({
+  data: { level: "anyone_with_link", role: "commenter", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
+  error: null,
+}));
 
 mock.module("@/features/sharing/services/client", () => ({
   ...sharingClient,
   getShareState,
+  setAccess,
 }));
 
 // Stub the toast so a missing Toaster host doesn't error under happy-dom.
@@ -68,6 +74,7 @@ const { canManageShare } = await import("@/features/sharing/services/client");
 beforeEach(() => {
   getShareState.mockClear();
   getShareState.mockImplementation(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
+  setAccess.mockClear();
   // default desktop width (modal branch)
   Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1440 });
 });
@@ -178,10 +185,10 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     expect(screen.getByTestId("share-person-dev@acme.com")).toBeInTheDocument();
     expect(screen.getByTestId("share-person-pending-bob@x.com")).toBeInTheDocument();
     expect(screen.queryByTestId("share-person-pending-dev@acme.com")).not.toBeInTheDocument();
-    // SHARING tab: the link section appears inline (AS-005) once shared by link — URL rendered
-    // absolute (origin + the relative path the backend returns, query preserved) + password set.
+    // SHARING tab: the link section appears inline (AS-005) once shared by link — the protection
+    // chips reflect the read (password set). The readable /d/<slug> is NOT shown as a copyable link.
     expect(screen.getByTestId("share-sec-link-protection")).toBeInTheDocument();
-    expect(screen.getByTestId("share-link-url")).toHaveTextContent("/d/web-core?k=9f2a");
+    expect(screen.queryByTestId("share-link-url")).not.toBeInTheDocument();
     expect(screen.getByTestId("share-link-password")).toHaveAttribute("data-on", "1");
 
     // OPTIONS tab: no guest-commenting toggle (removed 2026-06-20 — link role is the grant);
@@ -214,7 +221,8 @@ describe("capability-share-link S-005 — the Share box surfaces the capability 
     expect(cap).toHaveTextContent("/s/Hk3vQ2pLm8rT5wXyZ0aBcD");
     // It is presented as the external share link, DISTINCT from the in-app readable /d/<slug> address.
     expect(cap).not.toHaveTextContent("/d/web-core");
-    expect(screen.getByTestId("share-link-url")).toHaveTextContent("/d/web-core?k=9f2a");
+    // The readable /d/<slug> is no longer surfaced as a second copyable link (C-009 — don't leak the slug).
+    expect(screen.queryByTestId("share-link-url")).not.toBeInTheDocument();
 
     // A copy control sits with it and writes the absolute capability URL to the clipboard.
     const writeText = mock(async () => {});
@@ -241,6 +249,45 @@ describe("capability-share-link S-005 — the Share box surfaces the capability 
     await screen.findByTestId("share-sections");
     expect(screen.queryByTestId("share-sec-capability-link")).not.toBeInTheDocument();
     expect(screen.queryByTestId("share-capability-url")).not.toBeInTheDocument();
+  });
+
+  it("AS-027: switching to anyone-with-link in-session surfaces the /s/<token> link from the write response", async () => {
+    // Opened on a RESTRICTED doc — the share-state read carries no capabilityUrl → no link yet.
+    getShareState.mockImplementation(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
+    setAccess.mockImplementation(async () => ({
+      data: { level: "anyone_with_link", role: "viewer", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
+      error: null,
+    }));
+    renderDialog({ effectiveRole: "owner" });
+
+    await screen.findByTestId("share-sections");
+    expect(screen.queryByTestId("share-capability-url")).not.toBeInTheDocument();
+
+    // Switch general access to anyone-with-link from WITHIN the open dialog.
+    await userEvent.click(screen.getByTestId("share-access-opt-anyone_with_link"));
+
+    // The capability link now appears, sourced from the write's fresh token (not a re-open).
+    const cap = await screen.findByTestId("share-capability-url");
+    expect(cap).toHaveTextContent("/s/Hk3vQ2pLm8rT5wXyZ0aBcD");
+  });
+
+  it("AS-028: switching away from anyone-with-link in-session removes the capability link", async () => {
+    // Opened on an anyone-with-link doc — the link is shown.
+    getShareState.mockImplementation(async () => ({ data: LINK_STATE, error: null }));
+    setAccess.mockImplementation(async () => ({
+      data: { level: "restricted", role: "viewer", editorsCanShare: false, capabilityUrl: null },
+      error: null,
+    }));
+    renderDialog({ effectiveRole: "owner" });
+
+    await screen.findByTestId("share-sections");
+    await screen.findByTestId("share-capability-url");
+
+    // Switch to restricted from WITHIN the open dialog.
+    await userEvent.click(screen.getByTestId("share-access-opt-restricted"));
+
+    // The capability link disappears (the write returned capabilityUrl null).
+    await waitFor(() => expect(screen.queryByTestId("share-capability-url")).not.toBeInTheDocument());
   });
 });
 

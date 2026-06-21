@@ -63,7 +63,10 @@ function fakeLookupRepo(doc: DocLookup | null): DocLookupRepo {
   };
 }
 
-/** In-memory ShareRepo recording the last persisted setting. */
+/** In-memory ShareRepo recording the last persisted setting. Mirrors the real repo's
+ *  capability-token behaviour (capability-share-link C-001): anyone_with_link mints/keeps a
+ *  token, any other level clears it (null) — so the route can compute capabilityUrl off the
+ *  returned token (AS-027/AS-028). */
 function fakeShareRepo() {
   const calls: ResolvedShareSetting[] = [];
   const repo: ShareRepo = {
@@ -72,6 +75,8 @@ function fakeShareRepo() {
         docId,
         ...setting,
         editorsCanShare: setting.editorsCanShare ?? true,
+        capabilityToken:
+          setting.level === "anyone_with_link" ? "Hk3vQ2pLm8rT5wXyZ0aBcD" : null,
       };
       calls.push(resolved);
       return resolved;
@@ -226,6 +231,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
       level: "anyone_with_link",
       role: "commenter",
       editorsCanShare: true,
+      capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD",
     });
     // No guest-commenting field is persisted or echoed (reversal 2026-06-20).
     expect(json.data).not.toHaveProperty("guestCommenting");
@@ -331,6 +337,34 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const json = (await res.json()) as any;
     expect(json.error.code).toBe("FORBIDDEN");
     expect(share.calls).toHaveLength(0);
+  });
+
+  test("AS-027: PUT access → anyone_with_link returns capabilityUrl = /s/<token>", async () => {
+    const share = fakeShareRepo();
+    const app = buildApp({ shareRepo: share.repo });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/access", {
+        method: "PUT",
+        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.capabilityUrl).toBe("/s/Hk3vQ2pLm8rT5wXyZ0aBcD");
+  });
+
+  test("AS-028: PUT access → restricted returns capabilityUrl null (token cleared)", async () => {
+    const share = fakeShareRepo();
+    const app = buildApp({ shareRepo: share.repo });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/access", {
+        method: "PUT",
+        body: JSON.stringify({ level: "restricted", role: "viewer" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.data.capabilityUrl).toBeNull();
   });
 
   test("no session → 401 UNAUTHENTICATED", async () => {

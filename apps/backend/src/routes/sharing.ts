@@ -55,7 +55,7 @@ import {
   type LinkControlsUpdate,
   type PersistedLinkControls,
 } from "../sharing/link-controls-repo";
-import { readShareState, type ShareStateRepo } from "../sharing/share-state";
+import { readShareState, capabilityShareUrl, type ShareStateRepo } from "../sharing/share-state";
 import { createShareStateRepo } from "../sharing/share-state-repo";
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
 import { createLoadShareConfig } from "../sharing/resolve-doc-role-repo";
@@ -290,6 +290,11 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
                 level: result.level,
                 role: result.role,
                 editorsCanShare: result.editorsCanShare,
+                // AS-027/AS-028: the resulting capability link — `/s/<token>` for the just-minted
+                // anyone_with_link token, or null when it was cleared (restricted / workspace). The FE
+                // uses this as the single live source so the link surfaces on an in-session access
+                // change without re-reading …/share.
+                capabilityUrl: capabilityShareUrl(result.capabilityToken),
               };
             } catch (err) {
               // AS-018 invalid role → 400 VALIDATION_ERROR.

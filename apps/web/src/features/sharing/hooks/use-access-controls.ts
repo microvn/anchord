@@ -27,6 +27,11 @@ export interface AccessControls {
   saving: boolean;
   isLink: boolean;
   isOwner: boolean;
+  /** the live external capability link (`/s/<token>`) — the SINGLE authoritative source the dialog
+   *  renders. Seeded from the dialog-open read (`initial.capabilityUrl`) and refreshed from every
+   *  successful PUT …/access response (capability-share-link AS-027/AS-028) so switching general
+   *  access IN-SESSION surfaces / clears the link without a re-open. */
+  capabilityUrl: string | null;
   chooseLevel: (next: GeneralAccessLevel) => void;
   chooseRole: (next: ShareRole) => void;
   toggleEditorsCanShare: () => void;
@@ -41,6 +46,9 @@ export function useAccessControls(
   const [level, setLevel] = useState<GeneralAccessLevel>(initial.level);
   const [role, setRole] = useState<ShareRole>(initial.role);
   const [editorsCanShare, setEditorsCanShare] = useState(initial.editorsCanShare);
+  // AS-027/AS-028: the live capability link. Seeded from the dialog-open read (AS-012/AS-013), then
+  // overwritten by each PUT …/access response — the single authoritative source for the dialog.
+  const [capabilityUrl, setCapabilityUrl] = useState<string | null>(initial.capabilityUrl ?? null);
   const [saving, setSaving] = useState(false);
 
   const isLink = level === "anyone_with_link";
@@ -55,16 +63,21 @@ export function useAccessControls(
     role: ShareRole;
     editorsCanShare: boolean;
   };
+  // The rollback snapshot ALSO carries capabilityUrl so a refused write restores the prior link
+  // along with level/role (C-005) — never a half-applied state where the level reverts but the
+  // link lingers (or vice versa).
+  type RollbackSnapshot = Snapshot & { capabilityUrl: string | null };
 
-  function rollback(prev: Snapshot) {
+  function rollback(prev: RollbackSnapshot) {
     setLevel(prev.level);
     setRole(prev.role);
     setEditorsCanShare(prev.editorsCanShare);
+    setCapabilityUrl(prev.capabilityUrl);
     toast.error("Couldn't update access");
   }
 
   async function persist(next: Snapshot) {
-    const prev = { level, role, editorsCanShare };
+    const prev = { level, role, editorsCanShare, capabilityUrl };
     setLevel(next.level);
     setRole(next.role);
     setEditorsCanShare(next.editorsCanShare);
@@ -76,7 +89,13 @@ export function useAccessControls(
         // editors_can_share is owner-only — never send it for a non-owner (C-003).
         ...(isOwner ? { editorsCanShare: next.editorsCanShare } : {}),
       });
-      if (res.error || !res.data) rollback(prev);
+      if (res.error || !res.data) {
+        rollback(prev);
+      } else {
+        // AS-027/AS-028: the authoritative capability link AFTER the write — set it from the
+        // response (post-await), so a refused write rolls level/role AND capabilityUrl back.
+        setCapabilityUrl(res.data.capabilityUrl ?? null);
+      }
     } catch {
       rollback(prev);
     } finally {
@@ -91,6 +110,7 @@ export function useAccessControls(
     saving,
     isLink,
     isOwner,
+    capabilityUrl,
     chooseLevel: (next) => {
       if (next === level) return;
       void persist({ level: next, role, editorsCanShare });

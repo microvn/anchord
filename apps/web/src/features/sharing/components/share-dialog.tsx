@@ -315,11 +315,16 @@ function ShareSections({
                     the backend sends null → no capability row (AS-013). It sits ABOVE the in-app
                     address + protection chips, with accent treatment, so the owner copies the right
                     one (distinct from the in-app readable /d/<slug> address below). */}
-                {state.capabilityUrl ? (
-                  <CapabilityLinkRow capabilityUrl={state.capabilityUrl} />
+                {controls.capabilityUrl ? (
+                  <CapabilityLinkRow capabilityUrl={controls.capabilityUrl} />
                 ) : null}
-                <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">· Link · protection</span>
-                <LinkControls workspaceId={workspaceId} slug={slug} link={state.link} />
+                {/* Protection chips for the capability link above (password / expiry / view-limit,
+                    enforced at /s/:token redeem — S-006). No second copyable URL: the readable
+                    /d/<slug> is the in-app address, not an external share link (C-009). */}
+                <div className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">· Protection</span>
+                  <LinkControls workspaceId={workspaceId} slug={slug} link={state.link} />
+                </div>
               </section>
             ) : null}
           </div>
