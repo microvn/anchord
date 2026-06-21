@@ -106,22 +106,28 @@ async function fetchAllPages<T>(
 }
 
 /** GET …/projects — active projects in the workspace (COMPLETE set: the picker + scope control
- *  need every project, not a page). */
-export function useProjects(workspaceId: string) {
-  return useApiQuery<ProjectRow[]>(queryKeys.projects(workspaceId), async () => {
-    try {
-      const { items } = await fetchAllPages<ProjectRow>(async (page, limit) => {
-        const res = unwrapEnvelope<ProjectsResult>(
-          await fetchProjects(workspaceId, false, page, limit),
-        );
-        if (res.error) throw toApiError(res.error);
-        return { items: res.data?.projects ?? [], pagination: res.data?.pagination };
-      });
-      return { data: items.filter((p) => !p.archived), error: null };
-    } catch (thrown) {
-      return { data: null, error: thrown };
-    }
-  });
+ *  need every project, not a page). `enabled` (default true) lets a caller defer the fetch until it's
+ *  actually needed — the New-doc dialog passes `open` so its project picker doesn't fetch on every
+ *  workspace page while the dialog (mounted in the sidebar) sits closed. */
+export function useProjects(workspaceId: string, options?: { enabled?: boolean }) {
+  return useApiQuery<ProjectRow[]>(
+    queryKeys.projects(workspaceId),
+    async () => {
+      try {
+        const { items } = await fetchAllPages<ProjectRow>(async (page, limit) => {
+          const res = unwrapEnvelope<ProjectsResult>(
+            await fetchProjects(workspaceId, false, page, limit),
+          );
+          if (res.error) throw toApiError(res.error);
+          return { items: res.data?.projects ?? [], pagination: res.data?.pagination };
+        });
+        return { data: items.filter((p) => !p.archived), error: null };
+      } catch (thrown) {
+        return { data: null, error: thrown };
+      }
+    },
+    { enabled: options?.enabled },
+  );
 }
 
 /**

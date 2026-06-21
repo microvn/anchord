@@ -22,8 +22,9 @@ mock.module("sonner", () => ({
 let projectsList: { id: string; name: string; isDefault: boolean; archived: boolean }[] = [];
 
 const publishDoc = mock(async () => env({ docId: "d1", slug: "new-doc", url: "/d/new-doc" }));
+const fetchProjects = mock(async () => env({ projects: projectsList }));
 mock.module("@/features/docs/services/client", () => ({
-  fetchProjects: mock(async () => env({ projects: projectsList })),
+  fetchProjects,
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   createProject: mock(async () => env({})),
@@ -51,6 +52,7 @@ function Host() {
 
 beforeEach(() => {
   publishDoc.mockClear();
+  fetchProjects.mockClear();
   projectsList = [];
 });
 
@@ -108,6 +110,23 @@ describe("workspace-project-ui S-003 — publish into a chosen project", () => {
     await userEvent.click(screen.getByTestId("new-doc-project"));
     const options = await screen.findAllByRole("option");
     expect(options.map((o) => o.textContent)).toEqual(["Default (Default)", "Billing"]);
+  });
+
+  it("perf: a CLOSED dialog does NOT fetch the picker's project list (gated on `open`)", async () => {
+    // The dialog is mounted (closed) in the sidebar on every workspace page — its useProjects must
+    // stay idle until opened, else every page pays a redundant projects read. Regression guard for
+    // the `/w/:id/projects` two-`projects`-requests storm (the picker fetched on every page).
+    projectsList = TWO_PROJECTS;
+    render(
+      <QueryClientProvider client={client()}>
+        <MemoryRouter initialEntries={["/w/ws-acme/docs"]}>
+          <NewDocDialog open={false} onOpenChange={() => {}} workspaceId="ws-acme" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    // Let any (disabled) query settle; an enabled query would have called fetchProjects by now.
+    await waitFor(() => expect(fetchProjects).not.toHaveBeenCalled());
+    expect(fetchProjects).toHaveBeenCalledTimes(0);
   });
 });
 

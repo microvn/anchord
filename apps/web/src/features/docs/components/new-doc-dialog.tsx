@@ -99,7 +99,9 @@ export function NewDocDialog({
 
   // Project picker (S-003). The list is the active workspace's projects ONLY (C-003); the picker
   // defaults to the workspace's default project, so publishing without touching it lands there.
-  const { data: projects } = useProjects(workspace.id);
+  // Gated on `open` — this dialog is mounted (closed) in the sidebar on every workspace page, so
+  // fetching the picker list only when it actually opens avoids a redundant projects read per page.
+  const { data: projects } = useProjects(workspace.id, { enabled: open });
   const [projectId, setProjectId] = useState("");
   useEffect(() => {
     if (projectId || !projects?.length) return;
