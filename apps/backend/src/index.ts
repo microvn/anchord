@@ -153,7 +153,13 @@ const concreteLoadShareConfig = createLoadShareConfig(db);
 // doc-centric READ flows through (viewer loaders, annotation read, version read). Built
 // on the real sharedResolveDocRole, it also handles the anon path (anon may view only an
 // anyone_with_link doc, at the link role — C-005). canView ⇔ a non-null role.
-const sharedResolveAccess = createResolveAccess(db, { resolveDocRole: sharedResolveDocRole });
+// capability-share-link S-002 / C-006: pass APP_SECRET so the anon path validates the
+// admission cookie (resolveAdmission) against the doc's CURRENT capability token and admits
+// at the cookie's link role on every anon-reachable endpoint (read + comment/resolve write).
+const sharedResolveAccess = createResolveAccess(db, {
+  resolveDocRole: sharedResolveDocRole,
+  secret: cfg.APP_SECRET,
+});
 
 // workspace-project S-002 (AS-012/C-007): the MANAGE-SHARING resolver gates the owner
 // source on workspace MEMBERSHIP. We keep docs.owner_id set when a member is removed (no

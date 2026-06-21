@@ -26,6 +26,7 @@ import type { DB } from "../db/client";
 import type { Role } from "./roles";
 import type { ShareRole } from "./share";
 import type { Viewer } from "./access";
+import { resolveAdmission } from "./capability-cookie";
 
 /** The single access decision every doc-centric route gates on. */
 export interface AccessResult {
@@ -45,6 +46,15 @@ export interface ResolveAccessDeps {
    * OWN workspace. `null` → no source grants a role.
    */
   resolveDocRole: (docId: string, userId: string) => Promise<Role | null>;
+  /**
+   * capability-share-link S-002 / C-006: APP_SECRET, used to verify the anon admission
+   * cookie against the doc's CURRENT capability token (resolveAdmission). Optional — when
+   * omitted (or no cookie is presented) the anon path falls back to the existing
+   * anyone_with_link-by-slug admit. Wiring this is purely ADDITIVE: a VALID admission cookie
+   * grants the cookie's link role on every anon-reachable endpoint; it never removes the
+   * pre-existing slug admit (that tightening is S-003).
+   */
+  secret?: string;
 }
 
 /**
@@ -73,10 +83,28 @@ export function createResolveAccess(
       // would contradict "anyone with the link can view" whenever no explicit link role row
       // has been written yet.
       const [link] = await db
-        .select({ role: shareLinks.role })
+        .select({ role: shareLinks.role, capabilityToken: shareLinks.capabilityToken })
         .from(shareLinks)
         .where(eq(shareLinks.docId, docId))
         .limit(1);
+
+      // capability-share-link S-002 / C-006: when the anon carries a VALID admission cookie
+      // for THIS doc (bound to its docId + minted from its CURRENT capability token), admit
+      // at the COOKIE's link role. resolveAdmission does the cross-doc (AS-020) + stale-token
+      // (AS-021) binding against the live token; a forged/garbage/doc-B/no cookie returns
+      // null and falls through to the existing slug admit below. This is the production
+      // consumer of resolveAdmission — it grants the cookie role on every anon-reachable
+      // endpoint (the doc read AND the comment/resolve writes flow through this one gate).
+      if (deps.secret && viewer.admissionCookie) {
+        const claims = resolveAdmission(
+          viewer.admissionCookie,
+          docId,
+          link?.capabilityToken ?? null,
+          deps.secret,
+        );
+        if (claims) return { role: claims.role as Role, canView: true };
+      }
+
       const role = (link ? (link.role as ShareRole) : "viewer") as Role;
       return { role, canView: true };
     }

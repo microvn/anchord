@@ -23,8 +23,14 @@ import type { generalAccess } from "../db/schema";
 /** General-access level — mirrors docs.general_access (render-publish owns the enum). */
 export type GeneralAccessLevel = (typeof generalAccess.enumValues)[number];
 
-/** Who is asking to view: an anonymous (logged-out) session, or a logged-in user. */
-export type Viewer = { kind: "anon" } | { kind: "user"; userId: string };
+/** Who is asking to view: an anonymous (logged-out) session, or a logged-in user.
+ *  An anon MAY carry the raw capability admission cookie value (capability-share-link
+ *  S-002 / C-006) — the signed grant minted by the redeem route. When present, the access
+ *  gate validates it (resolveAdmission) against the doc's CURRENT capability token and, on
+ *  success, admits the anon at the cookie's link role on EVERY anon-reachable endpoint. */
+export type Viewer =
+  | { kind: "anon"; admissionCookie?: string | null }
+  | { kind: "user"; userId: string };
 
 /**
  * Injectable lookups the decision needs. Both are ports so the decision logic is

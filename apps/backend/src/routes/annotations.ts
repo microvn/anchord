@@ -40,6 +40,7 @@ import { enforceReadAccess } from "../http/access-result";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
 import { type Viewer, type GeneralAccessLevel } from "../sharing/access";
 import { type AccessResult } from "../sharing/resolve-access";
+import { ADMISSION_COOKIE_NAME } from "../sharing/capability-cookie";
 import { can, type Role } from "../sharing/roles";
 import {
   createAnnotation,
@@ -409,6 +410,25 @@ function toAnchor(input: z.infer<typeof createAnnotationSchema>["anchor"]): Anch
   return input as Anchor;
 }
 
+/**
+ * capability-share-link S-002 / C-006: extract the admission cookie VALUE from a request's
+ * `Cookie` header, or undefined when absent. Minimal RFC-6265 split (no decode needed — the
+ * cookie value is base64url + a dot, already URL-safe). The signature is verified downstream
+ * by resolveAdmission; this only locates the named cookie.
+ */
+function readAdmissionCookie(request: Request): string | undefined {
+  const header = request.headers.get("cookie");
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === ADMISSION_COOKIE_NAME) {
+      return part.slice(eq + 1).trim();
+    }
+  }
+  return undefined;
+}
+
 export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   const need = (name: string): never => {
     throw new Error(`annotationsRoutes requires \`${name}\` or \`db\``);
@@ -630,6 +650,18 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     const fwd = request.headers.get("x-forwarded-for");
     if (fwd) return fwd.split(",")[0]!.trim();
     return request.headers.get("x-real-ip")?.trim() || "unknown";
+  }
+
+  /**
+   * capability-share-link S-002 / C-006: build the anon `Viewer`, carrying the raw admission
+   * cookie value (if the request presents one) so the single resolveAccess gate can validate
+   * it against the doc's current capability token and admit at the cookie's link role on
+   * THIS anon-reachable endpoint (read AND write). A signed-in caller never needs it (their
+   * role is the session); a guest with no cookie carries undefined → the gate's existing
+   * slug admit applies, unchanged.
+   */
+  function anonViewer(request: Request): Viewer {
+    return { kind: "anon", admissionCookie: readAdmissionCookie(request) };
   }
 
   // ── handlers (extracted so the route tree below reads as a contract) ──
@@ -905,7 +937,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   async function commentHandler({ params, request, validBody, set }: any) {
     const body = validBody as z.infer<typeof replySchema>;
     const actor: Actor | null = await deps.resolveSession(request.headers);
-    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : { kind: "anon" };
+    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : anonViewer(request);
     // Existence-hiding on the parent doc applies to BOTH the session AND guest path.
     const parent = await enforceParentAccess(await annotationLookupRepo.findAnnotationDoc(params.id), viewer);
 
@@ -1023,7 +1055,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   async function docCreateAnnotationHandler({ params, request, validBody, set }: any) {
     const body = validBody as z.infer<typeof createAnnotationSchema>;
     const actor: Actor | null = await deps.resolveSession(request.headers);
-    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : { kind: "anon" };
+    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : anonViewer(request);
     const found = await lookupRepo.findDocBySlug(params.slug);
     const access = found ? await deps.resolveAccess(found.id, viewer) : { role: null, canView: false };
     const doc = enforceReadAccess({ doc: found, allowed: found !== null && access.canView }); // 404 if missing/hidden
@@ -1097,7 +1129,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
 
   async function docListAnnotationsHandler({ params, request, query }: any) {
     const actor: Actor | null = await deps.resolveSession(request.headers);
-    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : { kind: "anon" };
+    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : anonViewer(request);
     // AS-017 read: the single resolveAccess gate decides the doc-scoped list too — a denied
     // viewer 404s exactly like the doc read (no thread leak).
     const found = await lookupRepo.findDocBySlug(params.slug);
@@ -1114,7 +1146,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
   async function docResolutionHandler({ params, request, validBody }: any) {
     const { resolved } = validBody as z.infer<typeof resolutionSchema>;
     const actor: Actor | null = await deps.resolveSession(request.headers);
-    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : { kind: "anon" };
+    const viewer: Viewer = actor ? { kind: "user", userId: actor.userId } : anonViewer(request);
     const found = await annotationLookupRepo.findAnnotationDoc(params.id);
     const access = found ? await deps.resolveAccess(found.docId, viewer) : { role: null, canView: false };
     const parent = enforceReadAccess({ doc: found, allowed: found !== null && access.canView });

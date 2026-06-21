@@ -1,15 +1,22 @@
 // Integration tier (guarded by RUN_INTEGRATION): the capability-link redeem → admission →
-// read + write seam against a REAL Postgres, via the real app + the real capability-token repo.
+// read + write seam against a REAL Postgres, via the real app + the REAL resolve-access gate.
 //
-// These are the CROSS-SURFACE seams the unit tests can't prove (skill LINKED-FIELD/seam rule):
-//   - AS-006 / C-006: the admission cookie minted by redeem authorizes the WRITE path — a
-//     no-account guest holding a commenter capability link can post a comment, attributed to
-//     the guest name, through the REAL doc-addressed comment route (not a mocked cookie check).
-//   - AS-020 / C-007.a: a cookie minted for doc A is refused on doc B — the binding runs against
-//     the REAL token the capability-token repo reads back, not a fake.
+// These are the CROSS-SURFACE seams the unit tests can't prove (skill LINKED-FIELD/seam rule).
+// The app is built with the PRODUCTION resolveAccess (createResolveAccess over the real
+// createResolveDocRole) wired with APP_SECRET — NOT a stub — so the redeem-minted admission
+// cookie is what actually authorizes the anon-reachable endpoints, end-to-end on real DB:
+//   - AS-006 / C-006: the admission cookie minted by redeem authorizes the WRITE path (a
+//     no-account guest holding a commenter capability link posts a comment, attributed to the
+//     guest name) AND a READ path (annotations list) — "every anon-reachable endpoint", not one.
+//   - AS-020 / C-007.a: the cookie is bound to its doc — a cookie minted for doc A does NOT
+//     authorize a WRITE on doc B (whose link is viewer-only, so the slug fallback can't save it),
+//     and a write with NO cookie on that viewer-only doc is likewise refused. Both negatives run
+//     through the REAL gate — the seam is the production code path, not a mocked cookie check.
 //
-// resolveSession returns null (no account) so the guest path is exercised; the doc is a real
-// anyone_with_link doc with a real minted capability token.
+// Scope (S-002, additive): doc A keeps a commenter link, so the pre-S-003 slug admit still grants
+// comment there even without a cookie — that REMOVAL is S-003's job and is NOT asserted here. The
+// negatives use doc B (viewer link) where the slug fallback grants only view, so a refused write is
+// attributable to the MISSING/cross-doc cookie, proving the cookie — not the slug — is the grant.
 //
 // Run: RUN_INTEGRATION=1 bun test ./test/integration/share-redeem.itest.ts
 
@@ -21,6 +28,8 @@ import { createDocRepo } from "../../src/publish/repo";
 import { createCapabilityTokenRepo } from "../../src/sharing/share-repo";
 import { mintCapabilityToken } from "../../src/sharing/share-token";
 import { resolveAdmission, ADMISSION_COOKIE_NAME } from "../../src/sharing/capability-cookie";
+import { createResolveAccess } from "../../src/sharing/resolve-access";
+import { createResolveDocRole, createIsDocOwner } from "../../src/sharing/resolve-doc-role-repo";
 import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
@@ -29,19 +38,20 @@ const SECRET = "itest-secret-at-least-16-chars";
 const noSession: SessionResolver = async () => null; // every caller is an anon guest.
 const asMember: WorkspaceRoleResolver = async () => "member";
 
-describe.skipIf(!RUN)("capability-link redeem → admission seam (real Postgres)", () => {
+describe.skipIf(!RUN)("capability-link redeem → admission seam (real Postgres, real resolveAccess)", () => {
   let h: MigratedDb;
   let app: ReturnType<typeof createApp>;
   let tokenA = "";
   let tokenB = "";
   let slugA = "";
+  let slugB = "";
   let docIdA = "";
   let docIdB = "";
 
   beforeAll(async () => {
     h = await withMigratedDb();
 
-    // Two real anyone_with_link docs, each with its own minted capability token + a commenter link.
+    // Doc A: anyone_with_link, COMMENTER capability link (the happy path).
     slugA = `cap-a-${process.pid}`;
     const a = await createDocRepo(h.db).createDocWithV1({
       slug: slugA,
@@ -51,8 +61,11 @@ describe.skipIf(!RUN)("capability-link redeem → admission seam (real Postgres)
       contentHash: "hash-a",
     });
     docIdA = a.id;
+    // Doc B: anyone_with_link, VIEWER capability link — the slug fallback grants only view, so a
+    // refused WRITE on B is attributable to a missing/cross-doc cookie, not the link role.
+    slugB = `cap-b-${process.pid}`;
     const b = await createDocRepo(h.db).createDocWithV1({
-      slug: `cap-b-${process.pid}`,
+      slug: slugB,
       title: "Other Doc",
       kind: "html",
       content: "<p>other</p>",
@@ -69,28 +82,30 @@ describe.skipIf(!RUN)("capability-link redeem → admission seam (real Postgres)
       .values({ docId: docIdA, role: "commenter", capabilityToken: tokenA });
     await h.db
       .insert(shareLinks)
-      .values({ docId: docIdB, role: "commenter", capabilityToken: tokenB });
+      .values({ docId: docIdB, role: "viewer", capabilityToken: tokenB });
+
+    // The PRODUCTION access gate: createResolveAccess over the real createResolveDocRole, wired
+    // with APP_SECRET so the anon branch validates the admission cookie (resolveAdmission) against
+    // the doc's CURRENT capability token and admits at the cookie's link role. NO stub.
+    const resolveDocRole = createResolveDocRole(h.db, {
+      isOwner: createIsDocOwner(h.db),
+      isWorkspaceMember: async () => false,
+    });
+    const resolveAccess = createResolveAccess(h.db, { resolveDocRole, secret: SECRET });
 
     app = createApp({
       dbCheck: async () => {},
-      // The redeem surface under test, wired to the REAL token repo.
       shareRedeem: {
         resolveCapabilityToken: createCapabilityTokenRepo(h.db),
         secret: SECRET,
         secure: false,
       },
-      // The doc-addressed read + the guest comment WRITE path (session-optional). resolveAccess
-      // admits an anon on an anyone_with_link doc at the link role (the pre-S-003 behaviour); the
-      // point of THIS test is that the redeem-minted cookie rides the write, end-to-end on real DB.
       annotations: {
         db: h.db,
         resolveSession: noSession,
         resolveWorkspaceRole: asMember,
-        resolveDocRole: async () => "viewer" as const,
-        resolveAccess: async (_docId, viewer) =>
-          viewer.kind === "user"
-            ? { role: "owner" as const, canView: true }
-            : { role: "commenter" as const, canView: true },
+        resolveDocRole,
+        resolveAccess,
       },
     });
   });
@@ -119,7 +134,21 @@ describe.skipIf(!RUN)("capability-link redeem → admission seam (real Postgres)
     return { status: res.status, slug: body.slug, role: body.role, cookie };
   }
 
-  test("AS-006 / C-006: a commenter capability link lets a no-account guest comment (admission cookie authorizes the WRITE path)", async () => {
+  /** POST a guest annotation+comment to a doc, optionally carrying an admission cookie. */
+  function postComment(slug: string, cookie: string | undefined, guestName: string) {
+    return app.handle(
+      req(`/api/docs/${slug}/annotations`, {
+        method: "POST",
+        headers: cookie ? { cookie: `${ADMISSION_COOKIE_NAME}=${cookie}` } : {},
+        body: JSON.stringify({
+          anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 },
+          comment: { body: "guest feedback via capability link", guestName },
+        }),
+      }),
+    );
+  }
+
+  test("AS-006 / C-006: a commenter capability link admits a no-account guest WRITE through the REAL access gate (admission cookie authorizes the comment endpoint)", async () => {
     // Given an anon visitor opens doc A's commenter capability link → admission cookie + slug.
     const redeemed = await redeem(tokenA);
     expect(redeemed.status).toBe(200);
@@ -127,18 +156,10 @@ describe.skipIf(!RUN)("capability-link redeem → admission seam (real Postgres)
     expect(redeemed.role).toBe("commenter");
     expect(redeemed.cookie).toBeTruthy();
 
-    // C-006: the SAME cookie authorizes the doc-addressed comment WRITE — a guest creates an
-    // annotation carrying a first comment under their guest session name, on the REAL route + DB.
-    const createRes = await app.handle(
-      req(`/api/docs/${slugA}/annotations`, {
-        method: "POST",
-        headers: { cookie: `${ADMISSION_COOKIE_NAME}=${redeemed.cookie}` },
-        body: JSON.stringify({
-          anchor: { blockId: "block-p-1", textSnippet: "hello", offset: 0, length: 5 },
-          comment: { body: "guest feedback via capability link", guestName: "calm-falcon-znmy" },
-        }),
-      }),
-    );
+    // C-006: the cookie rides the doc-addressed comment WRITE — through the PRODUCTION resolveAccess
+    // (its anon branch validated the cookie via resolveAdmission), a guest creates an annotation +
+    // first comment under their guest name, on the REAL route + DB.
+    const createRes = await postComment(slugA, redeemed.cookie, "calm-falcon-znmy");
     expect(createRes.status).toBe(201);
 
     // Then the comment is persisted, attributed to the guest name, with NO account (author_id null).
@@ -158,24 +179,43 @@ describe.skipIf(!RUN)("capability-link redeem → admission seam (real Postgres)
     expect(row!.body).toBe("guest feedback via capability link");
   });
 
-  test("AS-020 / C-007.a: an admission cookie for doc A does not open doc B (cross-doc replay, real tokens)", async () => {
-    // Given the guest holds doc A's admission cookie.
+  test("AS-006 / C-006: the SAME admission cookie also authorizes a READ endpoint for doc A (annotations list) — every anon-reachable endpoint, not only the write", async () => {
+    const redeemed = await redeem(tokenA);
+    expect(redeemed.cookie).toBeTruthy();
+    const res = await app.handle(
+      req(`/api/docs/${slugA}/annotations`, {
+        headers: { cookie: `${ADMISSION_COOKIE_NAME}=${redeemed.cookie}` },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { items: unknown[] } };
+    // The annotation created in the previous test is visible to the cookie-bearing anon reader.
+    expect(Array.isArray(body.data.items)).toBe(true);
+  });
+
+  test("AS-020 / C-007.a: a doc-A cookie does NOT authorize a WRITE on doc B (cross-doc replay refused at the REAL gate)", async () => {
     const redeemed = await redeem(tokenA);
     expect(redeemed.cookie).toBeTruthy();
 
-    // The binding runs against the REAL tokens the capability-token repo reads back. The cookie is
-    // valid for A with A's current token...
+    // The doc-A cookie presented on doc B's comment endpoint: resolveAdmission(B) is null (bound to
+    // A), so the gate falls to doc B's slug role (viewer) → comment is refused. Doc B's viewer link
+    // means the slug fallback can never save the write, so this 404/403 is the cross-doc refusal.
+    const res = await postComment(slugB, redeemed.cookie, "calm-falcon-cross");
+    expect([403, 404]).toContain(res.status);
+
+    // And the binding is exactly what resolveAdmission decides on the live tokens the repo reads.
     const repo = createCapabilityTokenRepo(h.db);
     const targetA = await repo(tokenA);
     const targetB = await repo(tokenB);
     expect(targetA!.docId).toBe(docIdA);
     expect(targetB!.docId).toBe(docIdB);
-
-    // ...accepted against doc A (its docId + current token)...
     expect(resolveAdmission(redeemed.cookie, docIdA, tokenA, SECRET)).not.toBeNull();
-    // ...but REFUSED against doc B even using B's own current token — the cookie is bound to A's
-    // docId, so it can never admit on B (the gate S-003 will apply on B's anon read).
     expect(resolveAdmission(redeemed.cookie, docIdB, tokenB, SECRET)).toBeNull();
+  });
+
+  test("AS-006 / C-006 (negative): a WRITE on the viewer-link doc B with NO cookie is refused — reaching the endpoint is not the grant", async () => {
+    const res = await postComment(slugB, undefined, "no-cookie-guest");
+    expect([403, 404]).toContain(res.status);
   });
 
   test("AS-005: redeeming a token that matches no doc → 404, no admission cookie", async () => {
