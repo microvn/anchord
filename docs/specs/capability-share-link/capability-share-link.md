@@ -1,0 +1,431 @@
+# Spec: Capability Share Link
+
+**Created:** 2026-06-21
+**Last updated:** 2026-06-22
+**Status:** Draft
+**Snapshot limit:** 5
+
+## Overview
+
+anchord borrowed Google-Docs' "anyone with link" permission model but, unlike Google, its public doc
+address is guessable: the URL is `/d/<slugified-title>-<short-suffix>`, where the title half leaks the
+content and the random suffix is low-entropy (~30 effective bits, generated with a slicing bug) with no
+rate limit on the reader. So "anyone with the link" has degraded into "anyone who guesses the slug" —
+the capability-URL assumption (the link itself is the secret) does not hold.
+
+This feature restores it. When a doc is shared as `anyone_with_link`, anchord mints a high-entropy
+**capability link** `/s/<token>` (token ~128-bit, crypto-random, NO title). An anonymous visitor reaches
+the doc ONLY through that link; the readable `/d/:slug` address stops admitting anonymous visitors (it
+stays the in-app path for signed-in people who already have access). Turning sharing off kills the link.
+The already-built-but-unwired link controls (expiry / view-limit / password) are enforced on the
+capability link. Who is this for: doc owners who share externally, and the no-account guests they share with.
+
+## Data Model
+
+- **`share_links` gains `capability_token`** — a high-entropy, crypto-random, URL-safe string (~128-bit,
+  e.g. 22+ chars), carrying NO part of the doc title. Unique across all links. Set when the doc's general
+  access is `anyone_with_link`; cleared (or replaced) otherwise. The doc's immutable `slug` is unchanged.
+- **Existing `share_links` fields reused** (no schema change): `role` (viewer/commenter/editor),
+  `passwordHash`, `expiresAt`, `viewLimit`, `viewCount`.
+- **Capability admission cookie** — a signed, HTTP-only, Secure, SameSite cookie issued when a visitor
+  successfully opens a capability link (and, if password-protected, after the correct password). Its
+  signed payload **binds the docId AND a hash of the current capability token** — so a cookie minted for
+  doc A is rejected on doc B (cross-doc replay), and rotating/clearing the token invalidates every cookie
+  minted from the old token (the hash no longer matches). It carries the admitted link role + a
+  "password-cleared" marker so the viewer's follow-up reads/writes are authorized without re-redeeming or
+  re-entering the password. Lifetime is a bounded absolute expiry (default 24h, capped at the link's own
+  expiry if shorter), NOT renewed on read. Not persisted in the DB. The raw token is never logged and the
+  app sets `Referrer-Policy: no-referrer` so the token doesn't leak via the Referer header.
+
+## Stories
+
+### S-001: Mint an unguessable capability link for a shared doc (P0)
+
+**Description:** As a doc owner, when I share a doc to anyone-with-link, anchord gives me a link whose
+address is an unguessable token (not the doc title), so "anyone with the link" is actually secret.
+**Source:** Overview — "When a doc is shared as `anyone_with_link`, anchord mints a high-entropy capability link `/s/<token>`".
+**Applies Constraints:** C-001
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false
+- `files:` apps/backend/src/db/schema.ts, apps/backend/src/db/migrations/, apps/backend/src/sharing/share-token.ts, apps/backend/src/routes/sharing.ts, apps/backend/src/sharing/*-repo.ts
+- `autonomous:` checkpoint
+- `verify:` bun test apps/backend/src/sharing/share-token.test.ts
+
+**Acceptance Scenarios:**
+
+AS-001: Sharing a doc to anyone-with-link mints a capability link
+- **Given:** an owner viewing a doc whose general access is restricted
+- **When:** they set general access to anyone-with-link
+- **Then:** the doc has a capability link addressing it by a token, distinct from the doc's readable `/d/<slug>` address
+- **Data:** doc title "Refund Spec" → readable slug `refund-spec-xxxxxx`; capability link token unrelated to "refund"
+
+AS-002: The capability token is high-entropy and leaks no title
+- **Given:** a doc shared to anyone-with-link
+- **When:** its capability token is generated
+- **Then:** the token is crypto-random, at least 128 bits of entropy, URL-safe, and contains no part of the doc title
+- **Data:** title "Q3 Roadmap" → token contains neither "q3" nor "roadmap"
+
+AS-003: A non-shared doc has no capability link
+- **Given:** a doc whose general access is restricted (or anyone-in-workspace)
+- **When:** its share state is read
+- **Then:** no capability link/token is present
+- **Data:** generalAccess = restricted → capability token absent
+
+### S-002: Open a doc through its capability link (P0)
+
+**Description:** As anyone holding a capability link, I open it and read/act on the doc at the link's role,
+without an account, and the doc title never appears in my address bar.
+**Source:** Overview — "An anonymous visitor reaches the doc ONLY through that link".
+**Applies Constraints:** C-002, C-006, C-007, C-009
+
+> **Build note (2026-06-21):** This story also wired the admission cookie into the *shared* anon access
+> resolution — a valid cookie admits on the doc read AND on the annotation read + comment/resolve write
+> endpoints (C-006). The cookie-grant path lives HERE, additively; S-003 only removes the legacy no-cookie
+> slug admit. (Supersedes the earlier "S-003 rewrites the anon branch" narrative — see Clarifications.)
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` apps/backend/src/routes/share-redeem.ts, apps/backend/src/sharing/capability-cookie.ts, apps/web/src/app.tsx, apps/web/src/features/viewer/components/viewer-screen.tsx, apps/web/src/features/viewer/services/client.ts
+- `autonomous:` true
+- `verify:` bun test apps/backend/src/routes/share-redeem.test.ts
+
+**Acceptance Scenarios:**
+
+AS-004: An anonymous visitor opens the capability link and sees the doc
+- **Given:** an anonymous visitor with a valid capability link to an anyone-with-link doc whose link role is viewer
+- **When:** they open the capability link
+- **Then:** the rendered doc is served at the viewer role, and the address shown stays the token link — the doc title/readable slug never appears in the URL
+- **Data:** link role = viewer → doc visible, no comment affordance
+
+AS-005: An unknown token reveals nothing
+- **Given:** an anonymous visitor
+- **When:** they open a capability link whose token matches no doc
+- **Then:** the request is refused as not-found; no doc content and no title are served
+- **Data:** token = "deadbeefdeadbeefdeadbe" (no match) → not found
+
+AS-006: A commenter capability link lets a no-account guest comment
+- **Given:** an anonymous visitor holding a capability link whose link role is commenter
+- **When:** they open it and add a comment under their guest session name
+- **Then:** the comment is accepted and attributed to the guest name (no account required) — i.e. the
+  admission cookie authorizes the WRITE path, not just the doc read (the cross-surface seam, C-006)
+- **Data:** link role = commenter, guest name "calm-falcon-znmy" → comment saved
+
+AS-020: An admission cookie for one doc does not open another doc
+- **Given:** an anonymous visitor who opened doc A's capability link and holds A's admission cookie
+- **When:** they send A's cookie to read doc B (also anyone-with-link) without B's capability link
+- **Then:** doc B is not served — the cookie is bound to doc A and refused for B
+- **Data:** cookie(docId=A) used against doc B → denied
+
+AS-025: In-viewer affordances never expose the readable slug to a capability-link visitor
+- **Given:** an anonymous visitor in a capability-link session
+- **When:** the viewer renders, including its version-compare and annotation deep-link affordances
+- **Then:** those affordances stay token-relative or are not offered, so the doc's readable `/d/<slug>`
+  address is never surfaced to them — the address bar stays the token link
+- **Data:** anon capability session → no `/d/<slug>` in the URL or in any in-viewer link
+
+### S-003: The readable address stops admitting anonymous visitors (P0)
+
+**Description:** As the system, I no longer let an anonymous visitor in through the guessable `/d/:slug`
+address — anonymous access to an anyone-with-link doc happens only via the capability link.
+**Source:** Overview — "the readable `/d/:slug` address stops admitting anonymous visitors (it stays the in-app path for signed-in people who already have access)".
+**Applies Constraints:** C-002, C-005
+
+> **Build note (2026-06-21):** Scope is the *removal* of the legacy no-cookie admit-by-slug for anon on
+> an anyone-with-link doc. The cookie-grant wiring (valid cookie → admit) already landed in S-002; S-003
+> does not add it. Signed-in owner/member admission is unchanged.
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` apps/backend/src/sharing/resolve-access.ts
+- `autonomous:` true
+- `verify:` bun test apps/backend/src/sharing/resolve-access.test.ts
+
+**Acceptance Scenarios:**
+
+AS-007: An anonymous visitor is refused at the readable address
+- **Given:** an anyone-with-link doc and an anonymous visitor who knows its readable `/d/<slug>` address
+- **When:** they open the readable address directly
+- **Then:** they are not admitted — anonymous access requires the capability link
+- **Data:** generalAccess = anyone_with_link, no session, no capability cookie → denied
+
+AS-008: A signed-in member still opens the readable address
+- **Given:** an anyone-with-link doc and a signed-in user who is the owner, an invited member, or a workspace member with access
+- **When:** they open the readable `/d/<slug>` address
+- **Then:** they are admitted at their effective role, exactly as before this change
+- **Data:** session = doc owner → admitted as owner
+
+### S-004: Turning off sharing kills the link; re-enabling issues a fresh one (P0)
+
+**Description:** As a doc owner, when I turn off link sharing the old link stops working forever, and if I
+share again (or rotate) I get a brand-new link — so "stop sharing" is a real revocation.
+**Source:** Overview — "Turning sharing off kills the link."
+**Applies Constraints:** C-004, C-007
+
+> **Build note (2026-06-21):** Rotation is an explicit owner action exposed as a dedicated route
+> (`POST /api/.../link/rotate`), gated by the same share permission as set-general-access (GAP-002).
+> Re-enabling and turning-off go through the existing set-general-access path.
+
+**Execution:**
+- `depends_on:` S-001, S-002
+- `parallel_safe:` false
+- `files:` apps/backend/src/routes/sharing.ts, apps/backend/src/sharing/share-token.ts, apps/backend/src/sharing/*-repo.ts
+- `autonomous:` checkpoint
+- `verify:` bun test apps/backend/src/routes/share-redeem.test.ts
+
+**Acceptance Scenarios:**
+
+AS-009: Turning off sharing kills the existing link
+- **Given:** an anyone-with-link doc with a live capability link a guest has been using
+- **When:** the owner sets general access back to restricted
+- **Then:** opening the previously-shared capability link no longer serves the doc
+- **Data:** generalAccess restricted → old token no longer resolves
+
+AS-010: Re-enabling sharing issues a new link, the old stays dead
+- **Given:** a doc whose link sharing was turned off (its old capability link is dead)
+- **When:** the owner sets general access to anyone-with-link again
+- **Then:** a new capability link works, and the previously-shared link remains dead
+- **Data:** old token ≠ new token; old token still refused, new token resolves
+
+AS-011: Rotating the link while sharing stays on
+- **Given:** an anyone-with-link doc with a live capability link
+- **When:** the owner rotates/regenerates the link
+- **Then:** the old link stops working and the new link serves the doc, with general access still
+  anyone-with-link and the link role unchanged (rotation never silently changes the role)
+- **Data:** rotate → old token refused, new token resolves, generalAccess + role unchanged
+
+AS-021: A guest's existing session dies when the link is rotated or turned off
+- **Given:** a guest mid-session on a doc, holding an admission cookie minted from the old token
+- **When:** the owner rotates the link (or turns sharing off) and the guest's viewer makes its next read/write
+- **Then:** the old admission cookie is refused (its bound token-hash no longer matches), so the guest is
+  no longer served — they must re-open the new capability link
+- **Data:** rotate → old cookie's token-hash ≠ current → denied
+
+AS-026: Only someone with share permission can rotate the link
+- **Given:** an anyone-with-link doc and a user without share permission (e.g. a viewer-role visitor)
+- **When:** they attempt to rotate/regenerate the capability link
+- **Then:** the action is refused and the stored token is unchanged — the existing share permission governs
+  (the doc owner, or an editor when editors-can-share is set, per GAP-002); rotation is not a public action
+- **Data:** viewer-role caller rotates → refused, token unchanged
+
+### S-005: The share box surfaces the capability link (P1)
+
+**Description:** As a doc owner, the Share box shows me the capability link with a copy control when the
+doc is shared to anyone-with-link, visibly distinct from the in-app readable address.
+**Source:** Overview + file inventory — "Share dialog — surface the capability link with a copy button".
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` apps/web/src/features/sharing/components/share-dialog.tsx, apps/web/src/features/sharing/hooks/use-access-controls.ts, apps/web/src/features/sharing/components/capability-link-row.tsx, apps/web/src/features/sharing/services/client.ts, apps/backend/src/routes/sharing.ts, apps/backend/src/sharing/share-state.ts
+- `autonomous:` true
+
+**Acceptance Scenarios:**
+
+AS-012: The capability link shows with a copy control when sharing is on
+- **Given:** an owner opening the Share box for a doc set to anyone-with-link
+- **When:** the box renders
+- **Then:** it shows the capability link `/s/<token>` with a copy control, presented as the external share link distinct from the in-app `/d/<slug>` address
+
+AS-013: No capability link when the doc is not link-shared
+- **Given:** an owner opening the Share box for a restricted (or anyone-in-workspace) doc
+- **When:** the box renders
+- **Then:** no capability link is shown
+
+AS-027: Switching to anyone-with-link in-session surfaces the link immediately
+- **Given:** an owner with the Share box already open on a doc that is restricted (or anyone-in-workspace), so no capability link is shown
+- **When:** they change general access to anyone-with-link within the open box
+- **Then:** the capability link `/s/<token>` appears immediately with its copy control — without closing and reopening the box; the link shown is the freshly-minted token (re-enabling after a previous disable shows the NEW token, never a stale/dead one)
+- **Data:** restricted → anyone-with-link → the just-minted `/s/<token>` appears in place
+
+AS-028: Switching away from anyone-with-link in-session removes the link immediately
+- **Given:** an owner with the Share box open on an anyone-with-link doc, the capability link shown
+- **When:** they change general access to restricted (or anyone-in-workspace) within the open box
+- **Then:** the capability link disappears immediately (the access change reports no link), so a dead token is never left on screen
+- **Data:** anyone-with-link → restricted → the `/s/<token>` row disappears
+
+### S-006: A capability link honors expiry, view-limit, and password (P0)
+
+**Description:** As a doc owner, the controls I set on a link — expiry, view limit, password — are actually
+enforced when someone opens the capability link, and they never get in the way of people who already have access.
+**Source:** Overview — "the already-built-but-unwired link controls (expiry / view-limit / password) are enforced on the capability link"; file inventory — "view-limit consume exactly once per open", "password challenge + remember passed".
+**Applies Constraints:** C-003, C-005
+
+**Execution:**
+- `depends_on:` S-002
+- `parallel_safe:` false
+- `files:` apps/backend/src/routes/share-redeem.ts, apps/backend/src/sharing/link-controls.ts, apps/backend/src/sharing/link-controls-repo.ts, apps/backend/src/sharing/capability-cookie.ts, apps/web/src/features/viewer/components/link-password-gate.tsx
+- `autonomous:` true
+- `verify:` bun test apps/backend/src/sharing/link-controls.test.ts
+
+**Acceptance Scenarios:**
+
+AS-014: An expired link does not open
+- **Given:** a capability link whose expiry is in the past
+- **When:** a visitor opens it
+- **Then:** the doc is not served; the visitor is told the link has expired
+- **Data:** expiresAt = yesterday → refused "expired"
+
+AS-015: Opening counts exactly one view despite multiple loads
+- **Given:** a capability link with a view limit of 5 and 0 views so far
+- **When:** a visitor opens it once — i.e. one capability-link redemption — and the viewer then loads the
+  doc, its annotations and versions, and refocuses the tab (re-reads ride the admission cookie, not a new
+  redemption)
+- **Then:** exactly one view is counted, not one per underlying load; a later re-open in a new session
+  (a fresh redemption) counts as another view
+- **Data:** viewLimit = 5 → viewCount becomes 1 after a single open
+
+AS-016: A link past its view limit no longer opens
+- **Given:** a capability link with a view limit of 5 and 5 views already used
+- **When:** a new visitor opens it
+- **Then:** the doc is not served; the visitor is told the link is no longer available
+- **Data:** viewLimit = 5, viewCount = 5 → refused, viewCount stays 5
+
+AS-017: A correct password opens the link and is not re-asked
+- **Given:** a password-protected capability link
+- **When:** a visitor opens it, is prompted, and enters the correct password
+- **Then:** the doc is served, and subsequent reads in the same session do not prompt again
+- **Data:** password "letmein" correct → doc served, follow-up loads not prompted
+
+AS-018: A wrong password does not open, and repeats are throttled
+- **Given:** a password-protected capability link
+- **When:** a visitor submits an incorrect password, and keeps retrying
+- **Then:** the doc is not served, and after 5 failed attempts further attempts are throttled
+- **Data:** wrong password ×5 → refused, then rate-limited
+
+AS-019: Link controls never gate someone who already has access
+- **Given:** a doc whose capability link is expired (or past its view limit, or password-protected) and a signed-in owner/invited member
+- **When:** that member opens the doc by its readable `/d/<slug>` address
+- **Then:** they are admitted at their effective role, unaffected by the link's expiry/limit/password
+- **Data:** expired link + session = owner → owner still opens the doc
+
+AS-022: A wrong password does not consume a view
+- **Given:** a password-protected capability link with a view limit of 5 and 0 views
+- **When:** a visitor submits an incorrect password (and the doc is never served)
+- **Then:** no view is consumed — the count stays 0; only a successful admission consumes a view
+- **Data:** wrong password → viewCount stays 0
+
+AS-023: A view is consumed only once the doc is actually served
+- **Given:** a capability link with a view limit and all link controls passing
+- **When:** redemption succeeds but serving the doc then fails (the doc can't be returned)
+- **Then:** no view is consumed for that failed open — the count only advances when the doc is served
+- **Data:** redeem ok + serve fails → viewCount unchanged
+
+AS-024: A capability-link visitor's token does not leak via logs or referrer
+- **Given:** an anonymous visitor opening a capability link
+- **When:** the request is served (on any outcome — served, expired, view-limited, or password-gated)
+- **Then:** the raw token is not recorded in server logs, and the browser is instructed not to forward
+  the link as a referrer to other sites, so the token cannot leak through logs or the referrer header
+- **Data:** redeem (any outcome) → no raw token in logs; response carries a no-referrer instruction
+
+## Constraints & Invariants
+
+C-001: A capability token is crypto-random, ≥128-bit entropy, URL-safe, globally unique, and contains no part of the doc title. (AS-002)
+C-002: An anonymous visitor may reach an `anyone_with_link` doc ONLY via a valid capability link — never via the doc's readable `/d/:slug` address.
+  - scope: S-002, S-003
+  - surfaces: capability-link-open, readable-address-open
+  - coverage: capability-link-open → AS-004, readable-address-open → AS-007
+C-003: Link controls are enforced on the capability link before the doc is served — an expired link, a view-limit-exhausted link, or a wrong/absent password does not serve the doc.
+  - scope: S-006
+  - surfaces: expiry, view-limit, password
+  - coverage: expiry → AS-014, view-limit → AS-016, password → AS-018
+C-004: Turning off `anyone_with_link` (or rotating) explicitly replaces/clears the stored `capability_token` and mints a new one — it does not merely flip a flag; the old token is permanently dead and every admission cookie minted from it is refused thereafter. (AS-009, AS-010, AS-011, AS-021)
+C-005: An owner / invited member / workspace member opens the doc by its readable address at their effective role regardless of link state, and link controls (expiry/view-limit/password) never gate them. (AS-008, AS-019)
+C-006: A valid admission cookie authorizes EVERY anon-reachable endpoint for that doc — the doc read AND its annotations/versions/diff reads AND the comment/resolve writes — not only the doc read. (AS-006)
+C-007: An admission cookie is bound to its docId and the current capability token; it is refused on any other doc (cross-doc replay) and after the token is rotated/cleared (stale token-hash). (AS-020, AS-021)
+C-008: The raw capability token is never written to logs, and responses set `Referrer-Policy: no-referrer`, so the token does not leak via server logs or the Referer header. (AS-024)
+C-009: A visitor who entered via a capability link is never shown the doc's readable `/d/:slug` address — the URL stays the token link and in-viewer affordances (Share, version, deep-link) do not surface the slug to them. (AS-004, AS-025)
+
+## What Already Exists
+
+### System Impact & Technical Risks
+
+- **`apps/backend/src/sharing/resolve-access.ts` (anon branch)** — originally admitted an anonymous visitor whenever `doc.generalAccess === "anyone_with_link"`, keyed by slug. As built (2026-06-21): **S-002** added the admission-cookie check to this branch additively (a valid cookie → admit at the cookie's link role, threaded into the doc read AND the annotation read/comment/resolve write endpoints, C-006); **S-003** then removed the legacy no-cookie admit-by-slug so an anon visitor with no cookie is refused at the readable address. Owner/invited/member paths are untouched. Follow-up cleanup: the `ResolveAccessDeps.secret` JSDoc still describes the old "falls back to slug admit" behavior and should be corrected.
+- **`apps/backend/src/sharing/link-controls.ts` + `link-controls-repo.ts`** — `checkLinkAccess`, `checkLinkExpiry`, `tryConsumeView` (atomic view increment) and the password rate-limiter are BUILT and unit-tested but NOT wired into any read path today. S-006 reuses them as-is, adding the call site in the redeem route. No rebuild.
+- **`apps/backend/src/sharing/share-state.ts`** — returns the doc's share `url` (currently `/d/<slug>`). S-005 extends the share state to also carry the capability link.
+- **`apps/backend/src/publish/slug.ts`** — the guessable slug with the ~30-bit suffix bug. This feature does NOT fix the slug (the readable address is no longer an anonymous entry point after S-003, so its weakness stops mattering for anon access). Left as-is deliberately; see Not in Scope.
+- **Viewer SPA load pattern** — opening a doc fires multiple reads (`GET /api/docs/:slug`, annotations, versions) and refetches on window focus. This is why view-limit MUST be consumed once at redeem (S-006/AS-015), not per API call.
+- **`share_links.guest_commenting`** — deprecated column, not read/written (sharing reversal 2026-06-20). Untouched here.
+
+### UI Inventory
+
+| Component | Path | Reuse plan |
+|---|---|---|
+| Share dialog | `apps/web/src/features/sharing/components/share-dialog.tsx` | extend: add the capability-link row + copy control (S-005) |
+| Viewer screen | `apps/web/src/features/viewer/components/viewer-screen.tsx` | extend: add a `/s/:token` mount branch that redeems then renders by the resolved slug (S-002) |
+
+## Not in Scope
+
+- **Fixing the `/d/:slug` suffix entropy bug** — once the readable address no longer admits anonymous visitors (S-003), its low entropy stops being an anon-access risk. Hardening the slug is a separate, lower-priority cleanup.
+- **Per-recipient links / multiple concurrent capability links per doc** — v0 keeps one capability link per doc (one `share_links` row per doc already). Multiple named links is a later phase.
+- **Analytics on link opens** (who/when beyond the view counter) — deferred; only the existing `viewCount` is touched.
+- **Migrating the deprecated `guest_commenting` column** — orthogonal cleanup, needs its own migration.
+- **Backfilling existing `anyone_with_link` docs with a token** — not needed: the repo is greenfield, existing link-shared docs are seed data and are reset via `bun db:seed`. (Adversarial review flagged this; dropped deliberately — there is no production data to preserve.)
+- **Throttling / audit-logging invalid-token guesses at `/s/:token`** — a 128-bit token makes enumeration infeasible, so brute-force defense + open-tracking analytics are deferred to a later phase.
+- **Password-strength policy + per-link rate-limit hardening** — the existing IP-keyed link rate-limiter is reused as-is; stronger device/session binding and a minimum-password-strength rule are a separate hardening task. Residual risk: a weak owner-chosen password remains brute-forceable across rotating IPs.
+
+## Gaps
+
+GAP-001 (status: resolved): Cookie lifetime/scope — resolved in Data Model: a bounded absolute expiry (default 24h, capped at the link's own expiry if shorter), NOT renewed on read, bound to docId + token-hash. Affects AS-017.
+GAP-002 (status: resolved): Who may rotate/turn off the link — resolved: the existing share permission governs (the doc owner, or an editor when `editors_can_share` is set), consistent with the rest of sharing-permissions. No new permission.
+GAP-003 (status: resolved): The exact mechanism to guarantee the raw token never reaches logs/analytics. Source: C-008 — "never written to logs". Resolved at the S-006 build: no logger receives the raw token (it is never passed to any logger), and `Referrer-Policy: no-referrer` is set on every served/control-outcome response. Became **AS-024**.
+GAP-004 (status: resolved): For a visitor who entered via a capability link, whether in-viewer version-compare and annotation deep-link URLs are rewritten to a token form or simply not offered. Source: C-009 / AS-008. Resolved at the S-002 build (simplest-safe): an anon capability-link session is never shown the readable `/d/:slug` — the URL stays the token, and version-compare/deep-link affordances stay token-relative or are not offered. The Share button was already hidden for anon. Became **AS-025**.
+
+## Clarifications — 2026-06-21
+
+- **Redeem outcome → status contract (build decision, S-006).** The AS state redeem refusals in behavioral
+  terms ("told it expired", "no longer available", "throttled"). The wire contract chosen at build time is:
+  expired and view-limit-exhausted → 410; password required or incorrect → 401; password rate-limited → 429;
+  unknown/malformed token → 404 (existence-hiding, consistent with the slug pattern). Status codes are an
+  implementation detail kept OUT of the AS (the spec bans HTTP codes in AS text); recorded here so the
+  contract is not lost.
+- **Cookie-wiring ownership (build correction, S-002/S-003).** The cookie-grant path (a valid admission
+  cookie admits anon on the doc read AND the annotation read/comment/resolve write endpoints) was wired in
+  **S-002**, additively, into the shared anon access resolution. **S-003** only removed the legacy no-cookie
+  admit-by-slug. The earlier narrative that "S-003 rewrites the anon branch to call the admission check" is
+  superseded. The `ResolveAccessDeps.secret` JSDoc in `resolve-access.ts` still describes the old
+  slug-fallback behavior and should be corrected in a follow-up cleanup.
+
+## Clarifications — 2026-06-22
+
+- **capabilityUrl is a linked field with TWO producers (S-005 / AS-027).** The Share dialog (consumer)
+  reads `capabilityUrl` from BOTH the dialog-open share-state read (`GET …/share`, AS-012) AND the
+  set-general-access response (`PUT …/access`, AS-027/AS-028). The access response now carries
+  `capabilityUrl` (the freshly-minted `/s/<token>` when the new level is anyone-with-link; null when
+  switching to restricted / anyone-in-workspace) so the UI has ONE authoritative value that updates on
+  every access change — no stale dialog-open snapshot, no close/reopen, never a re-minted-but-dead token.
+  Cross-spec: this adds `capabilityUrl` to the `PUT /api/w/:workspaceId/docs/:slug/access` response
+  contract owned by **sharing-permissions S-001** (its `## API` row gains `capabilityUrl`); pin both
+  sides there too. Bug fixed: capabilityUrl came only from the dialog-open read and was never refreshed
+  after a `PUT …/access`, so switching to anyone-with-link in-session showed the link section but no link.
+
+## Spec Sizing Notes
+
+Stories=6 (target 7, under). AS=28 (target 20, in the G7 overage range ≤30).
+
+The AS over the soft target are each a distinct atom (no AS gộp):
+- /mf-challenge findings:
+  - S-002 AS-020 (cross-doc cookie rejection) — a separate security atom from AS-004's "address stays token".
+  - S-004 AS-021 (rotation/off invalidates an in-flight guest cookie) — distinct from AS-009/010/011.
+  - S-006 AS-022 (wrong password consumes no view) and AS-023 (failed serve consumes no view) — two distinct view-accounting atoms, split from AS-015 per G1.
+- /mf-build sync (2026-06-21), each a distinct atom from a resolved gap or a stated-but-untested rule:
+  - S-006 AS-024 (token not logged / no-referrer) — resolves GAP-003 (C-008's outcome).
+  - S-002 AS-025 (in-viewer affordances never expose the slug) — resolves GAP-004 (C-009's affordance case).
+  - S-004 AS-026 (only share-permitted users rotate) — the GAP-002 permission negative, previously untested.
+- /mf-plan in-session-surfacing fix (2026-06-22), two distinct atoms:
+  - S-005 AS-027 (switch TO anyone-with-link in-session → link appears, fresh token) — distinct from AS-012's dialog-open render.
+  - S-005 AS-028 (switch AWAY in-session → link disappears) — the inverse atom; the access response reports no link.
+
+No bloat — each AS traces to one stated atom.
+
+## Change Log
+
+| Date | Change | Ref |
+|------|--------|-----|
+| 2026-06-21 | Initial creation | -- |
+| 2026-06-21 | /mf-challenge: cookie binding (C-007) + all-endpoint auth (C-006) + token-leak hygiene (C-008) + slug-hiding (C-009); explicit revocation (C-004); AS-020/021/022/023; AS-015 "open" pinned; GAP-001/002 resolved, GAP-003/004 added; backfill dropped (greenfield). | -- |
+| 2026-06-21 | /mf-build sync: GAP-003→AS-024, GAP-004→AS-025 (both resolved); AS-026 (rotate permission negative, GAP-002); C-008/C-009 coverage refs → AS-024/AS-025; redeem status-code contract + cookie-wiring ownership recorded in Clarifications; S-002/S-003 descriptions + resolve-access System Impact corrected. | -- |
+| 2026-06-22 | Major (snapshot 2026-06-22.md): +AS-027/AS-028 (S-005) — capability link surfaces/clears IMMEDIATELY on an in-session general-access switch; the `PUT …/access` response now carries `capabilityUrl` (linked field, two producers: share-state read + access response) so the UI has one authoritative source. +Clarifications 2026-06-22; S-005 Execution.files extended. Cross-spec: sharing-permissions S-001 API row gains `capabilityUrl`. Fixes: switching to anyone-with-link in-session showed the section but no link. | -- |

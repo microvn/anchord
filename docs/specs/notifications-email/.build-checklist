@@ -1,0 +1,75 @@
+# notifications-email build checklist (controller-owned)
+# states: [ ] untouched | [x] done (test + code) | [~] partial (dest) | [N/A] out of scope
+
+## S-007 — per-event plain-text email, deep-links, resilient delivery (P0)
+[x] AS-019.T1 — ONE email | env.test+notify.test                                         | owner: S-007
+[x] AS-019.T2 — plain text not html | mail-transport.test:78                              | owner: S-007
+[x] AS-019.T3 — absolute deep-link body | buildAnnotationDeepLink + notify.test           | owner: S-007
+[x] AS-020.T1 — retry once ~5s (2 attempts) | mail-queue.test (fake sleep, delays=[5000])  | owner: S-007
+[x] AS-020.T2 — dead-letters after 2nd failure | mail-queue.test                          | owner: S-007
+[x] AS-020.T3 — in-app row persists + action never fails | notify.test C-007              | owner: S-007
+[x] AS-021    — low-signal (resolved) writes row, NO email | notify.test                   | owner: S-007
+[x] AS-022    — boot fails fast on absent/invalid APP_URL | env.test (3 cases)              | owner: S-007
+[x] AS-024.T1 — fragment scrolls+highlights via real focus path | deep-link-fragment.test  | owner: S-007
+[x] AS-024.T2 — no fragment → nothing focused | deep-link-fragment.test                    | owner: S-007
+[x] C-006     — channel policy by type | isEmailEligible/HIGH_SIGNAL_TYPES                  | owner: S-007
+[x] C-007     — best-effort never throws, mail-fail swallowed | notify.test                | owner: S-007
+[x] C-012     — minimal content, no doc body | buildEmailBody                              | owner: S-007
+[x] C-013     — anchor format + viewer fragment honored | reviewer PASS                    | owner: S-007
+[~] GAP-004   — per-event body wording → sensible one-liners (EVENT_SUMMARY/SUBJECT in notify.ts); GAP stays open per spec, copy tweakable w/o behavior change | owner: S-007
+
+## S-001 — notify on new feedback (P0, checkpoint)
+[x] AS-001.T1 — owner + editor each get one in-app row | notify.test + route test          | owner: S-001
+[x] AS-001.T2 — owner + editors each get one email (high-signal) | route test               | owner: S-001
+[x] AS-001.T3 — actor gets neither row nor email | notify.test + route test                 | owner: S-001
+[x] AS-002    — revoked editor dropped by REAL createResolveAccess seam | route test         | owner: S-001
+[x] C-001     — recipients relationship-derived server-side | computeNewFeedbackCandidates   | owner: S-001
+[x] C-002     — self-exclusion (incl actor=owner, actor=editor) | notify.test                | owner: S-001
+[x] C-003     — access-filter calls REAL resolveAccess | dispatchNewFeedbackNotify (mig 0011) | owner: S-001
+
+## S-002 — notify on thread activity (P0)
+[x] AS-003    — reply notifies other participants + owner, not the replier | unit+route     | owner: S-002
+[x] AS-004    — top-level comment on existing = thread_activity, asserts type NOT new_feedback | owner: S-002
+[x] AS-005    — owner+participant collapse to one row; self-exclusion wins | notify.test     | owner: S-002
+[x] AS-023    — guest comment notifies account-holders, never the guest | unit+route         | owner: S-002
+[x] C-004     — thread-activity trigger definition | dispatchThreadActivityNotify both branches | owner: S-002
+[x] C-005     — dedup one row per recipient | computeRecipients Set                          | owner: S-002
+[x] C-011     — guest never recipient; guest action notifies others | repo lists account-holders | owner: S-002
+
+## S-003 — notify on suggestion decided (P1)
+[x] AS-006    — deciding notifies author one row+email (accept+reject parity) | unit+route   | owner: S-003
+[x] AS-007    — owner deciding own suggestion notifies no one (403 + zero notify) | route     | owner: S-003
+
+## S-004 — notify on resolution and detach (P1)
+[x] AS-008    — resolve/reopen notifies creator in-app only NO email; self-resolve no-op | unit+route | owner: S-004
+[x] AS-009    — detach burst = ONE grouped row/recipient/publish, no email; GAP-002 authors-only | unit+job | owner: S-004
+[x] C-007b    — resolved/detached absent from HIGH_SIGNAL_TYPES → isEmailEligible false       | owner: S-004
+# note: detach-notify sink not ledger-gated (latent gap, documented JSDoc); once-per-publish in prod, acceptable v0
+
+## S-005 — notify the invitee on being added (P2)
+[x] AS-010    — invited account-holder gets one in-app row (in-app only); pending=no row | unit+surface | owner: S-005
+# note: invited dispatch on doc-invite account-exists path only; workspace invites are token-pending (no userId) → no row (reviewer: correct, not S1). GAP-006 holds: no invite_accepted enum/path.
+
+## S-006 — in-app read surface: bell panel, unread count, mark read (P0)
+[x] AS-012.T1 — list returns only caller's rows, newest-first | route test                  | owner: S-006
+[x] AS-012.T2 — limit 20/cap 50 clamped, page<1→400, total/hasNext | route test             | owner: S-006
+[x] AS-013    — unread count reflects caller's unread rows | route + bell-flow               | owner: S-006
+[x] AS-014.T1 — clicking one unread row flips only it, badge decrements | route + flow        | owner: S-006
+[x] AS-014.T2 — deep-link /d/:slug#annotation-:refId (LEFT JOIN slug) | format+flow           | owner: S-006
+[x] AS-015    — mark-all-read clears every unread row for caller | route + flow               | owner: S-006
+[x] AS-016    — empty state "You're all caught up", no badge | flow                           | owner: S-006
+[x] AS-017    — cross-user mark = scoped no-op, 200 not 403 leak; Carol row intact | route    | owner: S-006
+[x] AS-018    — already-read / mark-all none-unread idempotent; read monotonic | route+flow    | owner: S-006
+[x] C-008     — read own only: every query WHERE userId=actor.userId | read-repo               | owner: S-006
+[x] C-009     — mark-read on click not on open | BE+FE tests                                  | owner: S-006
+[x] C-010     — mark-read idempotency, read monotonic to true | route test                    | owner: S-006
+[x] GAP-003   — badge cap "9+", unread poll 45s (refetchInterval) | decided                   | owner: S-006
+
+## Not in scope (do not tick)
+[N/A] HTML email template — Phase 2                                                         | owner: —
+[N/A] email coalescing/digest — Phase 2                                                     | owner: —
+[N/A] per-user notification preferences — Phase 2                                           | owner: —
+[N/A] @mentions — Phase 2                                                                   | owner: —
+[N/A] real-time push (WebSocket) — Phase 2                                                  | owner: —
+[N/A] standalone /notifications page — Phase 2                                              | owner: —
+[N/A] notifying guests — Phase 2                                                            | owner: —
