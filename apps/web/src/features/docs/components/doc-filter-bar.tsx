@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Filter } from "lucide-react";
 import { Icon } from "@/components/icon";
 import {
   Select,
@@ -55,7 +56,7 @@ export function DocFilterBar({ browse, showing }: { browse: DocBrowse; showing: 
               : "border-line bg-sunken text-muted hover:text-ink",
           ].join(" ")}
         >
-          <Icon name="settings" size={14} />
+          <Filter size={12} />
           Filter
           {filter.active && filter.narrowedCount > 0 && (
             <span
