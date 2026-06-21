@@ -13,7 +13,7 @@ import { and, eq } from "drizzle-orm";
 import { docs, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
 import type { ShareRepo, ResolvedShareSetting } from "./share";
-import { capabilityTokenFor } from "./share-token";
+import { capabilityTokenFor, rotateCapabilityTokenFor } from "./share-token";
 import type { RedeemTarget } from "../routes/share-redeem";
 
 /**
@@ -57,6 +57,58 @@ export function createCapabilityTokenRepo(
       expiresAt: row.expiresAt ?? null,
     };
   };
+}
+
+/**
+ * The result of an explicit rotate (capability-share-link S-004 / AS-011 / C-004).
+ *  - `rotated: true`  → the doc was anyone_with_link; its capability_token was REPLACED with a
+ *    fresh one (`token`). The old token is permanently dead and every admission cookie minted
+ *    from it is now refused (its bound token-hash no longer matches the live token).
+ *  - `rotated: false` → the doc is NOT anyone_with_link (no capability link to rotate). The
+ *    column is left as-is (null); the caller (route) turns this into a 409, never a crash.
+ */
+export type RotateResult =
+  | { rotated: true; token: string }
+  | { rotated: false };
+
+/**
+ * Explicit rotate of a doc's capability token (capability-share-link S-004 / AS-011 / C-004).
+ *
+ * This is the owner action that REPLACES the live link's secret while keeping general access
+ * anyone_with_link and the link role UNCHANGED. It reads the doc's current level (the source of
+ * truth on the doc row), and — only when it is still anyone_with_link — writes a brand-new
+ * crypto-random token over the old one in ONE transaction. The minted value is distinct from the
+ * old one (a fresh CSPRNG mint), so the previously-shared link stays dead and every admission
+ * cookie minted from it is refused thereafter (the cookie binds a HASH of the now-replaced token).
+ *
+ * A doc that is not anyone_with_link (restricted / anyone_in_workspace) has no capability link, so
+ * there is nothing to rotate: this returns `{ rotated: false }` and leaves the column untouched —
+ * the route surfaces a 409, never a crash (C-004 edge). Only the role/level-agnostic token column
+ * is touched; the link role + controls (password/expiry/view-limit) are left as-is.
+ */
+export async function rotateCapabilityToken(db: DB, docId: string): Promise<RotateResult> {
+  return db.transaction(async (tx) => {
+    const [doc] = await tx
+      .select({ generalAccess: docs.generalAccess })
+      .from(docs)
+      .where(eq(docs.id, docId))
+      .limit(1);
+    // Nothing to rotate when the doc isn't link-shared (or doesn't exist): no-op, no crash.
+    const next = doc ? rotateCapabilityTokenFor(doc.generalAccess) : null;
+    if (next === null) return { rotated: false };
+
+    // Replace the token on the doc's single share_links row (C-001 unique docId). The row
+    // exists already (it is anyone_with_link), but upsert defensively so a missing row can't
+    // crash the rotate; the role/controls are left untouched (only the token column moves).
+    await tx
+      .insert(shareLinks)
+      .values({ docId, capabilityToken: next })
+      .onConflictDoUpdate({
+        target: shareLinks.docId,
+        set: { capabilityToken: next },
+      });
+    return { rotated: true, token: next };
+  });
 }
 
 /** Construct a ShareRepo backed by a Drizzle DB handle. */

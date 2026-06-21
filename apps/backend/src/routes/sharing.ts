@@ -41,12 +41,12 @@ import {
   type WorkspaceRoleResolver,
 } from "../http/auth-gate";
 import { withValidation } from "../http/validate";
-import { ValidationError, ForbiddenError, NotFoundError } from "../http/errors";
+import { ValidationError, ForbiddenError, NotFoundError, ConflictError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
 import { canViewDoc, type AccessDeps, type Viewer } from "../sharing/access";
 import { type Role, canManageSharing } from "../sharing/roles";
 import { setGeneralAccess, ShareRejected, type ShareRepo } from "../sharing/share";
-import { createShareRepo } from "../sharing/share-repo";
+import { createShareRepo, rotateCapabilityToken } from "../sharing/share-repo";
 import { inviteByEmail, type DocMemberRepo, type EnqueuedInvite, type InviteDeps } from "../sharing/invite";
 import { createDocMemberRepo, findUserByEmail, createEnqueueInvite } from "../sharing/doc-member-repo";
 import { setPassword } from "../sharing/link-controls";
@@ -353,6 +353,30 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
             };
           }),
       )
+
+      // ── POST /api/w/:workspaceId/docs/:slug/link/rotate — S-004 (regenerate the capability link) ──
+      // C-004 / AS-011: an EXPLICIT owner action that REPLACES the live capability token with a
+      // fresh one while general access stays anyone_with_link and the link role is UNCHANGED — so
+      // the old link is permanently dead and every admission cookie minted from it is refused
+      // (its bound token-hash no longer matches). Gated by the SAME manage-sharing gate as
+      // set-general-access (GAP-002): owner always, an editor when editors_can_share is on,
+      // viewer/commenter never (→ 403). Existence-hide first (404), then the gate (403).
+      // Edge (C-004): rotating a doc that is NOT anyone_with_link has no link to rotate → 409,
+      // not a crash.
+      .post("/api/w/:workspaceId/docs/:slug/link/rotate", async ({ params, actor, ws }) => {
+        const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+        await requireManageSharing(ws.workspaceId, doc.id, actor.userId); // 403 if not a manager
+        if (!deps.db) {
+          throw new Error("sharingRoutes rotate route requires `db` to replace the token");
+        }
+        const result = await rotateCapabilityToken(deps.db, doc.id);
+        if (!result.rotated) {
+          // Nothing to rotate — the doc is not anyone_with_link (no capability link).
+          throw new ConflictError("Doc is not shared via a capability link — nothing to rotate");
+        }
+        // The fresh token is the new secret; the SPA re-reads /share to surface the new /s/<token>.
+        return { rotated: true };
+      })
 
       // ── PATCH /api/w/:workspaceId/docs/:slug/members/:memberId — S-007 (change a member's role) ──
       // Gated IDENTICALLY to the other management writes (C-017): existence-hide → 404,

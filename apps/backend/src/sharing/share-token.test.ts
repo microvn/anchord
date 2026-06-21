@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import {
   mintCapabilityToken,
   capabilityTokenFor,
+  rotateCapabilityTokenFor,
   isWellFormedCapabilityToken,
 } from "./share-token";
 import { shareUrl } from "./share-state";
@@ -82,4 +83,38 @@ test("C-001: a capability token is unguessable — >=128-bit crypto, URL-safe, g
   // rotation here — rotation is S-004's explicit action); it is NOT title-derived.
   const existing = mintCapabilityToken();
   expect(capabilityTokenFor("anyone_with_link", existing)).toBe(existing);
+});
+
+// ── S-004: explicit rotation decision (PURE) ─────────────────────────────────
+
+test("AS-011: rotating a live anyone_with_link doc mints a FRESH token, distinct from the old (the role/level are the route's concern, not this pure step)", () => {
+  // Given a doc that is anyone_with_link with a live token; When the owner rotates it.
+  const old = mintCapabilityToken();
+  const next = rotateCapabilityTokenFor("anyone_with_link", old);
+
+  // Then a NEW, well-formed token is minted — never the old value resurrected (C-004).
+  expect(next).not.toBeNull();
+  expect(next).not.toBe(old);
+  expect(isWellFormedCapabilityToken(next!)).toBe(true);
+});
+
+test("AS-010: re-minting on anyone_with_link always yields a value DIFFERENT from any prior token (old stays dead)", () => {
+  // Even rotating repeatedly never collides with the previous token — each rotate is a
+  // fresh crypto mint, so the old link is permanently dead (C-004).
+  let prev = mintCapabilityToken();
+  for (let i = 0; i < 1000; i++) {
+    const next = rotateCapabilityTokenFor("anyone_with_link", prev)!;
+    expect(next).not.toBe(prev);
+    expect(isWellFormedCapabilityToken(next)).toBe(true);
+    prev = next;
+  }
+});
+
+test("C-004 (edge): rotating a doc that is NOT anyone_with_link is a no-op — no token (no crash, nothing to rotate)", () => {
+  // A restricted / anyone_in_workspace doc has no capability link, so there is nothing to
+  // rotate. The pure decision refuses by returning null (the route turns this into a 409/no-op),
+  // whether or not a stale token value is passed in.
+  expect(rotateCapabilityTokenFor("restricted", null)).toBeNull();
+  expect(rotateCapabilityTokenFor("anyone_in_workspace", null)).toBeNull();
+  expect(rotateCapabilityTokenFor("restricted", mintCapabilityToken())).toBeNull();
 });

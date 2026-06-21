@@ -1,7 +1,11 @@
 import { test, expect } from "bun:test";
 import { Elysia } from "elysia";
 import { shareRedeemRoutes, type RedeemTarget } from "./share-redeem";
-import { mintCapabilityToken } from "../sharing/share-token";
+import {
+  mintCapabilityToken,
+  capabilityTokenFor,
+  rotateCapabilityTokenFor,
+} from "../sharing/share-token";
 import { verifyAdmissionCookie, ADMISSION_COOKIE_NAME } from "../sharing/capability-cookie";
 
 // capability-share-link S-002: opening a doc through its capability link.
@@ -122,6 +126,88 @@ test("C-008: every redeem response sets Referrer-Policy: no-referrer so the /s/<
   // Also on the 404 path — a probe's Referer is just as sensitive.
   const miss = await redeem(appFor(token, { docId: "d", slug: "s", role: "viewer" }), mintCapabilityToken());
   expect(miss.headers.get("referrer-policy")).toBe("no-referrer");
+});
+
+// ── S-004: off kills the link; re-enable / rotate issues a fresh one ─────────
+//
+// These drive the REAL redeem route against a small in-memory "doc" whose level + token are
+// mutated by the SAME pure decision functions the production repo uses (capabilityTokenFor /
+// rotateCapabilityTokenFor) — so "old token no longer resolves at /s/:token, new one does" is
+// proven through the production redeem path, not a hand-rolled stub. The cookie-invalidation
+// half (AS-021) is the cross-surface integration test (capability-rotate.itest.ts).
+
+/** A mutable single-doc store whose resolver mirrors createCapabilityTokenRepo's guard:
+ *  a token resolves ONLY when it equals the doc's CURRENT token AND the doc is anyone_with_link. */
+function lifecycleApp() {
+  const doc = {
+    docId: "doc_L",
+    slug: "lifecycle-spec-1a2b",
+    role: "commenter" as const,
+    level: "anyone_with_link" as "anyone_with_link" | "restricted",
+    token: capabilityTokenFor("anyone_with_link", null), // freshly minted on enter
+  };
+  const resolveCapabilityToken = async (token: string): Promise<RedeemTarget | null> => {
+    if (doc.level !== "anyone_with_link" || !doc.token || token !== doc.token) return null;
+    return { docId: doc.docId, slug: doc.slug, role: doc.role };
+  };
+  const app = new Elysia().use(
+    shareRedeemRoutes({ resolveCapabilityToken, secret: SECRET, secure: false }),
+  );
+  return { app, doc };
+}
+
+test("AS-009: setting access back to restricted clears the token → the old capability link no longer resolves at /s/:token", async () => {
+  const { app, doc } = lifecycleApp();
+  const old = doc.token!;
+  // Live link resolves first.
+  expect((await redeem(app, old)).status).toBe(200);
+
+  // Owner sets general access back to restricted → token cleared (the production transition).
+  doc.level = "restricted";
+  doc.token = capabilityTokenFor("restricted", old); // → null
+
+  // The previously-shared link no longer serves the doc.
+  const res = await redeem(app, old);
+  expect(res.status).toBe(404);
+  expect(res.headers.get("set-cookie")).toBeNull();
+});
+
+test("AS-010: re-enabling anyone_with_link mints a NEW token (≠ old) that resolves, while the old token stays dead", async () => {
+  const { app, doc } = lifecycleApp();
+  const old = doc.token!;
+  // Turn it off (old link dead)…
+  doc.level = "restricted";
+  doc.token = capabilityTokenFor("restricted", old);
+  expect((await redeem(app, old)).status).toBe(404);
+
+  // …then re-enable. Re-entering from no token mints a fresh one, NOT the resurrected old.
+  doc.level = "anyone_with_link";
+  doc.token = capabilityTokenFor("anyone_with_link", doc.token);
+  const fresh = doc.token!;
+  expect(fresh).not.toBe(old);
+
+  // The new link works; the old one is permanently dead (C-004).
+  expect((await redeem(app, fresh)).status).toBe(200);
+  expect((await redeem(app, old)).status).toBe(404);
+});
+
+test("AS-011: rotating while sharing stays ON → old token stops resolving, the new token serves, link role UNCHANGED", async () => {
+  const { app, doc } = lifecycleApp();
+  const old = doc.token!;
+  const roleBefore = doc.role;
+  expect((await redeem(app, old)).status).toBe(200);
+
+  // Explicit rotate while still anyone_with_link.
+  doc.token = rotateCapabilityTokenFor("anyone_with_link", old);
+  const fresh = doc.token!;
+  expect(fresh).not.toBe(old);
+
+  // Old refused, new serves, generalAccess + role unchanged.
+  expect((await redeem(app, old)).status).toBe(404);
+  const res = await redeem(app, fresh);
+  expect(res.status).toBe(200);
+  expect((await res.json()).role).toBe(roleBefore);
+  expect(doc.level).toBe("anyone_with_link");
 });
 
 test("S-006-shape: the admission cookie lifetime is capped at the link's own expiry when sooner", async () => {

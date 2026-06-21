@@ -80,3 +80,28 @@ export function capabilityTokenFor(
   if (level !== "anyone_with_link") return null;
   return existing ?? mintCapabilityToken();
 }
+
+/**
+ * Resolve the capability token for an EXPLICIT rotate (PURE — no DB). Unlike
+ * `capabilityTokenFor`, which KEEPS a live token when the level is unchanged, rotate always
+ * mints a FRESH token — the whole point is to replace the secret so the old link (and every
+ * admission cookie minted from it) dies (C-004 / AS-011).
+ *
+ *  - `anyone_with_link` → a brand-new crypto-random token, distinct from `_existing` (the old
+ *    value is never resurrected — a fresh mint cannot collide with overwhelming probability).
+ *  - any other level → null: a doc that is not link-shared has no capability link, so there is
+ *    nothing to rotate. The DB layer / route turns this null into a no-op / 409 (C-004 edge),
+ *    never a crash. The `_existing` value is irrelevant here (a leftover token is being cleared,
+ *    not rotated).
+ *
+ * @param level     the doc's CURRENT general-access level
+ * @param _existing the doc's current token (only used to make the intent explicit; the result
+ *                  on anyone_with_link is always a NEW value regardless)
+ */
+export function rotateCapabilityTokenFor(
+  level: GeneralAccessLevel,
+  _existing: string | null = null,
+): string | null {
+  if (level !== "anyone_with_link") return null;
+  return mintCapabilityToken();
+}
