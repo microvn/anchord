@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ViewerAnnotation, AnnotationComment } from "@/features/viewer/services/client";
 import { Icon } from "@/components/icon";
+import { autoSizeTextarea } from "@/features/viewer/lib/auto-size-textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { labelDisplay } from "@/features/viewer/lib/label-presets";
 import { REDLINE_ROOT_BODY } from "@/features/viewer/hooks/use-compose";
 
@@ -221,6 +223,46 @@ function Avatar({ name, size = 22, fontSize = 9 }: { name: string; size?: number
   );
 }
 
+// A compact status marker for the header right cluster — the status' FIRST LETTER on its tone-tinted
+// disc, with the full word as a tooltip (and an sr-only label so screen readers + the existing
+// text-content assertions still read "Pending"/"Accepted"/etc.). Replaces the old full-word pills so
+// the header stays a single tidy line (C-006 status precedence is enforced by the caller).
+function StatusDot({
+  testId,
+  label,
+  letter,
+  tone,
+}: {
+  testId: string;
+  label: string;
+  letter: string;
+  tone: "neutral" | "muted" | "success" | "error" | "amber";
+}) {
+  const toneClass = {
+    neutral: "bg-sunken text-subtle",
+    muted: "bg-sunken text-muted",
+    success: "bg-success/15 text-success",
+    error: "bg-error/15 text-error",
+    amber: "bg-amber/15 text-amber",
+  }[tone];
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            data-testid={testId}
+            className={`flex h-[18px] min-w-[18px] cursor-default items-center justify-center rounded-[5px] px-1 font-mono text-[10px] font-bold uppercase ${toneClass}`}
+          >
+            <span aria-hidden>{letter}</span>
+            <span className="sr-only">{label}</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top">{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 // One comment's head (avatar · author · mono time). Shared by root + reply rows so the spacing +
 // type scale stay identical to .cmt-head / .cmt-author / .cmt-time.
 function CommentHead({
@@ -233,20 +275,21 @@ function CommentHead({
   avatarFont?: number;
 }) {
   const name = commentAuthor(c);
+  const guest = isGuestComment(c);
   return (
     <div className="flex items-center gap-2">
       <Avatar name={name} size={avatarSize} fontSize={avatarFont} />
-      <span className="text-[12.5px] font-semibold text-ink">{name}</span>
-      {/* C-010: a guest comment is visibly attributed as a guest — a neutral pill next to the
-          self-entered name (a display label, not an identity, distinct from a workspace member). */}
-      {isGuestComment(c) && (
-        <span
-          data-testid="guest-badge"
-          className="rounded-[4px] bg-sunken px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-subtle"
-        >
-          Guest
-        </span>
-      )}
+      {/* C-010: a guest author is distinguished by a DIMMER name (text-subtle) vs a member's text-ink —
+          no inline pill. An sr-only "(Guest)" under the guest-badge testid keeps the cue accessible. */}
+      <span className={`text-[12.5px] font-semibold ${guest ? "text-subtle" : "text-ink"}`}>
+        {name}
+        {guest && (
+          <span data-testid="guest-badge" className="sr-only">
+            {" "}
+            (Guest)
+          </span>
+        )}
+      </span>
       <span className="font-mono text-[10px] text-subtle">{timeLabel(c.createdAt)}</span>
     </div>
   );
@@ -269,6 +312,19 @@ function ReplyComposer({
   const canSend = body.trim().length > 0 && !sending;
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
+  // Autofocus the reply textarea when the inline reply opens (the composer remounts on open, so this
+  // fires each time) — the user clicks Reply and can type immediately. Mirrors the S-001 Composer.
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Auto-grow the reply box with its content — same helper the Composer uses, scaled to the reply
+  // (starts at 2 rows, grows to 10, then scrolls). Layout effect so the height is set before paint.
+  useLayoutEffect(() => {
+    if (inputRef.current) autoSizeTextarea(inputRef.current, { minRows: 2, maxRows: 10 });
+  }, [body]);
+
   const send = () => {
     if (!canSend) return;
     const text = body.trim();
@@ -289,11 +345,20 @@ function ReplyComposer({
   return (
     <div data-testid="reply-composer" className="mt-[9px] w-full" onClick={stop}>
       <textarea
+        ref={inputRef}
         data-testid="reply-input"
         aria-label="Reply"
         value={body}
         onChange={(e) => setBody(e.target.value)}
         onClick={stop}
+        // Shift+Enter POSTS the reply; a plain Enter inserts a newline (textarea default). Mirrors
+        // the comment composer's key binding so the send gesture is consistent across both surfaces.
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && e.shiftKey) {
+            e.preventDefault();
+            send();
+          }
+        }}
         placeholder="Reply"
         rows={2}
         className="block w-full resize-none rounded-[6px] border border-line bg-surface p-2 text-[12.5px] leading-[1.5] text-ink outline-none focus:border-accent"
@@ -319,8 +384,13 @@ function ReplyComposer({
             e.stopPropagation();
             send();
           }}
-          className="inline-flex cursor-pointer items-center rounded-[6px] bg-accent px-2.5 py-1 text-[12px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-[6px] bg-accent px-2.5 py-1 text-[12px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
+          {/* Shift+Enter send hint (wired on the textarea above) — decorative; label stays "Send". */}
+          <span className="inline-flex items-center gap-0.5 opacity-80" aria-hidden="true">
+            <Icon name="shift" size={12} />
+            <Icon name="cornerDownLeft" size={12} />
+          </span>
           {sending ? "Sending…" : "Send"}
         </button>
       </div>
@@ -334,6 +404,8 @@ export function ThreadCard({
   unplaceable,
   onFocus,
   currentUserId,
+  currentAuthorName = null,
+  currentAuthorIsGuest = false,
   isOwner = false,
   onReply,
   onResolve,
@@ -344,6 +416,12 @@ export function ThreadCard({
   focused: boolean;
   unplaceable: boolean;
   onFocus: (id: string) => void;
+  /** C-001: the REAL display name of the current author (member name, or guest session name) — used to
+   *  attribute an optimistic reply with the real name, never the literal "You". */
+  currentAuthorName?: string | null;
+  /** whether the current author is a no-account guest → the optimistic reply rides `guestName` (so it
+   *  dims as a guest), not `authorName`. */
+  currentAuthorIsGuest?: boolean;
   /** annotation-actions-ui S-001 (C-001): the current session user id, for own-vs-others. An item is
    *  marked OWN only when the annotation's durable `authorId` is non-null AND equals this — mirroring
    *  the backend null-guard. A guest annotation (null `authorId`) matches no one; a signed-out viewer
@@ -490,7 +568,10 @@ export function ThreadCard({
           {
             id: `optimistic-reply-${Date.now()}-${prev.length}`,
             parentId: root?.id ?? null,
-            authorName: "You",
+            // C-001: attribute with the REAL name, never "You". A guest reply rides guestName so it
+            // dims + reads as a guest; a member reply rides authorName.
+            authorName: currentAuthorIsGuest ? undefined : (currentAuthorName ?? undefined),
+            guestName: currentAuthorIsGuest ? (currentAuthorName ?? undefined) : undefined,
             body, // inert plaintext via React children (C-008)
             createdAt: new Date().toISOString(),
           },
@@ -622,74 +703,54 @@ export function ThreadCard({
         <div className="flex min-w-0 items-center gap-2">
           {root && <Avatar name={commentAuthor(root)} />}
           {rootName != null && (
-            <span className="truncate text-[12.5px] font-semibold text-ink">{rootName}</span>
-          )}
-          {/* C-010: a guest comment is visibly attributed as a guest (a display label, not identity). */}
-          {root && isGuestComment(root) && (
+            // C-010: a guest author is distinguished by a DIMMER name (text-muted) vs a real member's
+            // text-ink — no inline pill, no avatar badge. An sr-only "Guest" (kept under the guest-badge
+            // testid) keeps the cue accessible + the existing header assertions holding.
             <span
-              data-testid="guest-badge"
-              className="rounded-[4px] bg-sunken px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-subtle"
+              className={[
+                "truncate text-[12.5px] font-semibold",
+                root && isGuestComment(root) ? "text-subtle" : "text-ink",
+              ].join(" ")}
             >
-              Guest
+              {rootName}
+              {root && isGuestComment(root) && (
+                <span data-testid="guest-badge" className="sr-only">
+                  {" "}
+                  (Guest)
+                </span>
+              )}
             </span>
           )}
-          {root && <span className="font-mono text-[10px] text-subtle">{timeLabel(root.createdAt)}</span>}
         </div>
 
         <div className="flex flex-none items-center gap-1.5">
-          {/* The SINGLE status pill (render at most ONE — the precedence above). DESIGN.md hues:
-              Pending/Stale neutral, Accepted/Resolved success, Rejected error. */}
+          {/* The SINGLE status marker (render at most ONE — the precedence above), as a first-letter
+              tone disc with the full word on hover (StatusDot). DESIGN.md hues: Pending/Stale neutral,
+              Accepted/Resolved success, Rejected error. */}
           {isProposal && sugStatus === "pending" && (
-            <span
-              data-testid="redline-pending-badge"
-              className="rounded-[4px] bg-sunken px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-subtle"
-            >
-              Pending
-            </span>
+            <StatusDot testId="redline-pending-badge" label="Pending" letter="P" tone="neutral" />
           )}
           {sugStatus === "accepted" && (
-            <span
-              data-testid="redline-accepted-badge"
-              className="rounded-[4px] bg-success/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-success"
-            >
-              Accepted
-            </span>
+            <StatusDot testId="redline-accepted-badge" label="Accepted" letter="A" tone="success" />
           )}
           {sugStatus === "rejected" && (
-            <span
-              data-testid="redline-rejected-badge"
-              className="rounded-[4px] bg-error/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-error"
-            >
-              Rejected
-            </span>
+            <StatusDot testId="redline-rejected-badge" label="Rejected" letter="R" tone="error" />
           )}
           {isStale && (
-            <span
-              data-testid="redline-stale-badge"
-              className="rounded-[4px] bg-sunken px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-muted"
-            >
-              Stale
-            </span>
+            <StatusDot testId="redline-stale-badge" label="Stale" letter="S" tone="muted" />
           )}
-          {/* A RESOLVED REMARK keeps its Resolved pill; a decided PROPOSAL does NOT (its outcome pill
-              above is the single status — the dim conveys it's closed). */}
+          {/* A RESOLVED REMARK keeps its Resolved marker; a decided PROPOSAL does NOT (its outcome
+              marker above is the single status — the dim conveys it's closed). */}
           {showResolvedRemarkBadge && (
-            <span
-              data-testid="resolved-badge"
-              className="rounded-[4px] bg-success/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-success"
-            >
-              Resolved
-            </span>
+            <StatusDot testId="resolved-badge" label="Resolved" letter="R" tone="success" />
           )}
-          {/* Orthogonal placement warning — may render alongside the status pill. */}
+          {/* Orthogonal placement warning — may render alongside the status marker. */}
           {unplaceable && (
-            <span
-              data-testid="couldnt-place-badge"
-              className="rounded-[4px] bg-amber/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.06em] text-amber"
-            >
-              Couldn&rsquo;t place
-            </span>
+            <StatusDot testId="couldnt-place-badge" label="Couldn’t place" letter="!" tone="amber" />
           )}
+
+          {/* Time, pushed to the right next to the overflow ⋯. */}
+          {root && <span className="font-mono text-[10px] text-subtle">{timeLabel(root.createdAt)}</span>}
 
           {/* S-003 (C-004): the OVERFLOW MENU — a "⋯" that houses Delete. Mounted ONLY when canDelete
               (author delete-own OR doc-owner moderate) AND onDelete is wired; a viewer / guest /
@@ -773,7 +834,7 @@ export function ThreadCard({
               data-testid="type-badge-delete"
               className="inline-flex max-w-full items-center gap-1.5 rounded-[4px] bg-error/15 px-1.5 py-0.5 text-[11.5px] font-semibold text-error"
             >
-              <Icon name="trash" size={12} />
+              <Icon name="eraser" size={12} />
               <span>Delete</span>
             </div>
           )}

@@ -2,10 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   type LucideIcon,
   MousePointer2,
-  LocateFixed,
-  Pencil,
+  SquareDashedMousePointer,
+  Highlighter,
   MessageSquareText,
-  Strikethrough,
+  Eraser,
   Zap,
 } from "lucide-react";
 
@@ -37,9 +37,9 @@ type DocWidth = "wide" | "focus";
 // DESIGN.md "Annotation type / tool colors" (PO-approved 2026-06-15): Markup teal · Comment amber ·
 // Redline red · Label gold. The hue tints a tool affordance ONLY (active/hover), never general chrome.
 const TOOL_META: Record<MarkupTool, { label: string; icon: LucideIcon; hue: string }> = {
-  markup: { label: "Markup", icon: Pencil, hue: "#37b3bd" },
+  markup: { label: "Markup", icon: Highlighter, hue: "#37b3bd" },
   comment: { label: "Comment", icon: MessageSquareText, hue: "#d68a3e" },
-  redline: { label: "Redline", icon: Strikethrough, hue: "#f1655d" },
+  redline: { label: "Redline", icon: Eraser, hue: "#f1655d" },
   label: { label: "Label", icon: Zap, hue: "#cbb24a" },
 };
 
@@ -267,7 +267,7 @@ export function DocModeToolbar({
         <ToolChip
           testId="input-mode-pinpoint"
           labelTestId="input-mode-pinpoint-label"
-          icon={LocateFixed}
+          icon={SquareDashedMousePointer}
           label="Pinpoint"
           hue="#37b3bd"
           active={false}

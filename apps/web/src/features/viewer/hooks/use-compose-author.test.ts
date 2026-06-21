@@ -21,9 +21,10 @@ describe("optimisticAuthor — optimistic/reconciled create attribution", () => 
     expect(r.authorId).toBeUndefined();
   });
 
-  it("falls back to 'You' only when there is no resolved session name and no guest identity", () => {
+  it("carries NO name (no 'You' fallback) when there is no resolved session name and no guest identity", () => {
     const r = optimisticAuthor(null, undefined);
-    expect(r.comment.authorName).toBe("You");
+    expect(r.comment.authorName).toBeUndefined();
+    expect(r.comment.guestName).toBeUndefined();
     expect(r.authorId).toBeUndefined();
   });
 });

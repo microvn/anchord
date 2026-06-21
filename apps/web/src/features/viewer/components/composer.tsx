@@ -1,25 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
+import { autoSizeTextarea, DEFAULT_MIN_ROWS } from "@/features/viewer/lib/auto-size-textarea";
 
-// Comment textarea auto-grows with its content: at least MIN_ROWS tall (a comfortable starting box,
-// matching the old fixed height), growing up to MAX_ROWS, then scrolling. Heights are derived from
-// the element's own computed line-height/padding/border so it stays correct under the design tokens
-// (and box-sizing: border-box — scrollHeight is the padding-box, so the border is added back).
-const MIN_ROWS = 3;
-const MAX_ROWS = 10;
-function autoSizeTextarea(el: HTMLTextAreaElement): void {
-  const cs = getComputedStyle(el);
-  const line = parseFloat(cs.lineHeight) || 18;
-  const vPad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-  const vBorder = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
-  const min = line * MIN_ROWS + vPad + vBorder;
-  const max = line * MAX_ROWS + vPad + vBorder;
-  el.style.height = "auto"; // reset first so scrollHeight reflects content (lets it SHRINK too)
-  const next = Math.min(Math.max(el.scrollHeight + vBorder, min), max);
-  el.style.height = `${next}px`;
-  // Only show the scrollbar once content exceeds MAX_ROWS — below that the box grows, no scroll.
-  el.style.overflowY = el.scrollHeight + vBorder > max ? "auto" : "hidden";
-}
+// Comment textarea auto-grows with its content (shared helper: at least 3 rows, growing to 10, then
+// scrolling). The reply input reuses the same helper — see thread-card.tsx.
 
 // Composer (S-001 + S-005): the in-rail compose box that appears once the user picks Comment on a
 // selection. Mirrors the prototype `viewer.jsx` Composer: a PendingQuoteRef (the selected quote,
@@ -225,7 +209,7 @@ export function Composer({
           }
         }}
         placeholder="Add a comment"
-        rows={MIN_ROWS}
+        rows={DEFAULT_MIN_ROWS}
         className="block w-full resize-none overflow-hidden rounded-[6px] border border-line bg-surface p-2 text-[12.5px] leading-[1.5] text-ink outline-none focus:border-accent"
       />
 
@@ -241,8 +225,14 @@ export function Composer({
           data-testid="composer-send"
           disabled={!canSend}
           onClick={submit}
-          className="inline-flex cursor-pointer items-center rounded-[6px] bg-accent px-3 py-1 text-[12.5px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12.5px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
+          {/* Shift+Enter send hint (the key path is wired on the textarea above) — decorative, the
+              accessible label stays "Send". */}
+          <span className="inline-flex items-center gap-0.5 opacity-80" aria-hidden="true">
+            <Icon name="shift" size={13} />
+            <Icon name="cornerDownLeft" size={13} />
+          </span>
           {pending ? "Sending…" : "Send"}
         </button>
       </div>

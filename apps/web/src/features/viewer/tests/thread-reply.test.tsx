@@ -1,5 +1,5 @@
 import { describe, it, expect, mock } from "bun:test";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // annotation-core-ui-commenting S-003 — Reply in a thread (flat). The ThreadCard gains an inline
@@ -122,6 +122,31 @@ describe("ThreadCard reply (S-003)", () => {
     const list = screen.getByTestId("reply-list");
     expect(within(list).getByText("Reply to the reply.")).toBeInTheDocument();
     expect(within(list).getByText("A reply.")).toBeInTheDocument();
+  });
+
+  it("clicking Reply autofocuses the reply textarea", async () => {
+    // Request (2026-06-21): opening the inline reply focuses the input so the user can type at once.
+    renderCard(thread(), mock(async () => true));
+    await userEvent.click(screen.getByTestId("reply-open"));
+    const input = await screen.findByTestId("reply-input");
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("Shift+Enter in the reply posts; a plain Enter does NOT (mirrors the composer)", async () => {
+    const onReply = mock(async () => true);
+    renderCard(thread(), onReply);
+    await userEvent.click(screen.getByTestId("reply-open"));
+    const input = await screen.findByTestId("reply-input");
+    await userEvent.type(input, "Because the trial window is 24h.");
+
+    // Plain Enter falls through to the textarea (newline) — does NOT post.
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onReply).not.toHaveBeenCalled();
+
+    // Shift+Enter posts the reply (the same gesture the Send button's ⇧↵ hint advertises).
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(onReply).toHaveBeenCalledTimes(1));
+    expect(onReply.mock.calls[0]![0]).toBe("Because the trial window is 24h.");
   });
 
   it("C-008: a reply body renders inert (escaped plaintext, no HTML injected)", async () => {

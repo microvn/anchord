@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   type LucideIcon,
   MessageSquareText,
-  ThumbsUp,
+  Star,
   Zap,
-  Strikethrough,
-  Replace,
+  Eraser,
+  WandSparkles,
   X,
 } from "lucide-react";
 import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismiss";
@@ -14,7 +14,8 @@ import { useDismissOnOutsideAndEscape } from "@/features/viewer/hooks/use-dismis
 // appears over a live text selection on a rendered Markdown doc. Mirrors the prototype `viewer.jsx`
 // SelectionPopover. It is the SINGLE entry that maps a selection to one create path: the chosen
 // action sets the annotation `type`/`label`. It offers the five annotation types
-// Comment · Like · Label · Redline · Suggest (+ Dismiss).
+// Comment · Like · Redline · Label · Suggest (+ Dismiss). (Order: Redline before Label per request
+// 2026-06-20.)
 //
 // S-006 reframe (2026-06-15): this surface is now the MARKUP TOOL's surface — it is shown ONLY when
 // the Markup tool is active (the other tools route the selection directly, viewer-screen/C-009). Its
@@ -162,10 +163,10 @@ export function SelectionPopover({
           className="flex items-center gap-0.5 rounded-md border border-line bg-elev p-1 shadow-lg"
         >
       <PopoverButton type="comment" testId="popover-comment" icon={MessageSquareText} label="Comment" onClick={onComment} />
-      <PopoverButton type="like" testId="popover-like" icon={ThumbsUp} label="Like" onClick={() => onSelectType?.("like")} />
+      <PopoverButton type="like" testId="popover-like" icon={Star} label="Like" onClick={() => onSelectType?.("like")} />
+      <PopoverButton type="redline" testId="popover-redline" icon={Eraser} label="Redline" onClick={() => onSelectType?.("redline")} />
       <PopoverButton type="label" testId="popover-label" icon={Zap} label="Label" onClick={() => onSelectType?.("label")} />
-      <PopoverButton type="redline" testId="popover-redline" icon={Strikethrough} label="Redline" onClick={() => onSelectType?.("redline")} />
-      <PopoverButton type="suggest" testId="popover-suggest" icon={Replace} label="Suggest" onClick={() => onSelectType?.("suggest")} />
+      <PopoverButton type="suggest" testId="popover-suggest" icon={WandSparkles} label="Suggest" onClick={() => onSelectType?.("suggest")} />
       <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-line" />
       <button
         type="button"

@@ -53,8 +53,8 @@ let optimisticSeq = 0;
  * member uses their REAL session display name + durable `authorId` — so the rail shows the real name
  * + avatar immediately and `isOwn` (authorId === currentUserId) matches without waiting for a
  * refetch. A guest uses its self-entered name and carries NO authorId (a guest matches no signed-in
- * user). The literal "You" is only a last-resort fallback for the rare window where a signed-in
- * session's name has not resolved yet.
+ * user). There is NO "You" fallback — if a signed-in session's name hasn't resolved yet the comment
+ * carries no name, and the no-refetch reconcile fills the real name moments later.
  */
 export function optimisticAuthor(
   currentUser: { id: string; name: string } | null | undefined,
@@ -62,7 +62,9 @@ export function optimisticAuthor(
 ): { comment: { authorName?: string; guestName?: string }; authorId?: string } {
   if (guestIdentity) return { comment: { guestName: guestIdentity.guestName } };
   if (currentUser?.name) return { comment: { authorName: currentUser.name }, authorId: currentUser.id };
-  return { comment: { authorName: "You" } };
+  // No "You" fallback — a guest uses its session name, a member uses the authored name. The only way
+  // here is a not-yet-resolved session, a rare window the no-refetch reconcile corrects.
+  return { comment: {} };
 }
 
 // S-003 (C-003 / challenge #9): the Like preset. Picking Like opens the composer pre-filled with the
