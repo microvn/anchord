@@ -1,5 +1,12 @@
 import { describe, it, expect } from "bun:test";
-import { relativeTime, summaryFor, summaryForItem, deepLinkFor } from "@/features/notifications/lib/format";
+import {
+  relativeTime,
+  summaryFor,
+  summaryForItem,
+  headlineParts,
+  iconFor,
+  deepLinkFor,
+} from "@/features/notifications/lib/format";
 
 // notifications-email S-006 — pure presentation helpers for the bell.
 
@@ -41,6 +48,47 @@ describe("notifications format helpers (S-006)", () => {
     expect(summaryForItem({ type: "thread_activity", actorName: null, docTitle: null })).toBe(
       summaryFor("thread_activity"),
     );
+  });
+
+  it("iconFor maps each type to its glyph (reply→pencil, resolved→check, detached→alert, invited→mail)", () => {
+    expect(iconFor("reply")).toBe("pencil");
+    expect(iconFor("thread_activity")).toBe("pencil");
+    expect(iconFor("new_feedback")).toBe("pencil");
+    expect(iconFor("suggestion_decided")).toBe("check");
+    expect(iconFor("resolved")).toBe("check");
+    expect(iconFor("detached")).toBe("alert");
+    expect(iconFor("invited")).toBe("mail");
+    // Unknown/future type falls back to the neutral bell.
+    expect(iconFor("future_type" as never)).toBe("bell");
+  });
+
+  it("headlineParts: a comment-type row with an actor → actor + connective verb + title (space-joined)", () => {
+    expect(headlineParts({ type: "thread_activity", actorName: "Mara", docTitle: "Refund Spec" })).toEqual({
+      actor: "Mara",
+      verb: "commented in",
+      title: "Refund Spec",
+      titleSeparator: " ",
+    });
+    // No doc title → the title collapses to "a document" (AS-026).
+    expect(headlineParts({ type: "reply", actorName: "Mara", docTitle: null })).toEqual({
+      actor: "Mara",
+      verb: "replied in",
+      title: "a document",
+      titleSeparator: " ",
+    });
+  });
+
+  it("headlineParts: a non-comment row with a title → generic verb · title, no actor (AS-029)", () => {
+    expect(headlineParts({ type: "resolved", actorName: null, docTitle: "Refund Spec" })).toEqual({
+      verb: summaryFor("resolved"),
+      title: "Refund Spec",
+      titleSeparator: " · ",
+    });
+    // No actor, no title (invited) → just the generic verb.
+    expect(headlineParts({ type: "invited", actorName: null, docTitle: null })).toEqual({
+      verb: summaryFor("invited"),
+      titleSeparator: " · ",
+    });
   });
 
   it("AS-014.T2: deepLinkFor builds /d/:slug#annotation-:refId, null without a slug", () => {

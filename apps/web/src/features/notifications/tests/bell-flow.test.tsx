@@ -191,12 +191,40 @@ describe("notifications bell flow (notifications-email S-006)", () => {
     await waitFor(() => expect(screen.getByTestId("notifications-badge")).toHaveTextContent("1"));
     await user.click(screen.getByTestId("header-notifications"));
     const panel = await screen.findByTestId("notification-panel");
-    // Headline names the actor + the doc title (AS-026/AS-027).
-    expect(within(panel).getByTestId("notification-row-a")).toHaveTextContent("Mara commented in Refund Spec");
+    const rowA = within(panel).getByTestId("notification-row-a");
+    // Headline names the actor + the doc title (AS-026/AS-027), now as styled spans.
+    expect(rowA).toHaveTextContent("Mara commented in Refund Spec");
+    // The leading type glyph renders (an svg in the row) — the unread signal replaces the old dot.
+    expect(rowA.querySelector("svg")).toBeInTheDocument();
     // The comment excerpt renders on its own line (AS-028) as inert text.
     expect(within(panel).getByTestId("notification-snippet-a")).toHaveTextContent(
       "can we cap the partial refund at 50%",
     );
+  });
+
+  it("restyle: a `resolved` row renders '{generic} · {title}' with NO snippet line", async () => {
+    store = [row("a", { type: "resolved", docTitle: "Refund Spec", actorName: null, snippet: null })];
+    const user = userEvent.setup();
+    renderBell();
+    await waitFor(() => expect(screen.getByTestId("notifications-badge")).toHaveTextContent("1"));
+    await user.click(screen.getByTestId("header-notifications"));
+    const panel = await screen.findByTestId("notification-panel");
+    const rowA = within(panel).getByTestId("notification-row-a");
+    // Generic per-type summary joined to the doc title — no actor interpolation.
+    expect(rowA).toHaveTextContent("A thread you're in was resolved · Refund Spec");
+    // No comment snippet for a non-comment row.
+    expect(within(panel).queryByTestId("notification-snippet-a")).not.toBeInTheDocument();
+  });
+
+  it("restyle: an unread row carries data-unread, a read row does not", async () => {
+    store = [row("a"), row("b", { read: true })];
+    const user = userEvent.setup();
+    renderBell();
+    await waitFor(() => expect(screen.getByTestId("notifications-badge")).toHaveTextContent("1"));
+    await user.click(screen.getByTestId("header-notifications"));
+    const panel = await screen.findByTestId("notification-panel");
+    expect(within(panel).getByTestId("notification-row-a")).toHaveAttribute("data-unread", "true");
+    expect(within(panel).getByTestId("notification-row-b")).not.toHaveAttribute("data-unread");
   });
 
   it("AS-029: an `invited` row (no actor/snippet) renders the generic per-type summary, no snippet line", async () => {

@@ -34,6 +34,29 @@ export function summaryFor(type: NotificationType): string {
   return SUMMARY[type] ?? "New notification";
 }
 
+/**
+ * The leading type glyph for a row — conveys KIND by shape (per DESIGN.md: a single line-glyph,
+ * never a colored disc; the row's teal/ink weight carries the unread signal). Maps to an icon name
+ * in `@/components/icon`. Unknown/future types fall back to the neutral `bell`.
+ */
+export function iconFor(type: NotificationType): string {
+  switch (type) {
+    case "reply":
+    case "thread_activity":
+    case "new_feedback":
+      return "pencil";
+    case "suggestion_decided":
+    case "resolved":
+      return "check";
+    case "detached":
+      return "alert";
+    case "invited":
+      return "mail";
+    default:
+      return "bell";
+  }
+}
+
 /** The comment-type rows whose summary can be enriched with an actor + doc title (AS-027). */
 const COMMENT_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
   "reply",
@@ -49,6 +72,50 @@ const ACTOR_TEMPLATE: Partial<Record<NotificationType, (actor: string, title: st
   thread_activity: (a, t) => `${a} commented in ${t}`,
   new_feedback: (a, t) => `${a} left feedback on ${t}`,
 };
+
+// The connective verb between an actor and the doc title for a comment-type row ("{actor} {verb}
+// {title}"). Kept in lockstep with ACTOR_TEMPLATE so the structured + flat renderings read alike.
+const ACTOR_VERB: Partial<Record<NotificationType, string>> = {
+  reply: "replied in",
+  thread_activity: "commented in",
+  new_feedback: "left feedback on",
+};
+
+/** The styled pieces of a row's headline (rendered as separate spans, not one flat string). */
+export interface HeadlineParts {
+  /** The triggering actor's display name — present only on an enriched comment-type row. */
+  actor?: string;
+  /** The connective/generic verb phrase (e.g. "commented in", or the generic per-type summary). */
+  verb: string;
+  /** The doc title — present when the row names a doc. */
+  title?: string;
+  /** How `verb` and `title` join inline: " " after an actor verb, " · " after a generic verb. */
+  titleSeparator: " " | " · ";
+}
+
+/**
+ * The structured headline for a row (AS-026/AS-027/AS-029), as styled spans:
+ * - comment-type WITH actor → `{actor}` + verb ("commented in") + `{title}` (collapses to
+ *   "a document" when absent), joined by a space.
+ * - non-comment WITH a doc title → the generic per-type `verb` + `{title}`, joined by " · ".
+ * - no actor + no title (invited, or a comment-type row whose comment/doc is gone) → just `verb`.
+ * Pure + null-safe (C-014); the snippet is rendered separately.
+ */
+export function headlineParts(
+  item: Pick<NotificationItem, "type" | "actorName" | "docTitle">,
+): HeadlineParts {
+  if (COMMENT_TYPES.has(item.type) && item.actorName) {
+    return {
+      actor: item.actorName,
+      verb: ACTOR_VERB[item.type] ?? "commented in",
+      title: item.docTitle || "a document",
+      titleSeparator: " ",
+    };
+  }
+  const verb = summaryFor(item.type);
+  if (item.docTitle) return { verb, title: item.docTitle, titleSeparator: " · " };
+  return { verb, titleSeparator: " · " };
+}
 
 /**
  * The row's headline summary. When a comment-type row carries an actor (AS-027), it reads

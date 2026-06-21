@@ -6,13 +6,15 @@ import {
   useMarkRead,
   useMarkAllRead,
 } from "@/features/notifications/hooks/use-notifications";
-import { relativeTime, summaryForItem, deepLinkFor } from "@/features/notifications/lib/format";
+import { relativeTime, headlineParts, iconFor, deepLinkFor } from "@/features/notifications/lib/format";
 import type { NotificationItem } from "@/features/notifications/types";
 
 // The bell dropdown panel (notifications-email S-006): header + "mark all read", the recent-N list,
 // and an empty state. Opening the panel triggers the list read but NEVER marks anything read (C-009);
-// clicking a row marks JUST that row and deep-links to its thread (AS-014). Teal accent + chrome-
-// recedes per DESIGN.md; the unread dot is the only colored mark in a row.
+// clicking a row marks JUST that row and deep-links to its thread (AS-014). Restyle per DESIGN.md:
+// chrome recedes — each row leads with a per-type line-glyph (teal when unread, subtle when read),
+// then a headline with weight on the actor (ink) + doc title (the one teal link); comment-type rows
+// quote a snippet behind a teal left-rule. Teal is the ONLY accent — no colored dots, no discs.
 
 function NotificationRow({
   item,
@@ -21,6 +23,8 @@ function NotificationRow({
   item: NotificationItem;
   onActivate: (item: NotificationItem) => void;
 }) {
+  const unread = !item.read;
+  const head = headlineParts(item);
   return (
     <button
       type="button"
@@ -29,25 +33,36 @@ function NotificationRow({
       onClick={() => onActivate(item)}
       className="flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left outline-none transition-colors hover:bg-elev focus:bg-elev"
     >
-      {/* Unread dot — teal, the row's only accent; an invisible spacer keeps read rows aligned. */}
-      <span
-        data-testid={item.read ? undefined : `notification-unread-dot-${item.id}`}
-        aria-hidden="true"
-        className={`mt-[5px] size-[7px] flex-none rounded-full ${item.read ? "bg-transparent" : "bg-accent"}`}
-      />
+      {/* Leading type glyph — conveys KIND by shape; teal when unread, subtle when read (the unread
+          signal, replacing the old dot). A line-glyph, never a colored disc (DESIGN.md). */}
+      <span className={`mt-px flex-none ${unread ? "text-accent" : "text-subtle"}`}>
+        <Icon name={iconFor(item.type)} size={13} />
+      </span>
       <span className="min-w-0 flex-1">
-        {/* AS-026/AS-027: enriched headline ("{actor} replied in {docTitle}"), or the generic
-            per-type summary when actor/title are absent (AS-029). The doc title reads in the
-            accent teal per DESIGN.md (the row already deep-links). */}
-        <span className={`block truncate text-[12.5px] ${item.read ? "text-muted" : "text-ink"}`}>
-          {summaryForItem(item)}
+        {/* AS-026/AS-027/AS-029: the headline as styled spans — actor (ink/medium), generic-or-
+            connective verb (muted), and the doc title (the one teal link). Read rows recede to
+            muted. The whole line truncates. */}
+        <span className="block truncate text-[12.5px]">
+          {head.actor ? (
+            <span className={unread ? "font-medium text-ink" : "text-muted"}>{head.actor} </span>
+          ) : null}
+          <span className={unread ? "text-muted" : "text-subtle"}>{head.verb}</span>
+          {head.title ? (
+            <>
+              <span className={unread ? "text-muted" : "text-subtle"}>{head.titleSeparator}</span>
+              <span className={`font-medium ${unread ? "text-accent" : "text-muted"}`}>
+                {head.title}
+              </span>
+            </>
+          ) : null}
         </span>
-        {/* AS-028: the comment excerpt — IN-APP ONLY, untrusted user text rendered as inert React
-            children (never dangerouslySetInnerHTML). Muted + clamped; omitted when absent (AS-029). */}
+        {/* AS-028: the comment excerpt — IN-APP ONLY, untrusted user text as inert React children
+            (never dangerouslySetInnerHTML). Quoted behind a teal left-rule; comment-types only,
+            omitted when absent (AS-029). */}
         {item.snippet ? (
           <span
             data-testid={`notification-snippet-${item.id}`}
-            className="mt-0.5 block truncate text-[11.5px] text-muted"
+            className="mt-0.5 block truncate border-l-2 border-accent-soft pl-2 text-[11.5px] text-muted"
           >
             {item.snippet}
           </span>
