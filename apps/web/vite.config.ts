@@ -27,7 +27,17 @@ export default defineConfig({
       //
       // doc-access-routing S-006: the bare server-rendered /d/:slug was removed, so the /d
       // proxy is GONE — Vite's default SPA fallback now serves /d/* (the in-app viewer route).
-      "/v": { target: "http://localhost:3007", changeOrigin: true },
+      //
+      // Regex-anchored to `/v/` (NOT a bare "/v" prefix): a plain "/v" prefix also matched
+      // SPA routes that merely START with "v" — notably `/verify-email`, which got proxied to
+      // the backend and returned a 404 envelope instead of the SPA. Same swallow the /s rule
+      // below already guards against. Only `/v/:id` (the iframe src) proxies now.
+      "^/v/": { target: "http://localhost:3007", changeOrigin: true },
+      // capability-share-link S-002: the redeem API is mounted at ROOT (/s/:token/redeem,
+      // /s/:token/resolve) — envelope-exempt. Proxy ONLY those subpaths; the bare /s/:token
+      // GET stays Vite's SPA fallback (the capability-redeem screen). Regex key (^) so the
+      // SPA mount isn't swallowed.
+      "^/s/[^/]+/(redeem|resolve)": { target: "http://localhost:3007", changeOrigin: true },
     },
   },
 });
