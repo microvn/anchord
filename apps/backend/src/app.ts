@@ -28,6 +28,7 @@ import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
 import type { DB } from "./db/client";
 import type { Viewer } from "./sharing/access";
+import { readAdmissionCookie } from "./sharing/capability-cookie";
 
 export type ViewerDoc = {
   versionId: string;
@@ -385,9 +386,14 @@ export function createApp(deps: AppDeps) {
   // `viewerPage`/`loadViewer` path are GONE — the share link opens the in-app SPA viewer
   // (served by the SPA fallback). Only `/v/:id` (the iframe content surface) remains here.
   const resolveViewer = async (request: Request): Promise<Viewer> => {
-    if (!deps.resolveViewerSession) return { kind: "anon" };
+    if (!deps.resolveViewerSession) return { kind: "anon", admissionCookie: readAdmissionCookie(request) };
     const session = await deps.resolveViewerSession(request);
-    return session ? { kind: "user", userId: session.userId } : { kind: "anon" };
+    // C-006: an anon /v/:id content visitor authorizes via the signed capability admission
+    // cookie (same as viewer-doc.ts / annotations.ts). resolveAccess validates it against the
+    // doc's current token; no cookie / bad cookie → anon stays denied (existing 404).
+    return session
+      ? { kind: "user", userId: session.userId }
+      : { kind: "anon", admissionCookie: readAdmissionCookie(request) };
   };
 
   // /v/:id — untrusted content, served sandboxed (opaque origin via CSP), scripts run
