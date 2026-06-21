@@ -37,6 +37,11 @@ export function createCapabilityTokenRepo(
         generalAccess: docs.generalAccess,
         capabilityToken: shareLinks.capabilityToken,
         expiresAt: shareLinks.expiresAt,
+        // S-006: the link controls the redeem route enforces before serving — the password hash
+        // (gated against a visitor-supplied password) and the total-open limit (gating the
+        // atomic view consume). The plaintext password is never read here.
+        passwordHash: shareLinks.passwordHash,
+        viewLimit: shareLinks.viewLimit,
       })
       .from(shareLinks)
       .innerJoin(docs, eq(docs.id, shareLinks.docId))
@@ -55,6 +60,8 @@ export function createCapabilityTokenRepo(
       slug: row.slug,
       role: row.role,
       expiresAt: row.expiresAt ?? null,
+      passwordHash: row.passwordHash ?? null,
+      viewLimit: row.viewLimit ?? null,
     };
   };
 }

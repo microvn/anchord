@@ -302,4 +302,50 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: (d) => d === "doc_1" });
     expect(await gate("doc_1", asUser("u_member"))).toEqual({ role: "viewer", canView: true });
   });
+
+  // ── S-006 / AS-019 / C-005.b: link controls (expiry / view-limit / password) NEVER gate a
+  //    signed-in owner or invited member opening by the readable /d/:slug address. The link
+  //    controls live only on the REDEEM path (the anon capability link); the user branch goes
+  //    straight to resolveDocRole, which never reads passwordHash / expiresAt / viewLimit.
+  //    These seed an EXPIRED + password-protected + view-limit-exhausted link row and prove the
+  //    member is admitted at full role regardless.
+  test("AS-019 / C-005.b: a signed-in OWNER opens despite an EXPIRED + password + view-limit-exhausted link", async () => {
+    const db = fakeDb({
+      docRows: [{ generalAccess: "anyone_with_link", ownerId: "u_owner" }],
+      memberRows: [],
+      // Hostile link state: expired yesterday, password set, view limit already hit.
+      linkRows: [
+        {
+          role: "viewer",
+          capabilityToken: TOKEN,
+          passwordHash: "$argon2id$dummy",
+          expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+          viewLimit: 5,
+          viewCount: 5,
+        } as { role: string; capabilityToken: string },
+      ],
+    });
+    const gate = buildGateWithSecret(db, SECRET, { isOwner: async (_d, u) => u === "u_owner", isWorkspaceMember: () => false });
+    // Owner still opens at owner — link controls ignored on the readable address.
+    expect(await gate("doc_1", asUser("u_owner"))).toEqual({ role: "owner", canView: true });
+  });
+
+  test("AS-019 / C-005.b: a signed-in INVITED member opens at their invited role despite the same hostile link state", async () => {
+    const db = fakeDb({
+      docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
+      memberRows: [{ role: "commenter" }],
+      linkRows: [
+        {
+          role: "viewer",
+          capabilityToken: TOKEN,
+          passwordHash: "$argon2id$dummy",
+          expiresAt: new Date(Date.now() - 1000),
+          viewLimit: 1,
+          viewCount: 1,
+        } as { role: string; capabilityToken: string },
+      ],
+    });
+    const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
+    expect(await gate("doc_1", asUser("u_invited"))).toEqual({ role: "commenter", canView: true });
+  });
 });

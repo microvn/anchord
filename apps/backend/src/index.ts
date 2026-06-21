@@ -17,6 +17,7 @@ import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport, createEnqueueWorkspaceInvite } from "./auth/mail-transport";
 import { createDocMemberRepo, findUserById } from "./sharing/doc-member-repo";
 import { createCapabilityTokenRepo } from "./sharing/share-repo";
+import { tryConsumeView } from "./sharing/link-controls-repo";
 import { createDocMembersPendingInviteRepo } from "./sharing/invite";
 import {
   createAnnotationRepo,
@@ -268,6 +269,10 @@ const app = createApp({
   // off in development (local HTTP) so the cookie is actually stored.
   shareRedeem: {
     resolveCapabilityToken: createCapabilityTokenRepo(db),
+    // capability-share-link S-006 / C-003: enforce the owner's link controls before serving —
+    // expiry + password gate (the route), then the ATOMIC view-limit consume (exactly once per
+    // open, after the other gates pass so a denied open burns no view — AS-022/AS-023).
+    consumeView: (docId) => tryConsumeView(db, docId),
     secret: cfg.APP_SECRET,
     secure: cfg.NODE_ENV !== "development",
   },

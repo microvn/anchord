@@ -84,33 +84,68 @@ export interface RedeemResponse {
   role: "viewer" | "commenter" | "editor";
 }
 
-/** A redeem failure (unknown/expired token → 404, or a network error). `status` mirrors the
- *  HTTP status when there was a response (404 for an unknown token, AS-005). */
+/**
+ * A redeem failure. `status` mirrors the HTTP status; `code` is the server's error code so the
+ * caller can branch the outcome WITHOUT relitigating the status:
+ *   - 404 NOT_FOUND                → unknown/cleared token (AS-005) → not-found.
+ *   - 410 LINK_EXPIRED             → the link expired (S-006/AS-014) → not-found surface.
+ *   - 410 LINK_NO_LONGER_AVAILABLE → the link hit its view limit (S-006/AS-016) → not-found surface.
+ *   - 401 LINK_PASSWORD_REQUIRED   → a password is needed (S-006/AS-017) → show the gate.
+ *   - 401 LINK_PASSWORD_INCORRECT  → the supplied password was wrong (S-006/AS-018) → re-prompt.
+ *   - 429 LINK_PASSWORD_RATE_LIMITED → too many wrong tries (S-006/AS-018) → throttle message.
+ */
 export class RedeemError extends Error {
   status?: number;
-  constructor(message: string, status?: number) {
+  code?: string;
+  constructor(message: string, status?: number, code?: string) {
     super(message);
     this.name = "RedeemError";
     this.status = status;
+    this.code = code;
+  }
+  /** True when the link is password-protected and the gate should prompt (S-006/AS-017/AS-018). */
+  get isPasswordChallenge(): boolean {
+    return (
+      this.code === "LINK_PASSWORD_REQUIRED" ||
+      this.code === "LINK_PASSWORD_INCORRECT" ||
+      this.code === "LINK_PASSWORD_RATE_LIMITED"
+    );
   }
 }
 
-/** POST /s/:token/redeem — mint the admission cookie + resolve the slug. Rejects with a
- *  RedeemError (status 404) on an unknown token, so the caller renders not-found (AS-005). */
-export async function redeemCapabilityLink(token: string): Promise<RedeemResponse> {
+/**
+ * POST /s/:token/redeem — mint the admission cookie + resolve the slug. Optionally carries a
+ * `password` for a password-protected link (S-006). Rejects with a RedeemError carrying the
+ * server's status + error code so the caller can render not-found (AS-005), show the password
+ * gate (AS-017), re-prompt on a wrong password (AS-018), or back off when throttled (AS-018).
+ */
+export async function redeemCapabilityLink(
+  token: string,
+  password?: string,
+): Promise<RedeemResponse> {
   const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
   let res: Response;
   try {
     res = await fetch(`${origin}/s/${encodeURIComponent(token)}/redeem`, {
       method: "POST",
       credentials: "include", // store the admission Set-Cookie + send it on later reads/writes.
+      ...(password != null
+        ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) }
+        : {}),
     });
   } catch (err) {
     throw new RedeemError(err instanceof Error ? err.message : "Network error");
   }
   if (!res.ok) {
-    // AS-005: an unknown token → 404; no doc/title content. The body carries no doc data.
-    throw new RedeemError("This link is no longer valid", res.status);
+    // Carry the server's error code so the caller branches the outcome (password vs not-found).
+    let code: string | undefined;
+    try {
+      const body = (await res.json()) as { error?: { code?: string } };
+      code = body?.error?.code;
+    } catch {
+      code = undefined;
+    }
+    throw new RedeemError("This link is no longer valid", res.status, code);
   }
   return (await res.json()) as RedeemResponse;
 }
