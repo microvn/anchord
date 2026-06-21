@@ -16,6 +16,7 @@ import { createLoadContent } from "./render/viewer-loaders";
 import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport, createEnqueueWorkspaceInvite } from "./auth/mail-transport";
 import { createDocMemberRepo, findUserById } from "./sharing/doc-member-repo";
+import { createCapabilityTokenRepo } from "./sharing/share-repo";
 import { createDocMembersPendingInviteRepo } from "./sharing/invite";
 import {
   createAnnotationRepo,
@@ -253,6 +254,17 @@ const app = createApp({
   // path), session OPTIONAL (anon-capable). Same loader/access model as the /d viewer; a
   // no-access OR missing doc → 404 (existence-hiding), never a 401 → no FE sign-in bounce.
   docViewer: { resolveViewerSession, loaderDeps: viewerLoaderDeps },
+  // capability-share-link S-002: the anonymous redeem surface POST /s/:token/redeem +
+  // GET /s/:token/resolve. Resolves the token → doc (existence-hiding 404 on an unknown
+  // token), mints a signed admission cookie bound to docId + token-hash + link role
+  // (C-006/C-007), returns only { slug, role } so the SPA never shows the slug (C-009), and
+  // sets Referrer-Policy: no-referrer without ever logging the raw token (C-008). Secure cookie
+  // off in development (local HTTP) so the cookie is actually stored.
+  shareRedeem: {
+    resolveCapabilityToken: createCapabilityTokenRepo(db),
+    secret: cfg.APP_SECRET,
+    secure: cfg.NODE_ENV !== "development",
+  },
   // versioning-diff S-001..S-004: version create/title/history/restore/diff.
   versions: {
     db,

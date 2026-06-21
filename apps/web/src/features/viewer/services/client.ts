@@ -65,6 +65,56 @@ export interface ViewerDocResponse {
   content: string | { contentUrl: string };
 }
 
+// --- Capability-link redeem (capability-share-link S-002) ---------------------------------
+// POST /s/:token/redeem — an anonymous visitor TURNS a capability link into an admission.
+// The server looks up the doc by its capability token, sets a signed, HTTP-only admission
+// cookie bound to the doc + current token-hash + link role (C-006/C-007), and returns ONLY
+// { slug, role }. The viewer then loads the doc BY SLUG without navigating, so the address bar
+// keeps showing `/s/<token>` — the readable slug never appears in the URL (C-009/AS-004).
+//
+// This route lives OUTSIDE `/api` (it's a bare, envelope-exempt route), so it is a raw fetch
+// on the same origin with `credentials: "include"` (so the Set-Cookie is stored + later sent),
+// NOT the Eden treaty client. An unknown token → 404 (existence-hiding, AS-005), surfaced as a
+// rejected promise the screen turns into a not-found state — no doc/title is served.
+
+export interface RedeemResponse {
+  /** the readable slug the SPA loads the doc with — NOT shown in the address bar (C-009). */
+  slug: string;
+  /** the admitted link role (viewer/commenter/editor). */
+  role: "viewer" | "commenter" | "editor";
+}
+
+/** A redeem failure (unknown/expired token → 404, or a network error). `status` mirrors the
+ *  HTTP status when there was a response (404 for an unknown token, AS-005). */
+export class RedeemError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "RedeemError";
+    this.status = status;
+  }
+}
+
+/** POST /s/:token/redeem — mint the admission cookie + resolve the slug. Rejects with a
+ *  RedeemError (status 404) on an unknown token, so the caller renders not-found (AS-005). */
+export async function redeemCapabilityLink(token: string): Promise<RedeemResponse> {
+  const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+  let res: Response;
+  try {
+    res = await fetch(`${origin}/s/${encodeURIComponent(token)}/redeem`, {
+      method: "POST",
+      credentials: "include", // store the admission Set-Cookie + send it on later reads/writes.
+    });
+  } catch (err) {
+    throw new RedeemError(err instanceof Error ? err.message : "Network error");
+  }
+  if (!res.ok) {
+    // AS-005: an unknown token → 404; no doc/title content. The body carries no doc data.
+    throw new RedeemError("This link is no longer valid", res.status);
+  }
+  return (await res.json()) as RedeemResponse;
+}
+
 /** GET /api/docs/:slug — the access-gated, anon-capable doc read for the in-app viewer.
  *  doc-access-routing S-002/S-003 (C-002/C-004): addressed by slug alone (no workspace in the
  *  path), session optional. A no-access OR missing doc → 404 (existence-hiding), NEVER a 401, so

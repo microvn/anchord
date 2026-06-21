@@ -21,6 +21,7 @@ import { ProjectDocsScreen } from "./features/docs/components/project-docs-scree
 import { ActivityScreen } from "./features/docs/components/activity-screen";
 import { SearchScreen } from "./features/docs/components/search-screen";
 import { ViewerScreen } from "./features/viewer/components/viewer-screen";
+import { CapabilityRedeemScreen } from "./features/viewer/components/capability-redeem-screen";
 import { SettingsPage } from "./features/settings/components/settings-page";
 import { Toaster } from "./components/ui/sonner";
 
@@ -46,6 +47,13 @@ export function AppRoutes() {
           the in-app viewer instead of being bounced to /signin. Access is decided by the doc read
           (anon-capable, existence-hiding); a no-access reply renders NoAccessView in place. */}
       <Route path="/d/:slug" element={<ViewerScreen />} />
+
+      {/* capability-share-link S-002 (AS-004 / C-002 / C-009): the PUBLIC capability-link route.
+          Addressed by an unguessable token (NOT the slug), OUTSIDE AuthGuard so a no-account guest
+          lands here directly. It redeems the token (sets the admission cookie) then renders the
+          viewer by the resolved slug WITHOUT navigating — the address bar keeps showing /s/<token>,
+          the readable slug never appears (C-009). An unknown token → not-found (existence-hiding). */}
+      <Route path="/s/:token" element={<CapabilityRedeemScreen />} />
 
       <Route element={<AuthGuard />}>
         {/* Workspace invite accept/reject landing — signed in, outside the shell. */}

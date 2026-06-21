@@ -9,11 +9,55 @@
 // The link controls (password/expiry/view-limit, S-004) attach to the SAME row but
 // are untouched here (only role + the level), per C-001.
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { docs, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
 import type { ShareRepo, ResolvedShareSetting } from "./share";
 import { capabilityTokenFor } from "./share-token";
+import type { RedeemTarget } from "../routes/share-redeem";
+
+/**
+ * capability-share-link S-002: resolve a capability token → its doc (or null when no doc
+ * carries that token). Keyed on share_links.capability_token (the partial-unique index), and
+ * GUARDED on the doc still being anyone_with_link AND the token being non-null — so a token
+ * that was cleared/rotated (S-004) or a doc that left link-sharing no longer resolves, even if
+ * a stale row somehow lingered. Returns the readable slug + the link role + the link expiry so
+ * the redeem route can mint a cookie capped at the link's own expiry. Existence-hiding: a
+ * no-match is null, never an error that distinguishes "no such token" from "wrong shape".
+ */
+export function createCapabilityTokenRepo(
+  db: DB,
+): (token: string) => Promise<RedeemTarget | null> {
+  return async (token) => {
+    const [row] = await db
+      .select({
+        docId: shareLinks.docId,
+        slug: docs.slug,
+        role: shareLinks.role,
+        generalAccess: docs.generalAccess,
+        capabilityToken: shareLinks.capabilityToken,
+        expiresAt: shareLinks.expiresAt,
+      })
+      .from(shareLinks)
+      .innerJoin(docs, eq(docs.id, shareLinks.docId))
+      .where(
+        and(
+          eq(shareLinks.capabilityToken, token),
+          // Defense in depth: only an anyone_with_link doc admits an anon via the token. A
+          // doc that left link-sharing has its token cleared (S-004), but gate the level too.
+          eq(docs.generalAccess, "anyone_with_link"),
+        ),
+      )
+      .limit(1);
+    if (!row || !row.capabilityToken) return null;
+    return {
+      docId: row.docId,
+      slug: row.slug,
+      role: row.role,
+      expiresAt: row.expiresAt ?? null,
+    };
+  };
+}
 
 /** Construct a ShareRepo backed by a Drizzle DB handle. */
 export function createShareRepo(db: DB): ShareRepo {

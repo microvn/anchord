@@ -5,6 +5,7 @@ import { injectBlockIds } from "./annotation/block-id";
 import { injectBridge, injectStorageShim, generateNonce } from "./annotation/sandbox-bridge";
 import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
 import { viewerDocRoutes, docViewerRoutes, type ViewerDocRoutesDeps, type DocViewerRoutesDeps } from "./routes/viewer-doc";
+import { shareRedeemRoutes, type ShareRedeemRoutesDeps } from "./routes/share-redeem";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
 import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
@@ -91,6 +92,15 @@ export type AppDeps = {
    * loadViewerDoc (tests). Omit to leave the route unmounted.
    */
   docViewer?: DocViewerRoutesDeps;
+  /**
+   * capability-share-link S-002: enables the BARE (envelope-exempt) capability-link redeem
+   * surface — `POST /s/:token/redeem` + `GET /s/:token/resolve`. An anonymous visitor turns a
+   * capability link into a signed admission cookie bound to the doc + current token-hash + link
+   * role (C-006/C-007); the response returns only { slug, role } so the SPA loads the doc by slug
+   * WITHOUT putting it in the address bar (C-009). Unknown token → 404 (existence-hiding, AS-005).
+   * Sets `Referrer-Policy: no-referrer` and never logs the raw token (C-008). Omit to leave unmounted.
+   */
+  shareRedeem?: ShareRedeemRoutesDeps;
   /**
    * versioning-diff S-001..S-004: enables the enveloped, session-gated version
    * create/title-patch/history/restore/diff routes under /api/docs/:slug. Provide
@@ -259,6 +269,14 @@ export function createApp(deps: AppDeps) {
   // sign-in. Markdown → sanitized app-origin HTML; html/image → a /v sandbox reference (C-006).
   if (deps.docViewer) {
     app.use(docViewerRoutes(deps.docViewer));
+  }
+
+  // /s/:token/{redeem,resolve} — capability-share-link S-002, the anonymous redeem surface.
+  // BARE (no apiEnvelope): it sets a Set-Cookie + Referrer-Policy on a raw Response, like
+  // /v/:id. Mints the admission cookie that authorizes every later anon-reachable request for
+  // the doc (C-006/C-007); returns only { slug, role } so the SPA never shows the slug (C-009).
+  if (deps.shareRedeem) {
+    app.use(shareRedeemRoutes(deps.shareRedeem));
   }
 
   // /api/docs/:slug/... — versioning-diff S-001..S-004. Self-enveloped + session-

@@ -88,11 +88,19 @@ function frameRectToViewport(rect: { x: number; y: number; width: number; height
   return { top: rect.y, bottom: rect.y + rect.height, left: rect.x, right: rect.x + rect.width };
 }
 
-export function ViewerScreen() {
+export function ViewerScreen({
+  slug: slugOverride,
+  returnTo,
+}: { slug?: string; returnTo?: string } = {}) {
   // doc-access-routing S-003: the viewer mounts on the PUBLIC route `/d/:slug` (outside AuthGuard)
   // and is addressed by slug alone (C-002) — there is no workspaceId param. The doc read goes to
   // `GET /api/docs/:slug` (anon-capable), and the cache is keyed off slug only.
-  const { slug = "" } = useParams<{ slug: string }>();
+  //
+  // capability-share-link S-002 (C-009/AS-004): on the `/s/:token` capability route the slug is NOT
+  // in the URL (the URL stays the token). The redeem step resolves the slug and passes it in via
+  // `slugOverride`, so the viewer renders the doc by slug while the address bar keeps the token.
+  const { slug: slugParam = "" } = useParams<{ slug: string }>();
+  const slug = slugOverride ?? slugParam;
   const navigate = useNavigate();
   // AS-014/AS-015/AS-016: the session decides the NO-ACCESS variant + the anon top-bar chrome.
   // While the session resolves, `isPending` is true — we don't paint a misleading variant yet.
@@ -115,9 +123,13 @@ export function ViewerScreen() {
   );
 
   // AS-016: route to sign-in carrying a return-to-doc, so completing sign-in lands back on /d/:slug.
+  // capability-share-link S-002 (C-009/GAP-004): on a capability (`/s/:token`) session, the return-to
+  // is the TOKEN url, never `/d/:slug` — so signing in never leaks the readable slug into the address
+  // bar. `returnTo` is supplied by the redeem screen; the default `/d/:slug` path is unchanged.
   const goSignIn = useCallback(() => {
-    navigate(`/signin?redirect=${encodeURIComponent(`/d/${slug}`)}`);
-  }, [navigate, slug]);
+    const dest = returnTo ?? `/d/${slug}`;
+    navigate(`/signin?redirect=${encodeURIComponent(dest)}`);
+  }, [navigate, slug, returnTo]);
 
   if (query.isPending) {
     return (
@@ -334,7 +346,7 @@ function ViewerShell({
   // the count and the highlight-tap can open the rail drawer, while the rail still renders them.
   const anno = useAnnotations(slug, docPaneEl, hasDoc, canCompose, memberWorkspaceId, effectiveRole, doc?.kind === "markdown", () => {
     if (drawerMode) setRailOpen(true); // AS-014: tapping a highlight opens the rail drawer
-  });
+  }, guest ? guestIdentity.name : null, guest ? null : currentUserName);
 
   // S-002: a handle to the HTML sandbox frame so a created annotation's highlight can be relayed
   // DOWN to the in-iframe bridge (the parent can't draw a <mark> into the opaque iframe).
@@ -535,6 +547,9 @@ function ViewerShell({
       annotations={railAnnotations}
       // S-001 (C-001): each card marks own-vs-others from authorId vs the session user id.
       currentUserId={currentUserId}
+      // C-001: the real author name for an optimistic reply (never "You") — guest rides guestName.
+      currentAuthorName={guest ? guestIdentity.name : currentUserName}
+      currentAuthorIsGuest={guest}
     />
   ) : null;
 
@@ -912,6 +927,13 @@ function useAnnotations(
   /** HTML-PLACE: markdown places via the light-DOM placer; html/image place via the iframe bridge. */
   isMarkdown: boolean,
   onHighlightTap: () => void,
+  /** S-007 (AS-017): the session-stable guest name when this is a guest session (null for a signed-in
+   *  member). A guest reply rides it up so the anon write isn't rejected ("guestName is required");
+   *  a member passes null (identity is the session cookie). Mirrors useCompose's `guestName` param. */
+  guestName: string | null,
+  /** C-001: the member's REAL display name, so a reconciled reply shows the real name (never "You").
+   *  Null for a guest (the guest path uses guestName instead). */
+  currentUserName: string | null,
 ): {
   count: number;
   refetch: () => Promise<unknown>;
@@ -1182,6 +1204,11 @@ function useAnnotations(
             const res = await addComment(slug, annotation.id, {
               body,
               ...(parentId ? { parentId } : {}),
+              // Regression: a guest reply must carry the session-stable name — the anon write path has
+              // no session cookie, so without it the server rejects with "guestName is required". The
+              // composer (send) + redline (startRedline) already ride the name up; the reply path was
+              // the one guest-write surface the identity refactor missed. Members pass null (session cookie).
+              ...(guestName ? { guestName } : {}),
             });
             if (res.error) {
               toast.error("Couldn't post your reply");
@@ -1192,7 +1219,13 @@ function useAnnotations(
             const reply: ViewerAnnotation["comments"][number] = {
               id: peelCommentId(res.data),
               parentId,
-              authorName: "You",
+              // C-001: attribute with the REAL name — guest rides guestName (dims as a guest), a member
+              // rides their session name. No "You": if a member's name is unresolved, carry no name.
+              ...(guestName
+                ? { guestName }
+                : currentUserName
+                  ? { authorName: currentUserName }
+                  : {}),
               body,
               createdAt: new Date().toISOString(),
             };
