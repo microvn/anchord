@@ -169,6 +169,17 @@ export interface ProjectsRouteRepo {
    * union. Out-of-access filtering (C-003) is applied by the route, NOT here.
    */
   workspaceDocs(workspaceId: string): Promise<WorkspaceDocRow[]>;
+  /**
+   * S-003/AS-028: each project's ACCESSIBLE-doc count for `userId`, in ONE query — a GROUP BY
+   * over docs with the SAME access predicate the browse uses (mirrors canBrowseDoc / C-003:
+   * owner OR anyone_in_workspace+member OR individually-invited; anyone_with_link is NOT a
+   * browse grant). No per-project loop. The count NEVER includes a doc the caller can't access
+   * — access filtering happens IN SQL before the count, so it can't leak an out-of-access doc.
+   * Returns a Map keyed by projectId; a project with zero accessible docs is simply absent (the
+   * route defaults it to 0). Includes archived projects' docs too — the route decides which
+   * projects it renders, so the count is keyed by id and only read for the projects it lists.
+   */
+  countDocsByProject(workspaceId: string, userId: string): Promise<Map<string, number>>;
 }
 
 export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
@@ -264,6 +275,43 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
         latestVersion: Number(r.latestVersion),
         annotationCount: Number(r.annotationCount),
       }));
+    },
+    async countDocsByProject(workspaceId, userId): Promise<Map<string, number>> {
+      // ONE GROUP BY (no per-project loop): count each project's docs that pass the SAME
+      // access predicate as canBrowseDoc (C-003) — owner OR (anyone_in_workspace AND the
+      // caller is a member of THIS workspace) OR an active doc_members invite. anyone_with_link
+      // is NOT a browse grant, so it only counts when the caller is the owner/invited. The
+      // predicate is inlined in SQL with BOUND params (mirrors search-repo's accessible CTE), so
+      // an out-of-access doc is never counted — existence-hiding holds by construction.
+      const rows = await db.execute(sql`
+        select d.project_id as project_id, count(*)::int as n
+        from docs d
+        join projects p on p.id = d.project_id
+        where p.workspace_id = ${workspaceId}
+          and (
+            d.owner_id = ${userId}
+            or (
+              d.general_access = 'anyone_in_workspace'
+              and exists (
+                select 1 from workspace_members wm
+                where wm.user_id = ${userId}
+                  and wm.workspace_id = ${workspaceId}
+              )
+            )
+            or exists (
+              select 1 from doc_members m
+              where m.doc_id = d.id and m.user_id = ${userId} and m.status = 'active'
+            )
+          )
+        group by d.project_id
+      `);
+      // postgres.js returns a bare array; some drivers wrap as { rows }. Handle both (as search-repo).
+      const list = (rows as unknown as { rows?: unknown[] }).rows ?? (rows as unknown as unknown[]);
+      const counts = new Map<string, number>();
+      for (const r of list as Array<Record<string, unknown>>) {
+        counts.set(String(r.project_id), Number(r.n));
+      }
+      return counts;
     },
   };
 }

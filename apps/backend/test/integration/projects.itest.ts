@@ -340,6 +340,27 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     expect(row!.annotationCount).not.toBe(4);
   });
 
+  // S-003/AS-028 + C-003: the projects-list read carries each project's ACCESSIBLE-doc count,
+  // computed in ONE GROUP BY behind the same access predicate as the browse. The access filter
+  // is what this real-DB test proves: X gets a count of ONLY the docs X can browse — a restricted
+  // doc X is not invited to is NOT counted (it must never leak into the count, C-003). At this
+  // point Billing holds: doc B (anyone_in_workspace, browsable by X) + doc A (restricted, X
+  // uninvited). So X's count for Billing is 1, NOT 2 — the restricted doc is access-filtered out.
+  test("AS-028/C-003: projects-list docCount is access-filtered — X counts the workspace doc, NOT the restricted one", async () => {
+    const list = await app.handle(withCookie(`/api/w/${WA}/projects`, X.cookie));
+    expect(list.status).toBe(200);
+    const projects = ((await list.json()) as any).data.projects as { id: string; docCount: number }[];
+    const billing = projects.find((p) => p.id === billingId);
+    expect(billing).toBeTruthy();
+    // Billing has 2 docs total (B shared + A restricted); X can access only B → count 1, not 2.
+    expect(billing!.docCount).toBe(1);
+
+    // And A (the owner) counts BOTH (owner sees its own restricted doc) → 2.
+    const listA = await app.handle(withCookie(`/api/w/${WA}/projects`, A.cookie));
+    const projectsA = ((await listA.json()) as any).data.projects as { id: string; docCount: number }[];
+    expect(projectsA.find((p) => p.id === billingId)!.docCount).toBe(2);
+  });
+
   test("publish with a supplied-but-invalid projectId → 404 (never silent-default)", async () => {
     const bogus = "00000000-0000-0000-0000-000000000000";
     const pub = await app.handle(

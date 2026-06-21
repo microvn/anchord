@@ -41,9 +41,15 @@ let projectsActive: { id: string; name: string; isDefault: boolean; archived: bo
 let projectsAll: { id: string; name: string; isDefault: boolean; archived: boolean }[];
 const docCounts: Record<string, number> = {};
 
+// AS-028: the projects-list read now carries each project's server-computed `docCount`; the
+// Projects browser renders the badge from THIS read (no per-project fetchProjectDocs fan-out).
+const withCounts = (list: { id: string; name: string; isDefault: boolean; archived: boolean }[]) =>
+  list.map((p) => ({ ...p, docCount: docCounts[p.id] ?? 0 }));
 const fetchProjects = mock(async (_w: string, includeArchived = false) =>
-  env({ projects: includeArchived ? projectsAll : projectsActive }),
+  env({ projects: withCounts(includeArchived ? projectsAll : projectsActive) }),
 );
+// Still mocked because useProjectDocs (a different hook) imports it — but useProjectsBrowse must
+// NOT call it (AS-028). The AS-028 test below asserts it stays uncalled by the Projects screen.
 const fetchProjectDocs = mock(async (_w: string, id: string) =>
   env({ docs: Array.from({ length: docCounts[id] ?? 0 }, (_, i) => ({ id: `${id}-d${i}` })) }),
 );
@@ -92,9 +98,15 @@ function App() {
 }
 
 beforeEach(() => {
-  [renameProject, archiveProject, unarchiveProject, deleteProject, fetchProjects, toastError].forEach(
-    (m) => m.mockClear(),
-  );
+  [
+    renameProject,
+    archiveProject,
+    unarchiveProject,
+    deleteProject,
+    fetchProjects,
+    fetchProjectDocs,
+    toastError,
+  ].forEach((m) => m.mockClear());
   projectsActive = [
     { id: "p-default", name: "Default", isDefault: true, archived: false },
     { id: "p-bill", name: "Billing", isDefault: false, archived: false },
@@ -115,6 +127,25 @@ async function openProjectMenu(id: string) {
 }
 
 describe("workspace-project-ui S-002 — manage a project", () => {
+  // workspace-project:AS-028 — the Projects screen renders each project's "N docs" badge from the
+  // server-computed `docCount` on the ONE projects-list read; it does NOT fan out a per-project
+  // fetchProjectDocs (the retired N+1). Assert: fetchProjects called (once per list query) +
+  // fetchProjectDocs NEVER called by the screen + the served count renders on the card.
+  it("AS-028: renders the served docCount from ONE projects-list read, no per-project fetchProjectDocs fan-out", async () => {
+    render(<App />);
+    const billing = await screen.findByTestId("proj-card-p-bill");
+    // The served count (docCounts['p-bill'] = 2) renders on the card. The count + unit are
+    // separate text nodes, so assert on the card's combined textContent.
+    expect(billing.textContent).toMatch(/2\s*docs/);
+    const scratch = await screen.findByTestId("proj-card-p-scratch");
+    expect(scratch.textContent).toMatch(/0\s*docs/);
+
+    // The retired fan-out: the Projects browser never calls fetchProjectDocs per project — the
+    // count rode the projects-list response. And the list itself is read (default active page).
+    expect(fetchProjectDocs).not.toHaveBeenCalled();
+    expect(fetchProjects).toHaveBeenCalled();
+  });
+
   it("AS-003: Rename a project", async () => {
     render(<App />);
     await openProjectMenu("p-bill");

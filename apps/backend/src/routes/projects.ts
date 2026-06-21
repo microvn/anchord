@@ -146,7 +146,7 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       }
     })
     // GET — browse list (active by default; includeArchived=true shows all).
-    .get("/api/w/:workspaceId/projects", async ({ query, ws }) => {
+    .get("/api/w/:workspaceId/projects", async ({ query, actor, ws }) => {
       const includeArchived = (query as Record<string, string>).includeArchived === "true";
       const page = browsePage.parse(query) as PaginationParams;
       const list = await listProjects({ workspaceId: ws.workspaceId, includeArchived }, { repo });
@@ -155,12 +155,18 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       const total = list.length;
       const start = (page.page - 1) * page.limit;
       const slice = list.slice(start, start + page.limit);
+      // S-003/AS-028: each project's ACCESSIBLE-doc count in ONE query (GROUP BY behind the
+      // SAME access predicate as the browse, C-003) — never a per-project loop. The count
+      // reflects ONLY docs the caller can access, so it never leaks an out-of-access doc. A
+      // project absent from the map has zero accessible docs → docCount 0.
+      const docCounts = await ctx.countDocsByProject(ws.workspaceId, actor.userId);
       return {
         projects: slice.map((p) => ({
           id: p.id,
           name: p.name,
           isDefault: p.isDefault,
           archived: p.archivedAt != null,
+          docCount: docCounts.get(p.id) ?? 0,
         })),
         pagination: buildPagination({ page: page.page, limit: page.limit, total }),
       };

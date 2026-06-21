@@ -19,6 +19,8 @@ const treaty = api as any;
 /**
  * GET /api/w/:workspaceId/projects — list projects (workspace-project S-003). Active by default;
  * pass `includeArchived` to also list archived projects (the "Show archived" toggle, AS-005).
+ * Each project row carries a server-computed `docCount` (its accessible-doc count, AS-028) so the
+ * Projects browser renders the "N docs" badge from this one read — no per-project follow-up fetch.
  */
 export function fetchProjects(
   workspaceId: string,

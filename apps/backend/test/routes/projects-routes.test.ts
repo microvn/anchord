@@ -83,6 +83,9 @@ function fakeCtx(opts: {
   /** S-008: the union of browse docs across the workspace's active projects (each row carries
    *  its projectId + projectName). The route access-filters + pages + counts over this. */
   workspaceDocs?: WorkspaceDocRow[];
+  /** S-003/AS-028: the per-project accessible-doc count the projects-list read rides. Keyed by
+   *  projectId; a project absent here resolves to 0 (matches the repo's GROUP BY contract). */
+  docCounts?: Map<string, number>;
 }): ProjectsRouteRepo {
   return {
     async isInvited(docId, userId) {
@@ -93,6 +96,9 @@ function fakeCtx(opts: {
     },
     async workspaceDocs() {
       return opts.workspaceDocs ?? [];
+    },
+    async countDocsByProject() {
+      return opts.docCounts ?? new Map();
     },
   };
 }
@@ -262,6 +268,30 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     // The two docs have distinct created vs updated ordering → a consumer can sort either axis.
     expect(rowFor("dOld").createdAt < rowFor("dNew").createdAt).toBe(true);
     expect(rowFor("dOld").updatedAt > rowFor("dNew").updatedAt).toBe(true);
+  });
+
+  test("AS-028: the projects-list response carries each project's accessible-doc count (one read, count rides each row)", async () => {
+    const seed: ProjectRow[] = [
+      { id: "p_bill", workspaceId: WS, name: "Billing", ownerId: "u_a", isDefault: false, archivedAt: null },
+      { id: "p_pay", workspaceId: WS, name: "Payments", ownerId: "u_a", isDefault: false, archivedAt: null },
+      { id: "p_empty", workspaceId: WS, name: "Empty", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ];
+    const f = fakeRepo(seed);
+    // The repo's GROUP BY (countDocsByProject) is access-filtered by construction: Billing 5,
+    // Payments 3 (of 9 — only the accessible ones), Empty absent → 0. The route reads THIS map,
+    // never a per-project loop. (The DB-level access filter itself is proved in the .itest.)
+    const docCounts = new Map<string, number>([
+      ["p_bill", 5],
+      ["p_pay", 3],
+    ]);
+    const app = buildApp(asUser("u_a"), f.repo, fakeCtx({ docCounts }));
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    const byId = (id: string) => json.data.projects.find((p: any) => p.id === id);
+    expect(byId("p_bill").docCount).toBe(5);
+    expect(byId("p_pay").docCount).toBe(3); // 3 of 9 — the count is the ACCESSIBLE count, not the raw total
+    expect(byId("p_empty").docCount).toBe(0); // absent from the map → defaults to 0, never undefined
   });
 
   test("AS-006: empty project → 200 { docs: [] }", async () => {

@@ -9,6 +9,9 @@ import {
   fetchWorkspaceDocs,
   searchDocs,
 } from "@/features/docs/services/client";
+// NOTE: useProjectsBrowse no longer fans out per project for its doc count — the projects-list
+// read carries a server-computed `docCount` per project (workspace-project:AS-028). fetchProjectDocs
+// stays imported for useProjectDocs (the per-project browse), which still reads a project's docs.
 import type { DocRow, ProjectRow, SearchResultRow } from "@/features/docs/types";
 
 // Browse data hooks for the workspace-project surfaces. Keyed by workspaceId (GAP-001) so
@@ -121,24 +124,17 @@ export function useProjects(workspaceId: string) {
   });
 }
 
-/** A project annotated with its browse-visible doc count, derived from the per-project docs read's
- *  pagination total (or the doc count when the endpoint returns no pagination block). The doc
- *  payload itself is discarded — only the access-filtered total is needed for the card stat. */
-async function projectWithCount(workspaceId: string, p: ProjectRow): Promise<ProjectRow> {
-  // limit:1 — we only need `pagination.total`, not the docs (cheap when paginated). When the
-  // endpoint returns no pagination block (legacy/mock), fall back to the returned doc count.
-  const docsRes = unwrapEnvelope<ProjectDocsResult>(await fetchProjectDocs(workspaceId, p.id, 1, 1));
-  if (docsRes.error) throw toApiError(docsRes.error);
-  const docCount = docsRes.data?.pagination?.total ?? docsRes.data?.docs?.length ?? 0;
-  return { ...p, docCount };
-}
-
 /**
  * The Projects-browse view: the workspace's projects (active by default; ALL when
- * `includeArchived`), each annotated with its browse-visible doc count. Returns the COMPLETE
- * projects list (the screen paginates it client-side, S-008) — separate from `useWorkspaceDocs`
- * because the Projects screen needs archived projects on demand (the "Show archived" toggle,
- * S-002/AS-005). Keyed on `includeArchived` so toggling refetches the broadened list.
+ * `includeArchived`), each carrying its server-computed accessible-doc count (workspace-project:
+ * AS-028 — the projects-list read GROUP-BYs the count behind the same access filter as the browse,
+ * so a doc the caller can't access is never counted). Returns the COMPLETE projects list (the
+ * screen paginates it client-side, S-008) — separate from `useWorkspaceDocs` because the Projects
+ * screen needs archived projects on demand (the "Show archived" toggle, S-002/AS-005). Keyed on
+ * `includeArchived` so toggling refetches the broadened list.
+ *
+ * NO per-project fan-out: the count rides each row from the ONE projects-list request (the old
+ * `projectWithCount` → `fetchProjectDocs(limit:1)` per project is retired, AS-028).
  */
 export function useProjectsBrowse(workspaceId: string, includeArchived = false) {
   return useQuery<ProjectRow[], ApiError>({
@@ -152,8 +148,9 @@ export function useProjectsBrowse(workspaceId: string, includeArchived = false) 
         if (res.error) throw toApiError(res.error);
         return { items: res.data?.projects ?? [], pagination: res.data?.pagination };
       });
+      // Each row already carries its served `docCount` (AS-028) — no follow-up read per project.
       const visible = includeArchived ? items : items.filter((p) => !p.archived);
-      return Promise.all(visible.map((p) => projectWithCount(workspaceId, p)));
+      return visible.map((p) => ({ ...p, docCount: p.docCount ?? 0 }));
     },
   });
 }
