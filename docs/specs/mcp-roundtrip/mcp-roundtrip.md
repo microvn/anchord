@@ -1,7 +1,7 @@
 # Spec: mcp-roundtrip
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-20
 **Status:** Draft
 
 ## Overview
@@ -258,14 +258,19 @@ source, and read full comment threads.
 
 AS-007: pull_annotations returns enough context to locate and apply
 - **Given:** a doc has annotations (including resolved, orphaned, dismissed) and a replace suggestion
-- **When:** an agent calls `anchord_pull_annotations(docId)`
-- **Then:** for each annotation it returns the comment thread + status (unresolved/resolved,
-  is_orphaned, dismissed, deleted) + suggestion (`{kind: replace|delete, from, to?,
-  againstVersion}` with its suggestion_status pending/accepted/rejected/stale) + anchor
+- **When:** an agent calls `anchord_pull_annotations(docId, { cursor?, status?, includeOrphaned?,
+  includeDismissed?, includeDeleted?, type? })` — the filter params are OPTIONAL; calling with
+  NO filter (just docId) is the default
+- **Then:** with NO filter, for EVERY annotation it returns the comment thread + status
+  (unresolved/resolved, is_orphaned, dismissed, deleted) + suggestion (`{kind: replace|delete,
+  from, to?, againstVersion}` with its suggestion_status pending/accepted/rejected/stale) + anchor
   (`{blockId, textSnippet, offset, length?, segments?, region?}` — `segments` carries the full
   multi_range anchor, so a multi_range annotation is not truncated to its first segment) —
-  enough to locate and apply in source
-- **Data:** doc has 1 comment + 1 replace suggestion + 1 orphaned + 1 multi_range
+  enough to locate and apply in source; when a filter IS supplied (e.g. `status: unresolved`,
+  `includeDeleted: false`, `type: suggestion`) only annotations matching it are returned, the
+  per-annotation payload shape unchanged (C-004)
+- **Data:** doc has 1 comment + 1 replace suggestion + 1 orphaned + 1 multi_range; one pull with
+  no filter (all 4 returned) and one with `status: unresolved` + `includeOrphaned: false`
 - **Setup:** token has annotations:read
 
 AS-008: pull only fetches annotations changed since the cursor
@@ -369,7 +374,16 @@ AS-017: read_project returns a project in the token's workspace
   (unresolved/resolved, is_orphaned, dismissed, deleted) + suggestion (`{kind: replace|delete,
   from, to?, againstVersion}` + suggestion_status pending/accepted/rejected/stale) + anchor
   (`{blockId, textSnippet, offset, length?, segments?, region?}` — `segments` is required for
-  multi_range) — enough to locate and apply. (AS-007)
+  multi_range) — enough to locate and apply. The tool accepts OPTIONAL filter params the calling
+  model supplies from the user's request — `status` (unresolved | resolved), `includeOrphaned` /
+  `includeDismissed` / `includeDeleted` (each defaulting to **true**), and `type` (range |
+  multi_range | block | doc | suggestion). With NO filter the default is unchanged — every
+  annotation + its status flags is returned (full fidelity, so incremental change-tracking under
+  AS-008 still surfaces resolve/dismiss/orphan transitions). A supplied filter narrows the set
+  server-side; it composes with the `cursor` (the agent owns the trade-off — a filtered
+  incremental pull will not surface a row that no longer matches the filter, which is the agent's
+  explicit choice, not a silent server drop). The MCP server exposes the capability + describes
+  it; WHICH filter to send is the model's decision at call time. (AS-007)
 - C-005: Transport is **Streamable HTTP MCP** at `/mcp` (a single endpoint; the token carries its
   workspace, so no workspace is in the path) — a real MCP server implementing the protocol
   handshake: `initialize` (returns serverInfo + capabilities), `tools/list` (the `anchord_*` tools
@@ -662,3 +676,4 @@ No bloat — each AS traces to one stated atom (a /mf-challenge finding or a pri
 | 2026-06-19 | Major (snapshot 2026-06-19-3.md): /mf-challenge findings folded in — token hash = HMAC-SHA256(APP_SECRET) (Data Model/C-008); project access relaxed to workspace-member (C-010/AS-014/017/019); SDK spike (S-001); concurrency C-011 + GAP-005 split (S-002→checkpoint, +AS-026/027); re-anchor contract C-012 (+AS-028); cross-tenant C-013 (+AS-029); origin/envelope C-005 + C-014/GAP-007 (+AS-023); rate-limit C-007 pinned + token cap (GAP-004 resolved, +AS-024/025); revoke-per-request + last_used_at throttle (C-001/008, +AS-022); cursor (updated_at,id) + GAP-006 + anchor segments (AS-008/AS-007/C-004); read_project id-only (AS-017). 6 stories / 28 AS (+Spec Sizing Notes) | -- |
 | 2026-06-19 | Major (snapshot 2026-06-19-4.md): C-011 refined — default-project enforcement = partial-unique `UNIQUE(workspace_id, owner_id) WHERE is_default AND owner_id IS NOT NULL` (resolves build-time S2 with workspace-project's "no partial index" comment; partial unique IS portable per SQLite 3.8+); + Clarification (/mf-build reconciliation). S-002 owes the migration + a workspace-project comment fix | -- |
 | 2026-06-19 | Major (snapshot 2026-06-19-5.md): C-005 Origin reworded — validate ONLY WHEN PRESENT (present non-allowlisted → reject DNS-rebinding; absent/missing → ALLOWED so CLI MCP clients connect), transport = SDK web-standard Streamable HTTP MCP (initialize/tools.list/tools.call); AS-001 Then expanded for the handshake (resolves S1); +AS-030 (absent-Origin allowed) +AS-031 (present non-allowlisted Origin rejected). 30 AS (at cap). | -- |
+| 2026-06-20 | Major (snapshot 2026-06-20.md): pull_annotations gains OPTIONAL filter params (status unresolved/resolved; includeOrphaned/Dismissed/Deleted default-true; type) — the model picks filters from the user's request at call time; default (no filter) unchanged = all + flags (preserves AS-008 incremental fidelity); filters narrow server-side + compose with cursor (agent owns the trade-off). Folded into C-004 + AS-007 (no new AS — at 30-cap). | -- |

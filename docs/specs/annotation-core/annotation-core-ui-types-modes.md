@@ -1,7 +1,7 @@
 # Spec: annotation-core-ui-types-modes
 
 **Created:** 2026-06-14
-**Last updated:** 2026-06-16
+**Last updated:** 2026-06-21
 **Status:** Draft
 
 ## Overview
@@ -141,17 +141,21 @@ AS-004: Create a redline without editing content
   strikethrough; a rail card shows a DELETE badge with the quote; the doc content does NOT change
 - **Data:** redline the H1 title
 
-AS-005: The owner accepting a redline auto-resolves the thread
+AS-005: The owner accepting a redline auto-resolves the thread; the strike stays (dimmed)
 - **Given:** the doc owner views a pending redline
 - **When:** they Accept it
-- **Then:** the redline shows accepted, the thread becomes resolved (dimmed), and the doc content stays intact
+- **Then:** the redline shows accepted, the thread becomes resolved (dimmed), and the doc content stays
+  intact; the red strike REMAINS on the text (dimmed) — an accepted deletion is approved-but-not-yet-applied
+  (the actual removal happens later via the MCP round-trip), so the strike still conveys "this is slated for deletion"
 - **Data:** owner accepts the title redline
 
-AS-006: The owner rejecting a redline auto-resolves the thread
-- **Given:** the doc owner views a pending redline
+AS-006: The owner rejecting a redline auto-resolves the thread; the strike is removed
+- **Given:** the doc owner views a pending redline that has struck a span of text
 - **When:** they Reject it
-- **Then:** the redline shows rejected and the thread becomes resolved (dimmed)
-- **Data:** owner rejects the title redline
+- **Then:** the redline shows rejected, the thread becomes resolved (dimmed), AND the red strike is
+  REMOVED from the doc — a rejected delete-proposal no longer marks any text (the text it had struck
+  renders plain again). The annotation is dead: it carries no doc mark and is treated as resolved/inert
+- **Data:** owner rejects the title redline → the title text shows with no strike
 
 AS-007: A drifted redline shows stale at read time and cannot be accepted
 - **Given:** a redline whose pinned span no longer matches the current version (the author republished without it)
@@ -333,7 +337,10 @@ AS-023: With the Label tool active, a selection opens the label picker directly
 - C-002: Redline = a delete-kind proposal — NEVER edits content; the doc OWNER (not the thread author)
   accepts/rejects, which auto-resolves the thread (dimmed); a redline whose pinned span drifted renders in a
   distinct STALE style at read time and cannot be accepted; Reopening a DECIDED redline is owner-only and
-  resets the proposal to pending. (AS-005, AS-006, AS-007, AS-008)
+  resets the proposal to pending. The doc strike mark tracks the DECISION: an ACCEPTED redline keeps its
+  strike (dimmed — slated for deletion, applied later via MCP), a REJECTED redline has its strike REMOVED
+  (the proposal is dead; the text it struck renders plain again — no dangling mark on text that stays).
+  (AS-005, AS-006, AS-007, AS-008)
 - C-003: EVERY annotation has a root comment (creator's author + time + body); for Like/Label/Redline the
   body is pre-filled from the label/type text (editable at creation), so there is no comment-less mark. The
   `label` is stored STRUCTURED on the annotation (signal types only), validated server-side ∈ the preset set;
@@ -481,3 +488,4 @@ routing atom, no bloat:
 | 2026-06-14 | Initial creation — annotation type taxonomy (Like/Label/Redline) + Markup popover + Select mode; Pinpoint/global/customization deferred. From docs/explore/annotation-editor-types-modes.md (Mode A). | -- |
 | 2026-06-15 | Major (M1+M4+M6): PO prototype refinement — DocModeToolbar gains a markup TOOL PALETTE (Markup·Comment·Redline·Label) where the active tool routes the selection (+S-006, AS-020..023); S-001 flow reframed (popover = the Markup tool's surface, Markup = default); +C-009 (palette + per-tool routing + collapse→icon/active+hover→expand+colour + Wide\|Focus right); UI Notes + Spec Sizing updated. Colours formalized in DESIGN.md (type/tool palette, PO-approved deviation from teal-only). Snapshot 2026-06-15-types-modes.md | PO prototype 2026-06-15 |
 | 2026-06-14 | /mf-challenge hardening (10 findings accepted): unifying root-comment model (#3); labels = v0 constant, table→Phase 4 (#1); backend `label` column Prerequisite + GAP-001 (#2); reopen-decided resets to pending owner-only (#4); stale = render-time style (#5); optimistic rollback for Like/Label (#6); server-side label validation (#7); label/suggestion mutual exclusion (#8); one labeled-create path (#9); decide owner-only wording + route cite (#10). Stories 5, AS 14→19. | -- |
+| 2026-06-21 | Major (M5+M6, snapshot 2026-06-21-types-modes-reject-mark.md): a REJECTED redline now REMOVES its doc strike mark (the proposal is dead → text renders plain), not just dims it — fixes the miss-case where a rejected deletion left a lingering dimmed strike on text that stays. AS-006 Then += strike removed; AS-005 Then clarified the ACCEPTED strike STAYS (dimmed, slated for MCP-apply); C-002 extended: mark tracks the decision (accept→dimmed-kept, reject→removed). No new AS (held at 23). | -- |
