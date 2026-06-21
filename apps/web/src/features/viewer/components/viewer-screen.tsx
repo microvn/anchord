@@ -17,10 +17,13 @@ import { AnnotationsRail } from "./annotations-rail";
 import {
   type StatusFacet,
   type TypeFacet,
+  type DecisionFacet,
   DEFAULT_STATUS,
   DEFAULT_TYPE,
+  DEFAULT_DECISION,
   statusFacet,
   typeFacet,
+  decisionFacet,
   isShown,
 } from "@/features/viewer/lib/annotation-filter";
 import { ViewerTopBar } from "./viewer-top-bar";
@@ -953,8 +956,10 @@ function useAnnotations(
      *  SAME selection drives the rail filter AND the in-text mark dimming. */
     activeStatus: ReadonlySet<StatusFacet>;
     activeType: ReadonlySet<TypeFacet>;
+    activeDecision: ReadonlySet<DecisionFacet>;
     onToggleStatus: (f: StatusFacet) => void;
     onToggleType: (f: TypeFacet) => void;
+    onToggleDecision: (f: DecisionFacet) => void;
     onResetFilter: () => void;
     /** S-002 (C-002): the session is the doc owner — forwarded to each card's proposal close family. */
     isOwner: boolean;
@@ -987,6 +992,9 @@ function useAnnotations(
   // all-selected. Resolved threads surface only when the reviewer enables the Resolved facet.
   const [activeStatus, setActiveStatus] = useState<ReadonlySet<StatusFacet>>(DEFAULT_STATUS);
   const [activeType, setActiveType] = useState<ReadonlySet<TypeFacet>>(DEFAULT_TYPE);
+  // S-007 third axis (C-009): the Decision facet set — PARTIAL (only suggestions carry a decision).
+  // All-selected by default; the Open-only Status default already hides most decided suggestions.
+  const [activeDecision, setActiveDecision] = useState<ReadonlySet<DecisionFacet>>(DEFAULT_DECISION);
   const toggleStatus = useCallback((f: StatusFacet) => {
     setActiveStatus((prev) => {
       const next = new Set(prev);
@@ -1003,20 +1011,31 @@ function useAnnotations(
       return next;
     });
   }, []);
-  // S-007 (AS-027): Reset re-selects every facet on both axes.
+  const toggleDecision = useCallback((f: DecisionFacet) => {
+    setActiveDecision((prev) => {
+      const next = new Set(prev);
+      if (next.has(f)) next.delete(f);
+      else next.add(f);
+      return next;
+    });
+  }, []);
+  // S-007 (AS-027): Reset re-selects every facet across all three axes.
   const resetFilter = useCallback(() => {
-    // Reset returns to the DEFAULT baseline (Open-only, all types) — NOT all-selected (C-011).
+    // Reset returns to the DEFAULT baseline (Open-only, all types, all decisions) — NOT all-selected (C-011).
     setActiveStatus(DEFAULT_STATUS);
     setActiveType(DEFAULT_TYPE);
+    setActiveDecision(DEFAULT_DECISION);
   }, []);
-  // S-007 (AS-028): acting on a filtered-out annotation must re-activate BOTH its facets (status AND
-  // type) so it matches again — never a dead no-op. Used by the click-on-mark + rail-thread focus
-  // paths before they focus the thread.
-  const ensureFacetsActive = useCallback((a: Pick<ViewerAnnotation, "type" | "status" | "suggestion" | "label">) => {
+  // S-007 (AS-028): acting on a filtered-out annotation must re-activate whichever of its facets are off
+  // — across all three axes (status, type, and — for a suggestion — decision) — so it matches again,
+  // never a dead no-op. Used by the click-on-mark + rail-thread focus paths before they focus the thread.
+  const ensureFacetsActive = useCallback((a: Pick<ViewerAnnotation, "type" | "status" | "suggestion" | "label" | "suggestionStatus">) => {
     const sf = statusFacet(a);
     const tf = typeFacet(a);
+    const df = decisionFacet(a);
     setActiveStatus((prev) => (prev.has(sf) ? prev : new Set(prev).add(sf)));
     setActiveType((prev) => (prev.has(tf) ? prev : new Set(prev).add(tf)));
+    if (df !== null) setActiveDecision((prev) => (prev.has(df) ? prev : new Set(prev).add(df)));
   }, []);
   const queryClient = useQueryClient();
   // The cache key for this doc's annotation list (matches useApiQuery below). All post-write
@@ -1105,13 +1124,13 @@ function useAnnotations(
           kind: isRedline ? ("redline" as const) : undefined,
           stale: a.suggestionStatus === "stale",
           hue,
-          // S-007 (C-009): the mark is DIMMED when the annotation is NOT shown by the two-axis filter
-          // (its status facet OR its type facet is toggled off). Detached items carry no highlight
+          // S-007 (C-009): the mark is DIMMED when the annotation is NOT shown by the three-axis filter
+          // (its status / type / decision facet is toggled off). Detached items carry no highlight
           // (excluded below / by the placer), so this only affects anchored marks.
-          filtered: !isShown(a, activeStatus, activeType),
+          filtered: !isShown(a, activeStatus, activeType, activeDecision),
         };
       }),
-    [annotations, activeStatus, activeType],
+    [annotations, activeStatus, activeType, activeDecision],
   );
 
   // HTML-PLACE: the placeable set in the bridge's `{id, anchor}` shape, for an HTML doc to post down
@@ -1487,7 +1506,7 @@ function useAnnotations(
     prependAnnotation,
     htmlPlaceable,
     reportUnplaceableHtml,
-    railProps: { annotations, focusedId, unplaceableIds, activeStatus, activeType, onToggleStatus: toggleStatus, onToggleType: toggleType, onResetFilter: resetFilter, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete, canCompose, reattachPendingId, onDismissDetached, onReattachDetached },
+    railProps: { annotations, focusedId, unplaceableIds, activeStatus, activeType, activeDecision, onToggleStatus: toggleStatus, onToggleType: toggleType, onToggleDecision: toggleDecision, onResetFilter: resetFilter, isOwner: effectiveRole === "owner", onFocusThread: focusThread, onReply, onResolve, onDecide, onDelete, canCompose, reattachPendingId, onDismissDetached, onReattachDetached },
     reattachWith,
   };
 }

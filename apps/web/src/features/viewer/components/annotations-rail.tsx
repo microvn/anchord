@@ -6,11 +6,14 @@ import { FilterPopover } from "./filter-popover";
 import {
   type StatusFacet,
   type TypeFacet,
+  type DecisionFacet,
   DEFAULT_STATUS,
   DEFAULT_TYPE,
+  DEFAULT_DECISION,
   isShown,
   statusCounts as computeStatusCounts,
   typeCounts as computeTypeCounts,
+  decisionCounts as computeDecisionCounts,
   isFilterActive,
 } from "@/features/viewer/lib/annotation-filter";
 import type { ViewerAnnotation } from "@/features/viewer/services/client";
@@ -35,11 +38,15 @@ export function AnnotationsRail({
   focusedId,
   unplaceableIds,
   currentUserId,
+  currentAuthorName = null,
+  currentAuthorIsGuest = false,
   isOwner,
   activeStatus = DEFAULT_STATUS,
   activeType = DEFAULT_TYPE,
+  activeDecision = DEFAULT_DECISION,
   onToggleStatus,
   onToggleType,
+  onToggleDecision,
   onResetFilter,
   onFocusThread,
   onReply,
@@ -57,9 +64,13 @@ export function AnnotationsRail({
    *  The parent (viewer-screen) owns these so the SAME selection also drives the in-text mark dimming. */
   activeStatus?: ReadonlySet<StatusFacet>;
   activeType?: ReadonlySet<TypeFacet>;
+  /** S-007 third axis (C-009): which Decision facets {Pending, Accepted, Rejected, Stale} are active.
+   *  PARTIAL axis — only suggestions carry a decision; comments/labels pass it vacuously. Default all. */
+  activeDecision?: ReadonlySet<DecisionFacet>;
   /** S-007 (C-011): toggle a facet on/off (applies LIVE). Absent → the Filter control is read-only. */
   onToggleStatus?: (f: StatusFacet) => void;
   onToggleType?: (f: TypeFacet) => void;
+  onToggleDecision?: (f: DecisionFacet) => void;
   /** S-007 (AS-027): Reset re-selects every facet on both axes. */
   onResetFilter?: () => void;
   /** ids the FE couldn't anchor at runtime (GAP-005) — flagged, no scroll target. */
@@ -68,6 +79,11 @@ export function AnnotationsRail({
    *  so it can mark own-vs-others from the durable `authorId`. Null/undefined for a signed-out
    *  viewer (owns nothing). */
   currentUserId?: string | null;
+  /** C-001: the current author's REAL display name (member name or guest session name), forwarded to
+   *  each ThreadCard so an optimistic reply shows the real name, never "You". */
+  currentAuthorName?: string | null;
+  /** whether the current author is a no-account guest (the optimistic reply rides guestName). */
+  currentAuthorIsGuest?: boolean;
   /** annotation-actions-ui S-002 (C-002): the session is the doc OWNER. Forwarded to each ThreadCard
    *  so the proposal close family (Accept/Reject pending, Reopen decided) shows only to the owner. A
    *  client hint; the backend re-authorizes. Default false (non-owner / read-only rail). */
@@ -117,15 +133,17 @@ export function AnnotationsRail({
   // S-007 (C-009): the rail thread list shows only the ANCHORED threads whose status AND type facets
   // are both selected (the combine predicate). The "showing X of N" header counts the ANCHORED set
   // (detached lives in its own always-rendered section, C-004): N = anchored total, X = matched.
-  const visibleAnchored = anchored.filter((a) => isShown(a, activeStatus, activeType));
+  const visibleAnchored = anchored.filter((a) => isShown(a, activeStatus, activeType, activeDecision));
   const showing = visibleAnchored.length;
   const total = anchored.length;
 
-  // C-010: the DYNAMIC facet counts — each axis scoped to the OTHER axis's current selection, over the
+  // C-010: the DYNAMIC facet counts — each axis scoped to the OTHER axes' current selection, over the
   // WHOLE active set (anchored + detached: a detached item is counted into its facets too, C-009).
-  const statusCounts = computeStatusCounts(annotations, activeType);
-  const typeCounts = computeTypeCounts(annotations, activeStatus);
-  const filterActive = isFilterActive(activeStatus, activeType);
+  // Decision counts are over suggestions only (a comment/label has no decision).
+  const statusCounts = computeStatusCounts(annotations, activeType, activeDecision);
+  const typeCounts = computeTypeCounts(annotations, activeStatus, activeDecision);
+  const decisionCounts = computeDecisionCounts(annotations, activeStatus, activeType);
+  const filterActive = isFilterActive(activeStatus, activeType, activeDecision);
 
   // AS-026: an axis fully deselected → no thread can match → the no-match state (distinct from the
   // empty-doc state). Only when the doc HAS annotations (an empty doc shows the empty state).
@@ -170,10 +188,13 @@ export function AnnotationsRail({
               <FilterPopover
                 activeStatus={activeStatus}
                 activeType={activeType}
+                activeDecision={activeDecision}
                 statusCounts={statusCounts}
                 typeCounts={typeCounts}
+                decisionCounts={decisionCounts}
                 onToggleStatus={(f) => onToggleStatus?.(f)}
                 onToggleType={(f) => onToggleType?.(f)}
+                onToggleDecision={(f) => onToggleDecision?.(f)}
                 onReset={() => onResetFilter?.()}
                 onDismiss={() => setFilterOpen(false)}
               />
@@ -224,6 +245,8 @@ export function AnnotationsRail({
               onFocus={onFocusThread}
               // S-001: forward the session user id so the card derives own-vs-others from authorId.
               currentUserId={currentUserId}
+              currentAuthorName={currentAuthorName}
+              currentAuthorIsGuest={currentAuthorIsGuest}
               // S-002: forward owner-ness so the proposal close family (Accept/Reject / Reopen) gates.
               isOwner={isOwner}
               // S-003: bind the rail reply to THIS thread; the card hands us only the body.

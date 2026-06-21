@@ -334,9 +334,12 @@ describe("AnnotationsRail S-003", () => {
     for (let i = 0; i < 17; i++) items.push(makeAnnotation({ id: `comment-${i}`, status: "unresolved", anchor: anchorFor(i) }));
     items.push(makeAnnotation({ id: "comment-res", status: "resolved", anchor: anchorFor(1) })); // 18th comment, resolved
     items.push(makeAnnotation({ id: "markup-0", type: "suggestion", suggestion: { kind: "replace" }, suggestionStatus: "pending", status: "unresolved", anchor: anchorFor(0) }));
-    items.push(makeAnnotation({ id: "markup-1", type: "suggestion", suggestion: { kind: "replace" }, suggestionStatus: "pending", status: "unresolved", anchor: anchorFor(1) }));
+    // markup-1 is BORN-ACCEPTED (an editor's own replace-suggestion): accepted decision but still OPEN —
+    // demonstrates decision ⟂ status (accepted ≠ resolved). Keeps the open count at 20.
+    items.push(makeAnnotation({ id: "markup-1", type: "suggestion", suggestion: { kind: "replace" }, suggestionStatus: "accepted", status: "unresolved", anchor: anchorFor(1) }));
     items.push(makeAnnotation({ id: "redline-open", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", status: "unresolved", anchor: anchorFor(2) }));
-    items.push(makeAnnotation({ id: "redline-res", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "accepted", status: "resolved", anchor: anchorFor(3) }));
+    // redline-res was REJECTED (reject auto-resolves) → rejected decision + resolved status.
+    items.push(makeAnnotation({ id: "redline-res", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "rejected", status: "resolved", anchor: anchorFor(3) }));
     items.push(makeAnnotation({ id: "label-0", label: "out-of-scope", status: "resolved", anchor: anchorFor(0) }));
     return items;
   }
@@ -369,10 +372,22 @@ describe("AnnotationsRail S-003", () => {
     expect(screen.getByTestId("facet-type-redline")).toHaveTextContent("1");
     expect(screen.getByTestId("facet-type-label")).toHaveTextContent("0");
 
-    // Default selection: Open + every Type selected; Resolved DEselected.
+    // Decision axis counts are scoped to the active Status ({open}) + Type (all) → open suggestions
+    // only: markup-0 (pending) + markup-1 (accepted, born-accepted) + redline-open (pending). The
+    // rejected redline is resolved → excluded by the Open-only default. So Pending 2 · Accepted 1 ·
+    // Rejected 0 · Stale 0 (C-010 dynamic counts over suggestions).
+    expect(screen.getByTestId("facet-decision-pending")).toHaveTextContent("2");
+    expect(screen.getByTestId("facet-decision-accepted")).toHaveTextContent("1");
+    expect(screen.getByTestId("facet-decision-rejected")).toHaveTextContent("0");
+    expect(screen.getByTestId("facet-decision-stale")).toHaveTextContent("0");
+
+    // Default selection: Open + every Type + every Decision selected; Resolved DEselected.
     expect(screen.getByTestId("facet-status-open").getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByTestId("facet-status-resolved").getAttribute("aria-pressed")).toBe("false");
     for (const id of ["facet-type-markup", "facet-type-comment", "facet-type-redline", "facet-type-label"]) {
+      expect(screen.getByTestId(id).getAttribute("aria-pressed")).toBe("true");
+    }
+    for (const id of ["facet-decision-pending", "facet-decision-accepted", "facet-decision-rejected", "facet-decision-stale"]) {
       expect(screen.getByTestId(id).getAttribute("aria-pressed")).toBe("true");
     }
     // The old single-axis chips are gone.
@@ -538,14 +553,16 @@ describe("AnnotationsRail S-003", () => {
     const view = screen.getByTestId("markdown-view");
 
     await openFilter();
-    // Hide the open redline by deselecting BOTH its facets: Status Open OFF and Type Redline OFF.
+    // Hide the open PENDING redline by deselecting ALL THREE of its facets: Status Open OFF, Type
+    // Redline OFF, Decision Pending OFF — so the re-activation must restore across all three axes.
     await userEvent.click(screen.getByTestId("facet-status-open"));
     await userEvent.click(screen.getByTestId("facet-type-redline"));
+    await userEvent.click(screen.getByTestId("facet-decision-pending"));
     expect(rail.querySelector('[data-anno-thread="redline-open"]')).toBeNull();
     const mark = view.querySelector('[data-anno="redline-open"]') as HTMLElement;
     expect(mark.getAttribute("data-anno-filtered")).toBe("true");
 
-    // Click the dimmed highlight → BOTH the Open status facet and the Redline type facet re-activate.
+    // Click the dimmed highlight → its Open status, Redline type AND Pending decision facets re-activate.
     await userEvent.click(mark);
 
     await waitFor(() => {
@@ -556,10 +573,75 @@ describe("AnnotationsRail S-003", () => {
     expect(thread.getAttribute("aria-current")).toBe("true");
     expect(view.querySelector('[data-anno="redline-open"]')!.getAttribute("data-anno-filtered")).toBeNull();
 
-    // Both facets read active again (open the popover to check).
+    // All three facets read active again (open the popover to check).
     await openFilter();
     expect(screen.getByTestId("facet-status-open").getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByTestId("facet-type-redline").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("facet-decision-pending").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("AS-029: narrowing the Decision axis shows only matching suggestions and excludes non-suggestions", async () => {
+    // A pending markup suggestion + a plain comment + a label. Narrowing Decision to only Pending shows
+    // the pending suggestion; the comment and label (no decision) are EXCLUDED — once the axis is
+    // narrowed the reviewer is filtering by decision, so a thing with no decision no longer qualifies.
+    annoResponse = ok({
+      items: [
+        makeAnnotation({ id: "markup-pending", type: "suggestion", suggestion: { kind: "replace" }, suggestionStatus: "pending", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
+        makeAnnotation({ id: "comment-0", status: "unresolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
+        makeAnnotation({ id: "label-0", label: "out-of-scope", status: "unresolved", anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 } }),
+      ],
+    });
+    await renderViewer();
+    const rail = screen.getByTestId("annotations-rail");
+    const view = screen.getByTestId("markdown-view");
+
+    await openFilter();
+    // Narrow Decision to ONLY Pending (deselect the other three).
+    await userEvent.click(screen.getByTestId("facet-decision-accepted"));
+    await userEvent.click(screen.getByTestId("facet-decision-rejected"));
+    await userEvent.click(screen.getByTestId("facet-decision-stale"));
+
+    // Only the pending suggestion shows; the comment + label are excluded (no decision, axis narrowed).
+    expect(rail.querySelector('[data-anno-thread="markup-pending"]')).not.toBeNull();
+    expect(rail.querySelector('[data-anno-thread="comment-0"]')).toBeNull();
+    expect(rail.querySelector('[data-anno-thread="label-0"]')).toBeNull();
+
+    // The pending suggestion's mark is NOT dimmed; the comment + label marks ARE dimmed.
+    expect(view.querySelector('[data-anno="markup-pending"]')!.getAttribute("data-anno-filtered")).toBeNull();
+    expect(view.querySelector('[data-anno="comment-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
+    expect(view.querySelector('[data-anno="label-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
+  });
+
+  it("AS-030: deselecting every Decision facet is a no-match state", async () => {
+    // Suggestions (markup + redline) + comments/labels. Emptying the Decision axis matches no suggestion
+    // AND excludes the non-suggestions (axis narrowed) → nothing shows → no-match (uniform with AS-026).
+    annoResponse = ok({
+      items: [
+        makeAnnotation({ id: "markup-0", type: "suggestion", suggestion: { kind: "replace" }, suggestionStatus: "pending", status: "unresolved", anchor: { blockId: "block-p-1", textSnippet: "expires after 24h", offset: 8, length: 17 } }),
+        makeAnnotation({ id: "redline-0", type: "suggestion", suggestion: { kind: "delete" }, suggestionStatus: "pending", status: "unresolved", anchor: { blockId: "block-p-2", textSnippet: "bleed across", offset: 60, length: 12 } }),
+        makeAnnotation({ id: "comment-0", status: "unresolved", anchor: { blockId: "block-p-3", textSnippet: "last-admin invariant", offset: 4, length: 20 } }),
+        makeAnnotation({ id: "label-0", label: "out-of-scope", status: "unresolved", anchor: { blockId: "block-p-4", textSnippet: "onboarding copy", offset: 8, length: 15 } }),
+      ],
+    });
+    await renderViewer();
+    const rail = screen.getByTestId("annotations-rail");
+    const view = screen.getByTestId("markdown-view");
+
+    await openFilter();
+    // Deselect EVERY facet in the Decision axis.
+    await userEvent.click(screen.getByTestId("facet-decision-pending"));
+    await userEvent.click(screen.getByTestId("facet-decision-accepted"));
+    await userEvent.click(screen.getByTestId("facet-decision-rejected"));
+    await userEvent.click(screen.getByTestId("facet-decision-stale"));
+
+    // The no-match state (same as emptying Status/Type, AS-026) — nothing listed, no thread cards.
+    expect(screen.getByTestId("rail-no-match")).toBeInTheDocument();
+    expect(screen.queryAllByTestId("thread-card")).toHaveLength(0);
+    expect(rail.querySelector('[data-anno-thread="comment-0"]')).toBeNull();
+    expect(rail.querySelector('[data-anno-thread="markup-0"]')).toBeNull();
+    // All marks dimmed.
+    expect(view.querySelector('[data-anno="markup-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
+    expect(view.querySelector('[data-anno="comment-0"]')!.getAttribute("data-anno-filtered")).toBe("true");
   });
 
   it("AS-011 / C-004: a detached (isOrphaned) annotation shows in the amber detached section, never as anchored", async () => {
