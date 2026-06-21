@@ -75,8 +75,8 @@ const TWO_WS = env({
   userId: "me",
   activeWorkspaceId: "ws-mine",
   workspaces: [
-    { id: "ws-mine", name: "default", slug: "default", role: "admin", adminName: "Me" },
-    { id: "ws-lan", name: "default", slug: "default-2", role: "member", adminName: "Lan" },
+    { id: "ws-mine", name: "Alex's workspace", slug: "alex", role: "admin", adminName: "Me", creatorId: "me" },
+    { id: "ws-lan", name: "Lan's workspace", slug: "lan", role: "admin", adminName: "Lan", creatorId: "lan" },
   ],
 });
 
@@ -93,12 +93,16 @@ describe("workspaces-ui S-001 — workspace switcher", () => {
     await waitFor(() => expect(screen.getByTestId("ws-switcher-trigger")).toBeInTheDocument());
     await userEvent.click(screen.getByTestId("ws-switcher-trigger"));
 
-    // Both "default"s are listed: my own owner-default reads "My Default"; the one I'm only a
-    // member of shows its plain title-cased name "Default" (only the owner's default gets "My").
+    // Each workspace shows its STORED NAME as-is — no "My Default" relabel, no admin-qualification.
     const activeItem = screen.getByTestId("ws-item-ws-mine");
     const otherItem = screen.getByTestId("ws-item-ws-lan");
-    expect(activeItem).toHaveTextContent("My Default");
-    expect(otherItem).toHaveTextContent("Default");
+    expect(activeItem).toHaveTextContent("Alex's workspace");
+    expect(otherItem).toHaveTextContent("Lan's workspace");
+
+    // The one I created (creator === me) is marked "mine"; the one I'm only an admin of is not —
+    // both are admins, so the mark comes from creatorId, NOT from role+name (AS-001).
+    expect(screen.getByTestId("ws-mine-mark-ws-mine")).toBeInTheDocument();
+    expect(screen.queryByTestId("ws-mine-mark-ws-lan")).not.toBeInTheDocument();
 
     // The active workspace (ws-mine, the route) is marked; the other is not.
     expect(activeItem).toHaveAttribute("aria-current", "true");

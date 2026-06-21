@@ -77,8 +77,8 @@ const BOOTSTRAP = {
   userId: "u-1",
   activeWorkspaceId: "ws-acme",
   workspaces: [
-    { id: "ws-acme", name: "acme", slug: "acme", role: "admin", adminName: null },
-    { id: "ws-field", name: "field io", slug: "field-io", role: "member", adminName: "Sam" },
+    { id: "ws-acme", name: "Acme", slug: "acme", role: "admin", adminName: null, creatorId: "me" },
+    { id: "ws-field", name: "Field IO", slug: "field-io", role: "member", adminName: "Sam", creatorId: "sam" },
   ],
 };
 
@@ -182,11 +182,11 @@ describe("mcp-roundtrip S-001 — Developer settings UI", () => {
     expect(trigger).toHaveAttribute("role", "combobox");
     expect(trigger).toHaveTextContent("Acme");
 
-    // Open the listbox and pick the second workspace ("Field Io").
+    // Open the listbox and pick the second workspace ("Field IO").
     await user.click(trigger);
-    const option = await screen.findByRole("option", { name: "Field Io" });
+    const option = await screen.findByRole("option", { name: "Field IO" });
     await user.click(option);
-    expect(trigger).toHaveTextContent("Field Io");
+    expect(trigger).toHaveTextContent("Field IO");
 
     // A name is required to submit; then the chosen workspace id rides the POST body.
     await user.type(screen.getByTestId("token-name"), "Field token");

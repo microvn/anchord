@@ -13,8 +13,10 @@ export interface WorkspaceListItem {
   slug: string;
   /** The caller's role in THIS workspace — drives admin-only affordances (C-002). */
   role: WorkspaceRole;
-  /** The creating admin's display name, so two "default"s disambiguate (AS-001). */
+  /** The creating admin's display name (legacy disambiguation aid; kept for back-compat). */
   adminName: string | null;
+  /** The account that created this workspace (AS-006). The switcher marks "mine" by creatorId === me. */
+  creatorId: string | null;
 }
 
 /** The bootstrap payload (GET /api/me → envelope.data). */
@@ -54,12 +56,11 @@ export function titleCaseName(name: string): string {
 }
 
 /**
- * The label a switcher (and the breadcrumb) shows for a workspace (AS-001). Every workspace shows
- * its title-cased name — "default" → "Default", "hoang nguyen" → "Hoang Nguyen". The ONLY exception:
- * the auto-created `default` workspace, seen by its owner (admin), reads "My Default" to mark it as
- * the user's own home workspace. No other workspace is admin-qualified.
+ * The label a switcher (and the breadcrumb) shows for a workspace (AS-001 / web-core:AS-017):
+ * the STORED NAME as-is. Auto-created workspaces are now named after their creator
+ * ("<display name>'s workspace"), so there is no "default" to relabel and no "My Default" hack —
+ * the name already distinguishes them, and "mine" is derived separately from `creatorId === me`.
  */
 export function workspaceLabel(ws: WorkspaceListItem): string {
-  if (ws.role === "admin" && ws.name.toLowerCase() === "default") return "My Default";
-  return titleCaseName(ws.name);
+  return ws.name;
 }

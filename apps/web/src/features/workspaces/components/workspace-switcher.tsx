@@ -38,6 +38,7 @@ export function WorkspaceSwitcher() {
   const [creating, setCreating] = useState(false);
 
   const workspaces = query.data?.workspaces ?? [];
+  const myId = query.data?.userId ?? null;
   const active = workspaces.find((w) => w.id === workspaceId);
   // The two-letter mono glyph in the trigger (Anchord-Design ws-glyph).
   const glyph = (active?.name ?? "W").trim().slice(0, 2).toUpperCase();
@@ -108,6 +109,16 @@ export function WorkspaceSwitcher() {
                     <span className={`min-w-0 flex-1 truncate ${isActive ? "font-semibold" : "font-medium"}`}>
                       {workspaceLabel(ws)}
                     </span>
+                    {myId != null && ws.creatorId === myId && (
+                      // AS-001: the workspace I created is marked "mine" (creator === me) — distinct
+                      // from one I'm only an admin/member of. A low-contrast tag (chrome recedes).
+                      <span
+                        data-testid={`ws-mine-mark-${ws.id}`}
+                        className="ml-auto flex-none rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-subtle"
+                      >
+                        Mine
+                      </span>
+                    )}
                     {isActive && (
                       // The teal ✓ on the active workspace; testid kept for the active-mark assertion.
                       <span data-testid={`ws-active-mark-${ws.id}`} className="ml-auto inline-flex text-accent">
