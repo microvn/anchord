@@ -48,7 +48,7 @@ export interface DocFilterState {
   toggleStatus: (f: StatusFacet) => void;
   toggleFormat: (f: FormatFacet) => void;
   toggleAccess: (f: AccessFacet) => void;
-  /** Per-group "All" — re-select every value in that axis. */
+  /** Per-group "All" — TOGGLES the axis: fully selected → clear all; otherwise → select all. */
   allStatus: () => void;
   allFormat: () => void;
   allAccess: () => void;
@@ -113,9 +113,9 @@ export function useDocBrowse(docs: DocRow[], now: number = Date.now()): DocBrows
       toggleStatus: (f) => setStatus((s) => toggle(s, f)),
       toggleFormat: (f) => setFormat((s) => toggle(s, f)),
       toggleAccess: (f) => setAccess((s) => toggle(s, f)),
-      allStatus: () => setStatus(ALL_STATUS),
-      allFormat: () => setFormat(ALL_FORMAT),
-      allAccess: () => setAccess(ALL_ACCESS),
+      allStatus: () => setStatus((s) => (s.size === ALL_STATUS.size ? new Set<StatusFacet>() : ALL_STATUS)),
+      allFormat: () => setFormat((s) => (s.size === ALL_FORMAT.size ? new Set<FormatFacet>() : ALL_FORMAT)),
+      allAccess: () => setAccess((s) => (s.size === ALL_ACCESS.size ? new Set<AccessFacet>() : ALL_ACCESS)),
       setUpdated,
       reset: () => {
         setStatus(ALL_STATUS);

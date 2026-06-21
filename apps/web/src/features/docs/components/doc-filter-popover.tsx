@@ -70,7 +70,10 @@ function FacetRow({
   );
 }
 
-function GroupHeader({ label, onAll }: { label: string; onAll?: () => void }) {
+// The per-group shortcut TOGGLES the axis: fully selected → "None" (clear all), otherwise → "All"
+// (select all). `allOn` reflects the current state and drives the label. Omit onAll for a single-select
+// (radio) group, which has no all/none shortcut.
+function GroupHeader({ label, allOn, onAll }: { label: string; allOn?: boolean; onAll?: () => void }) {
   return (
     <div className="mt-1 flex items-center justify-between px-2">
       <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.07em] text-subtle">
@@ -80,10 +83,11 @@ function GroupHeader({ label, onAll }: { label: string; onAll?: () => void }) {
         <button
           type="button"
           data-testid={`facet-all-${label.toLowerCase()}`}
+          aria-pressed={allOn}
           onClick={onAll}
           className="cursor-pointer text-[11px] text-subtle transition-colors hover:text-accent-ink"
         >
-          All
+          {allOn ? "None" : "All"}
         </button>
       )}
     </div>
@@ -99,22 +103,14 @@ export function DocFilterPopover({ filter, onClose }: { filter: DocFilterState; 
       aria-label="Filter docs"
       className="absolute left-0 top-full z-40 mt-1 flex w-[264px] flex-col rounded-md border border-line bg-elev p-1.5 shadow-lg max-sm:fixed max-sm:inset-x-2 max-sm:bottom-2 max-sm:top-auto max-sm:w-auto"
     >
-      {/* Header — title + Reset all */}
-      <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
+      {/* Header — title only. Reset lives in the footer (the header "Reset all" was a duplicate). */}
+      <div className="flex items-center px-2 pb-1.5 pt-1">
         <span className="text-[13px] font-semibold text-ink">Filter</span>
-        <button
-          type="button"
-          data-testid="doc-filter-reset-all"
-          onClick={filter.reset}
-          className="cursor-pointer text-[12px] text-accent-ink transition-colors hover:underline"
-        >
-          Reset all
-        </button>
       </div>
 
       {/* Status */}
       <div role="group" aria-label="Filter by status">
-        <GroupHeader label="Status" onAll={filter.allStatus} />
+        <GroupHeader label="Status" allOn={STATUS_ORDER.every((f) => status.has(f))} onAll={filter.allStatus} />
         {STATUS_ORDER.map((f) => (
           <FacetRow
             key={f}
@@ -130,7 +126,7 @@ export function DocFilterPopover({ filter, onClose }: { filter: DocFilterState; 
 
       {/* Format */}
       <div role="group" aria-label="Filter by format">
-        <GroupHeader label="Format" onAll={filter.allFormat} />
+        <GroupHeader label="Format" allOn={FORMAT_ORDER.every((f) => format.has(f))} onAll={filter.allFormat} />
         {FORMAT_ORDER.map((f) => (
           <FacetRow
             key={f}
@@ -146,7 +142,7 @@ export function DocFilterPopover({ filter, onClose }: { filter: DocFilterState; 
 
       {/* Access */}
       <div role="group" aria-label="Filter by access">
-        <GroupHeader label="Access" onAll={filter.allAccess} />
+        <GroupHeader label="Access" allOn={ACCESS_ORDER.every((f) => access.has(f))} onAll={filter.allAccess} />
         {ACCESS_ORDER.map((f) => (
           <FacetRow
             key={f}
