@@ -2,7 +2,7 @@
 
 # <img src="docs/assets/anchord-mark.svg" width="34" align="middle" alt="" />&nbsp;Anchord
 
-**Self-hosted, own-your-data platform to share and annotate AI-generated docs.**
+**Self-hosted, own-your-data platform to share and annotate docs — HTML, Markdown, or images — built for the specs, plans, and reports your AI writes.**
 _Vaultwarden for AI docs — publish a spec/plan/report as a link, get margin comments back, and let your agent pull the feedback over MCP. Your data never leaves the box._
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
@@ -16,7 +16,7 @@ _Vaultwarden for AI docs — publish a spec/plan/report as a link, get margin co
 
 <!-- Drop a GIF of the 3-pane viewer (doc + margin comments) here, e.g. docs/assets/anchord.gif -->
 
-An author generates a doc in Claude / Cursor / Codex and publishes it as a link. Reviewers open it, read the rendered doc, and leave **comments, highlights, and suggestions** in a right-hand margin — no account required if the author allows it. The author revises, republishes a new **version**, and the annotations **re-anchor** onto the new content (or land in a "detached" list, never lost). An agent pulls the feedback back over **MCP** to revise. Everything runs on your own infrastructure.
+An author publishes a doc as a link — generated in Claude / Cursor / Codex, or written by hand. Reviewers open it, read the rendered doc, and leave **comments, highlights, and suggestions** in a right-hand margin — no account required if the author allows it. The author revises, republishes a new **version**, and the annotations **re-anchor** onto the new content (or land in a "detached" list, never lost). An agent pulls the feedback back over **MCP** to revise. Everything runs on your own infrastructure.
 
 The viewer is a **3-pane** layout: a table-of-contents rail, the rendered doc (in a sandboxed iframe that keeps the doc's own styling), and a margin of comment threads.
 
