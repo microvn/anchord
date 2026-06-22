@@ -106,6 +106,25 @@ All config is via environment variables (`.env.example` is the template). The on
 
 > **Fail-closed at boot:** a missing `APP_SECRET`, a missing `DATABASE_URL`, or no email provider throws on startup — so a half-configured instance never silently runs with a guessable secret or a broken sign-up flow. An OAuth provider is enabled only when **both** its id and secret are present (never half-on).
 
+### Enabling Google sign-in
+
+The Google provider is already wired — turning it on is config only, no code changes. The button appears on the sign-in screen automatically once the backend sees both env vars.
+
+1. **Create an OAuth client** in the [Google Cloud Console](https://console.cloud.google.com): **APIs & Services → Credentials → Create credentials → OAuth client ID**, application type **Web application**. (First time, you'll be asked to configure the **OAuth consent screen** — External, app name + support email; in Testing mode add your own address under Test users.)
+2. **Set the authorized redirect URI** to `<baseURL>/api/auth/callback/google`, where `<baseURL>` is your app's origin — **the backend port, not the Vite dev port**:
+   - Local dev: `http://localhost:3000/api/auth/callback/google`
+   - Production: `https://your-domain.com/api/auth/callback/google`
+3. **Copy the Client ID and Client Secret** into `.env`:
+
+   ```bash
+   GOOGLE_CLIENT_ID=xxxxxx.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=xxxxxx
+   ```
+
+4. **Restart the app.** Config is read once at boot — `docker compose up` (or `bun run dev`) again and `/api/auth-providers` starts advertising Google, so the frontend renders the button.
+
+**GitHub** works the same way: register an OAuth app at **GitHub → Settings → Developer settings → OAuth Apps**, set the callback URL to `<baseURL>/api/auth/callback/github`, and set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`. Either provider is optional and independent — set neither, one, or both.
+
 ## Agent / MCP integration
 
 Anchord ships a built-in **Model Context Protocol** server so an AI agent can drive the publish → review → revise loop without a human in the middle. This is Anchord's wedge: the doc your agent wrote, the feedback it gets, and the revision it makes all flow through one self-hosted endpoint.
