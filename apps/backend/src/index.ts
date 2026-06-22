@@ -242,6 +242,9 @@ const loadContent = createLoadContent(viewerLoaderDeps);
 const app = createApp({
   dbCheck,
   corsOrigin: cfg.CORS_ORIGIN === "*" ? true : cfg.CORS_ORIGIN.split(","),
+  // self-host S-005 / C-007: serve the built web app when WEB_ROOT is configured (production
+  // image). Undefined in dev → the Vite dev server owns the FE, the backend stays API-only.
+  webRoot: cfg.WEB_ROOT,
   authHandler: auth.handler,
   // doc-access-routing S-006: the bare server-rendered /d/:slug viewer was removed — the
   // share link opens the in-app SPA viewer. Only /v/:id (the sandbox content surface) is

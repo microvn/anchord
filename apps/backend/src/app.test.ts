@@ -1,4 +1,7 @@
 import { test, expect } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createApp } from "./app";
 import type { ViewerDoc } from "./app";
 import type { Viewer } from "./sharing/access";
@@ -183,4 +186,78 @@ test("AS-028: publish returns a /d/:slug app-viewer link and no /d server handle
   // …while /v (the iframe content surface) is preserved.
   const vRes = await app.handle(new Request("http://localhost/v/v-1"));
   expect(vRes.status).toBe(200);
+});
+
+// self-host S-005 / C-007 — build + serve the frontend app from the self-host image.
+// A configured `webRoot` (the built apps/web dist) turns on static serving + an SPA fallback;
+// without it (dev/tests above) the routes 404 as before. We point webRoot at a tmp dir holding
+// a fake index.html + asset so the routing is testable without a real vite build.
+
+function freshWebRoot() {
+  const dir = mkdtempSync(join(tmpdir(), "anchord-web-"));
+  writeFileSync(join(dir, "index.html"), '<!doctype html><div id="root"></div><script src="/assets/app-abc.js"></script>');
+  mkdirSync(join(dir, "assets"), { recursive: true });
+  writeFileSync(join(dir, "assets", "app-abc.js"), 'console.log("anchord app boot");');
+  return dir;
+}
+
+test("AS-010: opening the instance root serves the web app shell (HTML), not a JSON API error", async () => {
+  const dir = freshWebRoot();
+  const app = createApp({ dbCheck: async () => {}, webRoot: dir });
+  const res = await get(app, "/");
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type") ?? "").toContain("text/html");
+  const body = await res.text();
+  expect(body).toContain('<div id="root">'); // the app shell, NOT {"success":false,...}
+  expect(body).not.toContain('"success":false');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("AS-011: a client-side route with no server handler falls back to the app shell (not 404)", async () => {
+  const dir = freshWebRoot();
+  const app = createApp({ dbCheck: async () => {}, webRoot: dir });
+  for (const path of ["/signin", "/d/some-slug"]) {
+    const res = await get(app, path);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('<div id="root">'); // same shell → client router renders the page
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("AS-012: the app-shell fallback does not shadow health/API/content routes", async () => {
+  const dir = freshWebRoot();
+  // /health keeps its JSON; an unknown /api path keeps the enveloped 404; /v keeps its content.
+  const app = createApp({
+    dbCheck: async () => {},
+    webRoot: dir,
+    resolveViewerSession: async () => null,
+    loadContent: async (_id: string, _v: Viewer) => ({ content: "<h1>doc</h1>", kind: "html" as const }),
+  });
+
+  const health = await get(app, "/health");
+  expect(health.status).toBe(200);
+  expect((await health.json()).status).toBe("ok"); // JSON, not the shell
+
+  const apiMiss = await get(app, "/api/does-not-exist");
+  expect(apiMiss.status).toBe(404);
+  const apiBody = await apiMiss.json();
+  expect(apiBody.success).toBe(false); // enveloped API 404, NOT the SPA shell
+  expect(apiBody.error.code).toBe("NOT_FOUND");
+
+  const content = await get(app, "/v/v-1");
+  expect(content.status).toBe(200);
+  expect(await content.text()).toContain("doc"); // sandbox content, not the shell
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("AS-013: built static assets are served with the correct content type", async () => {
+  const dir = freshWebRoot();
+  const app = createApp({ dbCheck: async () => {}, webRoot: dir });
+  const res = await get(app, "/assets/app-abc.js");
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type") ?? "").toContain("javascript");
+  expect(await res.text()).toContain("anchord app boot");
+  rmSync(dir, { recursive: true, force: true });
 });

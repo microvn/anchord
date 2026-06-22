@@ -1,7 +1,14 @@
+# Snapshot: self-host
+**Date:** 2026-06-22
+**Ref:** --
+**Reason:** M4 (AS-001 Given adds APP_URL to required .env), M6 (C-002 widened to validate APP_URL at boot)
+
+---
+
 # Spec: self-host
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-07
 **Status:** Draft
 
 ## Overview
@@ -14,24 +21,9 @@ Postgres, images on a volume. No telemetry, no phone-home. The reason this proje
 
 - No new business entity. Infrastructure:
   - Volume `anchord_db` (Postgres data) + `anchord_assets` (images, path `ASSETS_DIR`).
-  - Config via env: `APP_SECRET`, `DATABASE_URL`, `APP_URL` (the public base URL the
-    instance builds absolute deep-links from — **boot-mandatory**, must be an absolute
-    `http(s)://` URL), an email provider (`SMTP_*` **or** `RESEND_API_KEY` — at least one
-    mandatory; both → Resend API wins), OAuth `GITHUB_*`/`GOOGLE_*` (optional), `ASSETS_DIR`,
-    `CORS_ORIGIN`, `PORT`.
-  - `APP_PORT` (optional, compose-level): the HOST port the app is published on. Defaults to the
-    in-container `PORT` (3000); an operator whose host 3000 is taken remaps via `APP_PORT` without
-    changing `PORT`. Host-side mapping only — never seen by the app process.
-  - Postgres credentials (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) are **operator-set
-    via `.env`**, NOT baked into the compose file — a self-host instance must never ship a fixed
-    default DB password. The app's `DATABASE_URL` is composed from the same values so the two can
-    never drift. Sensible non-secret defaults are allowed for the user/db NAME, but the PASSWORD
-    must be operator-supplied (no shipped default). (C-002, C-006)
-  - `WEB_ROOT` (optional): absolute path to the built web app the instance serves (S-005 / C-007).
-    Set by the production image (Dockerfile `ENV`, pointing at the built `apps/web` output); when
-    present the app serves those static assets + the SPA deep-link fallback. UNSET in dev → the
-    Vite dev server owns the frontend and the backend stays API-only. Not boot-mandatory — its
-    absence simply disables in-app serving, it never blocks startup.
+  - Config via env: `APP_SECRET`, `DATABASE_URL`, an email provider (`SMTP_*` **or**
+    `RESEND_API_KEY` — at least one mandatory; both → Resend API wins), OAuth
+    `GITHUB_*`/`GOOGLE_*` (optional), `ASSETS_DIR`, `CORS_ORIGIN`, `PORT`.
   - (Optional) blob dedup by `content_hash` for versions with identical content.
 
 ## Stories
@@ -52,7 +44,7 @@ Postgres comes up, migrations run, the app serves.
 **Acceptance Scenarios:**
 
 AS-001: compose up brings up a working instance
-- **Given:** a valid `.env` (APP_SECRET, DATABASE_URL, APP_URL, SMTP_*)
+- **Given:** a valid `.env` (APP_SECRET, DATABASE_URL, SMTP_*)
 - **When:** running `docker compose up`
 - **Then:** Postgres comes up (healthcheck), the app waits for healthy then runs migrations (idempotent)
   and serves; `/health` returns ok
@@ -90,18 +82,6 @@ AS-004: Missing email provider → refuse to start
 - **When:** the app boots
 - **Then:** the app won't start; the log clearly states an email provider is required (consistent with auth C-008)
 - **Data:** empty SMTP_* and no RESEND_API_KEY
-
-AS-008: Missing or non-absolute APP_URL → refuse to start
-- **Given:** `.env` is missing `APP_URL`, or sets it to a value that is not an absolute `http(s)://` URL
-- **When:** the app boots
-- **Then:** the app won't start; the log clearly states `APP_URL` is missing/invalid (it must be an absolute `http(s)://` base, since notification deep-links and invite accept-links are built from it)
-- **Data:** unset APP_URL; also `APP_URL=notaurl` and a relative `APP_URL=/d/spec`
-
-AS-009: Missing Postgres password → bring-up refused (no shipped default)
-- **Given:** `.env` does not set `POSTGRES_PASSWORD` (the compose file ships no default password)
-- **When:** running `docker compose up`
-- **Then:** the bring-up is refused with a clear message naming `POSTGRES_PASSWORD`; no instance comes up with a guessable default credential
-- **Data:** `.env` with POSTGRES_PASSWORD unset
 
 ### S-003: Store images on a volume, content in Postgres (P1)
 
@@ -151,67 +131,15 @@ AS-007: No phone-home / analytics
   reaches out when needed: sending email via configured SMTP, OAuth to an enabled provider)
 - **Data:** monitor outbound during use
 
-### S-005: Serve the frontend app from the self-host instance (P0)
-
-**Description:** As an operator, when I open my self-host instance in a browser I get the anchord
-web app (sign-in, workspaces, the doc viewer) — not a raw API response. The instance serves the
-built frontend, and client-side routes load the app shell so the in-app router can take over.
-**Source:** self-host build dogfood 2026-06-22 (Playwright: `docker compose up` served the API
-only — `/`, `/signin`, `/d/:slug` returned a JSON 404; the image never built or served `apps/web`).
-Also `app.test.ts` notes "prod: the static-serving fallback, owned by the self-host spec".
-**Applies Constraints:** C-007
-
-**Execution:**
-- `depends_on:` S-001
-- `parallel_safe:` false
-- `files:` unknown (`Dockerfile` multi-stage to build `apps/web`; `apps/backend/src/app.ts` static-asset serving + SPA fallback; `apps/web` build output)
-- `autonomous:` true
-- `verify:` `docker compose up` → `GET /` returns the app HTML (200, `text/html`); `GET /signin` and `GET /d/<slug>` return the same app shell; `GET /api/auth/ok` still 200 API; `GET /health` still 200 JSON; a built JS/CSS asset loads.
-
-**Acceptance Scenarios:**
-
-AS-010: Opening the instance root serves the web app
-- **Given:** a running instance (built image)
-- **When:** a browser requests `/`
-- **Then:** the anchord web app shell is served as HTML so the browser renders the app — NOT a JSON API error
-- **Data:** a fresh instance, no session
-
-AS-011: A client-side route with no server handler falls back to the app shell
-- **Given:** a running instance
-- **When:** a browser requests a client route the backend has no handler for — `/signin`, and a doc link `/d/<slug>`
-- **Then:** the app shell HTML is served (not a 404), so the in-app router renders the page
-- **Data:** `/signin`; `/d/some-slug`
-
-AS-012: The app-shell fallback does not shadow API, content, or health routes
-- **Given:** the app-shell fallback is active for unmatched routes
-- **When:** a request targets a real backend surface — `/api/...`, `/v/...`, `/s/<token>/resolve`, or `/health`
-- **Then:** the real handler responds with its own payload (API envelope / sandbox content / health JSON), never the app shell
-- **Data:** `/api/auth/ok`, `/health`, `/v/<id>`, `/s/<token>/resolve`
-
-AS-013: Built static assets are served
-- **Given:** the app shell references the built (hashed) JS/CSS bundles
-- **When:** the browser requests an asset path
-- **Then:** the asset is served with the correct content type, so the UI actually boots (not a blank shell)
-- **Data:** a hashed asset under the build output (e.g. `/assets/<hash>.js`)
-
 ## Constraints & Invariants
 
 - C-001: `docker compose up` brings up app + Postgres + volume (`anchord_db`,
   `anchord_assets`); migrations run at boot, idempotent, and if they fail the app won't serve. (AS-001, AS-002)
-- C-002: Required config (APP_SECRET ≥16, DATABASE_URL, `APP_URL` as an absolute `http(s)://`
-  base, an email provider — `SMTP_*` **or** `RESEND_API_KEY`) validated at boot; missing/invalid →
-  refuse to start with a clear log naming the bad key. (AS-003, AS-004, AS-008)
+- C-002: Required config (APP_SECRET ≥16, DATABASE_URL, an email provider — `SMTP_*` **or**
+  `RESEND_API_KEY`) validated at boot; missing/invalid → refuse to start with a clear log. (AS-003, AS-004)
 - C-003: Text content in Postgres; binary images on a volume (`ASSETS_DIR`). (AS-005)
 - C-004: No telemetry/phone-home by default; outbound only for configured SMTP/OAuth. (AS-007)
 - C-005: Storage errors (volume not writable) reported clearly, no crash. (AS-006)
-- C-006: Postgres credentials come from the operator's `.env`, never hardcoded in the compose file;
-  no fixed default DB PASSWORD ships. The app's `DATABASE_URL` is composed from the same `.env`
-  values (user/password/db) so app and database can never disagree on credentials. A missing
-  `POSTGRES_PASSWORD` stops the bring-up with a clear message. (AS-009)
-- C-007: The self-host image builds the web app and the running instance serves it. Unmatched
-  non-API `GET` requests fall back to the app shell (so client-side routing works on deep links),
-  while `/api/*`, `/v/*`, `/s/<token>/resolve|redeem`, and `/health` keep their own responses and
-  are never shadowed; built static assets are served with correct content types. (AS-010, AS-011, AS-012, AS-013)
 
 ## Linked Fields
 
@@ -227,11 +155,6 @@ AS-013: Built static assets are served
 
 - Repo is greenfield. `docker-compose.yml`/`Dockerfile`/`src/db/migrate.ts`/`src/config/env.ts`
   were sketched once (now reverted) — rebuild them per this spec.
-- `apps/web` is a Vite + React SPA (workspace `web`, `vite build` → `dist`), served by the Vite dev
-  server in development. The production Docker image historically built and ran only the backend, so
-  the SPA was unbuilt/unserved in self-host (the instance answered the API but had no UI) — S-005
-  closes that: build the SPA into the image and serve it from the running app (static assets + an
-  app-shell fallback that does not shadow `/api`, `/v`, `/s/<token>/…`, or `/health`).
 - Cross-spec: SMTP-required locks into `auth`/`workspace-project`; ASSETS_DIR locks into
   `render-publish`.
 - Risk: migration-on-boot must be idempotent + fail-closed (don't serve if migrate
@@ -280,7 +203,3 @@ AS-013: Built static assets are served
 | 2026-06-07 | Initial creation (from docs/explore/self-host.md); SMTP required (reverses explore) | -- |
 | 2026-06-07 | /mf-challenge harden H6: record SMTP runtime retry/dead-letter (auth C-009) | -- |
 | 2026-06-07 | Major: email provider generalized SMTP→(SMTP or Resend HTTP API) — AS-004 + C-002 + Linked Field + clarifications, mirroring auth C-008 | snapshot 2026-06-07.md |
-| 2026-06-22 | Major (M4/M6): APP_URL now boot-mandatory (Data Model + AS-001 Given + C-002 + new AS-008); APP_PORT host-port override (Data Model). Found during self-host build: compose didn't pass APP_URL → app exit(1) | snapshot 2026-06-22-app-url-port.md |
-| 2026-06-22 | Major (M6): DB credentials operator-set via `.env`, no shipped default password, DATABASE_URL composed from same values (Data Model + new C-006 + AS-009) | snapshot 2026-06-22-app-url-port.md |
-| 2026-06-22 | Major (M1): new S-005 — build + serve the frontend app from the self-host image (AS-010..013 + C-007). Found via Playwright dogfood: `docker compose up` served API only, `/` returned a JSON 404 | snapshot 2026-06-22-serve-frontend.md |
-| 2026-06-23 | Minor: document `WEB_ROOT` env in Data Model (the path that enables S-005 SPA serving; impl mechanism of C-007) | -- |

@@ -47,6 +47,10 @@ const schema = z
     // Images live on a volume (C-003); content text lives in Postgres.
     ASSETS_DIR: z.string().default("/data/assets"),
     CORS_ORIGIN: z.string().default("*"),
+    // self-host S-005 / C-007: absolute path to the built web app (apps/web `dist`). Set by the
+    // production image (Dockerfile ENV) so the instance serves the SPA + assets + deep-link
+    // fallback. Unset in dev → the Vite dev server owns the FE, the backend stays API-only.
+    WEB_ROOT: z.string().min(1).optional(),
   // OAuth providers (auth S-002) are OPTIONAL per self-host: an operator who does not
   // configure a provider simply does not get that sign-in button (C-004 / S-004 owns
   // the "disabled provider not shown" UI). A provider is ENABLED only when BOTH its id
@@ -97,6 +101,8 @@ export type Config = {
   SMTP?: { host: string; port: number; user: string; pass: string };
   ASSETS_DIR: string;
   CORS_ORIGIN: string;
+  /** Absolute path to the built web app served by the instance (S-005); undefined in dev. */
+  WEB_ROOT?: string;
   // Present only when both id+secret were supplied; otherwise undefined (provider off).
   oauth: {
     github?: { clientId: string; clientSecret: string };
@@ -153,6 +159,7 @@ export function parseConfig(raw: Record<string, unknown>): Config {
     SMTP: smtp,
     ASSETS_DIR: d.ASSETS_DIR,
     CORS_ORIGIN: d.CORS_ORIGIN,
+    WEB_ROOT: d.WEB_ROOT,
     oauth: oauthFrom(d),
   };
 }

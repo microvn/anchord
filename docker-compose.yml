@@ -5,13 +5,15 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: anchord
-      POSTGRES_PASSWORD: anchord
-      POSTGRES_DB: anchord
+      # DB credentials come from .env (C-006). User/db NAME may default; the PASSWORD ships NO
+      # default — a self-host instance must never come up on a guessable credential.
+      POSTGRES_USER: ${POSTGRES_USER:-anchord}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (no default ships)}
+      POSTGRES_DB: ${POSTGRES_DB:-anchord}
     volumes:
       - anchord_db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U anchord"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-anchord}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -24,8 +26,14 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgres://anchord:anchord@db:5432/anchord
+      # Composed from the SAME .env values the db service uses (C-006) so app + database can
+      # never disagree on credentials.
+      DATABASE_URL: postgres://${POSTGRES_USER:-anchord}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-anchord}
       APP_SECRET: ${APP_SECRET:?set APP_SECRET in .env (min 16 chars)}
+      # APP_URL — public base URL the instance builds absolute deep-links from (boot-mandatory
+      # in src/config/env.ts). Defaults to the local bring-up origin; set it in .env to your
+      # real public URL (e.g. https://anchord.example.com) for a deployed instance.
+      APP_URL: ${APP_URL:-http://localhost:3000}
       SMTP_HOST: ${SMTP_HOST:?SMTP is mandatory — set SMTP_* in .env}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:?SMTP is mandatory}
@@ -35,7 +43,9 @@ services:
     volumes:
       - anchord_assets:/data/assets
     ports:
-      - "3000:3000"
+      # Host port is overridable (APP_PORT) so an operator whose 3000 is taken can remap
+      # without touching the in-container PORT. Container always serves on 3000.
+      - "${APP_PORT:-3000}:3000"
 
 volumes:
   anchord_db:

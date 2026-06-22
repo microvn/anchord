@@ -26,6 +26,7 @@ import {
 } from "./routes/mcp";
 import type { DocRepo } from "./publish/service";
 import type { SessionResolver } from "./http/auth-gate";
+import { serveSpa, isReservedApiPath, reservedNotFound } from "./http/spa";
 import type { DB } from "./db/client";
 import type { Viewer } from "./sharing/access";
 import { readAdmissionCookie } from "./sharing/capability-cookie";
@@ -42,6 +43,14 @@ export type AppDeps = {
   /** Liveness probe for the database. Resolves if reachable, throws if not. */
   dbCheck: () => Promise<void>;
   corsOrigin?: string | string[] | boolean;
+  /**
+   * self-host S-005 / C-007: absolute path to the built web app (apps/web `dist`). When set,
+   * the instance serves those static assets and falls back to `index.html` for unmatched
+   * non-API GETs so the in-app router handles deep links (`/`, `/signin`, `/d/:slug`). Reserved
+   * backend surfaces (`/api`, `/v`, `/s`, `/health`, `/mcp`) are never shadowed. Omit in dev/tests
+   * (the Vite dev server owns the FE there) → unmatched routes 404 as before.
+   */
+  webRoot?: string;
   /**
    * Look up a version's raw content by version id for the /v/:id content route,
    * ACCESS-GATED (the version's doc must be viewable by `viewer`).
@@ -231,6 +240,23 @@ export function createApp(deps: AppDeps) {
       set.status = 200;
       return { status: db_ok ? "ok" : "degraded", db_ok, version: "0.0.0" };
     });
+
+  // self-host S-005 / C-007: serve the built web app on OTHERWISE-UNMATCHED routes. Hooked on
+  // NOT_FOUND (Elysia raises it only when no concrete route matched), NOT a catch-all `*` route —
+  // a catch-all would SHADOW better-auth's `/api/auth/*` and the `/v`,`/s` GETs (they'd 404). By
+  // running off NOT_FOUND, every real backend route resolves first; only a genuinely unmatched
+  // path falls here. A non-reserved GET → the SPA shell / a static asset (client routing); any
+  // reserved path, or a non-GET, → the standard enveloped 404 (the API is never given HTML).
+  // Registered BEFORE the route groups so it wins the NOT_FOUND for app routes. Active only when a
+  // web root is configured (production image); dev/tests leave it off → unmatched routes 404 as before.
+  if (deps.webRoot) {
+    const webRoot = deps.webRoot;
+    app.onError(async ({ code, request, path }) => {
+      if (code !== "NOT_FOUND") return; // 500/validation/etc. → let the envelope handler map it
+      if (request.method === "GET" && !isReservedApiPath(path)) return serveSpa(webRoot, path);
+      return reservedNotFound(request, path);
+    });
+  }
 
   // /api/auth/* — better-auth handles sign up / sign in / session / logout (S-001).
   // Mounted as a catch-all so better-auth owns the whole sub-tree (DB-backed,

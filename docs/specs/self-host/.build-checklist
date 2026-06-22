@@ -1,0 +1,22 @@
+[x] AS-001  — compose up brings up a working instance; /health 200 {status:ok,db_ok:true} after PG healthy + migrate (verified 2026-06-22: docker compose up → :3939/health) | owner: S-001
+[x] AS-002  — app waits for Postgres healthy before migrate/serve (compose depends_on: service_healthy) | owner: S-001
+[x] AS-003  — missing/short APP_SECRET → refuse to start, log names it (env.test.ts AS-003 ×2)        | owner: S-002
+[x] AS-004  — no email provider (neither SMTP_* nor RESEND_API_KEY) → refuse boot (env.test.ts AS-004) | owner: S-002
+[x] AS-005  — image bytes on the volume, HTML content in Postgres, both served (assets.test.ts AS-005) | owner: S-003
+[x] AS-006  — assets dir not writable → clear AssetStorageError, no crash (assets.test.ts AS-006 ×2)   | owner: S-003
+[x] AS-007  — no outbound telemetry/analytics on a normal request (app.test.ts AS-007/C-004)           | owner: S-004
+[x] C-001   — compose up app+PG+volume; boot migrate idempotent + fail-closed (migrations.itest + Dockerfile CMD) | owner: S-001
+[x] C-002   — required config validated at boot; missing/invalid → refuse with clear log (env.test.ts C-002) | owner: S-002
+[x] C-003   — text in Postgres, images on volume ASSETS_DIR (assets.test.ts AS-005/C-003)              | owner: S-003
+[x] C-004   — no telemetry/phone-home by default; outbound only SMTP/OAuth (app.test.ts AS-007/C-004)  | owner: S-004
+[x] C-005   — storage error (volume not writable) reported clearly, no crash (assets.test.ts AS-006/C-005) | owner: S-003
+[ ] GAP-001 — content dedup by content_hash — open (defer? affects storage growth)                    | owner: —
+[ ] GAP-002 — backup script (pg_dump + tar volume) vs document only — open                            | owner: —
+[ ] GAP-003 — per-instance storage/quota cap — open                                                   | owner: —
+[N/A] single-binary bun --compile → v1                                                                 | owner: —
+[N/A] S3 object store for images → v0.5+                                                               | owner: —
+[x] AS-010  — GET / serves the web app shell HTML (not a JSON error) (app.test.ts AS-010; E2E: /signin renders) | owner: S-005
+[x] AS-011  — client route /signin, /d/:slug → app shell, not 404 (app.test.ts AS-011; E2E verified) | owner: S-005
+[x] AS-012  — /api,/v,/s/:token/resolve,/health not shadowed; reserved unmatched → enveloped 404 (app.test.ts AS-012; container: /api/auth/* 200) | owner: S-005
+[x] AS-013  — built static assets served with correct content-type (app.test.ts AS-013; container: /assets/*.js 200 text/javascript) | owner: S-005
+[x] C-007   — image builds web + serves it; non-API GET → app shell; /api,/v,/s,/health keep own response (AS-010..013) | owner: S-005
