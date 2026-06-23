@@ -48,6 +48,12 @@ function memActivityRepo(seed: (NewActivity & { id: string; createdAt: Date })[]
     async listActivity(filter, { offset, limit }) {
       return sorted(filter).slice(offset, offset + limit) as unknown as ActivityRow[];
     },
+    async listAllActivity(filter) {
+      return sorted(filter) as unknown as ActivityRow[];
+    },
+    async getActivityById(filter, id) {
+      return (sorted(filter).find((r) => r.id === id) as unknown as ActivityRow) ?? null;
+    },
   };
 }
 
@@ -227,6 +233,12 @@ function throwingActivityRepo(): ActivityRepo {
     async listActivity() {
       return [];
     },
+    async listAllActivity() {
+      return [];
+    },
+    async getActivityById() {
+      return null;
+    },
   };
 }
 
@@ -243,6 +255,12 @@ describe("comment route emits activity best-effort (workspace-activity S-001, AS
           },
           async listActivity() {
             return [];
+          },
+          async listAllActivity() {
+            return [];
+          },
+          async getActivityById() {
+            return null;
           },
         }
       : activityRepo;

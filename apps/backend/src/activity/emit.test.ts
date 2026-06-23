@@ -23,6 +23,12 @@ function fakeRepo(opts: { throwOnInsert?: boolean } = {}): ActivityRepo & { inse
     async listActivity() {
       return [];
     },
+    async listAllActivity() {
+      return [];
+    },
+    async getActivityById() {
+      return null;
+    },
   };
 }
 

@@ -389,9 +389,12 @@ const app = createApp({
   // every query to actor.userId — C-008), backed by the real notifications table the earlier
   // stories write into.
   notifications: { db, resolveSession },
-  // workspace-activity S-001: the workspace event feed under /api/w/:workspaceId/activity.
+  // workspace-activity S-001/S-002: the workspace event feed under /api/w/:workspaceId/activity.
   // Session-gated + workspace-scoped (requireWorkspaceMember); recent-first, paginated (20/cap 50).
-  activity: { db, resolveSession, resolveWorkspaceRole },
+  // S-002 / C-003: the feed-list + single-event reads are role- + access-gated through the SAME
+  // shared resolveAccess the doc viewer uses (admins all; members see workspace-level events plus
+  // doc-scoped events on docs they can open, resolved at READ time, F-2).
+  activity: { db, resolveSession, resolveWorkspaceRole, resolveAccess: sharedResolveAccess },
   // workspace-project S-003: project routes under /api/w/:workspaceId/projects.
   projects: { db, resolveSession, resolveWorkspaceRole },
   // workspaces S-005: per-workspace member directory + role management under
