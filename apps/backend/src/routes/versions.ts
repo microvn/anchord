@@ -42,9 +42,11 @@ import {
   listVersionHistory,
   restoreVersion,
 } from "../services/version";
-import { compareVersions } from "../services/diff";
+import { compareVersions, computeLineDiff } from "../services/diff";
 import type { VersionRepo } from "../services/version";
 import { createVersionRepo } from "../services/version-repo";
+import { emitActivity, type ActivityEmitDeps, SYSTEM_ACTOR_NAME } from "../activity/emit";
+import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 import { docs, docVersions } from "../db/schema";
 import type { DB } from "../db/client";
 import type { GeneralAccessLevel } from "../sharing/access";
@@ -166,7 +168,31 @@ export interface VersionsRoutesDeps {
     content: string;
     /** Doc kind — drives renderForAnchoring inside the job (markdown→HTML before the matcher). */
     kind: "html" | "markdown" | "image";
+    /**
+     * workspace-activity S-005 / AS-021 / F-5: the route hands re-anchor a sink for the DETACHED
+     * count. The count is only known inside the (fired-not-awaited) re-anchor SUMMARY callback —
+     * so the route can't read it after firing. The job invokes this with the number of annotations
+     * it could NOT place; the route's `detached` activity emit lives in this sink (actor = System).
+     * Optional: a re-anchor impl that doesn't report a summary simply never calls it (a lost emit
+     * is acceptable per C-002). Called only when something detached (count > 0).
+     */
+    onDetached?: (count: number) => void | Promise<void>;
   }) => Promise<unknown> | unknown;
+  /**
+   * workspace-activity S-005 (C-002 / C-005 / C-008): emit version-lifecycle activity rows
+   * (publish / restore / detached) after the version write commits. Best-effort post-commit — a
+   * failure NEVER blocks the publish/restore (emitActivity swallows + logs, AS-006-style). Provide
+   * a pre-built ActivityRepo (tests) — else one is built from `db` — plus `workspaceOfDoc` (anchors
+   * the row to the doc's OWN workspace, C-008) and `resolveActorName` (resolves the actor name
+   * per-emit, the session carries only userId). OMIT the whole block to leave version activity
+   * logging off (a publish/restore still succeeds; no activity row) — keeps route tests that don't
+   * exercise activity unchanged.
+   */
+  activity?: {
+    repo?: ActivityRepo;
+    workspaceOfDoc: (docId: string) => Promise<string | null>;
+    resolveActorName: (userId: string) => Promise<string | null>;
+  };
 }
 
 const versionBodySchema = z.object({
@@ -211,6 +237,90 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
       return createDocLookupRepo(deps.db);
     })();
 
+  // workspace-activity S-005: built only when the `activity` block is provided. The repo is
+  // pre-built (tests) or built from `db`; workspaceOfDoc + resolveActorName resolve the row's owning
+  // workspace (C-008) + the actor name per-emit. Absent → version activity emit is a no-op.
+  const activityDeps: ActivityEmitDeps | null =
+    deps.activity != null
+      ? {
+          repo:
+            deps.activity.repo ??
+            (deps.db
+              ? createActivityRepo(deps.db)
+              : (() => {
+                  throw new Error("versionsRoutes activity requires `activity.repo` or `db`");
+                })()),
+          workspaceOfDoc: deps.activity.workspaceOfDoc,
+          resolveActorName: deps.activity.resolveActorName,
+        }
+      : null;
+
+  /**
+   * workspace-activity S-005 / AS-019 (C-005): best-effort post-commit `publish` emit. meta carries
+   * `from` (prev version) → `to` (new version) plus `adds`/`dels` COMPUTED HERE by splitting the
+   * diff lines (F-4) — the diff service yields only a total changeCount, so we count added vs
+   * removed source lines ourselves between the previous content and the just-published content.
+   * NEVER throws (emitActivity swallows + logs), so it can't block the publish (C-002). No-op when
+   * the activity block is unwired or there's no previous version (the doc's very first publish has
+   * no from/adds/dels baseline — still emits the publish with from=null).
+   */
+  async function emitPublish(
+    docId: string,
+    actorUserId: string,
+    newVersion: number,
+    previousVersion: number | null,
+    prevContent: string,
+    newContent: string,
+  ): Promise<void> {
+    if (!activityDeps) return;
+    // F-4: split the diff lines ourselves — added vs removed — since the diff service only totals.
+    const { lines } = computeLineDiff(prevContent, newContent);
+    const adds = lines.filter((l) => l.type === "added").length;
+    const dels = lines.filter((l) => l.type === "removed").length;
+    await emitActivity(
+      {
+        type: "publish",
+        actorUserId,
+        docId,
+        meta: { from: previousVersion, to: newVersion, adds, dels },
+      },
+      activityDeps,
+    );
+  }
+
+  /**
+   * workspace-activity S-005 / AS-020 (C-005 / F-3): best-effort post-commit `restore` emit. A
+   * restore reuses the version-append path but logs ONE `restore` event and NO `publish` event —
+   * the route calls THIS instead of emitPublish on the restore path. meta carries `restored` (the
+   * version that was restored) and `as` (the new version number it became). Never throws.
+   */
+  async function emitRestore(
+    docId: string,
+    actorUserId: string,
+    restored: number,
+    asVersion: number,
+  ): Promise<void> {
+    if (!activityDeps) return;
+    await emitActivity(
+      { type: "restore", actorUserId, docId, meta: { restored, as: asVersion } },
+      activityDeps,
+    );
+  }
+
+  /**
+   * workspace-activity S-005 / AS-021 (C-005 / F-5): best-effort `detached` emit. Actor is the
+   * System actor (null userId, name "System"); meta carries the `count` of annotations re-anchor
+   * could not place. Invoked from the re-anchor summary sink (where the count exists) — NOT the
+   * publish route, which has already returned. Never throws.
+   */
+  async function emitDetached(docId: string, count: number): Promise<void> {
+    if (!activityDeps) return;
+    await emitActivity(
+      { type: "detached", actorUserId: null, actorName: SYSTEM_ACTOR_NAME, docId, meta: { count } },
+      activityDeps,
+    );
+  }
+
   /**
    * Resolve :slug → a visible DocLookup or throw 404 (existence-hiding, C-006).
    * Used by EVERY route: missing doc OR no view-access both collapse to 404 here,
@@ -238,12 +348,23 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
     kind: "html" | "markdown" | "image",
   ): void {
     if (!deps.reanchorOnNewVersion || previousVersion === null) return;
-    void Promise.resolve(deps.reanchorOnNewVersion({ docId, version, content, kind })).catch(
-      () => {
-        // Swallowed by design (C-012): re-anchor is best-effort and must not surface into the
-        // request. The concrete impl logs / alerts on its own (the >25%-detached summary).
-      },
-    );
+    void Promise.resolve(
+      deps.reanchorOnNewVersion({
+        docId,
+        version,
+        content,
+        kind,
+        // workspace-activity S-005 / AS-021 / F-5: the re-anchor summary callback hands us the
+        // detached count (only known there); emit the System `detached` event from this sink. Its
+        // own rejection is swallowed below — a lost emit is acceptable (C-002).
+        onDetached: (count) => {
+          if (count > 0) void emitDetached(docId, count);
+        },
+      }),
+    ).catch(() => {
+      // Swallowed by design (C-012): re-anchor is best-effort and must not surface into the
+      // request. The concrete impl logs / alerts on its own (the >25%-detached summary).
+    });
   }
 
   /** Gate an editor-only write on the caller's doc-scoped role → 403 if too low. */
@@ -349,6 +470,21 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
               doc.kind,
             );
             set.status = 201;
+            // workspace-activity S-005 / AS-019 (C-005): log the publish. Read the previous
+            // version's content (if any) to compute adds/dels by splitting the diff (F-4). The doc's
+            // FIRST version has no previous → from=null, no baseline (empty prevContent). Best-effort.
+            const prev =
+              result.previousVersion === null
+                ? null
+                : await lookupRepo.getVersionContent(doc.id, result.previousVersion);
+            await emitPublish(
+              doc.id,
+              actor.userId,
+              result.version,
+              result.previousVersion,
+              prev?.content ?? "",
+              content,
+            );
             // C-012: re-anchor the doc's annotations onto the new content (fire-and-forget).
             // Pass RAW content + kind — the job renders markdown→HTML before the matcher.
             fireReanchor(doc.id, result.version, result.previousVersion, content, doc.kind);
@@ -404,6 +540,11 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
             throw new NotFoundError(`Version ${target} not found`);
           }
           set.status = 201;
+          // workspace-activity S-005 / AS-020 (C-005 / F-3): a restore logs ONE `restore` event and
+          // NO `publish` — emitPublish is NOT called on this path (suppression is structural: only
+          // the publish route calls it). meta.restored = the version restored; meta.as = the new
+          // version number it became. Best-effort post-commit.
+          await emitRestore(doc.id, actor.userId, target, result.version);
           // C-012: a restore append-copies version `target`'s content as the new current
           // version → re-anchor annotations against THAT content (fire-and-forget). Read the
           // restored content back (cheap) so the route stays decoupled from version.ts.

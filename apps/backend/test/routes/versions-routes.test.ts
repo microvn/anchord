@@ -446,7 +446,9 @@ describe("re-anchor trigger on version create (C-012)", () => {
     );
     expect(res.status).toBe(201);
     // Fired exactly once, with the resolved doc id, the new version number, and the new content.
-    expect(calls).toEqual([{ docId: "doc_1", version: 2, content: "v2 body", kind: "markdown" }]);
+    // (workspace-activity S-005 adds an `onDetached` sink to the input — assert the carried fields.)
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ docId: "doc_1", version: 2, content: "v2 body", kind: "markdown" });
   });
 
   test("C-012: the FIRST version (no previous) does NOT fire re-anchor — nothing to re-anchor", async () => {
@@ -487,6 +489,7 @@ describe("re-anchor trigger on version create (C-012)", () => {
     );
     expect(res.status).toBe(201);
     // Restore append-copies v1's content as v3 → re-anchor runs against that content.
-    expect(calls).toEqual([{ docId: "doc_1", version: 3, content: "restore me", kind: "markdown" }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ docId: "doc_1", version: 3, content: "restore me", kind: "markdown" });
   });
 });

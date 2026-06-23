@@ -317,7 +317,7 @@ const app = createApp({
     // detach (never dropped). Fired off the publish path (the route doesn't await it). The
     // ledger keys (annotation_id, version_id) so a re-run is idempotent; a >25%-detached
     // run logs an alert.
-    reanchorOnNewVersion: async ({ docId, version, content, kind }) => {
+    reanchorOnNewVersion: async ({ docId, version, content, kind, onDetached }) => {
       const versionId = `${docId}:${version}`;
       const ledger = createAnchorResolutionRepo(db);
       await runReanchorForNewVersion(
@@ -332,12 +332,23 @@ const app = createApp({
                   `(${Math.round(s.detachedRate * 100)}%) — over threshold`,
               );
             }
+            // workspace-activity S-005 / AS-021 (F-5): log ONE System `detached` activity row with
+            // the detached count from THIS summary (the only place the count exists). Best-effort —
+            // the route's emit swallows + logs; a lost row is acceptable (C-002).
+            if (s.detached > 0) void onDetached?.(s.detached);
           },
           // S-004 (AS-009): raise ONE grouped in-app `detached` row per affected author per publish.
           onDetachedGrouped,
         },
         { docId, versionId, content, kind },
       );
+    },
+    // workspace-activity S-005: log publish/restore/detached to the workspace activity feed.
+    // workspaceOfDoc anchors the row's workspace to the doc's OWN workspace (C-008); resolveActorName
+    // resolves the actor name per-emit. Best-effort post-commit — never blocks the publish/restore.
+    activity: {
+      workspaceOfDoc: (docId: string) => wsAccess.workspaceOfDoc(docId),
+      resolveActorName,
     },
   },
   // annotation-core S-001..S-007: annotation create/list, reply + guest comment,
