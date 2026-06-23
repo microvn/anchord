@@ -20,6 +20,7 @@
     "@elysiajs/cors": "^1.4.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-auth": "^1.6.14",
+    "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
     "elysia": "^1.4.28",
     "isomorphic-dompurify": "^3.16.0",

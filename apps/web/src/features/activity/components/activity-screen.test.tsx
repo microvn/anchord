@@ -49,11 +49,15 @@ const fetchActivity = mock(async (_w: string, page = 1, _limit = 20) =>
 );
 
 // bun mock.module is global + persistent: mock the WHOLE client surface (incl. the S-004 detail
-// reads) so this partial stub never shadows them with `undefined` for a later suite.
+// reads + the S-007 stats read) so this partial stub never shadows them with `undefined` for a
+// later suite.
 mock.module("@/features/activity/services/client", () => ({
   fetchActivity,
   fetchActivityEvent: mock(async () => env({ event: null })),
   fetchActivityRelated: mock(async () => env({ items: [] })),
+  fetchActivityStats: mock(async () =>
+    env({ counts: { all: 0, comments: 0, versions: 0, sharing: 0, people: 0 }, contributors: [], busiestDoc: null }),
+  ),
 }));
 
 const { ActivityScreen } = await import("@/features/activity/components/activity-screen");

@@ -84,6 +84,9 @@ mock.module("@/features/activity/services/client", () => ({
   fetchActivity: mock(async () => env({ items: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0, hasNext: false, hasPrevious: false } })),
   fetchActivityEvent,
   fetchActivityRelated,
+  fetchActivityStats: mock(async () =>
+    env({ counts: { all: 0, comments: 0, versions: 0, sharing: 0, people: 0 }, contributors: [], busiestDoc: null }),
+  ),
 }));
 // Mock the WHOLE versioning client surface (PublishDiffMini only needs getDiff) so this stub never
 // shadows getVersionHistory/restoreVersion with `undefined` for the versioning suite (mock leak).

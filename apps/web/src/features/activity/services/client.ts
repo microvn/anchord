@@ -50,3 +50,14 @@ export function fetchActivityEvent(workspaceId: string, eventId: string): Promis
 export function fetchActivityRelated(workspaceId: string, eventId: string): Promise<EdenResult<unknown>> {
   return treaty.api.w({ workspaceId }).activity({ eventId }).related.get() as Promise<EdenResult<unknown>>;
 }
+
+/**
+ * GET /api/w/:workspaceId/activity/stats — the stats rail (workspace-activity S-007). Returns
+ * `{ counts, contributors, busiestDoc }` under the envelope's `data`: per-category counts, the
+ * "most active" contributors ranked highest-first, and the busiest doc — all over a trailing 7-day
+ * window (C-006) and over the viewer's VISIBLE set (C-003), so a member's rail never names a doc
+ * they can't open (AS-028).
+ */
+export function fetchActivityStats(workspaceId: string): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).activity.stats.get() as Promise<EdenResult<unknown>>;
+}

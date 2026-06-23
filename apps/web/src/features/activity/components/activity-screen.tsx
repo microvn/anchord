@@ -4,7 +4,9 @@ import { NoResultsState } from "@/components/no-results-state";
 import { Pagination } from "@/components/pagination";
 import { ActivityFeed } from "@/features/activity/components/activity-feed";
 import { ActivityFilterSegment } from "@/features/activity/components/activity-filter-segment";
+import { ActivityStatsRail } from "@/features/activity/components/activity-stats-rail";
 import { useActivity } from "@/features/activity/hooks/use-activity";
+import { useActivityStats } from "@/features/activity/hooks/use-activity-stats";
 import type { ActivityCategory } from "@/features/activity/types";
 
 // `/w/:id/activity` — the workspace activity feed screen (workspace-activity S-001 + S-003).
@@ -27,6 +29,8 @@ export function ActivityScreen() {
   const [page, setPage] = useState(1);
   const [category, setCategory] = useState<ActivityCategory>("all");
   const query = useActivity(workspaceId, page, category);
+  // S-007: the trailing-7-day stats rail, scoped to the viewer's visible set (server-computed).
+  const statsQuery = useActivityStats(workspaceId);
 
   const rows = query.data?.items ?? [];
   const counts = query.data?.counts;
@@ -57,27 +61,36 @@ export function ActivityScreen() {
         <ActivityFilterSegment active={category} counts={counts} onChange={changeCategory} />
       </div>
 
-      {showNoResults ? (
-        <div className="rounded-[11px] border border-line bg-surface">
-          <NoResultsState
-            query={category}
-            onClear={() => changeCategory("all")}
-            description="No activity in this category yet. Clear the filter to see everything."
-          />
-        </div>
-      ) : (
-        <ActivityFeed
-          rows={rows}
-          loading={query.isLoading}
-          error={query.isError ? (query.error?.message ?? null) : null}
-          onRetry={() => void query.refetch()}
-          onOpen={(event) => navigate(`/w/${workspaceId}/activity/${event.id}`)}
-        />
-      )}
+      {/* Two-column layout (prototype `.activity-wrap` 1fr / 268px): the feed plus the stats rail.
+          Collapses to a single column below `lg` (the prototype's 1080px breakpoint), where the rail
+          flows below the feed as a wrapping row of cards (responsive, DESIGN.md §Responsive). */}
+      <div className="grid grid-cols-1 items-start gap-7 lg:grid-cols-[1fr_268px]">
+        <div className="min-w-0">
+          {showNoResults ? (
+            <div className="rounded-[11px] border border-line bg-surface">
+              <NoResultsState
+                query={category}
+                onClear={() => changeCategory("all")}
+                description="No activity in this category yet. Clear the filter to see everything."
+              />
+            </div>
+          ) : (
+            <ActivityFeed
+              rows={rows}
+              loading={query.isLoading}
+              error={query.isError ? (query.error?.message ?? null) : null}
+              onRetry={() => void query.refetch()}
+              onOpen={(event) => navigate(`/w/${workspaceId}/activity/${event.id}`)}
+            />
+          )}
 
-      {!query.isLoading && !query.isError && !showNoResults && (
-        <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
-      )}
+          {!query.isLoading && !query.isError && !showNoResults && (
+            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+          )}
+        </div>
+
+        <ActivityStatsRail stats={statsQuery.data} loading={statsQuery.isLoading} />
+      </div>
     </section>
   );
 }

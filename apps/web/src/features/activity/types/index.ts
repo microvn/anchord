@@ -62,6 +62,30 @@ export interface ActivityEventDetail extends ActivityEventRow {
   projectName?: string | null;
 }
 
+/** One "most active" contributor in the stats rail (S-007): display name + in-window event count. */
+export interface ActivityContributor {
+  name: string;
+  count: number;
+}
+
+/** The busiest doc in the stats rail (S-007): doc id, display name, and in-window event count. */
+export interface ActivityBusiestDoc {
+  docId: string;
+  name: string;
+  events: number;
+}
+
+/**
+ * The stats-rail payload (S-007): per-category counts, ranked contributors, and the busiest doc —
+ * all over a trailing 7-day window (C-006), computed over the viewer's visible set (C-003) so a
+ * member's rail never includes a doc they can't access (AS-028).
+ */
+export interface ActivityStats {
+  counts: ActivityCategoryCounts;
+  contributors: ActivityContributor[];
+  busiestDoc: ActivityBusiestDoc | null;
+}
+
 /** The type-specific `meta` JSON a publish event carries (S-004 PublishDiffMini reads from/to/adds/dels). */
 export interface ActivityPublishMeta {
   from?: string;

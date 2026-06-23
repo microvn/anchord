@@ -28,6 +28,7 @@ import { paginationQuery, paginate, type PaginationParams } from "../http/pagina
 import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 import { createActivityVisibility, type ResolveDocAccess } from "../activity/visibility";
 import { countByCategory, filterByCategory, isActivityCategory } from "../activity/category";
+import { computeStats } from "../activity/stats";
 import type { DB } from "../db/client";
 import type { Actor } from "../http/auth-gate";
 
@@ -105,6 +106,23 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       // `counts` (per-category, over the visible set) + the active `category` ride alongside the
       // standard {items, pagination} so the FE renders the segment with counts without a 2nd request.
       return { ...paginate(items, { page: page.page, limit: page.limit, total: matching.length }), counts, category };
+    })
+    // GET /api/w/:workspaceId/activity/stats — the stats rail (S-007). The FOURTH surface that MUST
+    // route through the SAME shared visibility gate (C-003/F-7): load the whole workspace log, filter
+    // it through `visibility.filterVisible` FIRST, THEN aggregate over that visible set. So a member's
+    // recent-event counts AND the "busiest doc" name can never include a doc they can't open (AS-028);
+    // an admin's rail covers every workspace event (same aggregator, wider visible set). All three
+    // aggregates cover a trailing 7-day window (C-006/AS-026) — `computeStats` windows + aggregates.
+    // Registered BEFORE the `:eventId` route so the static `/stats` segment is never read as an id.
+    .get("/api/w/:workspaceId/activity/stats", async (ctx) => {
+      const { params } = ctx;
+      const { actor, ws } = scope(ctx);
+      const filter = { workspaceId: params.workspaceId };
+      const all = await repo.listAllActivity(filter);
+      const visible = await visibility.filterVisible(all, { userId: actor.userId, role: ws.role });
+      // GAP-001 (deferred): per-viewer filtered aggregates cost a full visible-set load + in-process
+      // aggregate on every request — the SAME shape the feed already uses; no cache/cap in v0.
+      return computeStats(visible);
     })
     // GET /api/w/:workspaceId/activity/:eventId — one event's row (the detail-url surface, S-002 +
     // S-004). C-003 / AS-010: an event the viewer can't see returns NOT-FOUND (existence-hiding),
