@@ -11,7 +11,7 @@ import {
 import { createResolveAccess } from "./sharing/resolve-access";
 import { createWorkspaceAccess } from "./workspace/tenancy-repo";
 import { eq } from "drizzle-orm";
-import { session as sessionTable } from "./db/schema";
+import { session as sessionTable, user as userTable } from "./db/schema";
 import { createLoadContent } from "./render/viewer-loaders";
 import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport, createEnqueueWorkspaceInvite } from "./auth/mail-transport";
@@ -105,6 +105,14 @@ const isWorkspaceAdminForDoc = async (docId: string, userId: string): Promise<bo
 // path workspace), so it does not need to re-resolve the doc's workspace.
 const isWorkspaceAdmin = (workspaceId: string, userId: string) =>
   wsAccess.isWorkspaceAdminFor(workspaceId, userId);
+
+// workspace-activity S-001 (C-008): resolve a doc's OWN workspace + an actor's display name for
+// the best-effort activity emit. workspaceOfDoc reuses the same tenancy helper the access resolver
+// uses (so a row's workspaceId is anchored to the doc's real owner, never the caller's path).
+const resolveActorName = async (userId: string): Promise<string | null> => {
+  const [row] = await db.select({ name: userTable.name }).from(userTable).where(eq(userTable.id, userId)).limit(1);
+  return row?.name ?? null;
+};
 
 // mcp-roundtrip S-001: the shared PAT repo (HMAC-SHA256 keyed by APP_SECRET — C-008) + the
 // in-process per-token rate limiter (C-007). Both the /mcp transport and the Developer-settings
@@ -335,6 +343,13 @@ const app = createApp({
     // S-006: notify thread participants + doc owner on a reply (in-app row via the DB
     // notify repo + one email per recipient through the shared queue). Best-effort.
     notify: { mail: notifyMail, appUrl: cfg.APP_URL },
+    // workspace-activity S-001: log a comment/reply/resolve to the workspace activity feed.
+    // workspaceOfDoc anchors the row's workspace to the doc's OWN workspace (C-008); resolveActorName
+    // resolves the actor name per-emit. Best-effort post-commit — never blocks the comment/resolve.
+    activity: {
+      workspaceOfDoc: (docId: string) => wsAccess.workspaceOfDoc(docId),
+      resolveActorName,
+    },
   },
   // workspaces S-002/S-004: top-level workspace lifecycle + invitations.
   workspaces: {
@@ -374,6 +389,9 @@ const app = createApp({
   // every query to actor.userId — C-008), backed by the real notifications table the earlier
   // stories write into.
   notifications: { db, resolveSession },
+  // workspace-activity S-001: the workspace event feed under /api/w/:workspaceId/activity.
+  // Session-gated + workspace-scoped (requireWorkspaceMember); recent-first, paginated (20/cap 50).
+  activity: { db, resolveSession, resolveWorkspaceRole },
   // workspace-project S-003: project routes under /api/w/:workspaceId/projects.
   projects: { db, resolveSession, resolveWorkspaceRole },
   // workspaces S-005: per-workspace member directory + role management under

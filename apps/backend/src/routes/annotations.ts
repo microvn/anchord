@@ -75,6 +75,8 @@ import {
 import { createDocLookupRepo, type DocLookupRepo, type ResolveDocRole } from "./versions";
 import { notifyOnThreadActivity, notifyOnNewFeedback, notifyOnSuggestionDecided, notifyOnResolved, type MailEnqueuer, type NotifyRepo } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
+import { emitActivity, type ActivityEmitDeps } from "../activity/emit";
+import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { annotations as annotationsTable, docs as docsTable, docVersions, docMembers, user } from "../db/schema";
 import type { DB } from "../db/client";
@@ -289,6 +291,23 @@ export interface AnnotationsRoutesDeps {
     /** notifications-email S-007: APP_URL so the reply email carries an absolute deep-link (C-013). */
     appUrl?: string;
   };
+  /**
+   * workspace-activity S-001 (C-002 / C-005 / C-008): emit a workspace activity row after a
+   * SUCCESSFUL comment / reply / resolve on an annotation. Best-effort POST-COMMIT — a logging
+   * failure NEVER blocks or rolls back the comment/resolve (emitActivity swallows + logs).
+   * Provide a pre-built ActivityRepo (tests) — else one is built from `db` — plus the seams that
+   * resolve the row's owning workspace from the DOC (C-008 cross-workspace isolation) and the
+   * actor's display name (the session carries only userId). OMIT the whole block to leave activity
+   * logging off (a comment/resolve still succeeds; no activity row) — keeps existing route tests
+   * that don't exercise activity unchanged.
+   */
+  activity?: {
+    repo?: ActivityRepo;
+    /** The doc's OWN workspace (project → workspace) — anchors the row's workspaceId (C-008). */
+    workspaceOfDoc: (docId: string) => Promise<string | null>;
+    /** Resolve an account user's display name (user.name) for actorName. */
+    resolveActorName: (userId: string) => Promise<string | null>;
+  };
 }
 
 // ── Zod request schemas ────────────────────────────────────────────────────
@@ -447,6 +466,52 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
           appUrl: deps.notify.appUrl,
         }
       : null;
+
+  // workspace-activity S-001: built only when the `activity` block is provided. The repo is
+  // pre-built (tests) or built from `db`; the workspaceOfDoc + resolveActorName seams resolve the
+  // row's owning workspace (C-008) + the actor name per-emit. Absent → activity emit is a no-op.
+  const activityDeps: ActivityEmitDeps | null =
+    deps.activity != null
+      ? {
+          repo: deps.activity.repo ?? (deps.db ? createActivityRepo(deps.db) : need("activity.repo")),
+          workspaceOfDoc: deps.activity.workspaceOfDoc,
+          resolveActorName: deps.activity.resolveActorName,
+        }
+      : null;
+
+  /**
+   * workspace-activity S-001 (C-002 / C-005) — best-effort post-commit activity emit for a
+   * comment/reply/resolve on an annotation. Resolves the row's owning workspace from the DOC
+   * (C-008) and the actor's display name (the session carries only userId). A guest actor (null
+   * userId) carries "System" unless the caller passes a guest name. NEVER throws (emitActivity
+   * swallows + logs), so an activity failure can't block the comment/resolve (AS-006). No-op when
+   * the activity block is unwired.
+   */
+  async function dispatchActivity(input: {
+    type: "comment" | "reply" | "resolve";
+    docId: string;
+    actorUserId: string | null;
+    actorName?: string | null;
+    annotationId: string;
+    commentId?: string | null;
+    summary?: string | null;
+    target?: string | null;
+  }) {
+    if (!activityDeps) return;
+    await emitActivity(
+      {
+        type: input.type,
+        actorUserId: input.actorUserId,
+        actorName: input.actorName ?? null,
+        docId: input.docId,
+        annotationId: input.annotationId,
+        commentId: input.commentId ?? null,
+        summary: input.summary ?? null,
+        target: input.target ?? null,
+      },
+      activityDeps,
+    );
+  }
 
   /**
    * notifications-email S-002 — best-effort post-commit notify on THREAD ACTIVITY (a comment OR
@@ -686,6 +751,19 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // activity — notify the doc owner + every editor (minus the actor, minus no-access), NOT
     // the reply path (which had only the creator as participant here → was a no-op anyway).
     await dispatchNewFeedbackNotify(doc.id, result.id, actor.userId, result.commentId ?? null);
+    // workspace-activity S-001 (C-005): a new annotation carrying a first comment IS a `comment`
+    // event — log it best-effort (only when the create actually carried a comment).
+    if (result.commentId != null) {
+      await dispatchActivity({
+        type: "comment",
+        docId: doc.id,
+        actorUserId: actor.userId,
+        annotationId: result.id,
+        commentId: result.commentId,
+        summary: "commented on",
+        target: doc.title,
+      });
+    }
     set.status = 201;
     return { annotationId: result.id, ...(result.commentId != null ? { commentId: result.commentId } : {}) };
   }
@@ -730,6 +808,17 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // (self-exclusion). IN-APP ONLY (resolved is low-signal). Best-effort post-commit; reopen fires
     // identically (same event type). Fires only past the ok gate (no notify on a forbidden toggle).
     await dispatchResolvedNotify(parent.docId, params.id, found!.authorId, actor.userId);
+    // workspace-activity S-001 (C-005): a RESOLVE logs a `resolve` event. A reopen is not one of
+    // the twelve types, so emit only when the toggle settled to resolved. Best-effort post-commit.
+    if (result.ok && result.status === "resolved") {
+      await dispatchActivity({
+        type: "resolve",
+        docId: parent.docId,
+        actorUserId: actor.userId,
+        annotationId: params.id,
+        summary: "resolved a comment",
+      });
+    }
     return { status: result.status };
   }
 
@@ -956,6 +1045,16 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       // the top-level-comment branch above; the top-level case no longer drifts onto new_feedback,
       // AS-004). The actor is the session user; they never notify themselves (notifyOnThreadActivity).
       await dispatchThreadActivityNotify(parent.docId, params.id, actor.userId, result.id);
+      // workspace-activity S-001 (C-005): a reply (parentId present) logs `reply`; a top-level
+      // comment on an existing annotation logs `comment`. Best-effort post-commit.
+      await dispatchActivity({
+        type: body.parentId ? "reply" : "comment",
+        docId: parent.docId,
+        actorUserId: actor.userId,
+        annotationId: params.id,
+        commentId: result.id,
+        summary: body.parentId ? "replied to a comment" : "commented",
+      });
       set.status = 201;
       return { commentId: result.id };
     }
@@ -1012,6 +1111,18 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // actor is null → the guest is never a recipient (excluded automatically — and never IN the
     // participant set, since the repo lists account-holder author_ids only).
     await dispatchThreadActivityNotify(parent.docId, params.id, null, result.id);
+    // workspace-activity S-001 (C-005, guest): a guest has no account (actorUserId null) — carry
+    // the guest's supplied display name as the PLAIN-TEXT actorName (F-12). reply vs comment by
+    // parentId. Best-effort post-commit.
+    await dispatchActivity({
+      type: body.parentId ? "reply" : "comment",
+      docId: parent.docId,
+      actorUserId: null,
+      actorName: body.guestName ?? null,
+      annotationId: params.id,
+      commentId: result.id,
+      summary: body.parentId ? "replied to a comment" : "commented",
+    });
     set.status = 201;
     return { commentId: result.id };
   }
@@ -1104,6 +1215,20 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // (actor null) still notifies owner + editors and excludes nobody (the guest has no
     // account, so is never a recipient anyway).
     await dispatchNewFeedbackNotify(doc.id, result.id, actor?.userId ?? null, result.commentId ?? null);
+    // workspace-activity S-001 (C-005): a new annotation carrying a first comment IS a `comment`
+    // event. A GUEST create (actor null) carries the guest's supplied name as actorName (F-12).
+    if (result.commentId != null) {
+      await dispatchActivity({
+        type: "comment",
+        docId: doc.id,
+        actorUserId: actor?.userId ?? null,
+        actorName: actor ? null : body.comment?.guestName ?? null,
+        annotationId: result.id,
+        commentId: result.commentId,
+        summary: "commented on",
+        target: doc.title,
+      });
+    }
     set.status = 201;
     return { annotationId: result.id, ...(result.commentId != null ? { commentId: result.commentId } : {}) };
   }
@@ -1148,6 +1273,18 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     // IN-APP ONLY. The actor on this DOC-ADDRESSED route may be a guest (anon) → null actor, which
     // excludes nobody; a guest still can't be a recipient (the creator is the recipient, not the actor).
     await dispatchResolvedNotify(parent.docId, params.id, found!.authorId, actor?.userId ?? null);
+    // workspace-activity S-001 (C-005): emit a `resolve` event only when the toggle settled to
+    // resolved (a reopen is not one of the twelve types). A guest actor (null) carries "System"
+    // unless a name is known. Best-effort post-commit.
+    if (result.ok && result.status === "resolved") {
+      await dispatchActivity({
+        type: "resolve",
+        docId: parent.docId,
+        actorUserId: actor?.userId ?? null,
+        annotationId: params.id,
+        summary: "resolved a comment",
+      });
+    }
     return { status: result.status };
   }
 

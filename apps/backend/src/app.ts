@@ -12,6 +12,7 @@ import { sharingRoutes, type SharingRoutesDeps } from "./routes/sharing";
 import { workspacesRoutes, type WorkspacesRoutesDeps } from "./routes/workspaces";
 import { meRoutes, type MeRoutesDeps } from "./routes/me";
 import { notificationsRoutes, type NotificationsRoutesDeps } from "./routes/notifications";
+import { activityRoutes, type ActivityRoutesDeps } from "./routes/activity";
 import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
 import { membersRoutes, type MembersRoutesDeps } from "./routes/members";
 import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
@@ -156,6 +157,15 @@ export type AppDeps = {
    * the routes unmounted.
    */
   notifications?: NotificationsRoutesDeps;
+  /**
+   * workspace-activity S-001: enables the enveloped, session-gated, workspace-scoped
+   * GET /api/w/:workspaceId/activity — the recent-first, paginated workspace event feed
+   * (default 20 / cap 50, C-007). Gated by requireSession + requireWorkspaceMember (a
+   * non-member 404s, existence-hiding). Provide a Drizzle handle (production) or a pre-built
+   * ActivityRepo (tests), plus the session + workspace-role resolvers. Omit to leave the
+   * route unmounted.
+   */
+  activity?: ActivityRoutesDeps;
   /**
    * workspace-project S-003: enables the enveloped, session-gated project routes
    * (create/list/rename/archive/unarchive/delete + access-filtered browse-docs-in-
@@ -342,6 +352,14 @@ export function createApp(deps: AppDeps) {
   // mounted outside /api/auth/*. List/unread-count/mark-read/mark-all-read.
   if (deps.notifications) {
     app.use(notificationsRoutes(deps.notifications));
+  }
+
+  // /api/w/:workspaceId/activity — workspace-activity S-001, the workspace event feed. Self-
+  // enveloped + session-gated + workspace-scoped (requireWorkspaceMember; a non-member 404s),
+  // mounted outside /api/auth/*. Recent-first, paginated (default 20 / cap 50, C-007); the flat
+  // list is day-grouped client-side in the viewer's timezone.
+  if (deps.activity) {
+    app.use(activityRoutes(deps.activity));
   }
 
   // /api/projects — workspace-project S-003. Self-enveloped + session-gated, mounted

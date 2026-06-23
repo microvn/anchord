@@ -529,6 +529,82 @@ export const notifications = pgTable(
   (t) => [index("notifications_user_read_idx").on(t.userId, t.read)],
 );
 
+// ── activity (workspace-activity S-001) ────────────────────────────────────
+// An append-only workspace event log: every comment / reply / resolve / publish /
+// restore / share / invite / member-join / member-removed / workspace-rename /
+// project-create / detach across the workspace, read back through a workspace-scoped,
+// paginated, recent-first feed (C-007). DISTINCT from `notification_type` (notifications
+// are per-recipient; activity is the complete workspace log) — its own pgEnum.
+//
+// IMMUTABLE / APPEND-ONLY (C-001): deleting an underlying object does NOT delete its
+// activity row. `comment_id`/`annotation_id` are SET NULL on delete so the row survives,
+// but `doc_id` is RETAINED (never set-null) on a doc delete — nulling it would reclassify
+// the row as a workspace-level event (doc_id IS NULL) and leak a `restricted` doc's event
+// to all members (F-1). A deleted doc's event keeps its doc_id so the read-time visibility
+// filter (S-002) still gates it.
+//
+// `actor_user_id` is NULLABLE (the System actor + no-account guests have none); `actor_name`
+// is the REQUIRED denormalized display name resolved per-emit (the session carries only the
+// user id). `actor_name`/`summary`/`target` are PLAIN TEXT — never HTML (F-12 / guest-name
+// defence-in-depth; the FE renders them as escaped text). `meta` is jsonb for type-specific
+// fields (publish from/to/adds/dels, restore restored/as, detached count, share access/role,
+// invite role/pending).
+//
+// Portable on purpose (no Postgres-only features): the type enum is a plain pgEnum + the two
+// composite indexes are plain B-trees, so a future SQLite build stays open.
+export const activityType = pgEnum("activity_type", [
+  "comment",
+  "reply",
+  "resolve",
+  "publish",
+  "restore",
+  "share",
+  "invite",
+  "member",
+  "member_removed",
+  "workspace_renamed",
+  "project",
+  "detached",
+]);
+
+export const activity = pgTable(
+  "activity",
+  {
+    id: id(),
+    // The owning workspace — resolved at emit from the target doc's project → workspace
+    // (C-008 cross-workspace isolation). Cascade on workspace delete.
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    type: activityType("type").notNull(),
+    // The acting account; NULL for the System actor and no-account guests.
+    actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "set null" }),
+    // Denormalized display name (required, PLAIN TEXT — F-12).
+    actorName: text("actor_name").notNull(),
+    // Nullable targets. doc_id is NOT set-null on doc delete (RETAINED, C-001/F-1) — a
+    // doc-scoped event keeps its doc_id so the read-time filter still gates it; doc_id IS
+    // NULL means a genuinely workspace-level event, never a deleted doc.
+    docId: text("doc_id"),
+    projectId: text("project_id"),
+    versionId: text("version_id"),
+    // Deep-link refs — SET NULL on delete so the event row survives (C-001).
+    commentId: text("comment_id").references(() => comments.id, { onDelete: "set null" }),
+    annotationId: text("annotation_id").references(() => annotations.id, { onDelete: "set null" }),
+    // The sentence fragments a row renders (plain text, like actor_name).
+    summary: text("summary"),
+    target: text("target"),
+    // jsonb (declared exception): type-specific fields (publish from/to/adds/dels, etc.).
+    meta: jsonb("meta"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // C-007: the recent-first feed scan — workspace + created_at.
+    index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt),
+    // The access-filtered member query (S-002) + the detail "more on this doc" (S-004).
+    index("activity_workspace_doc_idx").on(t.workspaceId, t.docId),
+  ],
+);
+
 // ── workspace + membership (workspace-project S-001) ───────────────────────
 // v0 SINGLE workspace = the instance. First-run creates EXACTLY ONE workspaces
 // row + the installer as `admin` in workspace_members; everyone who signs up

@@ -18,7 +18,7 @@ import { MembersScreen } from "./features/workspaces/components/members-screen";
 import { DocsScreen } from "./features/docs/components/docs-screen";
 import { ProjectsScreen } from "./features/docs/components/projects-screen";
 import { ProjectDocsScreen } from "./features/docs/components/project-docs-screen";
-import { ActivityScreen } from "./features/docs/components/activity-screen";
+import { ActivityScreen } from "./features/activity/components/activity-screen";
 import { SearchScreen } from "./features/docs/components/search-screen";
 import { ViewerScreen } from "./features/viewer/components/viewer-screen";
 import { CapabilityRedeemScreen } from "./features/viewer/components/capability-redeem-screen";
