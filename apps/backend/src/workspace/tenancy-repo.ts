@@ -17,13 +17,21 @@ import type {
   WorkspaceRole,
   InvitationStatus,
 } from "./tenancy";
+import { defaultWorkspaceSettings } from "./settings";
 
 export function createTenancyRepo(db: DB): TenancyRepo {
   return {
     async createWorkspace(input) {
       const [ws] = await db
         .insert(workspaces)
-        .values({ name: input.name, slug: input.slug, creatorId: input.creatorId, settings: {} })
+        // shared-workspace model (workspaces:C-007): seed settings.defaultAccess = anyone_in_workspace
+        // so a new workspace is a shared group space — members see new docs by default.
+        .values({
+          name: input.name,
+          slug: input.slug,
+          creatorId: input.creatorId,
+          settings: defaultWorkspaceSettings(),
+        })
         .returning({ id: workspaces.id, slug: workspaces.slug, name: workspaces.name });
       return ws!;
     },

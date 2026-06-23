@@ -30,6 +30,7 @@ import { publishDoc, PublishRejected, type DocRepo, type ProjectResolver } from 
 import { createDocRepo } from "../publish/repo";
 import { createPublishProjectResolver } from "../workspace/repo";
 import { ProjectRejected } from "../workspace/projects";
+import { readWorkspaceDefaultAccess, type GeneralAccessLevel } from "../workspace/settings";
 import type { DB } from "../db/client";
 
 /**
@@ -87,6 +88,12 @@ export interface DocsRoutesDeps {
    * When neither is available the doc is published with a null project_id (seed path).
    */
   resolveProjectId?: ProjectResolver;
+  /**
+   * shared-workspace model (render-publish:C-011): resolves the workspace's default doc access a
+   * new doc inherits. Pre-built for tests; defaults to the Drizzle reader when `db` is
+   * set (reads workspaces.settings.defaultAccess, default anyone_in_workspace).
+   */
+  resolveDefaultAccess?: (workspaceId: string) => Promise<GeneralAccessLevel>;
 }
 
 /**
@@ -113,6 +120,13 @@ export function docsRoutes(deps: DocsRoutesDeps) {
   const resolveProjectId: ProjectResolver | undefined =
     deps.resolveProjectId ?? (deps.db ? createPublishProjectResolver(deps.db) : undefined);
 
+  // shared-workspace model (render-publish:C-011): a new doc inherits the workspace's default access
+  // (anyone_in_workspace by default). Injected for tests, the Drizzle reader when a db is
+  // present, else undefined (no workspace → column default).
+  const resolveDefaultAccess: ((workspaceId: string) => Promise<GeneralAccessLevel>) | undefined =
+    deps.resolveDefaultAccess ??
+    (deps.db ? (workspaceId) => readWorkspaceDefaultAccess(deps.db!, workspaceId) : undefined);
+
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
     .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
@@ -135,7 +149,7 @@ export function docsRoutes(deps: DocsRoutesDeps) {
             // or — when omitted — the publisher's default project.
             projectId,
           },
-          { repo, resolveProjectId },
+          { repo, resolveProjectId, resolveDefaultAccess },
         );
         set.status = 201; // created → 201; the envelope echoes statusCode 201
         return { docId: result.docId, slug: result.slug, url: result.url };

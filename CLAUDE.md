@@ -76,7 +76,14 @@ and carries a thread of **Comments**.
   (read how Plannotator solves this *before* designing your own).
 - **Anchor type 2 — image region**: point/box in normalized coordinates.
 - **Roles** (per-doc, Google-Docs style): viewer / commenter / editor / owner.
-- **General access**: restricted / anyone-with-link / anyone-in-workspace. Guest
+- **General access**: restricted / anyone-with-link / anyone-in-workspace. **Default =
+  `anyone_in_workspace` (shared-workspace model, locked 2026-06-23): workspace = shared group space.** A new
+  doc inherits its workspace's `settings.defaultAccess` (default `anyone_in_workspace`) at publish —
+  web AND MCP — so workspace members see new docs by default; `restricted` is a per-doc opt-in for a
+  private doc. The `defaultAccess` setting was declared but unwired before this; an admin UI to change
+  it per workspace is deferred (v0.5+). Do not relitigate back to restricted-by-default. Specs:
+  `workspaces`:C-007, `sharing-permissions`:C-018, `render-publish`:C-011/AS-027, `mcp-roundtrip`:AS-003/C-006.
+  Guest
   commenting has NO separate toggle (Google-Docs model, REVERSED 2026-06-20): an
   anyone-with-link doc whose link role is commenter+ lets anyone with the link —
   including no-account guests (name + optional email) — comment; the link role IS the

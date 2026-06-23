@@ -1,7 +1,7 @@
 # Spec: annotation-core-ui
 
 **Created:** 2026-06-11
-**Last updated:** 2026-06-21
+**Last updated:** 2026-06-23
 **Status:** Draft
 **Snapshot limit:** 30
 
@@ -383,6 +383,10 @@ AS-030: Deselecting every Decision facet is a no-match state
   restricted (= Draft). This is the SAME rule the dashboard doc list uses, so a doc reads the same
   Live/Draft in the list and in the viewer. A restricted doc is still served as published (it has a
   version) yet must read Draft. (AS-012, AS-020)
+  - **Note (2026-06-23, doc-access shared-workspace model):** the rule is UNCHANGED, but the common outcome
+    flipped — a freshly published doc now defaults to `anyone_in_workspace` (`workspaces`:C-007), so
+    it reads **Live immediately on publish** instead of Draft. Draft now appears only for a doc
+    explicitly set `restricted`. AS-012/AS-020 still hold (they assert the mapping, not the default).
 - C-008: The viewer reads the COMPLETE active annotation set for the doc on open — never a capped
   first-page subset. Every active annotation gets a rail thread and (when placeable) an in-text
   highlight, and the rail total equals the dashboard's annotation count for the doc, so the count is
@@ -604,3 +608,4 @@ addition forces a sub-spec split (e.g. pull the filter into `annotation-core-ui-
 | 2026-06-21 | Major (M4+M6, snapshot 2026-06-21-core-ui-filter-default): the rail filter DEFAULT drops Resolved — Status now defaults to {Open} only (Type stays all-selected), so resolved threads are hidden + their marks dimmed until the reviewer enables Resolved. The DEFAULT becomes the baseline: Reset returns to it (Open-only, all types), and the "active filter" signal is measured against the default (so the control reads inactive on load, flips active when Resolved is enabled or the selection otherwise deviates). AS-022 + AS-027 Then rewritten; C-009 + C-011 reworded; Overview client-state + verify updated. No AS added. | -- |
 | 2026-06-21 | Major (M4+M6, snapshot 2026-06-21-core-ui-decision-exclusive): Decision axis changed from VACUOUS-PASS to EXCLUSIVE-when-narrowed — a non-suggestion (comment/label) passes the Decision axis only while it is un-narrowed (default); deselecting any Decision facet means "filter by decision" so comments/labels drop out too. Consequences: selecting e.g. {Rejected} yields exactly the rejected suggestions (no comment/label bleed-through — the prior design showed 23 instead of the rejected few), and emptying the Decision axis is now a no-match like the other two axes (uniform). C-009 decision term + no-match clause reworked; C-010 status/type counts now apply the same exclusive term; AS-026 (any axis empty → no-match), AS-029 (narrowing Decision excludes non-suggestions), AS-030 (empty Decision = no-match) rewritten. ALSO C-011/UI Notes: filter popover drops the duplicate header "Reset all" (single footer Reset → default baseline); the per-axis "All" shortcut becomes an All↔None toggle. No AS added (held at 30). Source: session dogfooding 2026-06-21 (user couldn't isolate rejected; PO chose exclusive-when-narrowed). | -- |
 | 2026-06-21 | Major (M4+M6, snapshot 2026-06-21-core-ui-decision-axis): S-007 gains a THIRD filter axis **Decision** {Pending, Accepted, Rejected, Stale} reading `suggestionStatus`. Decision is a PARTIAL axis — it constrains only suggestions (Redline/Markup); a Comment/Label has no decision and passes it vacuously (standard faceted-search rule). Combine = Status ∧ Type ∧ (non-suggestion ∨ decision-selected). Default Decision all-selected; Reset includes it. No-match fires only when Status or Type is emptied — emptying Decision hides all suggestions but keeps comments/labels (not no-match). C-009/C-010/C-011 reworked (3 axes, counts vs other axes + Decision counts over suggestions only, popover lists 3 groups); AS-022/026/027/028 flow rewritten; +AS-029 (Decision facet hides suggestions only) +AS-030 (Decision-empty ≠ no-match); Data Model client-state += decision set; UI Notes FilterPopover += Decision group; Linked Fields += `suggestionStatus`. AS 28→30 (hard cap). Source: session design 2026-06-21 (user: "còn 1 trục là Accept, Reject, Pending nữa"). | -- |
+| 2026-06-23 | Minor — doc-access shared-workspace model: note on C-007 that the Live/Draft rule is unchanged but the common outcome flipped (a freshly published doc now defaults to `anyone_in_workspace`, `workspaces`:C-007, so it reads Live on publish; Draft now only for an explicitly `restricted` doc). No AS/constraint behaviour change → Minor, no snapshot. | doc-access audit 2026-06-23 |

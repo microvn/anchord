@@ -35,6 +35,7 @@ import {
   type DocMoveRepo,
 } from "../workspace/doc-move";
 import { createDocMoveRepo } from "../workspace/doc-move-repo";
+import { readProjectDefaultAccess } from "../workspace/settings";
 import type { Role } from "../sharing/roles";
 import { extractText } from "../render/extract-text";
 import type { DB } from "../db/client";
@@ -79,7 +80,13 @@ export function docMoveRoutes(deps: DocMoveRoutesDeps) {
   // extractText = the publish-time extractor, so the copy's v1 is searchable like a fresh
   // publish. The doc-scoped role resolver is the sharing seam. isWorkspaceAdmin is bound
   // PER-REQUEST to ws.workspaceId (C-002 scoping) below.
-  const baseDeps = { repo, resolveDocRole: deps.resolveDocRole, extractText };
+  // shared-workspace model (workspace-project:C-008): a copy inherits the target workspace's
+  // defaultAccess. Resolve it from the project when a db is present (the Drizzle reader);
+  // omitted otherwise → repo column default (legacy/seed fallback). moveDoc ignores it.
+  const resolveDefaultAccess = deps.db
+    ? (projectId: string) => readProjectDefaultAccess(deps.db!, projectId)
+    : undefined;
+  const baseDeps = { repo, resolveDocRole: deps.resolveDocRole, extractText, resolveDefaultAccess };
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))

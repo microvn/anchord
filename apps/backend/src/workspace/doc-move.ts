@@ -24,13 +24,17 @@
 //  - COPY title:       the copy keeps the SOURCE title (the spec leaves the new doc's
 //                      title unspecified; keeping it is least-surprising — the project,
 //                      not the name, is what changed).
-//  - COPY general_access: a copy is a FRESH doc → `restricted` (the safe default a new
-//                      publish gets). Sharing is NOT inherited (clean copy, C-008).
+//  - COPY general_access: a copy is a FRESH doc → it INHERITS the target workspace's
+//                      settings.defaultAccess (default anyone_in_workspace, workspaces:C-007),
+//                      exactly like a new publish (render-publish:C-011) — shared-workspace model. The
+//                      SOURCE's sharing is NOT inherited (clean copy, C-008); the default
+//                      comes from the workspace, not the source.
 //  - COPY version reset: only the source's CURRENT version content becomes the copy's
 //                      version 1 — history is NOT carried. Annotations/comments are NOT
 //                      copied (C-008 clean-copy invariant).
 
 import { can, type Role } from "../sharing/roles";
+import type { GeneralAccessLevel } from "./settings";
 
 /** Thrown when a move/copy is refused. The route maps `code` → HTTP status. */
 export class DocMoveRejected extends Error {
@@ -88,6 +92,12 @@ export interface DocMoveRepo {
     ownerId: string;
     projectId: string;
     extractedText: string | null;
+    /**
+     * shared-workspace model (C-008 / workspaces:C-007): the copy's general_access, inherited from the
+     * target workspace's defaultAccess. Omitted → the repo's column default (`restricted`),
+     * the seed/legacy fallback. The route supplies it via resolveDefaultAccess.
+     */
+    generalAccess?: GeneralAccessLevel;
   }): Promise<{ id: string; slug: string }>;
 }
 
@@ -99,6 +109,12 @@ export interface DocMoveDeps {
   isWorkspaceAdmin?: (userId: string) => boolean | Promise<boolean>;
   /** Derive the searchable text for the copy's v1 (mirrors publish). */
   extractText?: (content: string, kind: "html" | "markdown" | "image") => string;
+  /**
+   * shared-workspace model (C-008): resolve the target project's workspace defaultAccess, which the
+   * copy inherits as its general_access (same as a fresh publish). Optional so a legacy
+   * caller can omit it → the repo's column default. The route supplies the Drizzle reader.
+   */
+  resolveDefaultAccess?: (projectId: string) => Promise<GeneralAccessLevel>;
 }
 
 /**
@@ -204,6 +220,13 @@ export async function copyDoc(
   const extractText = deps.extractText;
   const extractedText = extractText ? extractText(current.content, doc.kind) : null;
 
+  // shared-workspace model (C-008 / workspaces:C-007): the copy inherits the target workspace's
+  // defaultAccess (anyone_in_workspace by default), like a fresh publish — NOT the source's
+  // sharing and NOT a hard restricted. Omitted only when no resolver is wired (legacy/seed).
+  const generalAccess = deps.resolveDefaultAccess
+    ? await deps.resolveDefaultAccess(input.targetProjectId)
+    : undefined;
+
   const created = await deps.repo.createCopy({
     // Decision: keep the source title (the project changed, not the name).
     title: doc.title,
@@ -214,6 +237,8 @@ export async function copyDoc(
     ownerId: input.actorId,
     projectId: input.targetProjectId,
     extractedText,
+    // shared-workspace model: inherit the workspace default (undefined → repo column default).
+    generalAccess,
   });
 
   return { docId: created.id, slug: created.slug, projectId: input.targetProjectId };

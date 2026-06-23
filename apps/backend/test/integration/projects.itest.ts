@@ -208,7 +208,10 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
       }),
     );
     const docAId = ((await pubA.json()) as any).data.docId;
-    // restricted is the default general_access, so no change needed.
+    // shared-workspace model (workspaces:C-007): a published doc now defaults to anyone_in_workspace,
+    // so to test the restricted-hidden path doc A must be set restricted EXPLICITLY (the
+    // per-doc opt-in) — it is no longer the publish default.
+    await h.db.update(docs).set({ generalAccess: "restricted" }).where(eq(docs.id, docAId));
 
     const browse = await app.handle(withCookie(`/api/w/${WA}/projects/${billingId}/docs`, X.cookie));
     expect(browse.status).toBe(200);

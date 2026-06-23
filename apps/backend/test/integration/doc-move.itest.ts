@@ -231,7 +231,9 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     const [copyDocRow] = await h.db.select().from(docs).where(eq(docs.id, copyId));
     expect(copyDocRow!.projectId).toBe(paymentsId);
     expect(copyDocRow!.ownerId).toBe(A.userId); // owner = the copier
-    expect(copyDocRow!.generalAccess).toBe("restricted"); // clean-copy safe default
+    // shared-workspace model (C-008): a copy inherits the target workspace's defaultAccess
+    // (anyone_in_workspace), like a fresh publish — NOT the old hard `restricted`.
+    expect(copyDocRow!.generalAccess).toBe("anyone_in_workspace");
     expect(copyDocRow!.title).toBe("Billing Spec"); // source title kept
 
     // Exactly ONE version, and its content = the source's CURRENT (v3) content.

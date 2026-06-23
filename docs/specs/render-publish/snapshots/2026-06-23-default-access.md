@@ -1,7 +1,14 @@
+# Snapshot: render-publish
+**Date:** 2026-06-23
+**Ref:** doc-access shared-workspace model (workspace = shared group space)
+**Reason:** M6 (new constraint C-011: publish sets general_access from workspace defaultAccess) + new AS-027 on S-001
+
+---
+
 # Spec: render-publish
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-17
 **Status:** Draft
 
 ## Overview
@@ -20,11 +27,6 @@ model defined here._
 
 - **docs**: `id`, `slug` (immutable, generated once), `kind` (html | markdown | image),
   `title` (mutable metadata), `general_access` (used by the sharing cluster), timestamps.
-  - `general_access` is SET AT PUBLISH from the target workspace's `settings.defaultAccess`
-    (default `anyone_in_workspace`, `workspaces`:C-007) — NOT left to fall to the column default
-    `restricted` (C-011, AS-027). The column default stays `restricted` as a safety floor, but the
-    publish path always writes the workspace default explicitly. Changing/enforcing access after
-    publish remains the sharing cluster's job.
   - `status` (AS-016) is NOT a stored column here — the viewer derives `status: "published"` for any
     doc served (it has ≥1 version). A real draft/published lifecycle, if added, belongs to versioning-diff.
 - **doc_versions**: `id`, `doc_id`, `version` (int, starting at 1), `content` (HTML/MD text;
@@ -93,12 +95,6 @@ AS-015: Ambiguous paste (no format, no extension) defaults to Markdown
 - **When:** they publish
 - **Then:** the doc is created with kind = markdown (safe default for ambiguous text)
 - **Data:** paste "a plain text paragraph", no declared format, no filename
-
-AS-027: A newly published doc inherits the workspace's default access
-- **Given:** a logged-in author publishing into a workspace whose `settings.defaultAccess` is `anyone_in_workspace` (the default)
-- **When:** they publish a doc
-- **Then:** the created doc's `general_access` is `anyone_in_workspace` — taken from the workspace's `settings.defaultAccess`, NOT left at the hard-coded `restricted` — so workspace members can see it immediately (sharing-permissions:C-018)
-- **Data:** workspace `defaultAccess = anyone_in_workspace` → new doc `general_access = anyone_in_workspace`
 
 ### S-002: Render HTML live & isolated (P0)
 
@@ -336,11 +332,6 @@ AS-026: A storage capability outside the shimmed set degrades without taking dow
   `data-block-id` instead; the markers appear in BOTH the viewer content (S-005) and the `/v` sandbox
   content; injection is best-effort on malformed content. This serves annotation-core C-001 (block id is
   a positional hint, not a stable identity). (AS-019, AS-020, AS-021, AS-022)
-- C-011: On publish, a new doc's `general_access` is set to the target workspace's
-  `settings.defaultAccess` (default `anyone_in_workspace`, `workspaces`:C-007), not left to the
-  column default `restricted`. This is the web/UI-publish enforcement of the shared-group-space
-  default (sharing-permissions:C-018); the same rule applies to MCP publish (mcp-roundtrip:AS-003).
-  (AS-027)
 - C-010: The sandbox content is prepended — before the doc's own scripts — with an in-memory
   client-storage shim for the storage capabilities that throw on the opaque origin (per-document
   storage, per-session storage, the cache store, the cross-tab channel), so the doc's own scripts run
@@ -376,7 +367,7 @@ auth gate C-005, validation C-007, existence-hiding C-006). `→` = serves which
 
 | Method · Path | Serves | Auth | Request | Success | Errors |
 |---|---|---|---|---|---|
-| `POST /api/w/:workspaceId/docs` | S-001 (AS-001/002/003/014/015/027) | session (member) | multipart file OR `{ content, kind?, title?, projectId? }` (Zod) | 201 `{ docId, slug, url }` (the created doc's `general_access` is set to the workspace's `settings.defaultAccess`, default `anyone_in_workspace` — AS-027/C-011) | 400 VALIDATION_ERROR (empty AS-014; type mismatch AS-005), 413 PAYLOAD_TOO_LARGE (over-cap AS-004) |
+| `POST /api/w/:workspaceId/docs` | S-001 (AS-001/002/003/014/015) | session (member) | multipart file OR `{ content, kind?, title?, projectId? }` (Zod) | 201 `{ docId, slug, url }` | 400 VALIDATION_ERROR (empty AS-014; type mismatch AS-005), 413 PAYLOAD_TOO_LARGE (over-cap AS-004) |
 | `GET /api/w/:workspaceId/docs/:slug` | S-005 (AS-016/017/018/023) + S-006 (block-ids in content) | session (viewer+) | path slug | 200 `{ doc: {title,kind,version,status,generalAccess,effectiveRole?}, content }` (`effectiveRole` = caller's role, omitted for anon AS-023; markdown: sanitized HTML w/ block-ids; html/image: `{ contentUrl: /v/:id }`) | 404 (no-access → indistinguishable, C-006/C-008) |
 
 Non-`/api` routes (already mounted in `src/app.ts`, **exempt from the JSON envelope** per
@@ -407,9 +398,7 @@ api-core C-009 — they serve HTML/sandboxed content, not JSON):
 - "Island" (embedding raw-HTML/JS inside Markdown) — v2.
 - Annotating PDFs, annotating live URLs — v2.
 - Appending versions / diff / restore — versioning-diff cluster.
-- Visibility / general-access enforcement — sharing-permissions cluster. (Publish only SETS the
-  initial `general_access` from the workspace default, C-011/AS-027; changing it afterward and
-  gating reads stay in sharing-permissions.)
+- Visibility / general-access enforcement — sharing-permissions cluster.
 - Publishing via MCP — mcp-roundtrip cluster (creates the same artifact).
 
 ## Gaps
@@ -439,10 +428,9 @@ api-core C-009 — they serve HTML/sandboxed content, not JSON):
 
 ## Spec Sizing Notes
 
-Stories=7 (at target 7). AS=27 (target 20, in the G7 overage range ≤30). The overage comes from the
-2026-06-11 additions for the React viewer (direction B), the 2026-06-13 effectiveRole atom, the
-2026-06-17 client-storage shim, and the 2026-06-23 default-access inheritance — each AS one atom:
-- S-001 publish: AS-027 (a new doc inherits the workspace `defaultAccess`).
+Stories=7 (at target 7). AS=26 (target 20, in the G7 overage range ≤30). The overage comes from the
+2026-06-11 additions for the React viewer (direction B), the 2026-06-13 effectiveRole atom, and the
+2026-06-17 client-storage shim — each AS one atom:
 - S-005 viewer content: AS-016 (meta+MD html), AS-017 (html/image → sandbox ref), AS-018 (no-access), AS-023 (caller's effectiveRole).
 - S-006 block-id inject: AS-019 (positional), AS-020 (don't-clobber existing id), AS-021 (duplicate→distinct), AS-022 (malformed best-effort).
 - S-007 storage shim: AS-024 (script runs not crashes), AS-025 (session-only, no leak), AS-026 (unshimmed capability degrades in isolation).
@@ -459,4 +447,3 @@ No bloat — each AS traces to one stated behavior.
 | 2026-06-11 | Major: + S-005 (serve doc to in-app React viewer, JSON meta+content, AS-016/017/018) + S-006 (serve-time block-id injection, AS-019/020/021/022) + C-008/C-009 + API `GET /api/w/:ws/docs/:slug`; POST path corrected to workspace-scoped; + Spec Sizing Notes. Snapshot 2026-06-11.md. Unblocks annotation-core-ui prerequisites #1+#2 | -- |
 | 2026-06-13 | Major: + S-005 AS-023 (viewer-doc read returns the caller's `effectiveRole`, omitted for anon) + API doc shape `effectiveRole?`. Closes the producer gap behind `sharing-permissions-ui:S-001` (the Share affordance gate consumed a field the read never delivered). Snapshot 2026-06-13.md | -- |
 | 2026-06-17 | Major: + S-007 (HTML doc's own client storage doesn't crash the page — in-memory, per-frame, non-bridged shim prepended before the doc's scripts, AS-024/025/026) + C-010. Fixes the seeded doc's theme-toggle crash on the opaque origin; claims the shim that annotation-html-marks.md punted as "tracked elsewhere". Snapshot 2026-06-17.md | -- |
-| 2026-06-23 | Major (M6+new-AS, snapshot 2026-06-23-default-access.md) — doc-access shared-workspace model: +AS-027 on S-001 (a new doc inherits the workspace `settings.defaultAccess`, default `anyone_in_workspace`) + C-011 (publish sets `general_access` from the workspace default, not the column default `restricted`). Data Model + API row + Not-in-Scope notes. Enforces the web/UI-publish surface of sharing-permissions:C-018 (MCP surface → mcp-roundtrip:AS-003). AS 26→27. | doc-access audit 2026-06-23 |

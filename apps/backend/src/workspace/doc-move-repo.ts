@@ -11,9 +11,10 @@
 //                          search repo's "order by version desc limit 1" current read.
 //  - setProjectId       → MOVE: update ONLY docs.project_id. Nothing else is touched, so
 //                          versions/annotations/sharing/owner/general_access all stay.
-//  - createCopy         → COPY: insert a NEW doc (new slug, restricted default access,
-//                          owner = the copier) + its version 1 in one transaction. Does
-//                          NOT copy annotations/comments/history (clean copy, C-008).
+//  - createCopy         → COPY: insert a NEW doc (new slug, general_access inherited from
+//                          the workspace defaultAccess when the service resolved one
+//                          (shared-workspace model / C-008); owner = the copier) + its version 1 in one
+//                          transaction. Does NOT copy annotations/comments/history (clean copy).
 //
 // Integration-verified against real Postgres in test/integration/doc-move.itest.ts.
 
@@ -73,9 +74,10 @@ export function createDocMoveRepo(db: DB): DocMoveRepo {
 
     async createCopy(input): Promise<{ id: string; slug: string }> {
       // COPY: a NEW doc + its version 1, in one transaction (mirrors createDocRepo).
-      // general_access is left to the column default (`restricted`) — a fresh, clean
-      // copy never inherits the source's sharing. A NEW slug is generated (never the
-      // source's — slug is unique + immutable).
+      // general_access INHERITS the target workspace's defaultAccess when the service
+      // resolved one (shared-workspace model, C-008 / workspaces:C-007) — a fresh, clean copy never
+      // inherits the SOURCE's sharing, but does inherit the workspace default like a
+      // publish. A NEW slug is generated (never the source's — slug is unique + immutable).
       const slug = generateSlug(input.title);
       return db.transaction(async (tx) => {
         const [doc] = await tx
@@ -86,7 +88,9 @@ export function createDocMoveRepo(db: DB): DocMoveRepo {
             kind: input.kind,
             ownerId: input.ownerId, // owner = the copier (a fresh publish)
             projectId: input.projectId,
-            // generalAccess omitted → DB default `restricted` (clean-copy safe default).
+            // shared-workspace model: workspace defaultAccess when resolved; omitted → DB default
+            // `restricted` (the legacy/seed clean-copy floor).
+            ...(input.generalAccess ? { generalAccess: input.generalAccess } : {}),
           })
           .returning({ id: docs.id, slug: docs.slug });
 

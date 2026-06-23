@@ -1,3 +1,10 @@
+# Snapshot: workspace-project
+**Date:** 2026-06-23
+**Ref:** doc-access shared-workspace model — copy path
+**Reason:** M6 (C-008 amended: a copied doc inherits the workspace defaultAccess, not hard restricted) + AS-013 Then
+
+---
+
 # Spec: workspace-project
 
 **Created:** 2026-06-07
@@ -178,14 +185,11 @@ AS-008: Move a doc to another project
 - **Data:** Billing → Payments
 
 AS-013: Duplicate (copy) a doc to another project
-- **Given:** doc in project "Billing" (in a workspace whose `settings.defaultAccess` is `anyone_in_workspace`) is at version 3
+- **Given:** doc in project "Billing" is at version 3
 - **When:** copy to project "Payments"
 - **Then:** create a NEW doc in "Payments" with a new slug, content = the current
-  version as version 1; do NOT copy annotations/comments (clean copy); the copy's `general_access`
-  is set to the workspace's `settings.defaultAccess` (= `anyone_in_workspace`; `workspaces`:C-007) —
-  the same inheritance a freshly published doc gets (`render-publish`:C-011), NOT copied from the
-  source and NOT hard-coded `restricted`; the source doc is unchanged
-- **Data:** copy a 3-version doc → new 1-version doc, no annotations, `general_access = anyone_in_workspace`
+  version as version 1; do NOT copy annotations/comments (clean copy); the source doc is unchanged
+- **Data:** copy a 3-version doc → new 1-version doc, no annotations
 
 ### S-005: Search across accessible docs (P0)
 
@@ -338,10 +342,7 @@ AS-027: The all-docs view loads from the single read, not one request per projec
 - C-007: A doc belongs to the project/workspace, not to an individual — removing a member does not delete/hide
   the doc; access continues per general_access; the doc's share loses its owner, so the admin handles it. (AS-012)
 - C-008: Copy creates a new doc (new slug, current version as v1), does NOT copy
-  annotations/comments, and sets the new doc's `general_access` to the workspace's
-  `settings.defaultAccess` (default `anyone_in_workspace`, `workspaces`:C-007 — shared-workspace model, same as
-  a fresh publish; NOT inherited from the source, NOT hard-coded `restricted`); move keeps the doc
-  as-is (slug/version/annotation/general_access). (AS-008, AS-013)
+  annotations/comments; move keeps the doc as-is (slug/version/annotation). (AS-008, AS-013)
 - C-009: Each account has an auto-created default project on joining the workspace; it is where
   MCP places docs if projectId is missing (`mcp-roundtrip`). (AS-014)
 - C-010: The doc-browse, projects-list, search, AND the workspace-wide docs reads are paginated at a
@@ -484,4 +485,3 @@ No bloat — each AS traces to one stated atom.
 | 2026-06-21 | Minor: S-008 AS-024 corrected — the workspace-docs read carries the active-project list as {id, name} only (move/copy target picker + project-count stat), NOT a per-project doc count. The earlier "per-project docCount from the one read" was unused — no consumer of useWorkspaceDocs renders per-project doc counts (the Projects browser shows those via useProjectsBrowse, a separate read). S-008 desc/files/verify + AS-026 reworded to drop the per-project-count obligation. No AS added/removed; P1 Then change → Minor. | -- |
 | 2026-06-21 | Major (M-new-AS, snapshot 2026-06-21-projects-list-count): + AS-028 on S-003 — the projects-list read (`GET …/projects`) carries each project's accessible-doc count in ONE query (group-by after the C-003 access filter), so the Projects browser renders the per-project "N docs" badge without a follow-up read. Retires the `useProjectsBrowse` per-project fan-out (was 1 projects read + 1 `docs?limit=1` per project). S-003 binds C-003 (count is access-filtered) + Execution.files made concrete; C-003 coverage += AS-028. Source: the /w/:id/projects Network storm. | -- |
 | 2026-06-23 | Minor — doc-access shared-workspace model (workspace = shared group space): Data Model note + Clarifications-2026-06-23 record that a new doc's `general_access` defaults to the workspace's `settings.defaultAccess` (=`anyone_in_workspace`, `workspaces`:C-007), not `restricted`, so browse's common case is "member sees the workspace's docs". No AS/constraint behaviour change — C-003 + AS-006/009 filter is unchanged (fewer docs are out-of-access). Framing/reference only → Minor, no snapshot. | doc-access audit 2026-06-23 |
-| 2026-06-23 | Major (M6, snapshot 2026-06-23-copy-default-access.md) — doc-access shared-workspace model, COPY path: AS-013 Then + C-008 amended so a copied doc's `general_access` inherits the workspace `settings.defaultAccess` (default `anyone_in_workspace`, `workspaces`:C-007), same as a fresh publish (`render-publish`:C-011), NOT hard-coded `restricted`. MOVE (AS-008) unchanged (keeps the doc's access as-is). Closes the copy/publish inconsistency surfaced during /mf-build. | doc-access audit 2026-06-23 |

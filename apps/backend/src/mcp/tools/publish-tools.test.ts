@@ -48,9 +48,14 @@ function fakeCreate(opts: {
   writableProjects?: Set<string>;
   /** the owner's default project id, lazily created (AS-003/AS-027). */
   defaultProjectByOwner?: Map<string, string>;
+  /** the workspace default access a new doc inherits (shared-workspace model / C-006). */
+  defaultAccess?: string;
 } = {}) {
   const writable = opts.writableProjects ?? new Set<string>();
   const defaults = opts.defaultProjectByOwner ?? new Map<string, string>();
+  // shared-workspace model: the real create port (publish-tools-wiring) inherits the token's
+  // workspace settings.defaultAccess, which defaults to anyone_in_workspace.
+  const defaultAccess = opts.defaultAccess ?? "anyone_in_workspace";
   let nDoc = 0;
   let nDefaultCreates = 0;
   const docs: {
@@ -86,7 +91,7 @@ function fakeCreate(opts: {
       workspaceId: input.workspaceId,
       ownerId: input.ownerId,
       projectId,
-      generalAccess: "restricted", // docs.general_access column default (C-006)
+      generalAccess: defaultAccess, // inherits the workspace default (shared-workspace model / C-006)
       version: 1,
     });
     return { docId, slug, url: `/d/${slug}` };
@@ -195,7 +200,7 @@ function fakeTokens(valid: Record<string, { id: string; userId: string; workspac
   } as unknown as ApiTokenRepo;
 }
 
-// ── AS-003: create_document → doc + immutable slug + v1, restricted, default project ──
+// ── AS-003: create_document → doc + immutable slug + v1, workspace-default access, default project ──
 
 describe("AS-003: anchord_create_document creates a doc in the token's workspace", () => {
   test("AS-003.T1: an immutable slug + version 1 are created", async () => {
@@ -207,11 +212,13 @@ describe("AS-003: anchord_create_document creates a doc in the token's workspace
     expect(res.slug).toBe("slug-doc_1");
   });
 
-  test("AS-003.T2: the doc is restricted (token-owner only), never set via MCP", async () => {
+  test("AS-003.T2: the doc inherits the workspace default access (anyone_in_workspace), not set via MCP", async () => {
     const fk = fakeCreate();
     const tool = createDocumentHandler(fk.port);
     await tool({ content: "x", format: "markdown" }, ctx());
-    expect(fk.docs[0]!.generalAccess).toBe("restricted");
+    // shared-workspace model (C-006): a new MCP doc inherits the workspace default; visibility is
+    // never *chosen* via MCP, but the default is no longer hard-coded restricted.
+    expect(fk.docs[0]!.generalAccess).toBe("anyone_in_workspace");
   });
 
   test("AS-003.T3: with no projectId, the doc lands in the owner's default project", async () => {

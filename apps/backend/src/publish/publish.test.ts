@@ -163,3 +163,39 @@ test("AS-015 / C-007: ambiguous paste (no format, no filename) defaults to markd
   expect(sniffKind(undefined, enc("a plain text paragraph"))).toBe("markdown");
   expect(sniffKind(undefined, enc("line one\nline two\n- a bullet"))).toBe("markdown");
 });
+
+// ── shared-workspace model (render-publish:C-011 / AS-027): a new doc inherits the target
+//    workspace's default access via resolveDefaultAccess ───────────────────────
+
+test("AS-027: a published doc inherits the workspace's default access (anyone_in_workspace)", async () => {
+  const { repo, rows } = fakeRepo();
+  await publishDoc(
+    { bytes: enc("# Spec"), declaredKind: "markdown", ownerId: "u_a", workspaceId: "W" },
+    {
+      repo,
+      slugGen: fixedSlug,
+      resolveProjectId: async () => "proj_1",
+      resolveDefaultAccess: async (workspaceId) => {
+        expect(workspaceId).toBe("W");
+        return "anyone_in_workspace";
+      },
+    },
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0].generalAccess).toBe("anyone_in_workspace");
+});
+
+test("AS-027: a restricted-default workspace yields a restricted doc", async () => {
+  const { repo, rows } = fakeRepo();
+  await publishDoc(
+    { bytes: enc("# Spec"), declaredKind: "markdown", ownerId: "u_a", workspaceId: "W" },
+    { repo, slugGen: fixedSlug, resolveProjectId: async () => "proj_1", resolveDefaultAccess: async () => "restricted" },
+  );
+  expect(rows[0].generalAccess).toBe("restricted");
+});
+
+test("C-011: the seed path (no workspace / no resolver) leaves generalAccess unset → column default", async () => {
+  const { repo, rows } = fakeRepo();
+  await publishDoc({ bytes: enc("# Seed"), declaredKind: "markdown" }, { repo, slugGen: fixedSlug });
+  expect(rows[0].generalAccess).toBeUndefined();
+});

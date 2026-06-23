@@ -1,9 +1,15 @@
+# Snapshot: mcp-roundtrip
+**Date:** 2026-06-23
+**Ref:** doc-access shared-workspace model (workspace = shared group space)
+**Reason:** M5 (AS-003 Then: MCP-created doc inherits workspace defaultAccess, not hard restricted) + M6 (C-006 amended)
+
+---
+
 # Spec: mcp-roundtrip
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-20
 **Status:** Draft
-**Snapshot limit:** 8
 
 ## Overview
 
@@ -156,11 +162,9 @@ AS-003: create_document creates doc + slug + version 1
 - **Given:** an agent authenticated with a docs:write token bound to workspace W
 - **When:** it calls `anchord_create_document(content, format, title?, projectId?)`
 - **Then:** a doc is created in workspace W with an immutable slug + version 1,
-  general_access = **the workspace's `settings.defaultAccess`** (default `anyone_in_workspace`,
-  `workspaces`:C-007 — so W's members can see the agent-created doc; NO longer hard-coded
-  `restricted`), placed in the token-owner's default project in W when projectId is missing;
-  returns `{ docId, slug, url }`
-- **Data:** HTML content + title "Payment Spec", no projectId passed; W `defaultAccess = anyone_in_workspace` → new doc `general_access = anyone_in_workspace`
+  general_access = **restricted** (token-owner only), placed in the token-owner's default
+  project in W when projectId is missing; returns `{ docId, slug, url }`
+- **Data:** HTML content + title "Payment Spec", no projectId passed
 - **Setup:** token-owner has a default project in W
 
 AS-004: update_document appends a new version
@@ -398,13 +402,10 @@ AS-017: read_project returns a project in the token's workspace
   from the API envelope — but exemption is by mount point: the envelope is opt-in via
   `apiEnvelope()`, so `/mcp` MUST be mounted OUTSIDE any enveloped group (and outside the shared
   parent whose scoped hooks propagate); responses are raw JSON-RPC. (AS-001, AS-023, AS-030, AS-031)
-- C-006: Visibility is NOT *set* via MCP in v0 (no tool param chooses the access level — set_access
-  stays v0.5). Instead, a doc an agent creates INHERITS the token's workspace `settings.defaultAccess`
-  (default `anyone_in_workspace`, `workspaces`:C-007) — the same shared-group-space default as
-  web/UI publish (sharing-permissions:C-018, render-publish:C-011), NOT hard-coded `restricted`.
-  Placement: an explicit `projectId` the owner can write to in the token's workspace is honored; a
-  foreign/invalid projectId is rejected (never silent fallback); a missing projectId → the
-  token-owner's default project in the token's workspace. (AS-003, AS-018, AS-019)
+- C-006: Visibility is NOT set via MCP in v0; docs an agent creates default to **restricted**
+  (token-owner only). Placement: an explicit `projectId` the owner can write to in the token's
+  workspace is honored; a foreign/invalid projectId is rejected (never silent fallback); a
+  missing projectId → the token-owner's default project in the token's workspace. (AS-003, AS-018, AS-019)
 - C-007: MCP has per-token rate-limiting with a concrete default of 60 requests/min/token
   (tunable), PLUS a per-user active-token cap (default 10) so the per-token limit can't be
   bypassed by minting tokens. The v0 limiter is in-process/in-memory (acceptable for a
@@ -553,12 +554,8 @@ own a route of its own). Canonical source for naming + shape: `Anchord-Design/se
 
 ## Gaps
 
-- GAP-001 (status: resolved → C-006, AS-003; SUPERSEDED 2026-06-23): originally docs an agent
-  creates defaulted to **restricted** (token-owner only; share later by hand/UI; decided 2026-06-07).
-  SUPERSEDED by doc-access shared-workspace model: an MCP-created doc now inherits the workspace
-  `settings.defaultAccess` (default `anyone_in_workspace`, `workspaces`:C-007) like web/UI publish —
-  members see it by default; `restricted` is a per-doc opt-in done on the web UI. Source: doc-access
-  audit 2026-06-23.
+- GAP-001 (status: resolved → C-006, AS-003): docs an agent creates default to **restricted**
+  (token-owner only; share later by hand/UI). (Decided 2026-06-07.)
 - GAP-002 (status: resolved → AS-003 + workspace-project:C-009): each account has a
   self-created default project per workspace; MCP places docs there if projectId is missing.
   (Decided 2026-06-07.)
@@ -654,18 +651,6 @@ own a route of its own). Canonical source for naming + shape: `Anchord-Design/se
   partial-unique migration AND remove/correct the stale "no partial index" comment in the
   workspace-project schema. (Decided 2026-06-19, user.)
 
-## Clarifications — 2026-06-23
-
-- **MCP-created docs inherit the workspace `defaultAccess` (shared-workspace model), not hard `restricted`:**
-  the 2026-06-07 decision that agent-created docs default to `restricted` is overturned by the
-  doc-access audit. An MCP-published doc now inherits its workspace's `settings.defaultAccess`
-  (default `anyone_in_workspace`, `workspaces`:C-007) — identical to web/UI publish
-  (render-publish:C-011) — so the workspace behaves as a shared group space and members see the
-  agent's docs by default. C-006 still holds that visibility is not *settable* via MCP (no
-  set_access tool in v0 — stays v0.5); only the inherited DEFAULT changed. AS-003 amended, C-006
-  amended, GAP-001 superseded. No new AS (spec at the 30-AS cap; the value is an attribute of the
-  existing create AS).
-
 ## Spec Sizing Notes
 
 Stories=6 (target 7 — under). AS=30 (target 20 — AT the G7 overage cap ≤30, G1-driven;
@@ -699,4 +684,3 @@ No bloat — each AS traces to one stated atom (a /mf-challenge finding or a pri
 | 2026-06-19 | Major (snapshot 2026-06-19-4.md): C-011 refined — default-project enforcement = partial-unique `UNIQUE(workspace_id, owner_id) WHERE is_default AND owner_id IS NOT NULL` (resolves build-time S2 with workspace-project's "no partial index" comment; partial unique IS portable per SQLite 3.8+); + Clarification (/mf-build reconciliation). S-002 owes the migration + a workspace-project comment fix | -- |
 | 2026-06-19 | Major (snapshot 2026-06-19-5.md): C-005 Origin reworded — validate ONLY WHEN PRESENT (present non-allowlisted → reject DNS-rebinding; absent/missing → ALLOWED so CLI MCP clients connect), transport = SDK web-standard Streamable HTTP MCP (initialize/tools.list/tools.call); AS-001 Then expanded for the handshake (resolves S1); +AS-030 (absent-Origin allowed) +AS-031 (present non-allowlisted Origin rejected). 30 AS (at cap). | -- |
 | 2026-06-20 | Major (snapshot 2026-06-20.md): pull_annotations gains OPTIONAL filter params (status unresolved/resolved; includeOrphaned/Dismissed/Deleted default-true; type) — the model picks filters from the user's request at call time; default (no filter) unchanged = all + flags (preserves AS-008 incremental fidelity); filters narrow server-side + compose with cursor (agent owns the trade-off). Folded into C-004 + AS-007 (no new AS — at 30-cap). | -- |
-| 2026-06-23 | Major (M5+M6, snapshot 2026-06-23-default-access.md) — doc-access shared-workspace model: AS-003 Then + C-006 amended so an MCP-created doc INHERITS the workspace `settings.defaultAccess` (default `anyone_in_workspace`, `workspaces`:C-007) instead of hard `restricted`; GAP-001 superseded; +Clarifications-2026-06-23. Covers the MCP-publish surface of sharing-permissions:C-018 (web/UI surface → render-publish:AS-027). No new AS (at 30-cap; value is an attribute of the existing create AS-003). Snapshot limit set to 8 (matches the 6 prior). | doc-access audit 2026-06-23 |

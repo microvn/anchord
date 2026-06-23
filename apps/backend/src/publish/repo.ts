@@ -26,6 +26,10 @@ export function createDocRepo(db: DB): DocRepo {
             // workspace-project S-003 (AS-005 / C-009): the resolved project (explicit
             // or the publisher's default); null only for a session-less seed.
             projectId: input.projectId ?? null,
+            // shared-workspace model (render-publish:C-011 / mcp-roundtrip:C-006): inherit the
+            // workspace's default access when the publish path resolved one; omitted on
+            // the seed path → the docs.general_access column default (restricted floor).
+            ...(input.generalAccess ? { generalAccess: input.generalAccess } : {}),
           })
           .returning({ id: docs.id });
 

@@ -1,7 +1,14 @@
+# Snapshot: workspaces
+**Date:** 2026-06-23
+**Ref:** doc-access shared-workspace model (workspace = shared group space)
+**Reason:** M6 (new constraint C-007: settings.defaultAccess default + source-of-truth) + M4/M5 (S-001/S-002 Then now assert defaultAccess=anyone_in_workspace)
+
+---
+
 # Spec: workspaces
 
 **Created:** 2026-06-09
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-22
 **Status:** Draft
 **Snapshot limit:** 8
 
@@ -23,16 +30,6 @@ per-doc sharing in `sharing-permissions`. The frontend is a sibling spec `worksp
   membership. `creator_id` is BOTH the "is this workspace mine" signal (creator_id === me) and a
   durable record of who created it (tracking) — it replaces inferring "my own default" from
   name+role, which mislabelled a default I was merely made admin of as also "mine".
-- **workspaces.settings** (`jsonb`, declared exception): `{ providers, defaultAccess, branding }`.
-  **`defaultAccess`** ∈ `restricted | anyone_in_workspace | anyone_with_link` is the per-workspace
-  default doc access — the **source of truth a publish reads** to set a new doc's `general_access`
-  (see C-007; enforced by `render-publish` + `mcp-roundtrip`). It defaults to **`anyone_in_workspace`**
-  for EVERY workspace (auto-created personal and user-created alike — no `isPersonal` distinction
-  exists in the schema), and an absent/unset value reads as `anyone_in_workspace`. **Wiring note
-  (2026-06-23):** today `settings` is inserted as `{}` empty and `defaultAccess` lived only in a
-  comment, never set, never read — this spec makes it real. New-workspace creation sets
-  `settings.defaultAccess = anyone_in_workspace`; existing `{}` rows need no migration because the
-  read path treats absent as `anyone_in_workspace`.
 - **workspace_members**: `workspace_id` → workspaces, `user_id` → user, `role`
   (**admin | member** — UNCHANGED from the existing enum; no migration), `created_at`. Unique
   on (workspace_id, user_id). A user holds rows in many workspaces with per-workspace roles.
@@ -72,7 +69,7 @@ not join anyone else's workspace.
 AS-001: Signing up creates the user's own workspace, named after them, recording them as creator
 - **Given:** a new person "Dung" with no account
 - **When:** they sign up (and verify)
-- **Then:** a workspace named "Dung's workspace" is created with them as its admin AND recorded as its creator, with `settings.defaultAccess` defaulting to `anyone_in_workspace`, plus a default project in it
+- **Then:** a workspace named "Dung's workspace" is created with them as its admin AND recorded as its creator, plus a default project in it
 - **Data:** new user "Dung" → workspace "Dung's workspace"
 
 AS-002: A new account does not auto-join an existing workspace as a member
@@ -99,7 +96,7 @@ workspace I own; a non-admin cannot rename.
 AS-003: Creating a workspace makes me its admin and records me as creator
 - **Given:** I am signed in
 - **When:** I create a workspace named "Acme"
-- **Then:** the workspace exists with me as its admin, recorded as its creator, with `settings.defaultAccess` defaulting to `anyone_in_workspace`, and appears in my list of workspaces
+- **Then:** the workspace exists with me as its admin, recorded as its creator, and appears in my list of workspaces
 - **Data:** name "Acme"
 
 AS-004: A workspace admin renames the workspace
@@ -313,9 +310,8 @@ AS-020: A workspace member reaches that workspace's anyone_in_workspace docs
 ## Constraints & Invariants
 
 - C-001: Each account auto-gets one workspace on sign-up, named "<the creator's display name>'s
-  workspace", recording that account as both its `creator` and its admin, with
-  `settings.defaultAccess = anyone_in_workspace`, plus a default project; sign-up never joins an
-  existing workspace. (AS-001, AS-002)
+  workspace", recording that account as both its `creator` and its admin, plus a default project;
+  sign-up never joins an existing workspace. (AS-001, AS-002)
 - C-002: A caller accesses a workspace's data ONLY as a member of that workspace; every
   **workspace-management** data API (members, projects, search, invites) is scoped to a
   workspace the caller belongs to (cross-tenant isolation), and `isWorkspaceMember`/access
@@ -343,14 +339,6 @@ AS-020: A workspace member reaches that workspace's anyone_in_workspace docs
 - C-006: Per-doc sharing is orthogonal to workspace membership — a non-member can access a doc
   via a direct per-doc share, and a doc's effective permission is the most-permissive across
   workspace-role and per-doc ACL (no double-gating). (GAP-004)
-- C-007: Every workspace carries `settings.defaultAccess` ∈ `restricted | anyone_in_workspace |
-  anyone_with_link`, defaulting to `anyone_in_workspace` UNIFORMLY (auto-created personal and
-  user-created workspaces alike — there is no `isPersonal` flag in the schema to vary it); an
-  absent/unset value reads as `anyone_in_workspace`. This makes the workspace a shared group space
-  (Shared-Drive model): members see new docs by default, and `restricted` stays available per-doc
-  to make an individual doc private. `defaultAccess` is the publish-time source of truth a new doc
-  inherits as its `general_access` — that inheritance is OWNED and covered by the publish specs
-  (`render-publish`, `mcp-roundtrip`), not here. (AS-001, AS-003)
 
 ## Linked Fields
 
@@ -363,11 +351,6 @@ This spec is the **producer** (backend tenancy); `workspaces-ui` is the consumer
   Produced by workspaces:S-005 (AS-021) on the workspace members surface. ✔.
 - invitation accept/reject — consumed by `workspaces-ui` accept/reject landing; produced by
   workspaces:S-004 (AS-010/011/012). ✔.
-- `settings.defaultAccess` — PRODUCED here (C-007, defined on the workspace; default
-  `anyone_in_workspace`). CONSUMED by the publish path at publish time: `render-publish` and
-  `mcp-roundtrip` read the target workspace's `defaultAccess` to set a new doc's `general_access`
-  (persisted on the doc, served on every later read). The enforcing AS live in those specs (added
-  in the same 2026-06-23 doc-access change). ✔ surface (publish) + lifecycle (persisted) pinned.
 
 ## UI Notes
 
@@ -407,13 +390,8 @@ invite + accept/reject landing). This backend spec names no components; see `wor
 - Per-doc sharing (invite-to-a-doc, anyone-with-link, guest) — `sharing-permissions` (unchanged;
   orthogonal to membership per C-006).
 - MCP under multi-workspace (identity-token + `/w/:id/mcp`, Atlassian model) — `mcp-roundtrip`, deferred.
-- Workspace deletion, leave-workspace (member self-removal), domain-allowlist auto-join — later (v0.5+).
-- **Admin UI to change `settings.defaultAccess` per workspace** — deferred (v0.5+). v0 ships the
-  field as a real, read source of truth with a fixed `anyone_in_workspace` default for every
-  workspace (C-007); changing that default per workspace is a later knob (Confluence-style default
-  space permissions). Private docs in v0 are handled per-doc via `restricted`, not by flipping the
-  workspace default. (Narrows the earlier "workspace-level default-share settings — v0.5+"
-  deferral: the field + default + publish inheritance are now IN scope; only the admin knob stays out.)
+- Workspace deletion, leave-workspace (member self-removal), domain-allowlist auto-join,
+  workspace-level default-share settings — later (v0.5+).
 - Signup gating (open vs invite-only): signup is OPEN — each new user gets their own isolated
   workspace and reaches others only by invite, so no instance-level gate is needed (Clarification).
 
@@ -492,4 +470,3 @@ over-target AS, AS-021 (the admin's member-list read), also stands. No bloat —
 | 2026-06-21 | Major (M1+M6) — unified invite flow: S-004 + AS-022 (public validate → workspace + invited email + accountExists), AS-023 (expired/used/tampered → uniform not-found), AS-024 (accept-as-new-user → verified account + session + join, no mail step), AS-025 (create path refused when account exists); C-004 amended for the token-authorized + new-user auto-verify carve-out (invite-accept path only); S-004 → checkpoint; +Spec Sizing Notes (25 AS). Snapshot 2026-06-21-invite-validate-newuser.md; rotated out 2026-06-10.md. | unified invite design |
 | 2026-06-21 | Major (M1) — added AS-026 (admin revokes a pending invite → status revoked, admin-authorized, workspace-scoped, pending-only); `revoked` added to the AS-023 not-found set; C-003 coverage +AS-026. Producer for the existing FE workspaces-ui:AS-017 (revoke had no backend AS — built + specced from the 404 fix). Snapshot 2026-06-21-2.md. | /mf-fix revoke 404 |
 | 2026-06-22 | Major (M6+M4) — +`workspaces.creator_id` (data model + migration: add col, backfill earliest-admin, rename literal "default" autos to "<creator>'s workspace"); C-001 + S-001/AS-001 auto-create named "<creator>'s workspace" recording creator; AS-003 manual create records creator; AS-006 bootstrap serves creator identity (mark "mine" by creator===me, not name+role). Supersedes GAP-002's admin-qualified-"default" disambiguation. Snapshot 2026-06-22-creator-id.md. | two "My Default" bug |
-| 2026-06-23 | Major (M6+M5+M4) — doc-access shared-workspace model (workspace = shared group space): Data Model defines `settings.defaultAccess` (default `anyone_in_workspace`, absent reads same, publish-time source of truth); +C-007 (uniform default, no isPersonal); C-001 + AS-001/AS-003 now assert created workspace gets `defaultAccess=anyone_in_workspace`; Linked Fields forward-pin to render-publish + mcp-roundtrip; Not-in-Scope narrowed (field/default/inheritance IN, admin-change-knob deferred v0.5+). Snapshot 2026-06-23-default-access.md (rotation of 2026-06-14.md blocked by guard — 9 snapshots kept). | doc-access audit 2026-06-23 |

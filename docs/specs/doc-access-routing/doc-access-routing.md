@@ -1,7 +1,7 @@
 # Spec: doc-access-routing
 
 **Created:** 2026-06-14
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-23
 **Status:** Draft
 
 ## Overview
@@ -485,6 +485,22 @@ C-002/C-005) by carving out doc-centric read+write. Resolved 2026-06-14 → Mode
   the general-access level itself is the grant. Implemented + tested in S-001
   (resolve-access; the anon/no-link-row case). Documented here; not promoted to a constraint.
 
+## Clarifications — 2026-06-23
+
+- **No logic change for doc-access shared-workspace model (workspace = shared group space):** the audit that
+  flipped the new-doc default from `restricted` to the workspace `settings.defaultAccess`
+  (default `anyone_in_workspace`; `workspaces`:C-007, render-publish:C-011, mcp-roundtrip:C-006)
+  does NOT touch resolution. `resolveAccess` / C-003 / AS-003 already grant a workspace member the
+  general-access role on an `anyone_in_workspace` doc — that was the rare path before and is now
+  the common one. Nothing here needs to change; this spec resolves whatever level a doc carries.
+- **C-011 / AS-008 fail-closed still holds and is still correct:** a project-less doc
+  (`project_id` null) grants NOTHING via the anyone-in-workspace path because it has no workspace —
+  even now that the level defaults to `anyone_in_workspace`. The owner still sees it (owner path,
+  AS-001), but members do not. This is intentional and unchanged. In practice both publish paths
+  assign a project (web uses project context; MCP falls back to the owner's default project,
+  mcp-roundtrip:C-006), so a published doc always has a workspace and the default takes effect
+  through AS-003 — the project-less branch is the deliberate fail-closed edge, not a regression.
+
 ## Spec Sizing Notes
 
 Stories=6 (target 7 — under). AS=30 (target 20 — in G7 overage range ≤30, hard cap 30).
@@ -513,3 +529,4 @@ AS-030 (member workspace context) is the one /mf-build addition (S1 fix) — one
 | 2026-06-15 | Major (M6): + C-015 (post-sign-in redirect honored only for internal paths — open-redirect guard from mf-fix AS-016). Snapshot 2026-06-15-3.md | /mf-fix AS-016 S3 |
 | 2026-06-15 | Major (M6): + C-013 (anon rate-limiter keyed IP:doc, signed-in bypass) + C-014 (impersonation guard matches owner name, guest-only) — formalize S-004 S3. Snapshot 2026-06-15-2.md | /mf-build S-004 S3 |
 | 2026-06-15 | Major (M5): + AS-030 member workspace context (doc-read response carries doc workspaceId → member-only Share/Version on the doc-scoped viewer); + Data Model read-response field + Linked Fields; Clarifications 2026-06-15 (S1 resolution + S3 default-viewer). Snapshot 2026-06-15.md | /mf-build S1+S3 |
+| 2026-06-23 | Minor — doc-access shared-workspace model: +Clarifications-2026-06-23 confirming resolveAccess / C-003 / AS-003 already implement the shared-group-space default (no logic change; the anyone_in_workspace member path is now the common case) and that C-011/AS-008 project-less fail-closed is unchanged and still correct. No AS/constraint change → Minor, no snapshot. | doc-access audit 2026-06-23 |

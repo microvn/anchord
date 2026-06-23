@@ -217,6 +217,26 @@ describe("copyDoc (workspace-project S-004)", () => {
     expect(f.state.setProjectIdCalls).toBe(0);
   });
 
+  test("AS-013: copy inherits the workspace defaultAccess (anyone_in_workspace), not restricted", async () => {
+    // shared-workspace model (workspace-project C-008, workspaces:C-007): a copy is a fresh doc that
+    // inherits the target workspace's defaultAccess — same as a publish, NOT hard restricted.
+    const f = fakeRepo();
+    await copyDoc(
+      { slug: "billing-doc", targetProjectId: "p_payments", actorId: "u_reader" },
+      deps(f.repo, "viewer", { resolveDefaultAccess: async () => "anyone_in_workspace" }),
+    );
+    expect(f.state.copies[0]!.generalAccess).toBe("anyone_in_workspace");
+  });
+
+  test("AS-013: copy inherits a restricted-default workspace as restricted", async () => {
+    const f = fakeRepo();
+    await copyDoc(
+      { slug: "billing-doc", targetProjectId: "p_payments", actorId: "u_reader" },
+      deps(f.repo, "viewer", { resolveDefaultAccess: async () => "restricted" }),
+    );
+    expect(f.state.copies[0]!.generalAccess).toBe("restricted");
+  });
+
   test("AS-013: read access (viewer) is enough to copy", async () => {
     const f = fakeRepo();
     const res = await copyDoc(

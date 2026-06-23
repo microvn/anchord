@@ -3,7 +3,9 @@
 // Maps the tools' injectable ports onto the EXISTING domain services (no new behaviour):
 //   • create → publish/service.ts `publishDoc` with the workspace-scoped
 //     `createPublishProjectResolver` (AS-003 default-project fallback / AS-018 explicit /
-//     AS-019 foreign-rejected) — restricted general_access is the docs column default (C-006).
+//     AS-019 foreign-rejected) — general_access INHERITS the token's workspace
+//     settings.defaultAccess (default anyone_in_workspace, shared-workspace model / C-006), not a
+//     hard-coded restricted; visibility is still never *chosen* via MCP in v0.
 //   • update → services/version-repo.ts `appendVersionTx` (per-doc advisory lock +
 //     UNIQUE(doc_id, version) backstop = C-011) + the doc lookup + resolveAccess role gate
 //     + the same re-anchor seam routes/versions.ts fires (C-012).
@@ -17,6 +19,7 @@ import type { DB } from "../../db/client";
 import { publishDoc } from "../../publish/service";
 import { createDocRepo } from "../../publish/repo";
 import { createPublishProjectResolver } from "../../workspace/repo";
+import { readWorkspaceDefaultAccess } from "../../workspace/settings";
 import { appendVersionTx, appendVersionTxPinned, VersionConflictError } from "../../services/version-repo";
 import { docVersions } from "../../db/schema";
 import { desc } from "drizzle-orm";
@@ -44,6 +47,7 @@ import type { ToolDef } from "../server";
 export function createMcpCreateDocumentPort(db: DB): CreateDocumentPort {
   const repo = createDocRepo(db);
   const resolveProjectId = createPublishProjectResolver(db);
+  const resolveDefaultAccess = (workspaceId: string) => readWorkspaceDefaultAccess(db, workspaceId);
   return async (input) => {
     const res = await publishDoc(
       {
@@ -54,10 +58,11 @@ export function createMcpCreateDocumentPort(db: DB): CreateDocumentPort {
         workspaceId: input.workspaceId,
         projectId: input.projectId,
       },
-      { repo, resolveProjectId },
+      { repo, resolveProjectId, resolveDefaultAccess },
     );
-    // C-006: the doc is created restricted (docs.general_access column default) — no
-    // visibility is ever set via MCP in v0. Return the agent-facing shape (AS-003.T4).
+    // shared-workspace model (C-006): the doc INHERITS the token's workspace default access
+    // (anyone_in_workspace by default) — visibility is never *chosen* via MCP in v0.
+    // Return the agent-facing shape (AS-003.T4).
     return { docId: res.docId, slug: res.slug, url: res.url };
   };
 }

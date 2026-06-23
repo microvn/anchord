@@ -1,9 +1,15 @@
+# Snapshot: sharing-permissions
+**Date:** 2026-06-23
+**Ref:** doc-access shared-workspace model (workspace = shared group space)
+**Reason:** M6 (new constraint C-018: new doc inherits workspace defaultAccess; default no longer hard-restricted)
+
+---
+
 # Spec: sharing-permissions
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-22
 **Status:** Draft
-**Snapshot limit:** 12
 
 ## Overview
 
@@ -15,12 +21,7 @@ Decides "who can open the link, who can do what".
 ## Data Model
 
 - **docs.general_access**: restricted | anyone_with_link | anyone_in_workspace
-  (defined in `render-publish`). **Default (2026-06-23, shared-workspace model):** a newly published doc does
-  NOT default to `restricted`; it inherits the target workspace's `settings.defaultAccess`, which
-  defaults to `anyone_in_workspace` (`workspaces`:C-007). `restricted` is the per-doc opt-in for a
-  private doc — see C-018. The inheritance is set at publish time and enforced by the publish specs
-  (`render-publish`:AS-027, `mcp-roundtrip`:AS-003); this spec owns what each level MEANS once set,
-  not how the default is assigned.
+  (defined in `render-publish`).
 - **doc_members**: `doc_id`, `user_id` (nullable if pending), `email` (for pending),
   `role`, `message`, `invited_by`, `status` (active | pending), `created_at`.
 - **share_links**: `doc_id`, `role` (for anyone-with-link), `password_hash` (nullable),
@@ -396,16 +397,6 @@ AS-032: The owner cannot be role-changed or removed (error)
   identically to the other management writes (owner, or editor when `editors_can_share`; C-007); the
   doc OWNER is never a reassignable or removable member through these actions (owner is separate from
   the invited-member roles, C-012). (AS-028, AS-029, AS-030, AS-031, AS-032)
-- C-018: A newly published doc's `general_access` is NOT hard-coded `restricted`; it INHERITS the
-  target workspace's `settings.defaultAccess` (default `anyone_in_workspace`, `workspaces`:C-007).
-  This is the shared-workspace model (shared-group-space) default — members see new docs by default;
-  `restricted` is the explicit per-doc opt-in to make a doc private (set later via S-001/AS-002). The
-  default is assigned at publish, so this cross-surface invariant is COVERED by the publish specs,
-  not by an AS here (this spec is at the 30-AS hard cap and owns level semantics, not default
-  assignment).
-  - scope: render-publish:S-001, mcp-roundtrip:S-002
-  - surfaces: web/UI publish, MCP publish
-  - coverage: web/UI publish → render-publish:AS-027; MCP publish → mcp-roundtrip:AS-003
 
 ## UI Notes
 
@@ -457,11 +448,7 @@ prompts then verifies server-side (AS-009/016, rate-limited). Role capability + 
 - Request access + owner approval — v0.5.
 - Transfer ownership — v0.5 (table has a slot, UI deferred).
 - Multiple named share-links per doc — v0.5+.
-- Workspace default-access (`settings.defaultAccess`) field + its `anyone_in_workspace` default +
-  publish-time inheritance are now IN scope (2026-06-23, C-018; defined in `workspaces`:C-007).
-  Still deferred: the admin UI to CHANGE the workspace default per workspace (v0.5+,
-  `workspaces`), project-level default share settings, and project role override (v0.5,
-  `workspace-project`).
+- Project/workspace default share settings, project role override — `workspace-project` (v0.5).
 - Block copy/download for viewers — v2.
 - Editor inviting others — v0 is owner-only.
 
@@ -470,11 +457,6 @@ prompts then verifies server-side (AS-009/016, rate-limited). Role capability + 
 - `general_access` — produced by this spec (AS-001/002). Consumed by
   `render-publish`/`versioning-diff` when gating the `/d/:slug` link. ✔ enforcement defined
   in S-005; the other cluster only checks before serving.
-- **`workspaces.settings.defaultAccess` (the new-doc default)** — produced by `workspaces` (C-007,
-  default `anyone_in_workspace`). CONSUMED at publish by `render-publish`:AS-027 + `mcp-roundtrip`:
-  AS-003, which set a new doc's `general_access` to it (persisted, served on every later read).
-  This spec defines the LEVEL semantics the inherited value lands in (C-009/C-018); the publish
-  specs own the assignment. ✔ surface (publish) + lifecycle (persisted) — covers C-018.
 - **pending invite (email→role)** — produced by S-003 (AS-008). Consumed by
   `auth` at sign up to assign the role. ✔ auth picks up by verified email.
 - **new member `id`** — produced by S-003 (AS-007/AS-008) in the `POST …/invites` 201 response
@@ -521,18 +503,6 @@ prompts then verifies server-side (AS-009/016, rate-limited). Role capability + 
   externally) is the common "share with the whole team" case, clearly different from anyone_with_link (public,
   including anon); cheap (just a membership check). Keep it for multi-workspace v2.
 
-## Clarifications — 2026-06-23
-
-- **New-doc default flipped from `restricted` to the workspace `defaultAccess` (`anyone_in_workspace`)
-  — shared-workspace model:** a doc is no longer born private; it inherits `workspaces.settings.defaultAccess`
-  (default `anyone_in_workspace`, `workspaces`:C-007) at publish. This makes the workspace a shared
-  group space (Shared Drive / Notion teamspace model): members see new docs by default, and
-  `restricted` is the explicit per-doc opt-in for a private doc (still set via S-001/AS-002, which is
-  UNCHANGED). The 3 levels, their semantics, precedence, and all gating are untouched — only the
-  DEFAULT a new doc gets changed, and that default is owned by `workspaces` + assigned by the publish
-  specs (C-018). Decided after the 2026-06-23 doc-access audit (the `defaultAccess` setting was
-  declared but never wired); do not relitigate back to restricted-by-default.
-
 ## Spec Sizing Notes
 
 Stories=7 (= soft target). AS=32 — **2 OVER the 30-AS hard cap** (2026-06-13, after +S-007).
@@ -569,4 +539,3 @@ further. Flagged to the product owner 2026-06-13.
 | 2026-06-20 | Major (snapshot 2026-06-20.md): DROP the guest-commenting sub-toggle (Google-Docs model) — anon-write is gated by link role ≥ commenter, not a separate toggle. Removed AS-003 + C-003 + the `guestCommenting` field from `GET …/share`, `PUT …/access`, the S-006 read AS, the ShareDialog UI, and the share-state Linked Field. Cascades: annotation-core drops the guestCommentingEnabled gate; CLAUDE.md domain note reversed. Fixes guest-can't-comment bug by construction. | -- |
 | 2026-06-22 | Major (snapshot 2026-06-22.md): setting/changing a link view limit resets the open count to 0 (fresh budget) — +AS-033 (S-004), C-008 extended, `PUT …/link` API row updated. Fixes a footgun found in dogfood: setLinkControls only updated password/expiry/viewLimit, never view_count, so a re-set limit could leave a link instantly exhausted by past opens. Scope: SET path only; rotate-resets-count left out of scope. | -- |
 | 2026-06-22 | Minor: `PUT …/access` response gains `capabilityUrl` (linked field for capability-share-link:S-005/AS-027 — share box surfaces the link in-session). Contract/doc row only; no behavior AS change here. | -- |
-| 2026-06-23 | Major (M6, snapshot 2026-06-23-default-access.md) — doc-access shared-workspace model: +C-018 (a new doc's `general_access` inherits the workspace `settings.defaultAccess`, default `anyone_in_workspace`, NOT hard `restricted`; cross-surface invariant covered by render-publish:AS-027 + mcp-roundtrip:AS-003). Data Model default note + Clarifications-2026-06-23 + Linked Field (`defaultAccess` consumed at publish) + Not-in-Scope narrowed (field/default/inheritance IN; admin-change-knob deferred). No AS added here (spec at 30-AS hard cap; assignment owned by the publish specs). Snapshot limit set to 12 (matches the 11 prior). | doc-access audit 2026-06-23 |
