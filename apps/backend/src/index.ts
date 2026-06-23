@@ -381,6 +381,11 @@ const app = createApp({
     db,
     resolveSession,
     resolveActorEmail: (userId: string) => findUserById(db, userId),
+    // workspace-activity S-006 (C-005): log workspace_renamed / invite / member-join (invite-accept)
+    // to the activity feed. WORKSPACE-LEVEL events — the route passes the workspaceId directly, so
+    // no workspaceOfDoc here; the repo is built from `db`. resolveActorName resolves the actor name
+    // per-emit. Best-effort post-commit — never blocks the rename/invite/accept.
+    activity: { resolveActorName },
     // AS-009: inviting a member ENQUEUES a workspace-invite email carrying the accept/
     // reject landing link the FE consumes — through the SAME shared queue + transport the
     // verification mail uses. Fixes the live wiring gap where this dep was absent so the
@@ -421,7 +426,10 @@ const app = createApp({
   // doc-scoped events on docs they can open, resolved at READ time, F-2).
   activity: { db, resolveSession, resolveWorkspaceRole, resolveAccess: sharedResolveAccess, resolveDocLink },
   // workspace-project S-003: project routes under /api/w/:workspaceId/projects.
-  projects: { db, resolveSession, resolveWorkspaceRole },
+  // workspace-activity S-006 / AS-024 (C-005): a project create logs ONE `project` event. The
+  // workspace is the path workspace (passed by the route), so no workspaceOfDoc; the repo is built
+  // from `db`. resolveActorName resolves the actor name per-emit. Best-effort post-commit.
+  projects: { db, resolveSession, resolveWorkspaceRole, activity: { resolveActorName } },
   // workspaces S-005: per-workspace member directory + role management under
   // /api/w/:workspaceId/members (admin-gated; ≥1-admin invariant).
   members: {
@@ -432,6 +440,10 @@ const app = createApp({
     // workspace name + recipient email are snapshotted PRE-delete by the route; the email deep-link
     // is workspace-shaped (built from APP_URL). Best-effort — a notify failure never fails removal.
     notify: { mail: notifyMail, appUrl: cfg.APP_URL },
+    // workspace-activity S-006 (C-005): a successful removal logs ONE `member_removed` event. The
+    // workspace is the path workspace (passed by the route), so no workspaceOfDoc; the repo is built
+    // from `db`. resolveActorName resolves the actor name per-emit. Best-effort post-commit.
+    activity: { resolveActorName },
   },
   // workspace-project S-005: GET /api/w/:workspaceId/search, scoped to the workspace.
   search: { db, resolveSession, resolveWorkspaceRole },
@@ -466,6 +478,14 @@ const app = createApp({
     mailQueue,
     mailTransport,
     secret: cfg.APP_SECRET,
+    // workspace-activity S-006 / AS-022 (C-005 / C-008): a successful general-access change logs ONE
+    // doc-scoped `share` event. workspaceOfDoc anchors the row to the doc's OWN workspace (C-008),
+    // reusing the same tenancy helper the access resolver uses; resolveActorName resolves the actor
+    // name per-emit. Best-effort post-commit — never blocks the share change.
+    activity: {
+      workspaceOfDoc: (docId: string) => wsAccess.workspaceOfDoc(docId),
+      resolveActorName,
+    },
   },
   // auth S-005 (AS-011 / harden H6): the invite accept-link endpoint. The accepting
   // email is resolved from the session actor (findUserById over the user table), never
