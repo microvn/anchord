@@ -421,6 +421,13 @@ export const comments = pgTable(
 // invited. `reply` is the legacy thread-activity alias kept green until S-002 folds it in. The
 // generated migration only APPENDS enum values (no DROP/ALTER of `reply`); plain enum, no
 // Postgres-only tricks, so the SQLite door stays open.
+//
+// workspace-notifications S-001 (2026-06-23): extended ADDITIVELY again with the four
+// workspace-membership events — `workspace_invited`, `workspace_member_joined`,
+// `workspace_member_removed`, `workspace_renamed`. The migration uses `ADD VALUE IF NOT
+// EXISTS` (idempotent, forward-only, no down-migration); the TS union NotificationType is
+// hand-synced in lockstep (F3). The doc-share `invited` value is left intact — the new
+// `workspace_invited` is a DISTINCT type, not an overload.
 export const notificationType = pgEnum("notification_type", [
   "reply",
   "new_feedback",
@@ -429,6 +436,10 @@ export const notificationType = pgEnum("notification_type", [
   "resolved",
   "detached",
   "invited",
+  "workspace_invited",
+  "workspace_member_joined",
+  "workspace_member_removed",
+  "workspace_renamed",
 ]);
 
 export const notifications = pgTable(
@@ -440,8 +451,14 @@ export const notifications = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     type: notificationType("type").notNull(),
-    // Deep-link target — the annotation (thread) id that received the reply.
+    // Deep-link target — the annotation (thread) id that received the reply, OR the
+    // workspace id for a workspace-membership row (workspace-notifications S-001).
     refId: text("ref_id").notNull(),
+    // workspace-notifications S-001 (F1): a human-readable display label SNAPSHOTTED at emit
+    // time, so the bell renders without a live join that could leak a workspace's CURRENT name
+    // to a since-removed member (and so it survives a membership delete). For workspace_invited
+    // this is the workspace name. NULL for annotation/doc rows (they enrich via refId→docs).
+    refLabel: text("ref_label"),
     // notifications-email S-006 (AS-027/AS-028, panel enrichment 2026-06-21): the TRIGGERING
     // comment for a comment-type row (reply/new_feedback/thread_activity). Set at emit; NULL for
     // non-comment types and (via set-null) when the comment is later removed — the read then

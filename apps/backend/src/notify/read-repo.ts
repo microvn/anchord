@@ -32,6 +32,14 @@ export interface NotificationRow {
   createdAt: Date;
   slug: string | null;
   /**
+   * workspace-notifications S-001 (F1): the display label SNAPSHOTTED at emit (e.g. the workspace
+   * name for a `workspace_invited` row). Rendered DIRECTLY by the bell for workspace types — NOT a
+   * live `workspaces` join (a live join would leak the CURRENT name to a since-removed member, and
+   * the refId→annotations→docs enrichment returns null for a workspace id anyway). Null for
+   * annotation/doc rows (those still enrich via docTitle/slug).
+   */
+  refLabel: string | null;
+  /**
    * S-006 panel enrichment (all NULL-safe, C-014):
    * - docTitle: the row's doc title (refId→annotation→doc); null for a non-doc row (e.g. `invited`)
    *   or when the annotation/doc is gone (AS-026/AS-029).
@@ -85,6 +93,9 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
           createdAt: notifications.createdAt,
           slug: docs.slug,
           docTitle: docs.title,
+          // workspace-notifications S-001 (F1): the emit-time label snapshot, rendered as-is for
+          // workspace rows. NO live workspaces join (would leak a removed member the current name).
+          refLabel: notifications.refLabel,
           // actorName = the member's name, falling back to the guest's typed name (AS-027).
           memberName: user.name,
           guestName: comments.guestName,
@@ -109,6 +120,7 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
         createdAt: r.createdAt,
         slug: r.slug ?? null,
         docTitle: r.docTitle ?? null,
+        refLabel: r.refLabel ?? null,
         // Member name wins; else the guest's typed name; else null (no resolvable comment, AS-029).
         actorName: r.memberName ?? r.guestName ?? null,
         snippet: r.snippet ?? null,

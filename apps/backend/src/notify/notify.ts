@@ -36,6 +36,13 @@ export interface NewNotification {
    * later removed (C-014, the read then degrades to the generic per-type summary).
    */
   commentId?: string | null;
+  /**
+   * workspace-notifications S-001 (F1): a human-readable display label snapshotted at EMIT time
+   * (e.g. the workspace name for `workspace_invited`). Persisted to `notifications.ref_label` so
+   * the bell renders without a live join that could leak a workspace's CURRENT name to a
+   * since-removed member. Undefined/null for annotation/doc rows (they enrich via refId→docs).
+   */
+  refLabel?: string | null;
 }
 
 /**
@@ -63,6 +70,23 @@ export interface NotifyRepo {
    * email then omits the link rather than crashing). Optional so existing fakes stay valid.
    */
   getDocSlug?(annotationId: string): Promise<string | null>;
+  /**
+   * workspace-notifications S-001: resolve the account user id for an email, or null when no
+   * account exists for it (a pending invite to an account-less address — then no in-app row).
+   * Optional so existing annotation-path fakes stay valid.
+   */
+  findUserIdByEmail?(email: string): Promise<string | null>;
+  /**
+   * workspace-notifications S-001: every ADMIN's user id in the workspace. S-001 itself only needs
+   * the invitee path, but the port is added now (S-002 join-notify consumes it). Optional so
+   * existing fakes stay valid.
+   */
+  listWorkspaceAdminIds?(workspaceId: string): Promise<string[]>;
+  /**
+   * workspace-notifications S-001: every MEMBER's user id in the workspace (admins + members). Added
+   * now for S-004 (rename → all members). Optional so existing fakes stay valid.
+   */
+  listWorkspaceMemberIds?(workspaceId: string): Promise<string[]>;
   /** Insert one in-app notification row. */
   insertNotification(input: NewNotification): Promise<{ id: string }>;
 }
@@ -114,6 +138,33 @@ export function buildAnnotationDeepLink(appUrl: string, slug: string, annotation
 }
 
 /**
+ * workspace-notifications S-001 (F3): build the absolute deep-link to a WORKSPACE —
+ * `{APP_URL}/w/{workspaceId}`. The existing annotation deep-link is doc-shaped
+ * (`/d/{slug}#annotation-{id}`) and useless for a workspace event, so this is a new builder.
+ * S-001's `workspace_invited` is in-app only (no email), but S-003's member-removed email needs
+ * this — added now so the email half lands without re-touching this module. `encodeURIComponent`
+ * keeps a special-char or control-char id from breaking the URL (the builder never throws).
+ */
+export function buildWorkspaceDeepLink(appUrl: string, workspaceId: string): string {
+  const base = appUrl.replace(/\/+$/, "");
+  return `${base}/w/${encodeURIComponent(workspaceId)}`;
+}
+
+/**
+ * workspace-notifications C-006 (S-001 minimal form): strip CR/LF + other control characters
+ * from an untrusted, user-controlled workspace name before it is snapshotted into a refLabel or
+ * (S-003) interpolated into an email. S-001 only needs the inert-snapshot half; the full
+ * length-bounding + email-injection coverage is S-003/AS-009. Bounds length defensively so a
+ * pathological name can't bloat a row.
+ */
+const REF_LABEL_MAX = 200;
+export function sanitizeRefLabel(name: string): string {
+  // Strip ASCII control chars (incl. CR/LF/TAB, U+0000-U+001F and U+007F) and trim; bound length.
+  // eslint-disable-next-line no-control-regex
+  return name.replace(/[\x00-\x1f\x7f]/g, "").trim().slice(0, REF_LABEL_MAX);
+}
+
+/**
  * Compose the per-event plain-text email body for a high-signal notification (C-012, GAP-004).
  * Minimal content only: a one-line per-type summary + the deep-link line. The doc body is NEVER
  * embedded (personal-data minimization). GAP-004 is a build-time copy decision — these are the
@@ -128,6 +179,14 @@ const EVENT_SUMMARY: Record<NotificationType, string> = {
   resolved: "An annotation you created was resolved.",
   detached: "Some of your annotations were detached.",
   invited: "You were invited.",
+  // workspace-notifications S-001 (F3): real, non-fallback copy for ALL FOUR workspace types so the
+  // maps stay total over the widened union (tsc) AND S-003's member-removed email never ships
+  // placeholder text. workspace_invited/joined/renamed are in-app only (never reach this builder);
+  // workspace_member_removed is high-signal and uses this body.
+  workspace_invited: "You were invited to a workspace.",
+  workspace_member_joined: "Someone joined a workspace you administer.",
+  workspace_member_removed: "You were removed from a workspace.",
+  workspace_renamed: "A workspace you're in was renamed.",
 };
 
 export function buildEmailBody(type: NotificationType, deepLink: string): string {
@@ -143,6 +202,11 @@ const EVENT_SUBJECT: Record<NotificationType, string> = {
   resolved: "An annotation was resolved",
   detached: "Annotations were detached",
   invited: "You've been invited",
+  // workspace-notifications S-001 (F3): non-fallback subjects for all four (totality + S-003 email).
+  workspace_invited: "You've been invited to a workspace",
+  workspace_member_joined: "A new member joined your workspace",
+  workspace_member_removed: "You've been removed from a workspace",
+  workspace_renamed: "A workspace you're in was renamed",
 };
 
 export function emailSubjectFor(type: NotificationType): string {
@@ -651,6 +715,56 @@ export async function notifyOnInvited(
   }
 }
 
+export interface NotifyOnWorkspaceInvitedInput {
+  /** The workspace the invite targets — persisted as the in-app row's refId (Data Model). */
+  workspaceId: string;
+  /** The invited email; resolved to an account user id (null → no in-app row). */
+  inviteeEmail: string;
+  /** The workspace's CURRENT name — snapshotted into refLabel at emit (F1), sanitized (C-006). */
+  workspaceName: string;
+  /** The inviting admin — never a recipient of their own invite (C-002). */
+  actorUserId: string | null;
+}
+
+/**
+ * workspace-notifications S-001 — notify an INVITED MEMBER in the bell. Emits ONE in-app
+ * `workspace_invited` row to the invited ACCOUNT, but ONLY when an account exists for the email
+ * (AS-001); a no-account email writes NOTHING (AS-002 — the existing invite email is the only
+ * thing they get). IN-APP ONLY (C-001) — `workspace_invited` is low-signal, so the notify path
+ * enqueues NO email; the workspace invite email is the invite flow's own (separate) channel and is
+ * never duplicated or removed here. The inviting admin is excluded even if they invite their own
+ * address (C-002, AS-003). refId = workspaceId; refLabel = the sanitized workspace name snapshot
+ * (F1) so the bell renders without a live `workspaces` join.
+ *
+ * BEST-EFFORT / POST-COMMIT (C-004): runs AFTER the invitation persists; the whole pass is wrapped
+ * so a throwing repo is logged and swallowed — the invite is never turned into a 500 by notify.
+ */
+export async function notifyOnWorkspaceInvited(
+  input: NotifyOnWorkspaceInvitedInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { workspaceId, inviteeEmail, workspaceName, actorUserId } = input;
+  const type: NotificationType = "workspace_invited"; // C-001: in-app only (low-signal).
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    // Resolve the invitee's account by email. No account → no in-app row to attach (AS-002).
+    const inviteeUserId = deps.repo.findUserIdByEmail
+      ? await deps.repo.findUserIdByEmail(inviteeEmail)
+      : null;
+    // C-002 (AS-003): the inviting admin is never a recipient — even self-invite resolves to []
+    const recipients =
+      inviteeUserId != null && inviteeUserId !== actorUserId ? [inviteeUserId] : [];
+    // F1/C-006: snapshot the sanitized workspace name so the row is inert + survives a rename/delete.
+    const refLabel = sanitizeRefLabel(workspaceName);
+    return await deliverToRecipients(workspaceId, recipients, type, deps, null, refLabel);
+  } catch (err) {
+    log("notifyOnWorkspaceInvited failed (best-effort, invite already persisted)", err);
+    return empty;
+  }
+}
+
 /**
  * Shared per-recipient channel send (C-005/C-006/C-012/C-013): for each recipient write ONE
  * in-app row (always — the durable channel) and, for a high-signal type only, enqueue ONE
@@ -666,6 +780,10 @@ async function deliverToRecipients(
   // S-006: the triggering comment id for a comment-type row (AS-027/AS-028). Absent for the
   // non-comment events (resolved/decided/detached/invited) → persisted NULL (C-014 degrade).
   commentId?: string | null,
+  // workspace-notifications S-001 (F1): the snapshotted display label for a workspace row (e.g. the
+  // workspace name). Undefined for annotation/doc rows — only spread into the insert when present so
+  // existing exact-equality assertions on those rows stay valid.
+  refLabel?: string | null,
 ): Promise<NotifyResult> {
   // C-006: email is sent ONLY for a high-signal type. A low-signal event writes the in-app
   // row(s) and enqueues NO mail. Eligibility is derived from `type`, never a stored column.
@@ -678,7 +796,15 @@ async function deliverToRecipients(
   for (const userId of recipients) {
     // Channel 1 — in-app: one notification row per recipient (always, the durable channel).
     // Carries the triggering comment id for comment-type rows (S-006) — null otherwise.
-    await deps.repo.insertNotification({ userId, type, refId: annotationId, commentId: commentId ?? null });
+    await deps.repo.insertNotification({
+      userId,
+      type,
+      refId: annotationId,
+      commentId: commentId ?? null,
+      // Only carry refLabel when the caller supplied one (workspace rows) — annotation/doc rows
+      // leave it undefined so their existing exact-shape assertions are unaffected.
+      ...(refLabel !== undefined ? { refLabel } : {}),
+    });
     inAppSent += 1;
 
     // Channel 2 — email: high-signal only (C-006); one mail per recipient that has an address.

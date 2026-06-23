@@ -6,8 +6,16 @@
 //
 // Integration-verified against a real Postgres in test/integration/notify.itest.ts.
 
-import { and, eq, isNotNull } from "drizzle-orm";
-import { annotations, comments, docMembers, docs, notifications, user } from "../db/schema";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
+import {
+  annotations,
+  comments,
+  docMembers,
+  docs,
+  notifications,
+  user,
+  workspaceMembers,
+} from "../db/schema";
 import type { DB } from "../db/client";
 import type { NewNotification, NotifyRepo } from "./notify";
 
@@ -70,6 +78,39 @@ export function createNotifyRepo(db: DB): NotifyRepo {
       return row?.email ?? null;
     },
 
+    // workspace-notifications S-001: resolve an account user id by email (the invitee path). Returns
+    // null when no account exists for the email (a pending invite to an account-less address → no
+    // in-app row, AS-002). The tenancy service normalizes invited emails to lowercase before storing,
+    // so match on lower(email) to stay case-insensitive against the better-auth user table.
+    async findUserIdByEmail(email: string): Promise<string | null> {
+      const normalized = email.trim().toLowerCase();
+      const [row] = await db
+        .select({ id: user.id })
+        .from(user)
+        .where(eq(sql`lower(${user.email})`, normalized));
+      return row?.id ?? null;
+    },
+
+    // workspace-notifications S-001: every ADMIN's user id in the workspace (S-002 join-notify
+    // consumes it). Real query against workspace_members, not a no-op.
+    async listWorkspaceAdminIds(workspaceId: string): Promise<string[]> {
+      const rows = await db
+        .select({ userId: workspaceMembers.userId })
+        .from(workspaceMembers)
+        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, "admin")));
+      return rows.map((r) => r.userId);
+    },
+
+    // workspace-notifications S-001: every MEMBER's user id (admins + members) in the workspace
+    // (S-004 rename-notify consumes it). Real query against workspace_members.
+    async listWorkspaceMemberIds(workspaceId: string): Promise<string[]> {
+      const rows = await db
+        .select({ userId: workspaceMembers.userId })
+        .from(workspaceMembers)
+        .where(eq(workspaceMembers.workspaceId, workspaceId));
+      return rows.map((r) => r.userId);
+    },
+
     // S-007: the annotation's doc slug — backs the email deep-link {APP_URL}/d/{slug}#annotation-{id}.
     async getDocSlug(annotationId: string): Promise<string | null> {
       const [row] = await db
@@ -92,6 +133,9 @@ export function createNotifyRepo(db: DB): NotifyRepo {
           refId: input.refId,
           // S-006: the triggering comment for a comment-type row (AS-027/AS-028); null otherwise.
           commentId: input.commentId ?? null,
+          // workspace-notifications S-001 (F1): the snapshotted display label for a workspace row
+          // (e.g. the workspace name); null for annotation/doc rows (they enrich via refId→docs).
+          refLabel: input.refLabel ?? null,
         })
         .returning({ id: notifications.id });
       return { id: row.id };

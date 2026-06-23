@@ -180,3 +180,89 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
     expect(mail.statusCounts().pending).toBe(2);
   });
 });
+
+// workspace-notifications S-001 — notify an invited member in the bell (real Postgres). Proves the
+// new repo ports (findUserIdByEmail / listWorkspace*Ids), refLabel persistence, and that the read
+// surface renders refLabel WITHOUT a live workspaces join (F1: a since-renamed workspace still shows
+// the snapshotted name). Drives the dispatch + read-repo directly (the HTTP invite route's session/
+// admin gate is unit-covered; this targets the live DB read/write).
+describe.skipIf(!RUN)("workspace-notifications S-001 (real Postgres)", () => {
+  let h: MigratedDb;
+  const ALICE = `u_ws_alice_${process.pid}`;
+  const BOB = `u_ws_bob_${process.pid}`;
+  const BOB_EMAIL = `ws-bob-${process.pid}@example.com`;
+  let WS = "";
+
+  beforeAll(async () => {
+    h = await withMigratedDb();
+    await h.db.insert(user).values([
+      { id: ALICE, name: "Alice", email: `ws-alice-${process.pid}@example.com`, emailVerified: true },
+      { id: BOB, name: "Bob", email: BOB_EMAIL, emailVerified: true },
+    ]);
+    ({ workspaceId: WS } = await seedWorkspace(h.db, { userId: ALICE, name: "Acme" }));
+    await h.db.insert(schema.workspaceMembers).values({ workspaceId: WS, userId: BOB, role: "member" });
+  });
+
+  afterAll(async () => {
+    if (h) {
+      await h.close();
+      await h.stop();
+    }
+  });
+
+  test("AS-001: inviting an existing account persists ONE workspace_invited row carrying refLabel, no email", async () => {
+    const { createNotifyRepo } = await import("../../src/notify/repo");
+    const { notifyOnWorkspaceInvited } = await import("../../src/notify/notify");
+    const mail = new MailQueue();
+    const result = await notifyOnWorkspaceInvited(
+      { workspaceId: WS, inviteeEmail: BOB_EMAIL.toUpperCase(), workspaceName: "Acme", actorUserId: ALICE },
+      { repo: createNotifyRepo(h.db), mail: { enqueue: (m) => mail.enqueue(m) } },
+    );
+
+    expect(result.recipients).toEqual([BOB]); // resolved case-insensitively
+    const rows = await h.db.select().from(notifications).where(eq(notifications.refId, WS));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].userId).toBe(BOB);
+    expect(rows[0].type).toBe("workspace_invited");
+    expect(rows[0].refLabel).toBe("Acme");
+    expect(rows[0].commentId).toBeNull();
+    // C-001: in-app only — the notify path enqueues NO email.
+    expect(mail.statusCounts().pending).toBe(0);
+  });
+
+  test("AS-001.T2: the bell renders refLabel WITHOUT a live workspaces join — a rename does not leak the new name (F1)", async () => {
+    const { createNotificationReadRepo } = await import("../../src/notify/read-repo");
+    // Rename the workspace AFTER the invite row was emitted.
+    await h.db.update(schema.workspaces).set({ name: "Acme Renamed" }).where(eq(schema.workspaces.id, WS));
+
+    const read = createNotificationReadRepo(h.db);
+    const list = await read.listForUser(BOB, { offset: 0, limit: 50 });
+    const wsRow = list.find((r) => r.type === "workspace_invited");
+    expect(wsRow).toBeDefined();
+    // Snapshot wins: still "Acme", NOT the current "Acme Renamed". Doc enrichment is null for a ws id.
+    expect(wsRow!.refLabel).toBe("Acme");
+    expect(wsRow!.docTitle).toBeNull();
+    expect(wsRow!.slug).toBeNull();
+  });
+
+  test("AS-002: inviting an email with NO account persists no row", async () => {
+    const { createNotifyRepo } = await import("../../src/notify/repo");
+    const { notifyOnWorkspaceInvited } = await import("../../src/notify/notify");
+    const mail = new MailQueue();
+    const before = (await h.db.select().from(notifications).where(eq(notifications.refId, WS))).length;
+    const result = await notifyOnWorkspaceInvited(
+      { workspaceId: WS, inviteeEmail: `nobody-${process.pid}@example.com`, workspaceName: "Acme", actorUserId: ALICE },
+      { repo: createNotifyRepo(h.db), mail: { enqueue: (m) => mail.enqueue(m) } },
+    );
+    expect(result.recipients).toEqual([]);
+    const after = (await h.db.select().from(notifications).where(eq(notifications.refId, WS))).length;
+    expect(after).toBe(before); // no new row
+  });
+
+  test("S-001 repo ports: listWorkspaceAdminIds / listWorkspaceMemberIds query workspace_members for real", async () => {
+    const { createNotifyRepo } = await import("../../src/notify/repo");
+    const repo = createNotifyRepo(h.db);
+    expect(await repo.listWorkspaceAdminIds!(WS)).toEqual([ALICE]);
+    expect((await repo.listWorkspaceMemberIds!(WS)).sort()).toEqual([ALICE, BOB].sort());
+  });
+});

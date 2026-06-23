@@ -10,9 +10,12 @@ import {
   notifyOnResolved,
   notifyOnDetached,
   notifyOnInvited,
+  notifyOnWorkspaceInvited,
   isEmailEligible,
   buildAnnotationDeepLink,
+  buildWorkspaceDeepLink,
   buildEmailBody,
+  emailSubjectFor,
   type MailEnqueuer,
   type NewNotification,
   type NotifyRepo,
@@ -1021,5 +1024,205 @@ describe("notifyOnInvited (invitee in-app row — in-app only, low-signal)", () 
     // Swallowed: returns the empty result, logs once, never throws.
     expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
     expect(logged).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// workspace-notifications S-001 — notify an invited member in the bell.
+// `workspace_invited` is a NEW, DISTINCT type (NOT the doc-share `invited`): IN-APP
+// ONLY (C-001), recipient = the invited ACCOUNT only when one exists for the email
+// (else no row), inviting admin is never a recipient (C-002), refId = workspaceId,
+// refLabel = the workspace name snapshotted at emit (rendered without a live join, F1).
+// ===========================================================================
+
+// A recording workspace-notify repo: resolves an invitee account id by email + records
+// inserts (incl. refLabel). The four workspace recipient ports are real on the Drizzle
+// impl; here they are fakes the dispatch logic plugs into.
+function fakeWsRepo(opts: {
+  accountByEmail?: Record<string, string>;
+  adminIds?: string[];
+  memberIds?: string[];
+}): NotifyRepo & {
+  inserted: NewNotification[];
+  findUserIdByEmail(email: string): Promise<string | null>;
+  listWorkspaceAdminIds(workspaceId: string): Promise<string[]>;
+  listWorkspaceMemberIds(workspaceId: string): Promise<string[]>;
+} {
+  const inserted: NewNotification[] = [];
+  return {
+    inserted,
+    async listParticipantIds() { return []; },
+    async getDocOwnerId() { return null; },
+    async getUserEmail() { return null; },
+    async findUserIdByEmail(email: string) {
+      const map = opts.accountByEmail ?? {};
+      return map[email.toLowerCase()] ?? null;
+    },
+    async listWorkspaceAdminIds() { return opts.adminIds ?? []; },
+    async listWorkspaceMemberIds() { return opts.memberIds ?? []; },
+    async insertNotification(input: NewNotification) {
+      inserted.push(input);
+      return { id: `n_${inserted.length}` };
+    },
+  };
+}
+
+describe("buildWorkspaceDeepLink (workspace-shaped deep-link, NOT annotation-shaped)", () => {
+  test("VERIFY-S1: builds {APP_URL}/w/{workspaceId} and trims a trailing slash (edge: special chars + control char)", () => {
+    expect(buildWorkspaceDeepLink("https://anchord.example.com/", "ws 123")).toBe(
+      "https://anchord.example.com/w/ws%20123",
+    );
+    // A control-char workspace id must not crash the builder (C-006 sanity for the maps).
+    expect(() => buildWorkspaceDeepLink("https://x.test", "ws\r\nid")).not.toThrow();
+  });
+});
+
+describe("emailSubjectFor / EVENT_SUMMARY totality over the widened union (F3)", () => {
+  // VERIFY-S1: every email-eligible type must carry a NON-FALLBACK subject AND body —
+  // no `?? "anchord notification"` leak, no generic body leak. The maps must also stay
+  // TOTAL over the widened union (tsc would otherwise break — proven by compilation +
+  // here by spot-checking the new workspace types have real copy).
+  const FALLBACK_SUBJECT = "anchord notification";
+  const FALLBACK_BODY = "You have a new notification on anchord.";
+  const allTypes: NotificationType[] = [
+    "reply",
+    "new_feedback",
+    "thread_activity",
+    "suggestion_decided",
+    "resolved",
+    "detached",
+    "invited",
+    "workspace_invited",
+    "workspace_member_joined",
+    "workspace_member_removed",
+    "workspace_renamed",
+  ];
+
+  test("VERIFY-S1: every email-eligible type has a non-fallback subject + non-fallback body", () => {
+    for (const t of allTypes) {
+      if (!isEmailEligible(t)) continue;
+      expect(emailSubjectFor(t)).not.toBe(FALLBACK_SUBJECT);
+      const body = buildEmailBody(t, "https://x.test/link");
+      expect(body).not.toContain(FALLBACK_BODY);
+    }
+  });
+
+  test("VERIFY-S1: the four new workspace types have real (non-fallback) subject + summary even though most are in-app only", () => {
+    for (const t of [
+      "workspace_invited",
+      "workspace_member_joined",
+      "workspace_member_removed",
+      "workspace_renamed",
+    ] as NotificationType[]) {
+      expect(emailSubjectFor(t)).not.toBe(FALLBACK_SUBJECT);
+      expect(buildEmailBody(t, "https://x.test/link")).not.toContain(FALLBACK_BODY);
+    }
+  });
+
+  test("C-001: workspace_invited is NOT email-eligible (in-app only)", () => {
+    expect(isEmailEligible("workspace_invited")).toBe(false);
+  });
+});
+
+describe("notifyOnWorkspaceInvited (S-001 — in-app bell row for an invited account)", () => {
+  test("AS-001.T1: inviting an existing account creates ONE in-app workspace_invited row for the invitee", async () => {
+    const repo = fakeWsRepo({ accountByEmail: { "bob@x": "u_bob" } });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceInvited(
+      { workspaceId: "ws_acme", inviteeEmail: "bob@x", workspaceName: "Acme", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(result.recipients).toEqual(["u_bob"]);
+    expect(result.inAppSent).toBe(1);
+    expect(repo.inserted).toHaveLength(1);
+    expect(repo.inserted[0].userId).toBe("u_bob");
+    expect(repo.inserted[0].type).toBe("workspace_invited");
+    // refId holds the workspaceId (Data Model); commentId is null for workspace types.
+    expect(repo.inserted[0].refId).toBe("ws_acme");
+    expect(repo.inserted[0].commentId).toBeNull();
+  });
+
+  test("AS-001.T2: the row carries refLabel = the workspace name (snapshot, no live join)", async () => {
+    const repo = fakeWsRepo({ accountByEmail: { "bob@x": "u_bob" } });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceInvited(
+      { workspaceId: "ws_acme", inviteeEmail: "bob@x", workspaceName: "Acme", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(repo.inserted[0].refLabel).toBe("Acme");
+  });
+
+  test("AS-001.T3: no email is sent beyond the existing invite email (in-app only, C-001)", async () => {
+    const repo = fakeWsRepo({ accountByEmail: { "bob@x": "u_bob" } });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceInvited(
+      { workspaceId: "ws_acme", inviteeEmail: "bob@x", workspaceName: "Acme", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("AS-002.T1: inviting an email with NO account creates no in-app row (null invitee account)", async () => {
+    const repo = fakeWsRepo({ accountByEmail: {} }); // new@x has no account
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceInvited(
+      { workspaceId: "ws_acme", inviteeEmail: "new@x", workspaceName: "Acme", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(repo.inserted).toHaveLength(0);
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+  });
+
+  test("AS-003: the inviting admin is never a recipient (even if they invite their own email)", async () => {
+    // Alice invites an address that resolves to Alice's own account → self-exclusion (C-002).
+    const repo = fakeWsRepo({ accountByEmail: { "alice@x": "u_alice" } });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceInvited(
+      { workspaceId: "ws_acme", inviteeEmail: "alice@x", workspaceName: "Acme", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(result.recipients).toEqual([]);
+    expect(repo.inserted).toHaveLength(0);
+  });
+
+  test("C-004: a throwing repo is swallowed (best-effort) — the invite is never failed by notify", async () => {
+    const logged: unknown[] = [];
+    const mail = fakeMail();
+    const repo = fakeWsRepo({ accountByEmail: { "bob@x": "u_bob" } });
+    repo.insertNotification = async () => { throw new Error("db boom"); };
+
+    const result = await notifyOnWorkspaceInvited(
+      { workspaceId: "ws_acme", inviteeEmail: "bob@x", workspaceName: "Acme", actorUserId: "u_alice" },
+      { repo, mail, logError: (_m, e) => logged.push(e) },
+    );
+
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(logged).toHaveLength(1);
+  });
+
+  test("C-006 (edge): a control-char workspace name is stripped before it reaches refLabel", async () => {
+    // S-001 builds the maps/deep-link without crashing on a control char; refLabel must be
+    // inert (no raw CR/LF). The full untrusted-name CRLF spec belongs to S-003/AS-009, but
+    // S-001's snapshot path should already not carry raw control chars.
+    const repo = fakeWsRepo({ accountByEmail: { "bob@x": "u_bob" } });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceInvited(
+      { workspaceId: "ws_acme", inviteeEmail: "bob@x", workspaceName: "Ac\r\nme", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
   });
 });

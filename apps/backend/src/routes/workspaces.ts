@@ -34,6 +34,8 @@ import { buildWorkspaceAcceptLink } from "../auth/invite";
 import { createProjectRepo } from "../workspace/repo";
 import type { ProjectRepo } from "../workspace/projects";
 import type { DB } from "../db/client";
+import { notifyOnWorkspaceInvited, type NotifyRepo, type MailEnqueuer } from "../notify/notify";
+import { createNotifyRepo } from "../notify/repo";
 
 export const createWorkspaceBodySchema = z.object({
   name: z.string().min(1, "workspace name is required"),
@@ -59,6 +61,14 @@ export interface WorkspacesRoutesDeps {
   resolveActorEmail: ResolveActorEmail;
   /** Records the invite intent (prod: enqueue the invite email with the accept link). */
   enqueueInvite?: (msg: { workspaceId: string; email: string; token: string; invitationId: string }) => void;
+  /**
+   * workspace-notifications S-001: the notify seam for the in-app bell row on invite. The dispatch
+   * is POST-COMMIT + BEST-EFFORT (never fails the invite). `repo` defaults to a Drizzle NotifyRepo
+   * built from `db`; `mail` is required by the port but unused for `workspace_invited` (in-app only,
+   * C-001 — the invite email is `enqueueInvite`'s job, never duplicated here). Omit entirely to
+   * disable the bell notification (e.g. in a route test that asserts only the invite contract).
+   */
+  notify?: { repo?: NotifyRepo; mail: MailEnqueuer };
 }
 
 function mapRejected(
@@ -94,6 +104,12 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
   const projectRepo: ProjectRepo | undefined =
     deps.projectRepo ?? (deps.db ? createProjectRepo(deps.db) : undefined);
   const tenancyDeps = { repo, projectRepo };
+
+  // workspace-notifications S-001: the notify repo for the post-commit in-app bell row on invite.
+  // Built from `db` when a `notify` dep is present but its repo isn't injected (prod); undefined
+  // disables the bell notification (route tests that don't exercise it).
+  const notifyRepo: NotifyRepo | undefined =
+    deps.notify?.repo ?? (deps.notify && deps.db ? createNotifyRepo(deps.db) : undefined);
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
@@ -137,6 +153,27 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
           token: inv.token,
           invitationId: inv.id,
         });
+        // workspace-notifications S-001 (C-001/C-002/C-004): POST-COMMIT, BEST-EFFORT in-app bell row.
+        // Resolves the invitee's account by email (no account → no row, AS-002), excludes the inviting
+        // admin (AS-003), snapshots the workspace name into refLabel (F1). IN-APP ONLY — never sends a
+        // second email (the invite email above is the only one). A notify failure never fails the
+        // invite (the dispatch swallows internally; the extra guard is belt-and-braces).
+        if (notifyRepo && deps.notify) {
+          try {
+            const ws = await repo.findWorkspace(params.id);
+            await notifyOnWorkspaceInvited(
+              {
+                workspaceId: params.id,
+                inviteeEmail: email,
+                workspaceName: ws?.name ?? "",
+                actorUserId: actor.userId,
+              },
+              { repo: notifyRepo, mail: deps.notify.mail },
+            );
+          } catch {
+            // best-effort: never surface a notify failure on the invite response (C-004).
+          }
+        }
         set.status = 201;
         // AS-009/AS-011: surface the accept/reject landing link in the response so the
         // invitee can be reached even if the email is slow/dead-lettered (the admin can

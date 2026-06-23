@@ -71,6 +71,7 @@ function rowsFor(userId: string, n: number, opts: { read?: boolean } = {}): Stor
     docTitle: null,
     actorName: null,
     snippet: null,
+    refLabel: null,
   }));
 }
 

@@ -346,6 +346,9 @@ const app = createApp({
     // verification mail uses. Fixes the live wiring gap where this dep was absent so the
     // route's optional `enqueueInvite?.(...)` silently no-op'd (201, no mail, no way in).
     enqueueInvite: createEnqueueWorkspaceInvite(mailQueue, mailTransport, cfg.APP_URL),
+    // workspace-notifications S-001: the post-commit in-app bell row on invite. `mail` is required
+    // by the port but unused (workspace_invited is in-app only, C-001 — no second email).
+    notify: { mail: notifyMail },
   },
   // workspaces S-003: top-level bootstrap (/api/me) + switch. The active workspace is the
   // login-default landing (C-005); read/written on the session row.
