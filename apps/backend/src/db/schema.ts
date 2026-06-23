@@ -442,6 +442,65 @@ export const notificationType = pgEnum("notification_type", [
   "workspace_renamed",
 ]);
 
+// ── notification preferences (notification-preferences S-001) ──────────────
+// Per-user, per-(type, channel) OVERRIDE rows. A row's PRESENCE means the user changed
+// that toggle away from its matrix default; ABSENCE means the matrix default applies
+// (so only changed toggles are ever stored — F11 future-type-defaults-on falls out for
+// free, no per-user baseline). The supported-channel matrix (src/notify/preferences-matrix.ts)
+// is the single source of truth for which (type, channel) pairs are SUPPORTED, default-on, or
+// LOCKED; the write API refuses an unsupported OR a locked-disable pair (AS-003/AS-015), so a
+// `{detached, in_app, false}` row can never exist. `channel` is its own small enum (in_app|email)
+// — the in-app/email split is preference-specific and not the notification_type taxonomy.
+//
+// UNIQUE(user_id, type, channel): one override per pair (the upsert target — a concurrent write
+// of the same pair collapses to one row, ON CONFLICT DO UPDATE). Cascade on user delete.
+// Portable on purpose (no Postgres-only features) so a future SQLite build stays open.
+export const notificationChannel = pgEnum("notification_channel", ["in_app", "email"]);
+
+export const notificationPreferences = pgTable(
+  "notification_preferences",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    type: notificationType("type").notNull(),
+    channel: notificationChannel("channel").notNull(),
+    enabled: boolean("enabled").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // One override per (user, type, channel) — the upsert key (C-005 caller-scoped writes
+    // upsert here). Makes a concurrent double-write of the same pair race-proof.
+    uniqueIndex("notification_preferences_uq").on(t.userId, t.type, t.channel),
+    index("notification_preferences_user_idx").on(t.userId),
+  ],
+);
+
+// ── notification settings (notification-preferences S-001) ─────────────────
+// The per-user MASTER email switch (C-001). Modeled as a dedicated one-row-per-user table
+// (cleaner than overloading the per-(type,channel) override rows with a sentinel `type`, which
+// the notification_type enum has no room for). `email_enabled` default true = email on until the
+// user opts out of ALL email. ABSENCE of a row means the default (email on). S-001 only STORES +
+// READS it; S-002 enforces the suppression at delivery (and the locked in-app notices still
+// deliver regardless — F6). UNIQUE(user_id) — at most one settings row per user.
+export const notificationSettings = pgTable(
+  "notification_settings",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    emailEnabled: boolean("email_enabled").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => sql`now()`),
+  },
+  (t) => [uniqueIndex("notification_settings_user_uq").on(t.userId)],
+);
+
 export const notifications = pgTable(
   "notifications",
   {

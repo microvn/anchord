@@ -16,11 +16,57 @@
 // no-op; `read` is monotonic to true (last-write-wins) — re-marking never flips it back.
 
 import { Elysia } from "elysia";
+import { z } from "zod";
 import { apiEnvelope } from "../http/envelope";
 import { requireSession, type SessionResolver } from "../http/auth-gate";
+import { validateBody } from "../http/validate";
+import { ValidationError } from "../http/errors";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
 import { createNotificationReadRepo, type NotificationReadRepo } from "../notify/read-repo";
+import { createPreferencesRepo, type PreferencesRepo } from "../notify/preferences-repo";
+import {
+  ALL_CHANNELS,
+  effectivePreferences,
+  rejectWrite,
+  type NotificationChannel,
+} from "../notify/preferences-matrix";
+import type { NotificationType } from "../notify/types";
 import type { DB } from "../db/client";
+
+// The notification types the preferences API accepts — mirrors the notification_type enum
+// (NotificationType). A change for an unknown type is refused at the schema boundary (400).
+const PREF_TYPES: readonly NotificationType[] = [
+  "reply",
+  "new_feedback",
+  "thread_activity",
+  "suggestion_decided",
+  "resolved",
+  "detached",
+  "invited",
+  "workspace_invited",
+  "workspace_member_joined",
+  "workspace_member_removed",
+  "workspace_renamed",
+];
+
+// One preference override the WRITE endpoint accepts. The matrix (not Zod) decides whether the
+// pair is supported/locked — Zod only guards the shape + the enum membership.
+const prefOverrideSchema = z.object({
+  type: z.enum(PREF_TYPES as [NotificationType, ...NotificationType[]]),
+  channel: z.enum(ALL_CHANNELS as unknown as [NotificationChannel, ...NotificationChannel[]]),
+  enabled: z.boolean(),
+});
+
+// The write body: a batch of one-or-more overrides, and/or the master email switch. At least one
+// of the two must be present (an empty body is a no-op the schema rejects).
+const prefWriteSchema = z
+  .object({
+    overrides: z.array(prefOverrideSchema).optional(),
+    masterEmailEnabled: z.boolean().optional(),
+  })
+  .refine((b) => (b.overrides && b.overrides.length > 0) || b.masterEmailEnabled !== undefined, {
+    message: "provide at least one override or masterEmailEnabled",
+  });
 
 // Bell page size: default 20, cap 50 (the recent-N surface — no infinite scroll in v0).
 const notificationsPage = paginationQuery({ defaultLimit: 20, maxLimit: 50 });
@@ -29,6 +75,8 @@ export interface NotificationsRoutesDeps {
   db?: DB;
   /** Pre-built read repo (tests). Wins over `db`. */
   repo?: NotificationReadRepo;
+  /** Pre-built preferences repo (tests). Wins over `db`. */
+  prefsRepo?: PreferencesRepo;
   resolveSession: SessionResolver;
 }
 
@@ -38,6 +86,12 @@ export function notificationsRoutes(deps: NotificationsRoutesDeps) {
     (() => {
       if (!deps.db) throw new Error("notificationsRoutes requires either `repo` or `db`");
       return createNotificationReadRepo(deps.db);
+    })();
+  const prefsRepo: PreferencesRepo =
+    deps.prefsRepo ??
+    (() => {
+      if (!deps.db) throw new Error("notificationsRoutes requires either `prefsRepo` or `db`");
+      return createPreferencesRepo(deps.db);
     })();
 
   return apiEnvelope(new Elysia())
@@ -71,5 +125,60 @@ export function notificationsRoutes(deps: NotificationsRoutesDeps) {
     .post("/api/me/notifications/read-all", async ({ actor }) => {
       const marked = await repo.markAllRead(actor.userId);
       return { marked };
+    })
+    // GET /api/me/notifications/preferences — the caller's EFFECTIVE preferences for every
+    // (type, channel) in the matrix: the matrix default unless an override row exists (AS-001/
+    // AS-002), plus the master email switch state. C-005: scoped to actor.userId (session-derived),
+    // never a body/path userId — Alice can never read Bob's prefs (AS-014).
+    .get("/api/me/notifications/preferences", async ({ actor }) => {
+      const [overrides, masterEmailEnabled] = await Promise.all([
+        prefsRepo.listOverrides(actor.userId),
+        prefsRepo.getMasterEmailEnabled(actor.userId),
+      ]);
+      return {
+        preferences: effectivePreferences(overrides),
+        masterEmailEnabled,
+      };
+    })
+    // PUT /api/me/notifications/preferences — set one-or-more (type, channel, enabled) overrides
+    // and/or the master email switch, for the CALLER ONLY (C-005, AS-014). Each override is checked
+    // against the matrix BEFORE any row is written: an unsupported pair (AS-003) or a locked-disable
+    // (AS-015) is refused with a clear reason and stores NO row (the whole batch is rejected — no
+    // partial write — so a single bad pair never leaves the others half-applied).
+    .put("/api/me/notifications/preferences", async ({ body, actor }) => {
+      const input = validateBody(prefWriteSchema, body);
+
+      // Validate the whole batch first (refusals store nothing — AS-003/AS-015).
+      for (const o of input.overrides ?? []) {
+        const reason = rejectWrite(o.type, o.channel, o.enabled);
+        if (reason) {
+          throw new ValidationError(
+            reason === "locked_channel"
+              ? "locked channel cannot be disabled"
+              : reason === "unsupported_channel"
+                ? "unsupported channel"
+                : "unknown notification type",
+            { details: [`${o.type}.${o.channel}: ${reason}`], field: `${o.type}.${o.channel}` },
+          );
+        }
+      }
+
+      // All pairs valid → persist (upsert on the unique key, so a concurrent same-pair write is
+      // race-proof). Scoped to actor.userId only (C-005).
+      for (const o of input.overrides ?? []) {
+        await prefsRepo.setOverride(actor.userId, o.type, o.channel, o.enabled);
+      }
+      if (input.masterEmailEnabled !== undefined) {
+        await prefsRepo.setMasterEmailEnabled(actor.userId, input.masterEmailEnabled);
+      }
+
+      const [overrides, masterEmailEnabled] = await Promise.all([
+        prefsRepo.listOverrides(actor.userId),
+        prefsRepo.getMasterEmailEnabled(actor.userId),
+      ]);
+      return {
+        preferences: effectivePreferences(overrides),
+        masterEmailEnabled,
+      };
     });
 }
