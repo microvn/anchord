@@ -930,6 +930,74 @@ export async function notifyOnWorkspaceMemberRemoved(
   }
 }
 
+export interface NotifyOnWorkspaceRenamedInput {
+  /** The renamed workspace — persisted as each in-app row's refId (Data Model). */
+  workspaceId: string;
+  /**
+   * The workspace's name BEFORE the rename — captured by the caller via getWorkspaceName at/just
+   * before rename time. User-controlled → sanitized (C-006) into the "<old> → <new>" refLabel.
+   */
+  oldName: string;
+  /**
+   * The workspace's name AFTER the rename (the new name the admin submitted). Also user-controlled
+   * → sanitized (C-006) into the "<old> → <new>" refLabel.
+   */
+  newName: string;
+  /** The renaming admin — never a recipient of their own rename (C-002, AS-007). */
+  actorUserId: string | null;
+}
+
+/**
+ * workspace-notifications S-004 — notify EVERY MEMBER when an admin renames the workspace: ONE
+ * in-app `workspace_renamed` row per member, MINUS the renamer (C-002, AS-007). Members are ALL
+ * workspace members (admins included — admins are members too), so the renamer is excluded by
+ * construction. IN-APP ONLY: `workspace_renamed` is NOT in HIGH_SIGNAL_TYPES, so the notify path
+ * enqueues NO email (AS-007.T3). refId = workspaceId; refLabel = the sanitized "<old> → <new>"
+ * display text (F1 — rendered without a live `workspaces` join; survives a later rename/delete).
+ * BOTH names are user-controlled, so each is run through sanitizeRefLabel (C-006) before they are
+ * composed — no CR/LF / control char survives into the inert in-app row.
+ *
+ * FAN-OUT (C-005): the member set fans out to EXACTLY one row per member, BATCH-inserted in ONE
+ * round-trip via deliverBatch → repo.insertNotifications([...]), never a serial per-member awaited
+ * insert. The rename route fires this WITHOUT awaiting on the request critical path (fire-and-forget)
+ * so a 500-member rename never holds the HTTP response.
+ *
+ * BEST-EFFORT / POST-COMMIT (C-004): runs AFTER the rename commits; the whole pass is wrapped so a
+ * throwing repo is logged and swallowed — the rename is never rolled back / never 500s by a notify
+ * failure. GAP-003 (open): notifications carry no idempotency key, so a retried rename could
+ * duplicate rows; v0 accepts rare duplicates (best-effort) — no uniqueness mechanism is built here.
+ */
+export async function notifyOnWorkspaceRenamed(
+  input: NotifyOnWorkspaceRenamedInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { workspaceId, oldName, newName, actorUserId } = input;
+  const type: NotificationType = "workspace_renamed"; // in-app only (not high-signal).
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    // Recipients = ALL members − the renamer (C-002). listWorkspaceMemberIds returns every member
+    // (admins included); exclude the actor so the renamer never self-notifies.
+    const memberIds = deps.repo.listWorkspaceMemberIds
+      ? await deps.repo.listWorkspaceMemberIds(workspaceId)
+      : [];
+    const recipients =
+      actorUserId != null
+        ? [...new Set(memberIds)].filter((id) => id !== actorUserId)
+        : [...new Set(memberIds)];
+
+    // F1/C-006: sanitize EACH user-controlled name (defensive against a null too) BEFORE composing
+    // the "<old> → <new>" label → strips CR/LF + control chars + bounds length; the row stays inert.
+    const refLabel = `${sanitizeRefLabel(oldName ?? "")} → ${sanitizeRefLabel(newName ?? "")}`;
+    // C-005: fan out via the BATCH path (one round-trip), in-app only (no email).
+    return await deliverBatch(workspaceId, recipients, type, deps, refLabel);
+  } catch (err) {
+    log("notifyOnWorkspaceRenamed failed (best-effort, rename already persisted)", err);
+    return empty;
+  }
+}
+
 /**
  * Shared per-recipient channel send (C-005/C-006/C-012/C-013): for each recipient write ONE
  * in-app row (always — the durable channel) and, for a high-signal type only, enqueue ONE

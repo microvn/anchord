@@ -37,6 +37,7 @@ import type { DB } from "../db/client";
 import {
   notifyOnWorkspaceInvited,
   notifyOnWorkspaceMemberJoined,
+  notifyOnWorkspaceRenamed,
   type NotifyRepo,
   type MailEnqueuer,
 } from "../notify/notify";
@@ -133,11 +134,43 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
     // PATCH /api/workspaces/:id — rename (admin-only, AS-004/005).
     .patch("/api/workspaces/:id", async ({ params, body, actor }) => {
       const { name } = validateBody(renameWorkspaceBodySchema, body);
+      // workspace-notifications S-004: capture the OLD name BEFORE the rename so the "<old> → <new>"
+      // label can be snapshotted. Read via the NOTIFY repo port (getWorkspaceName) — never a live
+      // post-rename read. Best-effort: a lookup failure must not fail the rename, so it is guarded.
+      let oldName: string | null = null;
+      if (notifyRepo && deps.notify) {
+        try {
+          oldName = (await notifyRepo.getWorkspaceName?.(params.id)) ?? null;
+        } catch {
+          // best-effort: missing old name just yields an empty "<old>" half, never a 500.
+        }
+      }
       try {
         const ws = await renameWorkspace(
           { workspaceId: params.id, actorId: actor.userId, name },
           tenancyDeps,
         );
+        // workspace-notifications S-004 (C-002/C-004/C-005): POST-COMMIT, BEST-EFFORT, FIRE-AND-FORGET
+        // notice to every member (minus the renamer) that "<old> → <new>". NOT awaited on the request
+        // critical path — a large member set must not hold the HTTP response (C-005). The dispatch
+        // batch-inserts the fan-out and swallows its own errors; the rename is never failed by notify.
+        if (notifyRepo && deps.notify) {
+          void (async () => {
+            try {
+              await notifyOnWorkspaceRenamed(
+                {
+                  workspaceId: params.id,
+                  oldName: oldName ?? "",
+                  newName: ws.name,
+                  actorUserId: actor.userId,
+                },
+                { repo: notifyRepo, mail: deps.notify!.mail },
+              );
+            } catch {
+              // best-effort: a notify failure never affects the (already-returned) rename response.
+            }
+          })();
+        }
         return { id: ws.id, name: ws.name };
       } catch (err) {
         if (err instanceof TenancyRejected) throw mapRejected(err);

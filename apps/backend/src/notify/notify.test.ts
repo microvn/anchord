@@ -13,6 +13,7 @@ import {
   notifyOnWorkspaceInvited,
   notifyOnWorkspaceMemberJoined,
   notifyOnWorkspaceMemberRemoved,
+  notifyOnWorkspaceRenamed,
   isEmailEligible,
   buildAnnotationDeepLink,
   buildWorkspaceDeepLink,
@@ -1609,5 +1610,183 @@ describe("notifyOnWorkspaceMemberJoined (S-002 — admins get an in-app row on a
     expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
     // eslint-disable-next-line no-control-regex
     expect(repo.inserted[0].refLabel).not.toMatch(/[\x00-\x1f\x7f]/);
+  });
+});
+
+// ===========================================================================
+// workspace-notifications S-004 — notify members on a workspace RENAME.
+// `workspace_renamed` is IN-APP ONLY (NOT in HIGH_SIGNAL_TYPES — no email).
+// Recipients = ALL current members of the workspace MINUS the renamer (C-002).
+// Fan-out (C-005): EXACTLY one row per member, BATCH-inserted (one bulk port call
+// with N rows, not N serial inserts), and NOT awaited on the request critical path.
+// refId = workspaceId; refLabel = the sanitized "<old> → <new>" display text — BOTH
+// names are user-controlled so each is stripped of CR/LF + control chars (C-006).
+// Best-effort/post-commit (C-004): a throwing repo is swallowed; the rename never 500s.
+// ===========================================================================
+describe("notifyOnWorkspaceRenamed (S-004 — members get an in-app row on a rename)", () => {
+  test("C-005 channel: workspace_renamed is NOT email-eligible (in-app only)", () => {
+    // Channel guard: workspace_renamed must stay out of HIGH_SIGNAL_TYPES.
+    expect(isEmailEligible("workspace_renamed")).toBe(false);
+  });
+
+  test("AS-007.T1: renaming notifies all members (Bob, Carol) with one in-app row '<old> → <new>'", async () => {
+    const repo = fakeWsRepo({ memberIds: ["u_alice", "u_bob", "u_carol"] });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceRenamed(
+      {
+        workspaceId: "ws_acme",
+        oldName: "Acme",
+        newName: "Acme Docs",
+        actorUserId: "u_alice",
+      },
+      { repo, mail },
+    );
+
+    // Members minus the renamer (Alice) → Bob + Carol, exactly one row each (C-005.T1).
+    expect(result.recipients.sort()).toEqual(["u_bob", "u_carol"]);
+    expect(result.inAppSent).toBe(2);
+    expect(repo.inserted.map((r) => r.userId).sort()).toEqual(["u_bob", "u_carol"]);
+    for (const row of repo.inserted) {
+      expect(row.type).toBe("workspace_renamed");
+      // refId holds the workspaceId (Data Model); commentId is null for workspace types.
+      expect(row.refId).toBe("ws_acme");
+      expect(row.commentId).toBeNull();
+      // refLabel snapshots the "<old> → <new>" display text (inert, no live join, F1).
+      expect(row.refLabel).toBe("Acme → Acme Docs");
+    }
+  });
+
+  test("AS-007.T2 / C-002: the renamer (Alice) gets none — excluded from the member fan-out", async () => {
+    // Alice is a member (admins are members too) but is the actor → never a recipient.
+    const repo = fakeWsRepo({ memberIds: ["u_alice", "u_bob", "u_carol"] });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceRenamed(
+      { workspaceId: "ws_acme", oldName: "Acme", newName: "Acme Docs", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(result.recipients).not.toContain("u_alice");
+    expect(repo.inserted.map((r) => r.userId)).not.toContain("u_alice");
+    expect(result.recipients.sort()).toEqual(["u_bob", "u_carol"]);
+  });
+
+  test("AS-007.T3: no email is sent (in-app only)", async () => {
+    const repo = fakeWsRepo({
+      memberIds: ["u_alice", "u_bob", "u_carol"],
+      emailByUser: { u_bob: "bob@acme.com", u_carol: "carol@acme.com" },
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceRenamed(
+      { workspaceId: "ws_acme", oldName: "Acme", newName: "Acme Docs", actorUserId: "u_alice" },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-005.T1: exactly ONE row per recipient — no duplicate across members", async () => {
+    const repo = fakeWsRepo({ memberIds: ["u_alice", "u_bob", "u_carol", "u_dan"] });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceRenamed(
+      { workspaceId: "ws_acme", oldName: "Acme", newName: "Acme Docs", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    const ids = repo.inserted.map((r) => r.userId);
+    expect(new Set(ids).size).toBe(ids.length); // no dup
+    expect(ids.length).toBe(3); // Bob, Carol, Dan (Alice excluded)
+  });
+
+  test("C-005.T2 (boundary: many members): the fan-out is BATCH-inserted — bulk port called ONCE with N rows", async () => {
+    // 500 members → one batch round-trip, never 500 serial inserts (C-005 non-blocking fan-out).
+    const memberIds = ["u_alice", ...Array.from({ length: 500 }, (_, i) => `u_m${i}`)];
+    const repo = fakeWsRepo({ memberIds });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceRenamed(
+      { workspaceId: "ws_acme", oldName: "Acme", newName: "Acme Docs", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(repo.bulkCalls).toBe(1);
+    expect(repo.bulkSizes).toEqual([500]); // 501 members − the renamer
+    expect(result.inAppSent).toBe(500);
+  });
+
+  test("AS-007 (edge: empty): no members other than the renamer → NO rows, no bulk call", async () => {
+    // Alice renames a workspace where she is the only member → recipients = members − renamer = [].
+    const repo = fakeWsRepo({ memberIds: ["u_alice"] });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceRenamed(
+      { workspaceId: "ws_acme", oldName: "Acme", newName: "Acme Docs", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(repo.inserted).toHaveLength(0);
+    expect(repo.bulkCalls).toBe(0); // no empty bulk insert
+  });
+
+  test("C-004: a throwing repo is swallowed (best-effort) — the rename is never failed by notify", async () => {
+    const logged: unknown[] = [];
+    const mail = fakeMail();
+    const repo = fakeWsRepo({ memberIds: ["u_alice", "u_bob"] });
+    repo.insertNotifications = async () => { throw new Error("db boom"); };
+
+    const result = await notifyOnWorkspaceRenamed(
+      { workspaceId: "ws_acme", oldName: "Acme", newName: "Acme Docs", actorUserId: "u_alice" },
+      { repo, mail, logError: (_m, e) => logged.push(e) },
+    );
+
+    // Swallowed: empty result, error logged once, no throw propagated to the rename handler.
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(logged).toHaveLength(1);
+  });
+
+  test("C-006 (special chars): CR/LF + control chars are stripped from BOTH names in the '<old> → <new>' refLabel", async () => {
+    const repo = fakeWsRepo({ memberIds: ["u_alice", "u_bob"] });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceRenamed(
+      {
+        workspaceId: "ws_acme",
+        oldName: "Ac\r\nme",
+        newName: "Acme\r\nSubject: spoof",
+        actorUserId: "u_alice",
+      },
+      { repo, mail },
+    );
+
+    expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
+    // eslint-disable-next-line no-control-regex
+    expect(repo.inserted[0].refLabel).not.toMatch(/[\x00-\x1f\x7f]/);
+    // Both sanitized halves still join with the arrow separator.
+    expect(repo.inserted[0].refLabel).toBe("Acme → AcmeSubject: spoof");
+  });
+
+  test("C-006 (null/undefined names): a null old/new name does not crash; refLabel is an inert string", async () => {
+    const repo = fakeWsRepo({ memberIds: ["u_alice", "u_bob"] });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceRenamed(
+      {
+        workspaceId: "ws_acme",
+        // Defensive: the caller may pass an unresolved (null) old name (getWorkspaceName miss).
+        oldName: null as unknown as string,
+        newName: "Acme Docs",
+        actorUserId: "u_alice",
+      },
+      { repo, mail },
+    );
+
+    expect(result.recipients).toEqual(["u_bob"]);
+    expect(typeof repo.inserted[0].refLabel).toBe("string");
+    expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
   });
 });
