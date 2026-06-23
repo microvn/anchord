@@ -15,6 +15,7 @@ import {
   notifications,
   user,
   workspaceMembers,
+  workspaces,
 } from "../db/schema";
 import type { DB } from "../db/client";
 import type { NewNotification, NotifyRepo } from "./notify";
@@ -111,6 +112,24 @@ export function createNotifyRepo(db: DB): NotifyRepo {
       return rows.map((r) => r.userId);
     },
 
+    // workspace-notifications S-002: the workspace's CURRENT name — snapshotted into the
+    // workspace_member_joined refLabel at emit (F1, rendered without a live join). Null when the
+    // workspace row can't be resolved (then the dispatch snapshots an empty/sanitized label).
+    async getWorkspaceName(workspaceId: string): Promise<string | null> {
+      const [row] = await db
+        .select({ name: workspaces.name })
+        .from(workspaces)
+        .where(eq(workspaces.id, workspaceId));
+      return row?.name ?? null;
+    },
+
+    // workspace-notifications S-002: a user's DISPLAY NAME (user.name — never email, F-security),
+    // for the join notice copy. Null when absent.
+    async getUserName(userId: string): Promise<string | null> {
+      const [row] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
+      return row?.name ?? null;
+    },
+
     // S-007: the annotation's doc slug — backs the email deep-link {APP_URL}/d/{slug}#annotation-{id}.
     async getDocSlug(annotationId: string): Promise<string | null> {
       const [row] = await db
@@ -139,6 +158,27 @@ export function createNotifyRepo(db: DB): NotifyRepo {
         })
         .returning({ id: notifications.id });
       return { id: row.id };
+    },
+
+    // workspace-notifications S-002 (C-005): BATCH-insert N rows in ONE round-trip — a single
+    // Drizzle insert().values([...]), NOT a serial per-recipient loop. Backs the join fan-out (all
+    // admins) and the S-004 rename fan-out (all members). Returns the inserted ids in row order. An
+    // empty input never reaches here (the dispatch guards a 0-recipient set), but stays a no-op if it does.
+    async insertNotifications(rows: NewNotification[]): Promise<{ id: string }[]> {
+      if (rows.length === 0) return [];
+      const out = await db
+        .insert(notifications)
+        .values(
+          rows.map((input) => ({
+            userId: input.userId,
+            type: input.type,
+            refId: input.refId,
+            commentId: input.commentId ?? null,
+            refLabel: input.refLabel ?? null,
+          })),
+        )
+        .returning({ id: notifications.id });
+      return out.map((r) => ({ id: r.id }));
     },
   };
 }

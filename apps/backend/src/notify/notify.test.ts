@@ -11,6 +11,7 @@ import {
   notifyOnDetached,
   notifyOnInvited,
   notifyOnWorkspaceInvited,
+  notifyOnWorkspaceMemberJoined,
   notifyOnWorkspaceMemberRemoved,
   isEmailEligible,
   buildAnnotationDeepLink,
@@ -1044,15 +1045,23 @@ function fakeWsRepo(opts: {
   adminIds?: string[];
   memberIds?: string[];
   emailByUser?: Record<string, string>;
+  workspaceName?: string;
 }): NotifyRepo & {
   inserted: NewNotification[];
+  /** S-002 (C-005.T2): how many times the BULK port was called, and the batch sizes seen. */
+  bulkCalls: number;
+  bulkSizes: number[];
   findUserIdByEmail(email: string): Promise<string | null>;
   listWorkspaceAdminIds(workspaceId: string): Promise<string[]>;
   listWorkspaceMemberIds(workspaceId: string): Promise<string[]>;
+  getWorkspaceName(workspaceId: string): Promise<string | null>;
+  insertNotifications(rows: NewNotification[]): Promise<{ id: string }[]>;
 } {
   const inserted: NewNotification[] = [];
-  return {
+  const self = {
     inserted,
+    bulkCalls: 0,
+    bulkSizes: [] as number[],
     async listParticipantIds() { return []; },
     async getDocOwnerId() { return null; },
     async getUserEmail(userId: string) { return opts.emailByUser?.[userId] ?? null; },
@@ -1062,11 +1071,22 @@ function fakeWsRepo(opts: {
     },
     async listWorkspaceAdminIds() { return opts.adminIds ?? []; },
     async listWorkspaceMemberIds() { return opts.memberIds ?? []; },
+    async getWorkspaceName() { return opts.workspaceName ?? null; },
     async insertNotification(input: NewNotification) {
       inserted.push(input);
       return { id: `n_${inserted.length}` };
     },
+    // S-002 (C-005.T2): the real batch path — ONE call inserting N rows in one round-trip.
+    async insertNotifications(rows: NewNotification[]) {
+      self.bulkCalls += 1;
+      self.bulkSizes.push(rows.length);
+      return rows.map((r) => {
+        inserted.push(r);
+        return { id: `n_${inserted.length}` };
+      });
+    },
   };
+  return self;
 }
 
 describe("buildWorkspaceDeepLink (workspace-shaped deep-link, NOT annotation-shaped)", () => {
@@ -1420,5 +1440,174 @@ describe("notifyOnWorkspaceMemberRemoved (S-003 — removed member gets in-app +
     expect(result.inAppSent).toBe(1);
     expect(result.emailsSent).toBe(0);
     expect(mail.sent).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// workspace-notifications S-002 — notify admins when a member JOINS.
+// `workspace_member_joined` is IN-APP ONLY by default (GAP-001: email OFF, admins
+// opt in later via notification-preferences). Recipients = ALL admins of the
+// workspace MINUS the joining member (C-002). Fan-out (C-005): EXACTLY one row per
+// admin, BATCH-inserted (one bulk port call with N rows, not N serial inserts), and
+// NOT awaited on the request critical path. refId = workspaceId; refLabel = the
+// sanitized workspace name snapshot (renders "<joiner> joined <ws>" with the joiner
+// name; never the joiner's email — F-security). GAP-003 (open): no idempotency key,
+// so a double-accept may duplicate rows — v0 accepts rare dups (no mechanism built).
+// ===========================================================================
+describe("notifyOnWorkspaceMemberJoined (S-002 — admins get an in-app row on a join)", () => {
+  test("workspace_member_joined is NOT email-eligible (in-app only by default, GAP-001)", () => {
+    // C-005 channel guard: member_joined must stay out of HIGH_SIGNAL_TYPES.
+    expect(isEmailEligible("workspace_member_joined")).toBe(false);
+  });
+
+  test("AS-004.T1: accepting an invite notifies EVERY admin (Alice, Carol) with one in-app row 'Bob joined Acme'", async () => {
+    const repo = fakeWsRepo({ adminIds: ["u_alice", "u_carol"], workspaceName: "Acme" });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberJoined(
+      {
+        workspaceId: "ws_acme",
+        joinerUserId: "u_bob",
+        workspaceName: "Acme",
+        joinerName: "Bob",
+        actorUserId: "u_bob",
+      },
+      { repo, mail },
+    );
+
+    // Both admins, exactly one row each (C-005.T1), typed workspace_member_joined.
+    expect(result.recipients.sort()).toEqual(["u_alice", "u_carol"]);
+    expect(result.inAppSent).toBe(2);
+    expect(repo.inserted.map((r) => r.userId).sort()).toEqual(["u_alice", "u_carol"]);
+    for (const row of repo.inserted) {
+      expect(row.type).toBe("workspace_member_joined");
+      // refId holds the workspaceId (Data Model); commentId is null for workspace types.
+      expect(row.refId).toBe("ws_acme");
+      expect(row.commentId).toBeNull();
+      // refLabel snapshots the workspace name (inert, no live join, F1).
+      expect(row.refLabel).toBe("Acme");
+    }
+  });
+
+  test("AS-004.T2 / C-002: the joiner (Bob) is never a recipient — even though a fresh joiner is a member", async () => {
+    // Bob's own admin id would be in the admin set if he joined as admin; he must still be excluded.
+    const repo = fakeWsRepo({ adminIds: ["u_alice", "u_carol", "u_bob"], workspaceName: "Acme" });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberJoined(
+      {
+        workspaceId: "ws_acme",
+        joinerUserId: "u_bob",
+        workspaceName: "Acme",
+        joinerName: "Bob",
+        actorUserId: "u_bob",
+      },
+      { repo, mail },
+    );
+
+    expect(result.recipients).not.toContain("u_bob");
+    expect(repo.inserted.map((r) => r.userId)).not.toContain("u_bob");
+    expect(result.recipients.sort()).toEqual(["u_alice", "u_carol"]);
+  });
+
+  test("AS-004.T3 / C-005 channel: NO email is sent by default (in-app only)", async () => {
+    const repo = fakeWsRepo({
+      adminIds: ["u_alice", "u_carol"],
+      workspaceName: "Acme",
+      emailByUser: { u_alice: "alice@acme.com", u_carol: "carol@acme.com" },
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberJoined(
+      {
+        workspaceId: "ws_acme",
+        joinerUserId: "u_bob",
+        workspaceName: "Acme",
+        joinerName: "Bob",
+        actorUserId: "u_bob",
+      },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-005.T1: exactly ONE row per recipient per event — no duplicate across admins", async () => {
+    const repo = fakeWsRepo({ adminIds: ["u_alice", "u_carol", "u_dan"], workspaceName: "Acme" });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceMemberJoined(
+      { workspaceId: "ws_acme", joinerUserId: "u_bob", workspaceName: "Acme", joinerName: "Bob", actorUserId: "u_bob" },
+      { repo, mail },
+    );
+
+    const ids = repo.inserted.map((r) => r.userId);
+    expect(new Set(ids).size).toBe(ids.length); // no dup
+    expect(ids.length).toBe(3);
+  });
+
+  test("C-005.T2: the fan-out is BATCH-inserted — bulk port called ONCE with N rows, not N serial inserts", async () => {
+    const repo = fakeWsRepo({
+      adminIds: ["u_a", "u_b", "u_c", "u_d", "u_e"], // many admins → batch exercised
+      workspaceName: "Acme",
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberJoined(
+      { workspaceId: "ws_acme", joinerUserId: "u_bob", workspaceName: "Acme", joinerName: "Bob", actorUserId: "u_bob" },
+      { repo, mail },
+    );
+
+    // ONE bulk round-trip carrying all 5 rows — never 5 single insertNotification calls.
+    expect(repo.bulkCalls).toBe(1);
+    expect(repo.bulkSizes).toEqual([5]);
+    expect(result.inAppSent).toBe(5);
+  });
+
+  test("AS-004 (edge: empty): no admins other than the joiner → NO rows, no bulk call", async () => {
+    // Bob joins a workspace where he is the only admin (self-created) → recipients = admins − joiner = [].
+    const repo = fakeWsRepo({ adminIds: ["u_bob"], workspaceName: "Acme" });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberJoined(
+      { workspaceId: "ws_acme", joinerUserId: "u_bob", workspaceName: "Acme", joinerName: "Bob", actorUserId: "u_bob" },
+      { repo, mail },
+    );
+
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(repo.inserted).toHaveLength(0);
+    // No recipients → no empty bulk insert.
+    expect(repo.bulkCalls).toBe(0);
+  });
+
+  test("C-004: a throwing repo is swallowed (best-effort) — the join is never failed by notify", async () => {
+    const logged: unknown[] = [];
+    const mail = fakeMail();
+    const repo = fakeWsRepo({ adminIds: ["u_alice", "u_carol"], workspaceName: "Acme" });
+    repo.insertNotifications = async () => { throw new Error("db boom"); };
+
+    const result = await notifyOnWorkspaceMemberJoined(
+      { workspaceId: "ws_acme", joinerUserId: "u_bob", workspaceName: "Acme", joinerName: "Bob", actorUserId: "u_bob" },
+      { repo, mail, logError: (_m, e) => logged.push(e) },
+    );
+
+    // Swallowed: empty result, error logged once, no throw propagated to the accept handler.
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(logged).toHaveLength(1);
+  });
+
+  test("C-006 (edge: special chars): a control-char workspace name is stripped before it reaches refLabel", async () => {
+    const repo = fakeWsRepo({ adminIds: ["u_alice"], workspaceName: "Ac\r\nme" });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceMemberJoined(
+      { workspaceId: "ws_acme", joinerUserId: "u_bob", workspaceName: "Ac\r\nme", joinerName: "B\r\nob", actorUserId: "u_bob" },
+      { repo, mail },
+    );
+
+    expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
+    // eslint-disable-next-line no-control-regex
+    expect(repo.inserted[0].refLabel).not.toMatch(/[\x00-\x1f\x7f]/);
   });
 });

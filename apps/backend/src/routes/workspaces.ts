@@ -34,7 +34,12 @@ import { buildWorkspaceAcceptLink } from "../auth/invite";
 import { createProjectRepo } from "../workspace/repo";
 import type { ProjectRepo } from "../workspace/projects";
 import type { DB } from "../db/client";
-import { notifyOnWorkspaceInvited, type NotifyRepo, type MailEnqueuer } from "../notify/notify";
+import {
+  notifyOnWorkspaceInvited,
+  notifyOnWorkspaceMemberJoined,
+  type NotifyRepo,
+  type MailEnqueuer,
+} from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
 
 export const createWorkspaceBodySchema = z.object({
@@ -198,6 +203,32 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
           { invitationId: params.id, token, actorId: actor.userId, actorEmail: me.email },
           tenancyDeps,
         );
+        // workspace-notifications S-002 (C-002/C-004/C-005): POST-COMMIT, BEST-EFFORT, FIRE-AND-FORGET
+        // notice to every admin (minus the joiner) that Bob joined. NOT awaited on the request
+        // critical path — a large admin set must not hold the HTTP response (C-005.T3). The dispatch
+        // batch-inserts the fan-out and swallows its own errors; the join is never failed by notify.
+        if (notifyRepo && deps.notify) {
+          void (async () => {
+            try {
+              const [wsName, joinerName] = await Promise.all([
+                notifyRepo.getWorkspaceName?.(res.workspaceId) ?? Promise.resolve(null),
+                notifyRepo.getUserName?.(actor.userId) ?? Promise.resolve(null),
+              ]);
+              await notifyOnWorkspaceMemberJoined(
+                {
+                  workspaceId: res.workspaceId,
+                  joinerUserId: actor.userId,
+                  workspaceName: wsName ?? "",
+                  joinerName: joinerName ?? "",
+                  actorUserId: actor.userId,
+                },
+                { repo: notifyRepo, mail: deps.notify!.mail },
+              );
+            } catch {
+              // best-effort: a notify failure never affects the (already-returned) accept response.
+            }
+          })();
+        }
         return { workspaceId: res.workspaceId, role: res.role };
       } catch (err) {
         if (err instanceof TenancyRejected) throw mapRejected(err);

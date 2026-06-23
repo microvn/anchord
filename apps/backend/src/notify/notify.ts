@@ -87,8 +87,27 @@ export interface NotifyRepo {
    * now for S-004 (rename → all members). Optional so existing fakes stay valid.
    */
   listWorkspaceMemberIds?(workspaceId: string): Promise<string[]>;
+  /**
+   * workspace-notifications S-002: the workspace's CURRENT name, snapshotted at emit into the
+   * `workspace_member_joined` refLabel (F1 — rendered without a live `workspaces` join). Null when
+   * the workspace can't be resolved. Optional so existing annotation-path fakes stay valid.
+   */
+  getWorkspaceName?(workspaceId: string): Promise<string | null>;
+  /**
+   * workspace-notifications S-002: a user's DISPLAY NAME (the `user.name` column — NEVER their email,
+   * F-security), for the join notice's "<joiner> joined <ws>" copy. Null when absent. Optional so
+   * existing fakes stay valid.
+   */
+  getUserName?(userId: string): Promise<string | null>;
   /** Insert one in-app notification row. */
   insertNotification(input: NewNotification): Promise<{ id: string }>;
+  /**
+   * workspace-notifications S-002 (C-005): BATCH-insert N in-app rows in ONE round-trip (a single
+   * Drizzle `insert().values([...])`), not a serial per-recipient loop. Backs the multi-recipient
+   * fan-out events (join → all admins; S-004 rename → all members). Optional so existing fakes stay
+   * valid — the batch path falls back to per-row `insertNotification` when this port is absent.
+   */
+  insertNotifications?(rows: NewNotification[]): Promise<{ id: string }[]>;
 }
 
 /**
@@ -768,6 +787,70 @@ export async function notifyOnWorkspaceInvited(
   }
 }
 
+export interface NotifyOnWorkspaceMemberJoinedInput {
+  /** The workspace the member joined — persisted as each in-app row's refId (Data Model). */
+  workspaceId: string;
+  /** The joining member's account id — the ACTOR, excluded from the recipient set (C-002). */
+  joinerUserId: string;
+  /** The workspace's CURRENT name — snapshotted into refLabel at emit (F1), sanitized (C-006). */
+  workspaceName: string;
+  /**
+   * The joiner's DISPLAY NAME snapshot (NEVER their email — F-security). Carried for the bell's
+   * "<joiner> joined <ws>" copy; sanitized defensively (C-006). The refLabel itself snapshots the
+   * workspace name (the cleanest inert label), with the joiner name available to the read side.
+   */
+  joinerName: string;
+  /** The acting joiner (== joinerUserId) — never a recipient of their own join (C-002, AS-004). */
+  actorUserId: string | null;
+}
+
+/**
+ * workspace-notifications S-002 — notify EVERY ADMIN when a member joins (accepts an invite): ONE
+ * in-app `workspace_member_joined` row per admin, MINUS the joining member (C-002, AS-004). The
+ * joiner — even though a fresh joiner is now a `member` and could be an admin if they joined as one
+ * — is excluded by construction. IN-APP ONLY by default (GAP-001): `workspace_member_joined` is NOT
+ * in HIGH_SIGNAL_TYPES, so the notify path enqueues NO email (admins opt in later via
+ * notification-preferences). refId = workspaceId; refLabel = the SANITIZED workspace name snapshot
+ * (F1 — rendered without a live `workspaces` join; survives a later rename/delete).
+ *
+ * FAN-OUT (C-005): the admin set fans out to EXACTLY one row per admin, BATCH-inserted in ONE
+ * round-trip via deliverBatch → repo.insertNotifications([...]), never a serial per-admin awaited
+ * insert. The accept route fires this WITHOUT awaiting on the request critical path (fire-and-forget).
+ *
+ * BEST-EFFORT / POST-COMMIT (C-004): runs AFTER the membership commit; the whole pass is wrapped so a
+ * throwing repo is logged and swallowed — the join (Bob is in) is never rolled back by a notify
+ * failure. GAP-003 (open): notifications carry no idempotency key, so a double-accept could duplicate
+ * rows; v0 accepts rare duplicates (best-effort) — no uniqueness mechanism is built here.
+ */
+export async function notifyOnWorkspaceMemberJoined(
+  input: NotifyOnWorkspaceMemberJoinedInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { workspaceId, joinerUserId, workspaceName, actorUserId } = input;
+  const type: NotificationType = "workspace_member_joined"; // in-app only (GAP-001, not high-signal).
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    // Recipients = ALL admins − the joining member (C-002). The actor is the joiner; exclude both the
+    // declared actor and the joiner id (defensively identical) so a fresh admin-joiner never self-notifies.
+    const adminIds = deps.repo.listWorkspaceAdminIds
+      ? await deps.repo.listWorkspaceAdminIds(workspaceId)
+      : [];
+    const excluded = new Set<string>([joinerUserId]);
+    if (actorUserId != null) excluded.add(actorUserId);
+    const recipients = [...new Set(adminIds)].filter((id) => !excluded.has(id));
+
+    // F1/C-006: snapshot the sanitized workspace name → inert refLabel (no raw CR/LF / control chars).
+    const refLabel = sanitizeRefLabel(workspaceName);
+    // C-005: fan out via the BATCH path (one round-trip), in-app only (no email — GAP-001).
+    return await deliverBatch(workspaceId, recipients, type, deps, refLabel);
+  } catch (err) {
+    log("notifyOnWorkspaceMemberJoined failed (best-effort, join already persisted)", err);
+    return empty;
+  }
+}
+
 export interface NotifyOnWorkspaceMemberRemovedInput {
   /** The workspace the user was removed from — persisted as the in-app row's refId (Data Model). */
   workspaceId: string;
@@ -917,4 +1000,41 @@ async function deliverToRecipients(
     }
   }
   return { recipients, inAppSent, emailsSent };
+}
+
+/**
+ * workspace-notifications S-002 (C-005) — the multi-recipient FAN-OUT channel: write ONE in-app row
+ * per recipient in a SINGLE batch round-trip (repo.insertNotifications([...])), not a serial awaited
+ * insert per recipient. IN-APP ONLY — the fan-out events that route here (join → admins; S-004 rename
+ * → members) are low-signal, so NO email is enqueued. An empty recipient set writes NOTHING (no empty
+ * batch insert). Falls back to per-row insertNotification when the bulk port is absent (keeps older
+ * fakes valid), still in-app only. The recipient list is already deduped + actor-excluded by the
+ * caller; throws propagate to the caller's best-effort try/catch.
+ */
+async function deliverBatch(
+  refId: string,
+  recipients: string[],
+  type: NotificationType,
+  deps: NotifyDeps,
+  refLabel?: string | null,
+): Promise<NotifyResult> {
+  if (recipients.length === 0) return { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  const rows: NewNotification[] = recipients.map((userId) => ({
+    userId,
+    type,
+    refId,
+    commentId: null,
+    ...(refLabel !== undefined ? { refLabel } : {}),
+  }));
+
+  if (deps.repo.insertNotifications) {
+    // One round-trip for the whole admin/member set (C-005 — not N serial inserts).
+    await deps.repo.insertNotifications(rows);
+  } else {
+    // Back-compat fallback (bulk port absent): per-row insert, still in-app only.
+    for (const row of rows) await deps.repo.insertNotification(row);
+  }
+  // In-app only (low-signal fan-out) → zero emails.
+  return { recipients, inAppSent: rows.length, emailsSent: 0 };
 }
