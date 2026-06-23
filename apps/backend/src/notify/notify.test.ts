@@ -312,7 +312,10 @@ describe("isEmailEligible (C-006: channel policy derived from notification type)
   });
 
   test("C-006: low-signal types are NOT email-eligible (in-app only)", () => {
-    for (const t of ["resolved", "detached", "invited"] as NotificationType[]) {
+    // notification-preferences C-003/AS-006: `invited` was UPGRADED to email-on (the matrix is now
+    // the SSOT for email eligibility), so it is NO LONGER in this no-email set. resolved + detached
+    // remain in-app-only (no email channel in the matrix).
+    for (const t of ["resolved", "detached"] as NotificationType[]) {
       expect(isEmailEligible(t)).toBe(false);
     }
   });
@@ -969,22 +972,25 @@ describe("notifyOnDetached (ONE grouped row per author, in-app ONLY — C-006 lo
 // `invited` is LOW-SIGNAL → IN-APP ONLY, ZERO notify-email. The recipient is the single bound
 // invitee userId resolved at invite time; a pending invite (no userId) never reaches here.
 describe("notifyOnInvited (invitee in-app row — in-app only, low-signal)", () => {
-  test("AS-010: an invited account-holder gets ONE in-app `invited` row, NO email", async () => {
+  test("AS-010: an invited account-holder gets ONE in-app `invited` row", async () => {
     const repo = fakeRepo({});
     const mail = fakeMail();
 
+    // No appUrl supplied → the email channel needs no deep-link to fire, but the route that wires
+    // notifyOnInvited can pass a no-op enqueuer; here a recording enqueuer proves the in-app row.
     const result = await notifyOnInvited({ refId: "doc_1", inviteeUserId: "dev-user" }, { repo, mail });
 
     // ONE in-app row, typed `invited`, pointing at the doc (refId).
     // S-006: every row now carries comment_id — null for a non-comment type like `invited` (AS-029).
     expect(repo.inserted).toEqual([{ userId: "dev-user", type: "invited", refId: "doc_1", commentId: null }]);
-    expect(result).toEqual({ recipients: ["dev-user"], inAppSent: 1, emailsSent: 0 });
-    // C-006: invited is low-signal → ZERO notify-email enqueued by the notify path.
-    expect(mail.sent).toHaveLength(0);
+    expect(result.recipients).toEqual(["dev-user"]);
+    expect(result.inAppSent).toBe(1);
   });
 
-  test("C-006: `invited` is NOT email-eligible (low-signal channel confirmed)", () => {
-    expect(isEmailEligible("invited")).toBe(false);
+  test("C-006 / AS-006: `invited` IS email-eligible by default now (matrix upgrade, notification-preferences C-003)", () => {
+    // The doc-share `invited` event was upgraded from in-app-only to in-app+email by the
+    // notification-preferences matrix; eligibility is read from the matrix SSOT.
+    expect(isEmailEligible("invited")).toBe(true);
   });
 
   test("AS-010 (pending nuance): a null invitee userId → NO in-app row (no account to attach to)", async () => {
@@ -1788,5 +1794,340 @@ describe("notifyOnWorkspaceRenamed (S-004 — members get an in-app row on a ren
     expect(result.recipients).toEqual(["u_bob"]);
     expect(typeof repo.inserted[0].refLabel).toBe("string");
     expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
+  });
+});
+
+// ===========================================================================
+// notification-preferences S-002 — email + in-app delivery honor per-recipient
+// preferences. Turning a channel off stops that delivery while leaving the other intact;
+// the master email switch silences ALL email; critical in-app notices (detached,
+// workspace_member_removed) cannot be turned off. The per-recipient prefs read is BATCHED
+// ONCE per dispatch and split BY CHANNEL on failure: email fails CLOSED, in-app fails OPEN.
+//
+// The prefs port models the EFFECTIVE per-user decision for ONE event type (matrix default
+// ∪ the user's overrides ∪ the master email switch). Absent port → matrix defaults, no
+// overrides, master on (back-compat: existing reply/new_feedback tests above stay green).
+// ===========================================================================
+
+// A fake NotifyRepo with the S-002 prefs port. `prefs` maps userId → effective {inApp,email}
+// decision for THIS dispatch's event type; a user absent from the map reads matrix defaults
+// (the helper applies them). `throwOnPrefs` proves the fail-closed/open split (C-006).
+function fakePrefsRepo(opts: {
+  owner?: string | null;
+  editors?: string[];
+  participants?: string[];
+  emails?: Record<string, string | null>;
+  slug?: string | null;
+  // Per-user effective decision for the event type under test. Absent user → undefined →
+  // the helper falls back to matrix defaults (master on, no override).
+  prefs?: Record<string, { inApp: boolean; email: boolean }>;
+  throwOnPrefs?: boolean;
+}): NotifyRepo & {
+  inserted: NewNotification[];
+  prefsCalls: number;
+  prefsUserIdsSeen: string[][];
+} {
+  const inserted: NewNotification[] = [];
+  const self = {
+    inserted,
+    prefsCalls: 0,
+    prefsUserIdsSeen: [] as string[][],
+    async listParticipantIds() {
+      return opts.participants ?? [];
+    },
+    async getDocOwnerId() {
+      return opts.owner ?? null;
+    },
+    async listEditorIds() {
+      return opts.editors ?? [];
+    },
+    async getUserEmail(userId: string) {
+      const map = opts.emails ?? {};
+      return userId in map ? map[userId] : `${userId}@example.com`;
+    },
+    async getDocSlug() {
+      return opts.slug === undefined ? "spec-v2" : opts.slug;
+    },
+    async insertNotification(input: NewNotification) {
+      inserted.push(input);
+      return { id: `n_${inserted.length}` };
+    },
+    // S-002: the BATCHED per-recipient prefs read (one call per dispatch). Returns each
+    // requested user's effective {inApp,email}; a user absent from `opts.prefs` resolves to
+    // the matrix default for the type (so the port reflects "no override, master on").
+    async listPreferencesFor(
+      userIds: string[],
+      _type: NotificationType,
+    ): Promise<Map<string, { inApp: boolean; email: boolean }>> {
+      self.prefsCalls += 1;
+      self.prefsUserIdsSeen.push([...userIds]);
+      if (opts.throwOnPrefs) throw new Error("prefs read boom");
+      const out = new Map<string, { inApp: boolean; email: boolean }>();
+      for (const u of userIds) {
+        if (opts.prefs && u in opts.prefs) out.set(u, opts.prefs[u]!);
+      }
+      return out;
+    },
+  };
+  return self;
+}
+
+describe("notification-preferences S-002 — delivery honors preferences", () => {
+  test("AS-004: email OFF for new_feedback → recipient gets the in-app row, NO email; other recipients still email", async () => {
+    // Alice (owner) turned email OFF for new_feedback; Dan (editor) has defaults → still emails.
+    const repo = fakePrefsRepo({
+      owner: "Alice",
+      editors: ["Dan"],
+      slug: "spec-v2",
+      prefs: { Alice: { inApp: true, email: false } },
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    // Both get the durable in-app row.
+    expect(result.recipients.sort()).toEqual(["Alice", "Dan"]);
+    expect(repo.inserted.map((n) => n.userId).sort()).toEqual(["Alice", "Dan"]);
+    expect(result.inAppSent).toBe(2);
+    // Alice's email is suppressed; Dan still emails (per-recipient, not global).
+    expect(mail.sent.map((m) => m.to)).toEqual(["Dan@example.com"]);
+    expect(mail.sent.map((m) => m.to)).not.toContain("Alice@example.com");
+    expect(result.emailsSent).toBe(1);
+  });
+
+  test("AS-013.T1: a prefs-read failure fails CLOSED for email — NO email is sent (never re-send a silenced email)", async () => {
+    // Alice turned email off, but the prefs read THROWS transiently. Email must be skipped
+    // for everyone (fail closed), not optimistically re-sent.
+    const repo = fakePrefsRepo({
+      owner: "Alice",
+      editors: ["Dan"],
+      slug: "spec-v2",
+      throwOnPrefs: true,
+    });
+    const mail = fakeMail();
+    const logged: unknown[] = [];
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      {
+        repo,
+        mail,
+        type: "new_feedback",
+        appUrl: "https://anchord.example.com",
+        logError: (_m, e) => logged.push(e),
+      },
+    );
+
+    expect(mail.sent).toHaveLength(0); // email fails closed for ALL recipients
+    expect(result.emailsSent).toBe(0);
+    expect(logged.length).toBeGreaterThanOrEqual(1); // the failure is logged
+  });
+
+  test("AS-013.T2: a prefs-read failure fails OPEN for in-app — the durable rows are still written", async () => {
+    const repo = fakePrefsRepo({
+      owner: "Alice",
+      editors: ["Dan"],
+      slug: "spec-v2",
+      throwOnPrefs: true,
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    // In-app fails open: every recipient still gets their bell row.
+    expect(result.inAppSent).toBe(2);
+    expect(repo.inserted.map((n) => n.userId).sort()).toEqual(["Alice", "Dan"]);
+  });
+
+  test("AS-005: master email OFF silences email for ALL recipients; in-app rows still appear", async () => {
+    // Both recipients have the master email switch off → no email of any kind, in-app intact.
+    const repo = fakePrefsRepo({
+      owner: "Alice",
+      editors: ["Dan"],
+      slug: "spec-v2",
+      prefs: {
+        Alice: { inApp: true, email: false }, // master off folds into email=false here
+        Dan: { inApp: true, email: false },
+      },
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.inAppSent).toBe(2);
+    expect(repo.inserted.map((n) => n.userId).sort()).toEqual(["Alice", "Dan"]);
+    expect(mail.sent).toHaveLength(0); // master off → no email at all
+    expect(result.emailsSent).toBe(0);
+  });
+
+  test("AS-006: doc-share `invited` sends an in-app row AND an email by DEFAULT (upgraded via the matrix)", async () => {
+    // No overrides (default prefs). `invited` is in-app-only in the legacy HIGH_SIGNAL set,
+    // but the matrix marks invited.email default-on — delivery routes eligibility through the
+    // matrix so the default now includes email. A real MailEnqueuer + appUrl are supplied.
+    const repo = fakePrefsRepo({ slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnInvited(
+      { refId: "doc_1", inviteeUserId: "Alice" },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    // In-app row (type invited) — the existing low-signal behavior.
+    expect(repo.inserted.map((n) => ({ u: n.userId, t: n.type }))).toEqual([
+      { u: "Alice", t: "invited" },
+    ]);
+    expect(result.inAppSent).toBe(1);
+    // NEW: an email is enqueued by default for invited (the doc-shared default now includes email).
+    expect(result.emailsSent).toBe(1);
+    expect(mail.sent.map((m) => m.to)).toEqual(["Alice@example.com"]);
+  });
+
+  test("AS-007: a critical in-app notice (detached) is delivered regardless of ANY stored preference", async () => {
+    // Even a (stray) in-app-off preference for the recipient cannot suppress detached in-app —
+    // the always-deliver set is consulted BEFORE reading any row.
+    const repo = fakePrefsRepo({
+      slug: "spec-v2",
+      prefs: { Bob: { inApp: false, email: false } }, // stray disable — must be ignored for in-app
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnDetached(
+      { refId: "doc_1", authors: [{ authorId: "Bob", count: 5 }] },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.inAppSent).toBe(1); // detached in-app delivered regardless
+    expect(repo.inserted.map((n) => n.userId)).toEqual(["Bob"]);
+    expect(repo.inserted[0]!.type).toBe("detached");
+    // detached has no email channel (matrix) → still zero email.
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-001: master email off suppresses ALL email but never touches in-app (cross-type)", async () => {
+    // thread_activity (email-on by default) with email folded off → in-app stays, email gone.
+    const repo = fakePrefsRepo({
+      participants: ["B"],
+      owner: "C",
+      slug: "spec-v2",
+      prefs: { B: { inApp: true, email: false }, C: { inApp: true, email: false } },
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnThreadActivity(
+      { annotationId: "ann_1", actorUserId: "A" },
+      { repo, mail, type: "thread_activity", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.inAppSent).toBe(2);
+    expect(mail.sent).toHaveLength(0);
+    expect(result.emailsSent).toBe(0);
+  });
+
+  test("C-002: workspace_member_removed in-app is always delivered even with a stray in-app-off pref", async () => {
+    const repo = fakePrefsRepo({
+      emails: { u_bob: "bob@acme.com" },
+      prefs: { u_bob: { inApp: false, email: false } }, // stray disable — must be ignored in-app
+    });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme",
+        recipientEmail: "bob@acme.com",
+        actorUserId: "u_alice",
+      },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    // C-002: in-app forced on (locked critical) despite the stray disable.
+    expect(result.inAppSent).toBe(1);
+    expect(repo.inserted[0]!.type).toBe("workspace_member_removed");
+    // The email pref IS honored (it is togglable, not locked) → email suppressed here.
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  test("C-003: matrix defaults flow through — invited gains email; member_joined email stays OFF by default", async () => {
+    // member_joined (in-app only by default, email off) with no overrides → never emails,
+    // proving the matrix default narrows correctly even when an email address exists.
+    const repo = fakePrefsRepo({});
+    // Reuse a workspace-style fan-out: member_joined routes through deliverBatch (in-app only).
+    const wsRepo = fakeWsRepo({
+      adminIds: ["u_alice"],
+      workspaceName: "Acme",
+      emailByUser: { u_alice: "alice@acme.com" },
+    });
+    const mail = fakeMail();
+
+    const joined = await notifyOnWorkspaceMemberJoined(
+      { workspaceId: "ws_acme", joinerUserId: "u_bob", workspaceName: "Acme", joinerName: "Bob", actorUserId: "u_bob" },
+      { repo: wsRepo, mail, appUrl: "https://anchord.example.com" },
+    );
+    expect(joined.emailsSent).toBe(0); // member_joined email OFF by default (matrix)
+    expect(mail.sent).toHaveLength(0);
+
+    // And invited gains email by default (the other half of C-003 / AS-006).
+    const inviteMail = fakeMail();
+    const invited = await notifyOnInvited(
+      { refId: "doc_1", inviteeUserId: "Alice" },
+      { repo, mail: inviteMail, appUrl: "https://anchord.example.com" },
+    );
+    expect(invited.emailsSent).toBe(1);
+  });
+
+  test("C-006: the prefs read is BATCHED once per dispatch (one call for all recipients, no N+1)", async () => {
+    const repo = fakePrefsRepo({ owner: "Alice", editors: ["Dan", "Eve"], slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients.sort()).toEqual(["Alice", "Dan", "Eve"]);
+    // ONE batched prefs call carrying ALL 3 recipient ids — never one call per recipient.
+    expect(repo.prefsCalls).toBe(1);
+    expect(repo.prefsUserIdsSeen[0]!.sort()).toEqual(["Alice", "Dan", "Eve"]);
+  });
+
+  test("C-006 (back-compat): no prefs port → matrix defaults, master on (existing email-eligible types still email)", async () => {
+    // fakeRepo has NO listPreferencesFor — delivery must default to matrix-on, master-on, so
+    // a high-signal type still emails. Guards the back-compat invariant for the old fakes.
+    const repo = fakeRepo({ owner: "Alice", editors: ["Dan"], slug: "spec-v2" });
+    const mail = fakeMail();
+
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Bob" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.emailsSent).toBe(2); // both still email — defaults preserved
+    expect(mail.sent.map((m) => m.to).sort()).toEqual(["Alice@example.com", "Dan@example.com"]);
+  });
+
+  test("C-006 (empty): no recipients → no prefs read at all (nothing to batch)", async () => {
+    const repo = fakePrefsRepo({ owner: "Alice", editors: [], slug: "spec-v2" });
+    const mail = fakeMail();
+
+    // Actor is the owner with no editors → empty recipient set.
+    const result = await notifyOnNewFeedback(
+      { annotationId: "ann_1", actorUserId: "Alice" },
+      { repo, mail, type: "new_feedback", appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(repo.prefsCalls).toBe(0); // no recipients → no batched read
   });
 });

@@ -21,6 +21,7 @@
 // + the real MailQueue wiring are integration/glue-verified.
 
 import type { NotificationType } from "./types";
+import { defaultEnabled } from "./preferences-matrix";
 
 /** What insertNotification persists — one in-app notification row for one recipient. */
 export interface NewNotification {
@@ -108,6 +109,20 @@ export interface NotifyRepo {
    * valid — the batch path falls back to per-row `insertNotification` when this port is absent.
    */
   insertNotifications?(rows: NewNotification[]): Promise<{ id: string }[]>;
+  /**
+   * notification-preferences S-002 (C-006): the BATCHED per-recipient preferences read. Given the
+   * full recipient set + the event type, return — per user — the EFFECTIVE channel decision
+   * `{ inApp, email }` for THIS type, built from the matrix default ∪ the user's stored overrides ∪
+   * their master email switch. Read ONCE per dispatch (NOT once per recipient — no N+1). A user
+   * absent from the returned map reads the matrix default (no override, master on). Optional so the
+   * existing notify fakes (which have no prefs port) stay valid: a missing port means "matrix
+   * defaults, no overrides, master on" — so high-signal types still email by default (back-compat).
+   * On throw the delivery path fails CLOSED for email (skip + log) and OPEN for in-app (still write).
+   */
+  listPreferencesFor?(
+    userIds: string[],
+    type: NotificationType,
+  ): Promise<Map<string, { inApp: boolean; email: boolean }>>;
 }
 
 /**
@@ -129,23 +144,69 @@ export interface MailEnqueuer {
 // ---------------------------------------------------------------------------
 
 /**
- * High-signal notification types — these send email AND in-app (C-006). Everything else is
- * low-signal: in-app only, no email. Eligibility is DERIVED from `type`, never a stored column.
- * `reply` counts as high-signal (it is the legacy thread-activity alias, kept green until S-002).
+ * notification-preferences S-002 — the SINGLE source of truth for "does this type send email by
+ * DEFAULT" is now the supported-channel MATRIX (preferences-matrix.ts), NOT a hand-kept
+ * HIGH_SIGNAL_TYPES set. Routing eligibility through the matrix is what lets the doc-share
+ * `invited` event gain email by default (C-003/AS-006) and what makes per-user overrides apply at
+ * delivery — the matrix is the SSOT S-001 already built, so a second set here would be a drift
+ * hazard. The legacy HIGH_SIGNAL_TYPES set is retired in favor of `defaultEnabled(type, "email")`.
+ *
+ * Crucially this only ever sets the DEFAULT base eligibility: a low-signal type (resolved/detached)
+ * has no email channel in the matrix → false → still emails no one. Per-recipient preferences and
+ * the master switch (read in the delivery path) only ever NARROW from this default, never widen it.
  */
-const HIGH_SIGNAL_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
-  "reply",
-  "new_feedback",
-  "thread_activity",
-  "suggestion_decided",
-  // workspace-notifications S-003: the ONLY workspace type that emails. A removed member must be
-  // told they lost access, in-app AND by email — a CRITICAL always-on notice (mirrors `detached`).
+export function isEmailEligible(type: NotificationType): boolean {
+  return defaultEnabled(type, "email");
+}
+
+/**
+ * C-002 (delivery lock): the CRITICAL in-app notices that are always-on and CANNOT be suppressed by
+ * any stored preference or a prefs-read failure. This hardcoded set is consulted BEFORE reading any
+ * preference row, so a stray `{type, in_app, false}` override (which the write API already refuses)
+ * or a transient prefs-read error can never drop the in-app row for these types. Mirrors the matrix
+ * `locked` flag (defence-in-depth) but enforced at the DELIVERY path (S-001 enforces it at the
+ * write API + effective-read; S-002 enforces it here).
+ */
+const ALWAYS_DELIVER_IN_APP: ReadonlySet<NotificationType> = new Set<NotificationType>([
+  "detached",
   "workspace_member_removed",
 ]);
 
-/** True iff a notification of this type should also send an email (C-006). */
-export function isEmailEligible(type: NotificationType): boolean {
-  return HIGH_SIGNAL_TYPES.has(type);
+/**
+ * notification-preferences S-002 (C-006) — resolve the EFFECTIVE per-recipient channel decisions
+ * for one dispatch in ONE batched read. Returns a function `(userId) → { inApp, email }`.
+ *
+ * - No prefs port (existing fakes / unwired callers) → matrix defaults for everyone, master on.
+ * - The port THROWS (transient DB error) → fail CLOSED for email (email=false for everyone — never
+ *   re-send a silenced email) and OPEN for in-app (inApp=true — the durable row is still written);
+ *   the failure is logged. This is the channel-split fail-safe (C-006).
+ * - Otherwise: a user present in the port's map uses their effective decision; a user ABSENT reads
+ *   the matrix default for the type (no override, master on).
+ *
+ * In ALL cases the C-002 always-deliver set forces in-app on for its types — applied by the caller
+ * AFTER this resolver, so even a fail-closed/disabled decision can't drop a critical in-app row.
+ */
+async function resolvePreferenceDecisions(
+  recipients: string[],
+  type: NotificationType,
+  deps: NotifyDeps,
+): Promise<(userId: string) => { inApp: boolean; email: boolean }> {
+  const matrixDefault = {
+    inApp: defaultEnabled(type, "in_app"),
+    email: defaultEnabled(type, "email"),
+  };
+  if (recipients.length === 0 || !deps.repo.listPreferencesFor) {
+    return () => matrixDefault;
+  }
+  try {
+    const map = await deps.repo.listPreferencesFor(recipients, type);
+    return (userId) => map.get(userId) ?? matrixDefault;
+  } catch (err) {
+    // C-006 fail-safe: email fails CLOSED (skip everywhere), in-app fails OPEN (still deliver).
+    const log = deps.logError ?? ((msg, e) => console.error(msg, e));
+    log("listPreferencesFor failed — email fails closed, in-app fails open (C-006)", err);
+    return () => ({ inApp: true, email: false });
+  }
 }
 
 /**
@@ -1023,9 +1084,16 @@ async function deliverToRecipients(
   // has no slug, and its link must point at the workspace, never an annotation fragment.
   emailDeepLinkOverride?: string,
 ): Promise<NotifyResult> {
-  // C-006: email is sent ONLY for a high-signal type. A low-signal event writes the in-app
-  // row(s) and enqueues NO mail. Eligibility is derived from `type`, never a stored column.
+  // C-006: email default eligibility is the MATRIX default for this type. A low-signal event
+  // (resolved/detached) has no email channel → false → no mail to anyone. This is the base; the
+  // per-recipient prefs decision below only ever NARROWS it (never widens), and the master switch
+  // folds into each recipient's `email` decision (C-001).
   const emailEligible = isEmailEligible(type);
+
+  // C-006: read ALL recipients' effective channel decisions in ONE batched call (no N+1). On a
+  // prefs-read failure this returns a fail-safe (email closed, in-app open) decision function.
+  const decisionFor = await resolvePreferenceDecisions(recipients, type, deps);
+
   // C-013: resolve the doc slug once (per event) to build the per-recipient deep-link. Skipped when
   // the caller supplied an explicit deep-link override (workspace events carry no doc slug).
   const slug =
@@ -1036,22 +1104,30 @@ async function deliverToRecipients(
   let inAppSent = 0;
   let emailsSent = 0;
   for (const userId of recipients) {
-    // Channel 1 — in-app: one notification row per recipient (always, the durable channel).
-    // Carries the triggering comment id for comment-type rows (S-006) — null otherwise.
-    await deps.repo.insertNotification({
-      userId,
-      type,
-      refId: annotationId,
-      commentId: commentId ?? null,
-      // Only carry refLabel when the caller supplied one (workspace rows) — annotation/doc rows
-      // leave it undefined so their existing exact-shape assertions are unaffected.
-      ...(refLabel !== undefined ? { refLabel } : {}),
-    });
-    inAppSent += 1;
+    const decision = decisionFor(userId);
+    // C-002: a critical type forces the in-app row regardless of the stored/failed decision; for
+    // every other type the recipient's in-app preference applies (default on per the matrix).
+    const deliverInApp = ALWAYS_DELIVER_IN_APP.has(type) || decision.inApp;
 
-    // Channel 2 — email: high-signal only (C-006); one mail per recipient that has an address.
-    // Guard a missing email (account-holders should always have one, but never crash on null).
-    if (!emailEligible) continue;
+    // Channel 1 — in-app: the durable channel. Carries the triggering comment id for comment-type
+    // rows (S-006) — null otherwise. Suppressed only by a non-critical recipient in-app opt-out.
+    if (deliverInApp) {
+      await deps.repo.insertNotification({
+        userId,
+        type,
+        refId: annotationId,
+        commentId: commentId ?? null,
+        // Only carry refLabel when the caller supplied one (workspace rows) — annotation/doc rows
+        // leave it undefined so their existing exact-shape assertions are unaffected.
+        ...(refLabel !== undefined ? { refLabel } : {}),
+      });
+      inAppSent += 1;
+    }
+
+    // Channel 2 — email: matrix-eligible AND the recipient's email decision is on (C-001/C-006).
+    // The decision already folds in their per-event override + master switch; a fail-closed read
+    // leaves it false. Guard a missing email (account-holders should always have one, never crash).
+    if (!emailEligible || !decision.email) continue;
     const email = await deps.repo.getUserEmail(userId);
     if (email != null && email.length > 0) {
       // C-013 / C-012: plain-text body carrying the absolute deep-link (no doc body embedded). A
@@ -1088,7 +1164,15 @@ async function deliverBatch(
 ): Promise<NotifyResult> {
   if (recipients.length === 0) return { recipients: [], inAppSent: 0, emailsSent: 0 };
 
-  const rows: NewNotification[] = recipients.map((userId) => ({
+  // C-006/C-002: batched per-recipient in-app decision. The fan-out events here are in-app only,
+  // so the email half is irrelevant; the always-deliver set forces critical types on regardless.
+  const decisionFor = await resolvePreferenceDecisions(recipients, type, deps);
+  const deliverTo = recipients.filter(
+    (userId) => ALWAYS_DELIVER_IN_APP.has(type) || decisionFor(userId).inApp,
+  );
+  if (deliverTo.length === 0) return { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  const rows: NewNotification[] = deliverTo.map((userId) => ({
     userId,
     type,
     refId,
@@ -1103,6 +1187,7 @@ async function deliverBatch(
     // Back-compat fallback (bulk port absent): per-row insert, still in-app only.
     for (const row of rows) await deps.repo.insertNotification(row);
   }
-  // In-app only (low-signal fan-out) → zero emails.
-  return { recipients, inAppSent: rows.length, emailsSent: 0 };
+  // In-app only (low-signal fan-out) → zero emails. `recipients` reflects who actually got a row
+  // (after per-recipient in-app opt-out narrowing).
+  return { recipients: deliverTo, inAppSent: rows.length, emailsSent: 0 };
 }
