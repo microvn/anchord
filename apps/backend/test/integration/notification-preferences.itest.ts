@@ -134,10 +134,12 @@ describe.skipIf(!RUN)("notification preferences — table/API/delivery (real Pos
     for (const p of prefs.preferences.filter((p) => p.channel === "in_app")) {
       expect(p.enabled).toBe(true);
     }
-    // email on for the high-signal four.
-    for (const t of ["new_feedback", "thread_activity", "suggestion_decided", "invited"]) {
+    // email on for the high-signal three.
+    for (const t of ["new_feedback", "thread_activity", "suggestion_decided"]) {
       expect(pref(prefs, t, "email").enabled).toBe(true);
     }
+    // invited is in-app only — no email channel (the transactional invite email is separate).
+    expect(pref(prefs, "invited", "email").supported).toBe(false);
     // member_joined email supported but OFF by default (opt-in).
     const mj = pref(prefs, "workspace_member_joined", "email");
     expect(mj.supported).toBe(true);
@@ -289,7 +291,7 @@ describe.skipIf(!RUN)("notification preferences — table/API/delivery (real Pos
     await createPreferencesRepo(h.db).setMasterEmailEnabled(BOB, true);
   });
 
-  test("AS-006: invited default-on — recipient with default prefs gets in-app AND email (matrix upgrade)", async () => {
+  test("AS-006: invited — recipient with default prefs gets an in-app row ONLY, NO notification email", async () => {
     const did = await seedDoc();
     const mail = new MailQueue();
     const result = await notifyOnInvited(
@@ -302,7 +304,7 @@ describe.skipIf(!RUN)("notification preferences — table/API/delivery (real Pos
       .from(notifications)
       .where(and(eq(notifications.refId, did), eq(notifications.userId, BOB), eq(notifications.type, "invited")));
     expect(rows).toHaveLength(1); // in-app row
-    expect(mail.statusCounts().pending).toBe(1); // email — invited gains email by default
+    expect(mail.statusCounts().pending).toBe(0); // invited is in-app only — the invite email is separate
   });
 
   test("AS-007: critical locked at delivery — detached writes the in-app row even attempting a disable", async () => {

@@ -28,7 +28,7 @@ const MATRIX: Record<string, { in_app: Policy; email: Policy }> = {
   new_feedback: { in_app: on, email: on },
   thread_activity: { in_app: on, email: on },
   suggestion_decided: { in_app: on, email: on },
-  invited: { in_app: on, email: on },
+  invited: { in_app: on, email: none }, // doc-share invited is in-app only (the invite email is separate)
   resolved: { in_app: on, email: none },
   detached: { in_app: lockedOn, email: none },
   workspace_member_joined: { in_app: on, email: off },

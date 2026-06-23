@@ -55,7 +55,6 @@ test("AS-001.T2: a fresh user reads email ON for the high-signal personal events
     "new_feedback",
     "thread_activity",
     "suggestion_decided",
-    "invited",
   ] as NotificationType[]) {
     expect(find(prefs, type, "email")).toMatchObject({ supported: true, enabled: true });
   }
@@ -72,6 +71,7 @@ test("AS-001: events with no email channel read unsupported + disabled for a fre
   for (const type of [
     "resolved",
     "detached",
+    "invited",
     "workspace_invited",
     "workspace_renamed",
   ] as NotificationType[]) {
@@ -89,7 +89,9 @@ test("AS-002: an override {new_feedback,email,off} persists in the effective rea
   // Its sibling channel and every other default-on supported pair are unaffected.
   expect(find(prefs, "new_feedback", "in_app").enabled).toBe(true);
   expect(find(prefs, "thread_activity", "email").enabled).toBe(true);
-  expect(find(prefs, "invited", "email").enabled).toBe(true);
+  expect(find(prefs, "suggestion_decided", "email").enabled).toBe(true);
+  // invited has no email channel (in-app only) — its email pair reads unsupported.
+  expect(find(prefs, "invited", "email")).toMatchObject({ supported: false, enabled: false });
 });
 
 test("AS-003: an unsupported channel is refused by rejectWrite and reads unsupported", () => {

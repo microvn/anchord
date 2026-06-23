@@ -101,7 +101,9 @@ test("AS-001: a fresh user reads every preference at its matrix default + master
   // in-app on for every event (spot-check a few), email on for high-signal, off for member_joined.
   expect(find(data.preferences, "new_feedback", "in_app").enabled).toBe(true);
   expect(find(data.preferences, "new_feedback", "email").enabled).toBe(true);
-  expect(find(data.preferences, "invited", "email").enabled).toBe(true);
+  // invited is in-app only — no email channel (the transactional invite email is separate).
+  expect(find(data.preferences, "invited", "in_app").enabled).toBe(true);
+  expect(find(data.preferences, "invited", "email").supported).toBe(false);
   expect(find(data.preferences, "workspace_member_joined", "email").enabled).toBe(false);
   expect(find(data.preferences, "detached", "email").supported).toBe(false);
 });

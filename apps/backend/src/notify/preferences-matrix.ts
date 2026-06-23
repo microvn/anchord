@@ -11,7 +11,7 @@
 //   | new_feedback              | on            | on              |
 //   | thread_activity           | on            | on              |
 //   | suggestion_decided        | on            | on              |
-//   | invited (doc shared)      | on            | on (upgraded)   |
+//   | invited (doc shared)      | on            | — (unsupported) |
 //   | resolved                  | on            | — (unsupported) |
 //   | detached                  | on (LOCKED)   | — (unsupported) |
 //   | workspace_member_joined   | on            | off (opt-in)    |
@@ -55,7 +55,7 @@ export const PREFERENCES_MATRIX: Record<NotificationType, TypeMatrix> = {
   new_feedback: { in_app: on, email: on },
   thread_activity: { in_app: on, email: on },
   suggestion_decided: { in_app: on, email: on },
-  invited: { in_app: on, email: on }, // doc-share invited gains email by default (upgraded)
+  invited: { in_app: on, email: none }, // doc-share invited is in-app only (the transactional invite email is separate)
   resolved: { in_app: on, email: none },
   detached: { in_app: lockedOn, email: none }, // critical in-app, no toggle
   workspace_member_joined: { in_app: on, email: off }, // email supported but OFF by default (opt-in)

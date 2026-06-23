@@ -146,10 +146,11 @@ export interface MailEnqueuer {
 /**
  * notification-preferences S-002 — the SINGLE source of truth for "does this type send email by
  * DEFAULT" is now the supported-channel MATRIX (preferences-matrix.ts), NOT a hand-kept
- * HIGH_SIGNAL_TYPES set. Routing eligibility through the matrix is what lets the doc-share
- * `invited` event gain email by default (C-003/AS-006) and what makes per-user overrides apply at
- * delivery — the matrix is the SSOT S-001 already built, so a second set here would be a drift
- * hazard. The legacy HIGH_SIGNAL_TYPES set is retired in favor of `defaultEnabled(type, "email")`.
+ * HIGH_SIGNAL_TYPES set. Routing eligibility through the matrix is what makes per-user overrides
+ * apply at delivery — the matrix is the SSOT S-001 already built, so a second set here would be a
+ * drift hazard. The legacy HIGH_SIGNAL_TYPES set is retired in favor of `defaultEnabled(type,
+ * "email")`. The doc-share `invited` event is in-app only in the matrix (no email channel — the
+ * transactional invite email is a separate pre-existing channel), so it emails no one here.
  *
  * Crucially this only ever sets the DEFAULT base eligibility: a low-signal type (resolved/detached)
  * has no email channel in the matrix → false → still emails no one. Per-recipient preferences and

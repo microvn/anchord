@@ -312,10 +312,10 @@ describe("isEmailEligible (C-006: channel policy derived from notification type)
   });
 
   test("C-006: low-signal types are NOT email-eligible (in-app only)", () => {
-    // notification-preferences C-003/AS-006: `invited` was UPGRADED to email-on (the matrix is now
-    // the SSOT for email eligibility), so it is NO LONGER in this no-email set. resolved + detached
-    // remain in-app-only (no email channel in the matrix).
-    for (const t of ["resolved", "detached"] as NotificationType[]) {
+    // notification-preferences C-003/AS-006: the doc-share `invited` event is in-app only (no email
+    // channel in the matrix — the transactional invite email is a separate channel). resolved +
+    // detached are likewise in-app-only.
+    for (const t of ["resolved", "detached", "invited"] as NotificationType[]) {
       expect(isEmailEligible(t)).toBe(false);
     }
   });
@@ -987,10 +987,10 @@ describe("notifyOnInvited (invitee in-app row — in-app only, low-signal)", () 
     expect(result.inAppSent).toBe(1);
   });
 
-  test("C-006 / AS-006: `invited` IS email-eligible by default now (matrix upgrade, notification-preferences C-003)", () => {
-    // The doc-share `invited` event was upgraded from in-app-only to in-app+email by the
-    // notification-preferences matrix; eligibility is read from the matrix SSOT.
-    expect(isEmailEligible("invited")).toBe(true);
+  test("C-006 / AS-006: `invited` is NOT email-eligible (in-app only — the invite email is separate)", () => {
+    // The doc-share `invited` event is in-app only in the matrix (no email channel); the
+    // transactional invite email is a separate pre-existing channel, so the notify path emails no one.
+    expect(isEmailEligible("invited")).toBe(false);
   });
 
   test("AS-010 (pending nuance): a null invitee userId → NO in-app row (no account to attach to)", async () => {
@@ -1969,10 +1969,9 @@ describe("notification-preferences S-002 — delivery honors preferences", () =>
     expect(result.emailsSent).toBe(0);
   });
 
-  test("AS-006: doc-share `invited` sends an in-app row AND an email by DEFAULT (upgraded via the matrix)", async () => {
-    // No overrides (default prefs). `invited` is in-app-only in the legacy HIGH_SIGNAL set,
-    // but the matrix marks invited.email default-on — delivery routes eligibility through the
-    // matrix so the default now includes email. A real MailEnqueuer + appUrl are supplied.
+  test("AS-006: doc-share `invited` sends an in-app row ONLY — NO notification email (the invite email is separate)", async () => {
+    // No overrides (default prefs). `invited` is in-app only in the matrix (no email channel) — the
+    // transactional invite email is a separate pre-existing channel, so the notify path emails no one.
     const repo = fakePrefsRepo({ slug: "spec-v2" });
     const mail = fakeMail();
 
@@ -1981,14 +1980,14 @@ describe("notification-preferences S-002 — delivery honors preferences", () =>
       { repo, mail, appUrl: "https://anchord.example.com" },
     );
 
-    // In-app row (type invited) — the existing low-signal behavior.
+    // In-app row (type invited) — the low-signal, in-app-only behavior.
     expect(repo.inserted.map((n) => ({ u: n.userId, t: n.type }))).toEqual([
       { u: "Alice", t: "invited" },
     ]);
     expect(result.inAppSent).toBe(1);
-    // NEW: an email is enqueued by default for invited (the doc-shared default now includes email).
-    expect(result.emailsSent).toBe(1);
-    expect(mail.sent.map((m) => m.to)).toEqual(["Alice@example.com"]);
+    // NO notification email is enqueued for invited (in-app only).
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
   });
 
   test("AS-007: a critical in-app notice (detached) is delivered regardless of ANY stored preference", async () => {
@@ -2059,7 +2058,7 @@ describe("notification-preferences S-002 — delivery honors preferences", () =>
     expect(mail.sent).toHaveLength(0);
   });
 
-  test("C-003: matrix defaults flow through — invited gains email; member_joined email stays OFF by default", async () => {
+  test("C-003: matrix defaults flow through — member_joined email stays OFF; invited is in-app only", async () => {
     // member_joined (in-app only by default, email off) with no overrides → never emails,
     // proving the matrix default narrows correctly even when an email address exists.
     const repo = fakePrefsRepo({});
@@ -2078,13 +2077,14 @@ describe("notification-preferences S-002 — delivery honors preferences", () =>
     expect(joined.emailsSent).toBe(0); // member_joined email OFF by default (matrix)
     expect(mail.sent).toHaveLength(0);
 
-    // And invited gains email by default (the other half of C-003 / AS-006).
+    // And invited stays in-app only (no email channel — the invite email is separate).
     const inviteMail = fakeMail();
     const invited = await notifyOnInvited(
       { refId: "doc_1", inviteeUserId: "Alice" },
       { repo, mail: inviteMail, appUrl: "https://anchord.example.com" },
     );
-    expect(invited.emailsSent).toBe(1);
+    expect(invited.emailsSent).toBe(0);
+    expect(inviteMail.sent).toHaveLength(0);
   });
 
   test("C-006: the prefs read is BATCHED once per dispatch (one call for all recipients, no N+1)", async () => {
