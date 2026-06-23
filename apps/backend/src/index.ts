@@ -378,7 +378,15 @@ const app = createApp({
   projects: { db, resolveSession, resolveWorkspaceRole },
   // workspaces S-005: per-workspace member directory + role management under
   // /api/w/:workspaceId/members (admin-gated; ≥1-admin invariant).
-  members: { db, resolveSession, resolveWorkspaceRole },
+  members: {
+    db,
+    resolveSession,
+    resolveWorkspaceRole,
+    // workspace-notifications S-003: the post-commit removed-member notice (in-app + email). The
+    // workspace name + recipient email are snapshotted PRE-delete by the route; the email deep-link
+    // is workspace-shaped (built from APP_URL). Best-effort — a notify failure never fails removal.
+    notify: { mail: notifyMail, appUrl: cfg.APP_URL },
+  },
   // workspace-project S-005: GET /api/w/:workspaceId/search, scoped to the workspace.
   search: { db, resolveSession, resolveWorkspaceRole },
   // workspace-project S-004: move/copy under /api/w/:workspaceId/docs/:slug. The admin

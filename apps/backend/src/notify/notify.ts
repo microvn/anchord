@@ -119,6 +119,9 @@ const HIGH_SIGNAL_TYPES: ReadonlySet<NotificationType> = new Set<NotificationTyp
   "new_feedback",
   "thread_activity",
   "suggestion_decided",
+  // workspace-notifications S-003: the ONLY workspace type that emails. A removed member must be
+  // told they lost access, in-app AND by email — a CRITICAL always-on notice (mirrors `detached`).
+  "workspace_member_removed",
 ]);
 
 /** True iff a notification of this type should also send an email (C-006). */
@@ -765,6 +768,85 @@ export async function notifyOnWorkspaceInvited(
   }
 }
 
+export interface NotifyOnWorkspaceMemberRemovedInput {
+  /** The workspace the user was removed from — persisted as the in-app row's refId (Data Model). */
+  workspaceId: string;
+  /**
+   * The removed user's account id — THE recipient by construction (F1/C-003/AS-006). It is
+   * snapshotted by the caller BEFORE the membership delete; this dispatch never re-checks "is
+   * this user still a member" (they are not), so the just-removed user is never dropped.
+   */
+  removedUserId: string;
+  /**
+   * The workspace's name snapshotted BEFORE the delete (F1) — post-delete it may be unreadable via
+   * membership joins, and a live read could leak a since-changed name. Sanitized (C-006) before it
+   * reaches refLabel AND the email subject/body.
+   */
+  workspaceName: string;
+  /**
+   * The removed user's email snapshotted BEFORE the delete (F1), or null when absent. Passed for
+   * documentation/parity; the email channel resolves the address via the repo (getUserEmail reads
+   * the durable `user` row, which survives the membership delete) — a null here just signals the
+   * caller couldn't find one (then no email channel, only the in-app row).
+   */
+  recipientEmail: string | null;
+  /** The removing admin — never a recipient of their own action (C-002, AS-005). */
+  actorUserId: string | null;
+}
+
+/**
+ * workspace-notifications S-003 — notify a REMOVED MEMBER. Emits ONE in-app
+ * `workspace_member_removed` row AND ONE email to the removed user: this is the ONLY workspace
+ * type that emails (high-signal, a CRITICAL always-on notice — mirrors `detached`). The recipient
+ * is the removed user BY CONSTRUCTION (F1/C-003/AS-006) — the caller snapshots { removedUserId,
+ * workspaceName, recipientEmail } BEFORE the membership delete and passes them here, so the
+ * membership-based recipient resolution never drops the just-removed user (no "is Bob still a
+ * member" re-check). The removing admin is excluded even if they somehow target their own id
+ * (C-002, AS-005). refId = workspaceId; refLabel = the SANITIZED workspace name (C-006), and the
+ * SAME sanitized name is what the email body interpolates — no raw CR/LF reaches the subject/body
+ * (AS-009). The email deep-link is WORKSPACE-shaped (`/w/{id}`), never annotation-shaped (GAP-002:
+ * the click-landing on a no-longer-accessible workspace stays deferred — a workspace link is fine).
+ *
+ * BEST-EFFORT / POST-COMMIT (C-004/AS-008): runs AFTER the removal commits; the whole pass is
+ * wrapped so a throwing repo/mail is logged and swallowed — the removal (Bob is gone) is never
+ * rolled back by a notify failure.
+ */
+export async function notifyOnWorkspaceMemberRemoved(
+  input: NotifyOnWorkspaceMemberRemovedInput,
+  deps: NotifyDeps,
+): Promise<NotifyResult> {
+  const { workspaceId, removedUserId, workspaceName, actorUserId } = input;
+  const type: NotificationType = "workspace_member_removed"; // high-signal: in-app + email.
+  const log = deps.logError ?? ((msg, err) => console.error(msg, err));
+  const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
+
+  try {
+    // C-003/AS-006: the removed user IS the recipient — resolved from the snapshot, NOT a live
+    // membership read. C-002 (AS-005): exclude the removing admin (a self-targeted removal yields []).
+    const recipients = removedUserId !== actorUserId ? [removedUserId] : [];
+    // F1/C-006: sanitize the snapshotted name → strips CR/LF + control chars + bounds length, BEFORE
+    // it becomes refLabel (inert in-app row) AND before it is interpolated into the email body.
+    const refLabel = sanitizeRefLabel(workspaceName);
+    // F3/GAP-002: the email link is WORKSPACE-shaped — build it here and pass it as the override so
+    // deliverToRecipients does not compute a (meaningless) annotation link from a missing doc slug.
+    const emailDeepLink = deps.appUrl
+      ? buildWorkspaceDeepLink(deps.appUrl, workspaceId)
+      : undefined;
+    return await deliverToRecipients(
+      workspaceId,
+      recipients,
+      type,
+      deps,
+      null,
+      refLabel,
+      emailDeepLink,
+    );
+  } catch (err) {
+    log("notifyOnWorkspaceMemberRemoved failed (best-effort, removal already persisted)", err);
+    return empty;
+  }
+}
+
 /**
  * Shared per-recipient channel send (C-005/C-006/C-012/C-013): for each recipient write ONE
  * in-app row (always — the durable channel) and, for a high-signal type only, enqueue ONE
@@ -784,12 +866,21 @@ async function deliverToRecipients(
   // workspace name). Undefined for annotation/doc rows — only spread into the insert when present so
   // existing exact-equality assertions on those rows stay valid.
   refLabel?: string | null,
+  // workspace-notifications S-003 (F3): an absolute email deep-link the CALLER already built (the
+  // WORKSPACE-shaped `/w/{id}` link for member-removed). When supplied it OVERRIDES the
+  // annotation-shaped link this stage would otherwise compute from the doc slug — a workspace event
+  // has no slug, and its link must point at the workspace, never an annotation fragment.
+  emailDeepLinkOverride?: string,
 ): Promise<NotifyResult> {
   // C-006: email is sent ONLY for a high-signal type. A low-signal event writes the in-app
   // row(s) and enqueues NO mail. Eligibility is derived from `type`, never a stored column.
   const emailEligible = isEmailEligible(type);
-  // C-013: resolve the doc slug once (per event) to build the per-recipient deep-link.
-  const slug = emailEligible && deps.repo.getDocSlug ? await deps.repo.getDocSlug(annotationId) : null;
+  // C-013: resolve the doc slug once (per event) to build the per-recipient deep-link. Skipped when
+  // the caller supplied an explicit deep-link override (workspace events carry no doc slug).
+  const slug =
+    emailEligible && emailDeepLinkOverride === undefined && deps.repo.getDocSlug
+      ? await deps.repo.getDocSlug(annotationId)
+      : null;
 
   let inAppSent = 0;
   let emailsSent = 0;
@@ -812,9 +903,12 @@ async function deliverToRecipients(
     if (!emailEligible) continue;
     const email = await deps.repo.getUserEmail(userId);
     if (email != null && email.length > 0) {
-      // C-013 / C-012: plain-text body carrying the absolute deep-link (no doc body embedded).
+      // C-013 / C-012: plain-text body carrying the absolute deep-link (no doc body embedded). A
+      // caller-supplied override (the workspace-shaped link) wins; otherwise build the
+      // annotation-shaped link from the doc slug.
       const deepLink =
-        deps.appUrl && slug ? buildAnnotationDeepLink(deps.appUrl, slug, annotationId) : null;
+        emailDeepLinkOverride ??
+        (deps.appUrl && slug ? buildAnnotationDeepLink(deps.appUrl, slug, annotationId) : null);
       const text = deepLink
         ? buildEmailBody(type, deepLink)
         : EVENT_SUMMARY[type] ?? "You have a new notification on anchord.";

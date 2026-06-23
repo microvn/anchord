@@ -11,6 +11,7 @@ import {
   notifyOnDetached,
   notifyOnInvited,
   notifyOnWorkspaceInvited,
+  notifyOnWorkspaceMemberRemoved,
   isEmailEligible,
   buildAnnotationDeepLink,
   buildWorkspaceDeepLink,
@@ -1042,6 +1043,7 @@ function fakeWsRepo(opts: {
   accountByEmail?: Record<string, string>;
   adminIds?: string[];
   memberIds?: string[];
+  emailByUser?: Record<string, string>;
 }): NotifyRepo & {
   inserted: NewNotification[];
   findUserIdByEmail(email: string): Promise<string | null>;
@@ -1053,7 +1055,7 @@ function fakeWsRepo(opts: {
     inserted,
     async listParticipantIds() { return []; },
     async getDocOwnerId() { return null; },
-    async getUserEmail() { return null; },
+    async getUserEmail(userId: string) { return opts.emailByUser?.[userId] ?? null; },
     async findUserIdByEmail(email: string) {
       const map = opts.accountByEmail ?? {};
       return map[email.toLowerCase()] ?? null;
@@ -1224,5 +1226,199 @@ describe("notifyOnWorkspaceInvited (S-001 — in-app bell row for an invited acc
     );
 
     expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
+  });
+});
+
+// ===========================================================================
+// workspace-notifications S-003 — notify a REMOVED member.
+// `workspace_member_removed` is HIGH-SIGNAL: in-app + EMAIL (the only new type that
+// emails). Recipient = the removed user BY CONSTRUCTION (no membership re-check — the
+// caller snapshots id + name + email PRE-delete, F1/C-003/AS-006). The removing admin is
+// never a recipient (C-002). refId = workspaceId; refLabel = the SANITIZED workspace name,
+// and the same sanitized name flows into the email subject/body (C-006/AS-009). The email
+// deep-link is WORKSPACE-shaped (buildWorkspaceDeepLink), not annotation-shaped.
+// ===========================================================================
+describe("notifyOnWorkspaceMemberRemoved (S-003 — removed member gets in-app + email)", () => {
+  test("workspace_member_removed is email-eligible (high-signal: in-app + email)", () => {
+    expect(isEmailEligible("workspace_member_removed")).toBe(true);
+  });
+
+  test("AS-005.T1: removing a member creates ONE in-app workspace_member_removed row for the removed user", async () => {
+    const repo = fakeWsRepo({ emailByUser: { u_bob: "bob@acme.com" } });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme",
+        recipientEmail: "bob@acme.com",
+        actorUserId: "u_alice",
+      },
+      { repo, mail },
+    );
+
+    expect(result.recipients).toEqual(["u_bob"]);
+    expect(result.inAppSent).toBe(1);
+    expect(repo.inserted).toHaveLength(1);
+    expect(repo.inserted[0].userId).toBe("u_bob");
+    expect(repo.inserted[0].type).toBe("workspace_member_removed");
+    // refId holds the workspaceId (Data Model); commentId is null for workspace types.
+    expect(repo.inserted[0].refId).toBe("ws_acme");
+    expect(repo.inserted[0].commentId).toBeNull();
+  });
+
+  test("AS-005.T2: the removed member gets ONE email titled for removal", async () => {
+    const repo = fakeWsRepo({ emailByUser: { u_bob: "bob@acme.com" } });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme",
+        recipientEmail: "bob@acme.com",
+        actorUserId: "u_alice",
+      },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.emailsSent).toBe(1);
+    expect(mail.sent).toHaveLength(1);
+    expect(mail.sent[0].to).toBe("bob@acme.com");
+    expect(mail.sent[0].subject).toMatch(/removed/i);
+    // The email deep-link is WORKSPACE-shaped (/w/{id}), NOT annotation-shaped (/d/...#annotation-).
+    expect(mail.sent[0].text).toContain("/w/ws_acme");
+    expect(mail.sent[0].text).not.toContain("#annotation-");
+  });
+
+  test("AS-005.T3: the removing admin (Alice) gets no row and no email", async () => {
+    const repo = fakeWsRepo({ emailByUser: { u_bob: "bob@acme.com", u_alice: "alice@acme.com" } });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme",
+        recipientEmail: "bob@acme.com",
+        actorUserId: "u_alice",
+      },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    // Only the removed user is ever a recipient — Alice never appears (C-002).
+    expect(repo.inserted.map((r) => r.userId)).toEqual(["u_bob"]);
+    expect(mail.sent.map((m) => m.to)).toEqual(["bob@acme.com"]);
+  });
+
+  test("AS-006 / C-003: the just-removed user is NOT dropped — recipient resolved from the pre-delete snapshot, no membership re-check", async () => {
+    // The repo reports the workspace as having NO members (Bob's membership is already deleted).
+    // The dispatch must still notify Bob — it relies on the snapshot, never re-checks membership.
+    const repo = fakeWsRepo({ memberIds: [], adminIds: ["u_alice"], emailByUser: { u_bob: "bob@acme.com" } });
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme",
+        recipientEmail: "bob@acme.com",
+        actorUserId: "u_alice",
+      },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.recipients).toEqual(["u_bob"]);
+    expect(repo.inserted).toHaveLength(1);
+    expect(repo.inserted[0].userId).toBe("u_bob");
+  });
+
+  test("AS-008 / C-004: a throwing repo is swallowed (best-effort) — the removal is never failed by notify", async () => {
+    const logged: unknown[] = [];
+    const mail = fakeMail();
+    const repo = fakeWsRepo({ emailByUser: { u_bob: "bob@acme.com" } });
+    repo.insertNotification = async () => { throw new Error("db boom"); };
+
+    const result = await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme",
+        recipientEmail: "bob@acme.com",
+        actorUserId: "u_alice",
+      },
+      { repo, mail, logError: (_m, e) => logged.push(e) },
+    );
+
+    // Swallowed: empty result, error logged, no throw propagated to the caller.
+    expect(result).toEqual({ recipients: [], inAppSent: 0, emailsSent: 0 });
+    expect(logged).toHaveLength(1);
+  });
+
+  test("AS-009.T1 / C-006: CR/LF + control chars are stripped from the name before it reaches the in-app row (refLabel inert)", async () => {
+    const repo = fakeWsRepo({ emailByUser: { u_bob: "bob@acme.com" } });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme\r\nSubject: verify at evil.com",
+        recipientEmail: "bob@acme.com",
+        actorUserId: "u_alice",
+      },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    // AS-009.T3: the in-app row renders the name as inert text (refLabel, no raw CR/LF/control).
+    expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
+    // eslint-disable-next-line no-control-regex
+    expect(repo.inserted[0].refLabel).not.toMatch(/[\x00-\x1f\x7f]/);
+  });
+
+  test("AS-009.T2 / C-006: no injected header / spoofed line survives into the email subject or body", async () => {
+    const repo = fakeWsRepo({ emailByUser: { u_bob: "bob@acme.com" } });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme\r\nSubject: verify at evil.com",
+        recipientEmail: "bob@acme.com",
+        actorUserId: "u_alice",
+      },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    const sent = mail.sent[0];
+    // The subject is a fixed non-interpolated string (never carries the name), so no CRLF.
+    expect(sent.subject).not.toMatch(/[\r\n]/);
+    // The body never carries a raw CR/LF-injected spoofed header line from the name. Body has
+    // its OWN legitimate newlines (summary\n\nlink), so assert the injected "Subject:" line
+    // cannot ride a CR/LF that came from the workspace name.
+    expect(sent.text).not.toContain("\r");
+    expect(sent.text).not.toMatch(/\nSubject: verify at evil\.com/);
+  });
+
+  test("AS-005 (edge: null email): a removed user with no resolvable email still gets the in-app row, no email", async () => {
+    const repo = fakeWsRepo({ emailByUser: {} }); // no email on record
+    const mail = fakeMail();
+
+    const result = await notifyOnWorkspaceMemberRemoved(
+      {
+        workspaceId: "ws_acme",
+        removedUserId: "u_bob",
+        workspaceName: "Acme",
+        recipientEmail: null,
+        actorUserId: "u_alice",
+      },
+      { repo, mail, appUrl: "https://anchord.example.com" },
+    );
+
+    expect(result.inAppSent).toBe(1);
+    expect(result.emailsSent).toBe(0);
+    expect(mail.sent).toHaveLength(0);
   });
 });
