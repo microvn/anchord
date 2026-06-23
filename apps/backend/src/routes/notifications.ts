@@ -87,12 +87,17 @@ export function notificationsRoutes(deps: NotificationsRoutesDeps) {
       if (!deps.db) throw new Error("notificationsRoutes requires either `repo` or `db`");
       return createNotificationReadRepo(deps.db);
     })();
-  const prefsRepo: PreferencesRepo =
-    deps.prefsRepo ??
-    (() => {
-      if (!deps.db) throw new Error("notificationsRoutes requires either `prefsRepo` or `db`");
-      return createPreferencesRepo(deps.db);
-    })();
+  // prefsRepo is LAZY: only the preferences endpoints need it. The read endpoints (list /
+  // unread-count / mark-read / read-all) work with just `repo`, so constructing the routes with
+  // neither `prefsRepo` nor `db` must NOT throw — it only fails if a preferences handler runs
+  // without a resolvable repo. (Mirrors how `repo` is local to the read endpoints.)
+  let cachedPrefsRepo: PreferencesRepo | undefined = deps.prefsRepo;
+  const getPrefsRepo = (): PreferencesRepo => {
+    if (cachedPrefsRepo) return cachedPrefsRepo;
+    if (!deps.db) throw new Error("notificationsRoutes requires either `prefsRepo` or `db`");
+    cachedPrefsRepo = createPreferencesRepo(deps.db);
+    return cachedPrefsRepo;
+  };
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
@@ -131,6 +136,7 @@ export function notificationsRoutes(deps: NotificationsRoutesDeps) {
     // AS-002), plus the master email switch state. C-005: scoped to actor.userId (session-derived),
     // never a body/path userId — Alice can never read Bob's prefs (AS-014).
     .get("/api/me/notifications/preferences", async ({ actor }) => {
+      const prefsRepo = getPrefsRepo();
       const [overrides, masterEmailEnabled] = await Promise.all([
         prefsRepo.listOverrides(actor.userId),
         prefsRepo.getMasterEmailEnabled(actor.userId),
@@ -146,6 +152,7 @@ export function notificationsRoutes(deps: NotificationsRoutesDeps) {
     // (AS-015) is refused with a clear reason and stores NO row (the whole batch is rejected — no
     // partial write — so a single bad pair never leaves the others half-applied).
     .put("/api/me/notifications/preferences", async ({ body, actor }) => {
+      const prefsRepo = getPrefsRepo();
       const input = validateBody(prefWriteSchema, body);
 
       // Validate the whole batch first (refusals store nothing — AS-003/AS-015).
