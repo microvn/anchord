@@ -10,8 +10,9 @@ import { MemoryRouter, Routes, Route } from "react-router-dom";
 // already covers as C-006.reg):
 //   AS-011 — a sibling feature registers a section (Developer); it appears in the nav WITHOUT a
 //            "Soon" badge and opens its own content when selected.
-//   AS-012 — a still-reserved slot with no owner (Notifications) renders the coming-soon stub
-//            with NO interactive controls.
+//   AS-012 — a still-reserved slot with no owner (Security) renders the coming-soon stub
+//            with NO interactive controls. (Notifications was the original example; it is now OWNED
+//            by notification-preferences S-003, so `security` is the remaining unowned reserved slot.)
 //
 // CRITICAL — registry is MODULE-GLOBAL (process-wide under bun test). AS-011 registers over the
 // `developer` slug, which mutates shared state other settings test files observe (the documented
@@ -105,8 +106,8 @@ describe("account-settings S-004 — reserved settings sections", () => {
     expect(screen.queryByTestId("settings-coming-soon")).not.toBeInTheDocument();
   });
 
-  it("AS-012: an unowned reserved section (Notifications) shows the coming-soon state with no interactive controls", () => {
-    renderShellAt("/settings/notifications");
+  it("AS-012: an unowned reserved section (Security) shows the coming-soon state with no interactive controls", () => {
+    renderShellAt("/settings/security");
 
     // The coming-soon stub renders for the still-reserved slot.
     const stub = screen.getByTestId("settings-coming-soon");

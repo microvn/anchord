@@ -1,6 +1,10 @@
 import { api } from "@/lib/api";
 import type { EdenResult } from "@/lib/api/use-api-query";
 import type { NotificationPage } from "@/features/notifications/types";
+import type {
+  NotificationPreferences,
+  PreferenceOverrideInput,
+} from "@/features/notifications/types/preferences";
 
 // Typed request thunks for the in-app notification bell (notifications-email S-006) —
 // `GET /api/me/notifications`, `GET /api/me/notifications/unread-count`,
@@ -33,4 +37,25 @@ export function markNotificationRead(id: string): Promise<EdenResult<{ read: boo
 /** POST /api/me/notifications/read-all — mark every unread row read. */
 export function markAllNotificationsRead(): Promise<EdenResult<{ marked: number }>> {
   return treaty.api.me.notifications["read-all"].post() as Promise<EdenResult<{ marked: number }>>;
+}
+
+/**
+ * GET /api/me/notifications/preferences (notification-preferences S-003) — the caller's EFFECTIVE
+ * preferences for EVERY (type, channel) in the live matrix plus the master email switch. This is the
+ * taxonomy source the settings section renders from (AS-012).
+ */
+export function fetchNotificationPreferences(): Promise<EdenResult<NotificationPreferences>> {
+  return treaty.api.me.notifications.preferences.get() as Promise<EdenResult<NotificationPreferences>>;
+}
+
+/**
+ * PUT /api/me/notifications/preferences — set one override (type, channel, enabled) for the caller.
+ * The backend refuses unsupported + locked-disable writes; returns the recomputed effective set.
+ */
+export function updateNotificationPreference(
+  override: PreferenceOverrideInput,
+): Promise<EdenResult<NotificationPreferences>> {
+  return treaty.api.me.notifications.preferences.put({
+    overrides: [override],
+  }) as Promise<EdenResult<NotificationPreferences>>;
 }

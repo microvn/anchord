@@ -156,15 +156,20 @@ describe("account-settings S-001 — settings shell", () => {
     expect(screen.getByTestId("settings-nav-appearance")).toBeInTheDocument();
     // Reserved group: developer/notifications/security are all in the reserved group. A reserved
     // slot carries a "Soon" badge UNTIL a sibling feature registers over it. `developer` is now
-    // OWNED by mcp-roundtrip (it renders the real PAT surface, no Soon); notifications + security
-    // are still unowned and stay Soon.
+    // OWNED by mcp-roundtrip and `notifications` by notification-preferences S-003 (both render a
+    // real surface, no Soon); `security` is still unowned and stays Soon.
     const reservedSlugs = getSettingsSectionsByGroup("reserved").map((s) => s.slug);
     expect(reservedSlugs).toEqual(
       expect.arrayContaining(["developer", "notifications", "security"]),
     );
-    expect(getSettingsSectionsByGroup("reserved").every((s) => ["developer"].includes(s.slug) || s.soon)).toBe(true);
+    expect(
+      getSettingsSectionsByGroup("reserved").every(
+        (s) => ["developer", "notifications"].includes(s.slug) || s.soon,
+      ),
+    ).toBe(true);
     expect(resolveSettingsSection("developer").soon).toBeFalsy();
-    expect(resolveSettingsSection("notifications").soon).toBe(true);
+    expect(resolveSettingsSection("notifications").soon).toBeFalsy();
+    expect(resolveSettingsSection("security").soon).toBe(true);
     expect(screen.getAllByText("Soon").length).toBeGreaterThanOrEqual(1);
 
     // The registration mechanism: a sibling feature overrides a reserved slug in place,

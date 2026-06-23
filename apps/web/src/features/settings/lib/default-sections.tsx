@@ -3,6 +3,7 @@ import { ComingSoonSection } from "../components/coming-soon-section";
 import { AccountSection } from "../components/account-section";
 import { AppearanceSection } from "../components/appearance-section";
 import { DeveloperSection } from "../components/developer-section";
+import { NotificationsSettingsSection } from "@/features/notifications/components/notifications-settings-section";
 
 // account-settings S-001 / C-006: register the sections this shell ships. Two OWNED slots
 // (account, appearance) and three RESERVED slots (developer, notifications, security) that show
@@ -49,21 +50,16 @@ export function registerDefaultSettingsSections(): void {
     sub: "Theme and how anchord looks for you.",
     render: () => <AppearanceSection />,
   });
+  // notification-preferences S-003: the Notifications section is now OWNED — the notifications
+  // feature registers its real per-event/per-channel preferences surface over the reserved
+  // `notifications` slug (overriding the prior coming-soon stub in place, clearing the "Soon" badge).
   registerSettingsSection({
     slug: "notifications",
     label: "Notifications",
     icon: "bell",
     group: "reserved",
-    soon: true,
     sub: "How and when anchord notifies you.",
-    render: () => (
-      <ComingSoonSection
-        icon="bell"
-        title="Notifications settings coming soon"
-        sub="Choose what you're notified about and how. This section is owned by the notifications feature."
-        owner="slot · notifications"
-      />
-    ),
+    render: () => <NotificationsSettingsSection />,
   });
   registerSettingsSection({
     slug: "security",
