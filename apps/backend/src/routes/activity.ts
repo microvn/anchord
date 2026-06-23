@@ -27,6 +27,7 @@ import { NotFoundError } from "../http/errors";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
 import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 import { createActivityVisibility, type ResolveDocAccess } from "../activity/visibility";
+import { countByCategory, filterByCategory, isActivityCategory } from "../activity/category";
 import type { DB } from "../db/client";
 import type { Actor } from "../http/auth-gate";
 
@@ -70,14 +71,26 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       const { params, query } = ctx;
       const { actor, ws } = scope(ctx);
       const page = activityPage.parse(query) as PaginationParams;
+      // S-003: optional category filter (All / Comments / Versions / Sharing / People). An unknown
+      // or absent value falls back to "all" — the filter is a UI narrowing, never an error.
+      const category = isActivityCategory(query.category) ? query.category : "all";
       const filter = { workspaceId: params.workspaceId };
-      // C-003: filter the WHOLE log by per-doc visibility first, THEN page — so `total` and the
-      // page can never disagree (a count of 15 with only 12 visible rows is impossible, F-STATS).
+      // C-003 / F-7: filter the WHOLE log by per-doc visibility ONCE through the shared gate, THEN
+      // derive both the counts and the page from that SAME visible set — so a count can never reveal
+      // an event the viewer can't see, and `total` and the page can never disagree (F-STATS, AS-012).
       const all = await repo.listAllActivity(filter);
       const visible = await visibility.filterVisible(all, { userId: actor.userId, role: ws.role });
+      // S-003: per-category counts are over the full visible set (NOT the category-filtered set) so
+      // every segment shows its own visible count regardless of which filter is active (AS-012).
+      const counts = countByCategory(visible);
+      // The page is the category-filtered visible set, sliced (AS-011); `total` is that filtered
+      // length so pagination matches the rows actually shown.
+      const matching = filterByCategory(visible, category);
       const offset = (page.page - 1) * page.limit;
-      const items = visible.slice(offset, offset + page.limit);
-      return paginate(items, { page: page.page, limit: page.limit, total: visible.length });
+      const items = matching.slice(offset, offset + page.limit);
+      // `counts` (per-category, over the visible set) + the active `category` ride alongside the
+      // standard {items, pagination} so the FE renders the segment with counts without a 2nd request.
+      return { ...paginate(items, { page: page.page, limit: page.limit, total: matching.length }), counts, category };
     })
     // GET /api/w/:workspaceId/activity/:eventId — one event's row (the detail-url surface, S-002).
     // C-003 / AS-010: an event the viewer can't see returns NOT-FOUND (existence-hiding), never

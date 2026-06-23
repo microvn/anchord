@@ -19,6 +19,18 @@ export type ActivityType =
   | "project"
   | "detached";
 
+/** The five feed filter segments (S-003). "all" is the no-filter default. */
+export type ActivityCategory = "all" | "comments" | "versions" | "sharing" | "people";
+
+/** Per-category counts over the viewer's visible set — rendered next to each segment label (S-003). */
+export interface ActivityCategoryCounts {
+  all: number;
+  comments: number;
+  versions: number;
+  sharing: number;
+  people: number;
+}
+
 /** One feed row as served + rendered. actorName/summary/target are PLAIN TEXT (escaped, never HTML). */
 export interface ActivityEventRow {
   id: string;

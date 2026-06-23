@@ -12,17 +12,22 @@ import type { EdenResult } from "@/lib/api/use-api-query";
 const treaty = api as any;
 
 /**
- * GET /api/w/:workspaceId/activity?page=&limit= — the recent-first, paginated workspace event feed
- * (default 20 / cap 50, C-007). Returns `{ items, pagination }` under the envelope's `data`.
+ * GET /api/w/:workspaceId/activity?page=&limit=&category= — the recent-first, paginated workspace
+ * event feed (default 20 / cap 50, C-007). Returns `{ items, pagination, counts, category }` under
+ * the envelope's `data`. `category` (S-003) narrows the feed to one segment; the per-category
+ * `counts` are over the viewer's full visible set so every segment label shows its own count.
  */
 export function fetchActivity(
   workspaceId: string,
   page?: number,
   limit?: number,
+  category?: string,
 ): Promise<EdenResult<unknown>> {
   const q: Record<string, string> = {};
   if (page != null) q.page = String(page);
   if (limit != null) q.limit = String(limit);
+  // "all" is the default — omit it so the URL stays clean and the server's fallback applies.
+  if (category != null && category !== "all") q.category = category;
   const query = Object.keys(q).length ? { query: q } : undefined;
   return treaty.api.w({ workspaceId }).activity.get(query) as Promise<EdenResult<unknown>>;
 }
