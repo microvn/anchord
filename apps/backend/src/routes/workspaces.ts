@@ -42,6 +42,8 @@ import {
   type MailEnqueuer,
 } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
+import { emitActivity, type ActivityEmitDeps } from "../activity/emit";
+import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 
 export const createWorkspaceBodySchema = z.object({
   name: z.string().min(1, "workspace name is required"),
@@ -75,6 +77,20 @@ export interface WorkspacesRoutesDeps {
    * disable the bell notification (e.g. in a route test that asserts only the invite contract).
    */
   notify?: { repo?: NotifyRepo; mail: MailEnqueuer };
+  /**
+   * workspace-activity S-006 (C-002 / C-005): emit WORKSPACE-LEVEL activity rows for the workspace
+   * lifecycle — `member` on invite-ACCEPT (the SINGLE join site, F-11 / AS-023), `workspace_renamed`
+   * on rename, and `invite` on invite-SENT (C-005 completeness). Each is best-effort POST-COMMIT — a
+   * logging failure NEVER blocks the originating action (emitActivity swallows + logs). The row's
+   * workspaceId is passed directly (no doc), so `workspaceOfDoc` is unused. Provide a pre-built
+   * ActivityRepo (tests) — else one is built from `db` — plus `resolveActorName` (the session carries
+   * only userId). OMIT the whole block to leave activity logging off — keeps existing route tests
+   * that don't exercise activity unchanged.
+   */
+  activity?: {
+    repo?: ActivityRepo;
+    resolveActorName: (userId: string) => Promise<string | null>;
+  };
 }
 
 function mapRejected(
@@ -116,6 +132,22 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
   // disables the bell notification (route tests that don't exercise it).
   const notifyRepo: NotifyRepo | undefined =
     deps.notify?.repo ?? (deps.notify && deps.db ? createNotifyRepo(deps.db) : undefined);
+
+  // workspace-activity S-006: built only when the `activity` block is provided. Repo pre-built
+  // (tests) or from `db`; resolveActorName resolves the actor name per-emit. Absent → emit is a
+  // no-op. These are workspace-level events (no doc), so workspaceOfDoc is unused.
+  const activityDeps: ActivityEmitDeps | null =
+    deps.activity != null
+      ? {
+          repo:
+            deps.activity.repo ??
+            (() => {
+              if (!deps.db) throw new Error("workspacesRoutes activity requires `activity.repo` or `db`");
+              return createActivityRepo(deps.db);
+            })(),
+          resolveActorName: deps.activity.resolveActorName,
+        }
+      : null;
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
@@ -171,6 +203,21 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
             }
           })();
         }
+        // workspace-activity S-006 (C-005): a rename logs ONE `workspace_renamed` event carrying
+        // the old → new name. Best-effort post-commit — never blocks the rename.
+        if (activityDeps) {
+          await emitActivity(
+            {
+              type: "workspace_renamed",
+              actorUserId: actor.userId,
+              workspaceId: params.id,
+              summary: "renamed the workspace",
+              target: ws.name,
+              meta: { from: oldName, to: ws.name },
+            },
+            activityDeps,
+          );
+        }
         return { id: ws.id, name: ws.name };
       } catch (err) {
         if (err instanceof TenancyRejected) throw mapRejected(err);
@@ -211,6 +258,22 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
           } catch {
             // best-effort: never surface a notify failure on the invite response (C-004).
           }
+        }
+        // workspace-activity S-006 (C-005): an invite SENT logs ONE `invite` event (distinct from
+        // the `member` join logged when it is ACCEPTED). meta carries the role + the invitee email
+        // + pending status. Best-effort post-commit — never blocks the invite.
+        if (activityDeps) {
+          await emitActivity(
+            {
+              type: "invite",
+              actorUserId: actor.userId,
+              workspaceId: params.id,
+              summary: "invited",
+              target: email,
+              meta: { role: role ?? "member", email, pending: true },
+            },
+            activityDeps,
+          );
         }
         set.status = 201;
         // AS-009/AS-011: surface the accept/reject landing link in the response so the
@@ -261,6 +324,22 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
               // best-effort: a notify failure never affects the (already-returned) accept response.
             }
           })();
+        }
+        // workspace-activity S-006 / AS-023 (C-005 / F-11): invite-ACCEPT is the SINGLE member-
+        // join site (a new account's own default workspace at sign-up is owner, not a join). Log
+        // ONE `member` event naming the joiner (the session actor), with meta.role = the role they
+        // joined as. Best-effort post-commit — never blocks the join.
+        if (activityDeps) {
+          await emitActivity(
+            {
+              type: "member",
+              actorUserId: actor.userId,
+              workspaceId: res.workspaceId,
+              summary: "joined the workspace",
+              meta: { role: res.role },
+            },
+            activityDeps,
+          );
         }
         return { workspaceId: res.workspaceId, role: res.role };
       } catch (err) {

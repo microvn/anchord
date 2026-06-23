@@ -49,6 +49,8 @@ import {
   type WorkspaceDocRow,
 } from "../workspace/repo";
 import { paginationQuery, buildPagination, type PaginationParams } from "../http/pagination";
+import { emitActivity, type ActivityEmitDeps } from "../activity/emit";
+import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 import type { DB } from "../db/client";
 
 // S-007: the shared page parser for the browse + projects-list reads (default size 20,
@@ -69,6 +71,19 @@ export interface ProjectsRoutesDeps {
   resolveSession: SessionResolver;
   /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
   resolveWorkspaceRole: WorkspaceRoleResolver;
+  /**
+   * workspace-activity S-006 / AS-024 (C-002 / C-005): emit a `project` activity row after a
+   * project is CREATED. A WORKSPACE-LEVEL event (no doc target) — the row's workspaceId is the
+   * path workspace (passed directly, so `workspaceOfDoc` is unused here). Best-effort POST-COMMIT —
+   * a logging failure NEVER blocks the create (emitActivity swallows + logs). Provide a pre-built
+   * ActivityRepo (tests) — else one is built from `db` — plus `resolveActorName` (the session
+   * carries only userId). OMIT the whole block to leave activity logging off (the create still
+   * succeeds; no row) — keeps existing route tests that don't exercise activity unchanged.
+   */
+  activity?: {
+    repo?: ActivityRepo;
+    resolveActorName: (userId: string) => Promise<string | null>;
+  };
 }
 
 /** Map a ProjectRejected onto the right HTTP DomainError. */
@@ -102,6 +117,22 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       return createProjectsRouteRepo(deps.db);
     })();
 
+  // workspace-activity S-006: built only when the `activity` block is provided. The repo is
+  // pre-built (tests) or built from `db`; resolveActorName resolves the actor name per-emit.
+  // Absent → the project-created emit is a no-op. workspaceOfDoc is unused (workspace-level event).
+  const activityDeps: ActivityEmitDeps | null =
+    deps.activity != null
+      ? {
+          repo:
+            deps.activity.repo ??
+            (() => {
+              if (!deps.db) throw new Error("projectsRoutes activity requires `activity.repo` or `db`");
+              return createActivityRepo(deps.db);
+            })(),
+          resolveActorName: deps.activity.resolveActorName,
+        }
+      : null;
+
   // ONE enveloped + session-gated + workspace-scoped instance for the whole group. The
   // workspace gate (requireWorkspaceMember) injects ctx.ws = { workspaceId, role } from
   // the :workspaceId path — a non-member is 404 (existence-hiding) BEFORE any handler.
@@ -118,6 +149,22 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
           { workspaceId: ws.workspaceId, name, ownerId: actor.userId },
           { repo },
         );
+        // workspace-activity S-006 / AS-024 (C-005): a project create logs ONE `project` event
+        // naming the project (workspace-level — no doc target; workspaceId from the path). Best-
+        // effort post-commit — never blocks the create (emitActivity swallows + logs).
+        if (activityDeps) {
+          await emitActivity(
+            {
+              type: "project",
+              actorUserId: actor.userId,
+              workspaceId: ws.workspaceId,
+              projectId: p.id,
+              summary: "created project",
+              target: p.name,
+            },
+            activityDeps,
+          );
+        }
         set.status = 201;
         return { id: p.id, name: p.name };
       } catch (err) {

@@ -34,6 +34,8 @@ import { createTenancyRepo } from "../workspace/tenancy-repo";
 import type { DB } from "../db/client";
 import { notifyOnWorkspaceMemberRemoved, type NotifyRepo, type MailEnqueuer } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
+import { emitActivity, type ActivityEmitDeps } from "../activity/emit";
+import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 
 export const changeRoleBodySchema = z.object({
   role: z.enum(["admin", "member"]),
@@ -53,6 +55,18 @@ export interface MembersRoutesDeps {
    * Omit entirely to disable the notice (a route test that asserts only the removal contract).
    */
   notify?: { repo?: NotifyRepo; mail: MailEnqueuer; appUrl?: string };
+  /**
+   * workspace-activity S-006 (C-002 / C-005): emit a `member_removed` activity row after an admin
+   * removes a member. A WORKSPACE-LEVEL event (no doc; workspaceId from the path). Best-effort
+   * POST-COMMIT — a logging failure NEVER blocks the removal (emitActivity swallows + logs).
+   * Provide a pre-built ActivityRepo (tests) — else one is built from `db` — plus `resolveActorName`
+   * (the session carries only userId). OMIT the whole block to leave activity logging off — keeps
+   * existing route tests that don't exercise activity unchanged.
+   */
+  activity?: {
+    repo?: ActivityRepo;
+    resolveActorName: (userId: string) => Promise<string | null>;
+  };
 }
 
 /** Map a TenancyRejected onto the right HTTP DomainError. */
@@ -83,6 +97,22 @@ export function membersRoutes(deps: MembersRoutesDeps) {
   // the notice (route tests that only assert the removal contract).
   const notifyRepo: NotifyRepo | undefined =
     deps.notify?.repo ?? (deps.notify && deps.db ? createNotifyRepo(deps.db) : undefined);
+
+  // workspace-activity S-006: built only when the `activity` block is provided. Repo pre-built
+  // (tests) or from `db`. Absent → the member_removed emit is a no-op. Workspace-level event, so
+  // workspaceOfDoc is unused.
+  const activityDeps: ActivityEmitDeps | null =
+    deps.activity != null
+      ? {
+          repo:
+            deps.activity.repo ??
+            (() => {
+              if (!deps.db) throw new Error("membersRoutes activity requires `activity.repo` or `db`");
+              return createActivityRepo(deps.db);
+            })(),
+          resolveActorName: deps.activity.resolveActorName,
+        }
+      : null;
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
@@ -144,6 +174,22 @@ export function membersRoutes(deps: MembersRoutesDeps) {
         } catch {
           // best-effort: never surface a notify failure on the removal response (C-004/AS-008).
         }
+      }
+
+      // workspace-activity S-006 (C-005): a successful removal logs ONE `member_removed` event
+      // (workspace-level — no doc; workspaceId from the path). The actor is the removing admin;
+      // the removed user is referenced in meta. Best-effort post-commit — never blocks the removal.
+      if (activityDeps) {
+        await emitActivity(
+          {
+            type: "member_removed",
+            actorUserId: actor.userId,
+            workspaceId: ws.workspaceId,
+            summary: "removed a member",
+            meta: { removedUserId: params.userId },
+          },
+          activityDeps,
+        );
       }
 
       return { userId: params.userId, removed: true };

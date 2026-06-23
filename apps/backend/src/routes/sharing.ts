@@ -62,6 +62,8 @@ import { createLoadShareConfig } from "../sharing/resolve-doc-role-repo";
 import { MailQueue, type MailTransport } from "../auth/mail-queue";
 import { notifyOnInvited, type NotifyRepo } from "../notify/notify";
 import { createNotifyRepo } from "../notify/repo";
+import { emitActivity, type ActivityEmitDeps } from "../activity/emit";
+import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 import type { DB } from "../db/client";
 
 // ── Zod request schemas ─────────────────────────────────────────────────────
@@ -161,6 +163,21 @@ export interface SharingRoutesDeps {
    * well-formed; prod always passes the real secret).
    */
   secret?: string;
+  /**
+   * workspace-activity S-006 (C-002 / C-005 / C-008): emit a `share` activity row after a
+   * SUCCESSFUL general-access change (AS-022). Best-effort POST-COMMIT — a logging failure NEVER
+   * blocks the share change (emitActivity swallows + logs). The row records the NEW access + role
+   * only (new-state-only, F-10). Provide a pre-built ActivityRepo (tests) — else one is built from
+   * `db` — plus the seams that anchor the row's owning workspace from the DOC (C-008) and resolve
+   * the actor's display name (the session carries only userId). OMIT the whole block to leave
+   * activity logging off (the share change still succeeds; no row) — keeps existing route tests
+   * that don't exercise activity unchanged.
+   */
+  activity?: {
+    repo?: ActivityRepo;
+    workspaceOfDoc: (docId: string) => Promise<string | null>;
+    resolveActorName: (userId: string) => Promise<string | null>;
+  };
 }
 
 export function sharingRoutes(deps: SharingRoutesDeps) {
@@ -202,6 +219,18 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
         );
       }
     : undefined;
+
+  // workspace-activity S-006: built only when the `activity` block is provided. The repo is
+  // pre-built (tests) or built from `db`; workspaceOfDoc + resolveActorName anchor the row's owning
+  // workspace (C-008) + resolve the actor name per-emit. Absent → the share emit is a no-op.
+  const activityDeps: ActivityEmitDeps | null =
+    deps.activity != null
+      ? {
+          repo: deps.activity.repo ?? (deps.db ? createActivityRepo(deps.db) : need("activity.repo")),
+          workspaceOfDoc: deps.activity.workspaceOfDoc,
+          resolveActorName: deps.activity.resolveActorName,
+        }
+      : null;
 
   /** Resolve :slug → a visible DocLookup or throw 404 (existence-hiding, C-006). */
   async function loadVisibleDoc(slug: string, userId: string) {
@@ -286,6 +315,22 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
                 shareRepo,
                 { actorIsOwner },
               );
+              // workspace-activity S-006 / AS-022 (C-005 / F-10): a SUCCESSFUL general-access
+              // change logs ONE `share` event recording the NEW access + role only (no from/to).
+              // Best-effort post-commit — never blocks the change (emitActivity swallows + logs).
+              if (activityDeps) {
+                await emitActivity(
+                  {
+                    type: "share",
+                    actorUserId: actor.userId,
+                    docId: doc.id,
+                    summary: "changed sharing on",
+                    target: doc.title,
+                    meta: { access: result.level, role: result.role },
+                  },
+                  activityDeps,
+                );
+              }
               return {
                 level: result.level,
                 role: result.role,
