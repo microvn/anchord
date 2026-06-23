@@ -52,6 +52,11 @@ function memActivityRepo(seed: Seed[]): ActivityRepo {
     async getActivityById(f, id) {
       return (sorted(f).find((r) => r.id === id) as unknown as ActivityRow) ?? null;
     },
+    async listRelatedByDoc(f, docId, opts) {
+      return sorted(f)
+        .filter((r) => r.docId === docId && r.id !== opts?.excludeId)
+        .slice(0, opts?.limit ?? 5) as unknown as ActivityRow[];
+    },
   };
 }
 

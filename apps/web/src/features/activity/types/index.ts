@@ -48,3 +48,24 @@ export interface ActivityEventRow {
   /** ISO timestamp string from the API envelope (parsed client-side for day-grouping). */
   createdAt: string;
 }
+
+/**
+ * The detail-page event shape (workspace-activity S-004): a feed row enriched at READ time with the
+ * CURRENT doc link target for "Open doc" — the viewer is slug-addressed (`/d/:slug`), so the detail
+ * read resolves the doc's slug + project name. A deleted doc resolves to null and "Open doc"
+ * degrades (AS-018). `docSlug`/`projectName` are absent on workspace-level events (no doc target).
+ */
+export interface ActivityEventDetail extends ActivityEventRow {
+  /** the doc's current viewer slug, or null when the doc is deleted / the event is workspace-level. */
+  docSlug?: string | null;
+  /** the doc's current project name, for the metadata list / document card. */
+  projectName?: string | null;
+}
+
+/** The type-specific `meta` JSON a publish event carries (S-004 PublishDiffMini reads from/to/adds/dels). */
+export interface ActivityPublishMeta {
+  from?: string;
+  to?: string;
+  adds?: number;
+  dels?: number;
+}

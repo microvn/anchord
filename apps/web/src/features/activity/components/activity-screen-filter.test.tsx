@@ -35,7 +35,13 @@ const fetchActivity = mock(async (_w: string, page = 1, _limit = 20, category = 
   });
 });
 
-mock.module("@/features/activity/services/client", () => ({ fetchActivity }));
+// bun mock.module is global + persistent: mock the WHOLE client surface (incl. the S-004 detail
+// reads) so this partial stub never shadows them with `undefined` for a later suite.
+mock.module("@/features/activity/services/client", () => ({
+  fetchActivity,
+  fetchActivityEvent: mock(async () => env({ event: null })),
+  fetchActivityRelated: mock(async () => env({ items: [] })),
+}));
 
 const { ActivityScreen } = await import("@/features/activity/components/activity-screen");
 

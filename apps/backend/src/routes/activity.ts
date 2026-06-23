@@ -48,7 +48,21 @@ export interface ActivityRoutesDeps {
    * foundation / pre-S-002 tests) means the whole workspace log is visible; prod ALWAYS wires it.
    */
   resolveAccess?: ResolveDocAccess;
+  /**
+   * workspace-activity S-004: resolves a doc-scoped event's CURRENT doc link target — the slug the
+   * viewer is addressed by (`/d/:slug`) plus the project name — so the detail page's "Open doc"
+   * deep-link can be built. Resolved at READ time; a DELETED doc returns null, and "Open doc"
+   * degrades gracefully (C-001 / AS-018). Optional: omitted (pre-S-004 tests / foundation) leaves
+   * `docSlug`/`projectName` null.
+   */
+  resolveDocLink?: ResolveDocLink;
 }
+
+/** The S-004 doc-link resolver: a live docId → its viewer slug (+ project name), or null if the doc
+ *  was deleted (the "Open doc" link then degrades, AS-018). */
+export type ResolveDocLink = (
+  docId: string,
+) => Promise<{ slug: string; projectName?: string } | null>;
 
 export function activityRoutes(deps: ActivityRoutesDeps) {
   const repo: ActivityRepo =
@@ -92,9 +106,11 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       // standard {items, pagination} so the FE renders the segment with counts without a 2nd request.
       return { ...paginate(items, { page: page.page, limit: page.limit, total: matching.length }), counts, category };
     })
-    // GET /api/w/:workspaceId/activity/:eventId — one event's row (the detail-url surface, S-002).
-    // C-003 / AS-010: an event the viewer can't see returns NOT-FOUND (existence-hiding), never
-    // forbidden — indistinguishable from a non-existent / cross-workspace id.
+    // GET /api/w/:workspaceId/activity/:eventId — one event's row (the detail-url surface, S-002 +
+    // S-004). C-003 / AS-010: an event the viewer can't see returns NOT-FOUND (existence-hiding),
+    // never forbidden — indistinguishable from a non-existent / cross-workspace id. S-004 enriches
+    // the row with the CURRENT doc slug (+ project name) so the detail page's "Open doc" deep-link
+    // can be built; a deleted doc resolves to null and "Open doc" degrades (AS-018).
     .get("/api/w/:workspaceId/activity/:eventId", async (ctx) => {
       const { params } = ctx;
       const { actor, ws } = scope(ctx);
@@ -103,7 +119,35 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       if (!event) throw new NotFoundError();
       const canSee = await visibility.canSee(event, { userId: actor.userId, role: ws.role });
       if (!canSee) throw new NotFoundError(); // AS-010/AS-030: hide existence, not 403
-      return { event };
+      // S-004 / AS-014: resolve the live doc link for "Open doc". docId null (workspace-level) or a
+      // deleted doc (resolver → null) both yield a null slug, and the FE degrades the button (AS-018).
+      let docSlug: string | null = null;
+      let projectName: string | null = null;
+      if (event.docId != null && deps.resolveDocLink) {
+        const link = await deps.resolveDocLink(event.docId);
+        docSlug = link?.slug ?? null;
+        projectName = link?.projectName ?? null;
+      }
+      return { event: { ...event, docSlug, projectName } };
+    })
+    // GET /api/w/:workspaceId/activity/:eventId/related — "More on this doc" (S-004). Other events on
+    // the SAME doc as :eventId, recent-first, capped at 5, EXCLUDING the viewed event. Gated through
+    // the SAME visibility filter (C-003) so related rows are access-filtered exactly like the feed;
+    // the event must itself be visible first (else NOT-FOUND, existence-hiding — a member can't probe
+    // a doc they can't access). A workspace-level event (docId null) has no "this doc" → empty list.
+    .get("/api/w/:workspaceId/activity/:eventId/related", async (ctx) => {
+      const { params } = ctx;
+      const { actor, ws } = scope(ctx);
+      const viewer = { userId: actor.userId, role: ws.role };
+      const filter = { workspaceId: params.workspaceId };
+      const event = await repo.getActivityById(filter, params.eventId);
+      if (!event) throw new NotFoundError();
+      if (!(await visibility.canSee(event, viewer))) throw new NotFoundError();
+      if (event.docId == null) return { items: [] }; // workspace-level event — no "this doc"
+      const related = await repo.listRelatedByDoc(filter, event.docId, { excludeId: event.id, limit: 5 });
+      // C-003 / F-7: same gate as the feed-list — never a second hand-written access filter.
+      const items = await visibility.filterVisible(related, viewer);
+      return { items };
     });
 }
 

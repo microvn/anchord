@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { NoResultsState } from "@/components/no-results-state";
 import { Pagination } from "@/components/pagination";
 import { ActivityFeed } from "@/features/activity/components/activity-feed";
@@ -23,6 +23,7 @@ import type { ActivityCategory } from "@/features/activity/types";
 
 export function ActivityScreen() {
   const { workspaceId = "" } = useParams<{ workspaceId: string }>();
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [category, setCategory] = useState<ActivityCategory>("all");
   const query = useActivity(workspaceId, page, category);
@@ -70,6 +71,7 @@ export function ActivityScreen() {
           loading={query.isLoading}
           error={query.isError ? (query.error?.message ?? null) : null}
           onRetry={() => void query.refetch()}
+          onOpen={(event) => navigate(`/w/${workspaceId}/activity/${event.id}`)}
         />
       )}
 

@@ -26,6 +26,9 @@ function fakeRepo(opts: { throwOnInsert?: boolean } = {}): ActivityRepo & { inse
     async listAllActivity() {
       return [];
     },
+    async listRelatedByDoc() {
+      return [];
+    },
     async getActivityById() {
       return null;
     },

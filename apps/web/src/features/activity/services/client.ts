@@ -31,3 +31,22 @@ export function fetchActivity(
   const query = Object.keys(q).length ? { query: q } : undefined;
   return treaty.api.w({ workspaceId }).activity.get(query) as Promise<EdenResult<unknown>>;
 }
+
+/**
+ * GET /api/w/:workspaceId/activity/:eventId — one event's detail (workspace-activity S-004). Returns
+ * `{ event }` (the stored row enriched with the CURRENT `docSlug`/`projectName` for the "Open doc"
+ * deep-link) under the envelope's `data`. A hidden/inaccessible/nonexistent event is a 404
+ * (existence-hiding) → the call site surfaces a not-found state (AS-010).
+ */
+export function fetchActivityEvent(workspaceId: string, eventId: string): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).activity({ eventId }).get() as Promise<EdenResult<unknown>>;
+}
+
+/**
+ * GET /api/w/:workspaceId/activity/:eventId/related — "More on this doc" (S-004). Returns
+ * `{ items }`: other events on the SAME doc, recent-first, capped at 5, access-filtered through the
+ * SAME visibility gate as the feed (C-003). A workspace-level event yields an empty list.
+ */
+export function fetchActivityRelated(workspaceId: string, eventId: string): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).activity({ eventId }).related.get() as Promise<EdenResult<unknown>>;
+}

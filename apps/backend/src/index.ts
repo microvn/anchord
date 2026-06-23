@@ -11,7 +11,7 @@ import {
 import { createResolveAccess } from "./sharing/resolve-access";
 import { createWorkspaceAccess } from "./workspace/tenancy-repo";
 import { eq } from "drizzle-orm";
-import { session as sessionTable, user as userTable } from "./db/schema";
+import { session as sessionTable, user as userTable, docs as docsTable, projects as projectsTable } from "./db/schema";
 import { createLoadContent } from "./render/viewer-loaders";
 import { MailQueue } from "./auth/mail-queue";
 import { createMailTransport, createEnqueueWorkspaceInvite } from "./auth/mail-transport";
@@ -112,6 +112,20 @@ const isWorkspaceAdmin = (workspaceId: string, userId: string) =>
 const resolveActorName = async (userId: string): Promise<string | null> => {
   const [row] = await db.select({ name: userTable.name }).from(userTable).where(eq(userTable.id, userId)).limit(1);
   return row?.name ?? null;
+};
+
+// workspace-activity S-004: resolve a doc-scoped event's CURRENT viewer link target (slug +
+// project name) for the detail page's "Open doc" deep-link. A DELETED doc has no row → null, and
+// the detail degrades the button (AS-018). Read at detail time, never frozen at emit.
+const resolveDocLink = async (docId: string): Promise<{ slug: string; projectName?: string } | null> => {
+  const [row] = await db
+    .select({ slug: docsTable.slug, projectName: projectsTable.name })
+    .from(docsTable)
+    .leftJoin(projectsTable, eq(docsTable.projectId, projectsTable.id))
+    .where(eq(docsTable.id, docId))
+    .limit(1);
+  if (!row) return null;
+  return { slug: row.slug, projectName: row.projectName ?? undefined };
 };
 
 // mcp-roundtrip S-001: the shared PAT repo (HMAC-SHA256 keyed by APP_SECRET — C-008) + the
@@ -394,7 +408,7 @@ const app = createApp({
   // S-002 / C-003: the feed-list + single-event reads are role- + access-gated through the SAME
   // shared resolveAccess the doc viewer uses (admins all; members see workspace-level events plus
   // doc-scoped events on docs they can open, resolved at READ time, F-2).
-  activity: { db, resolveSession, resolveWorkspaceRole, resolveAccess: sharedResolveAccess },
+  activity: { db, resolveSession, resolveWorkspaceRole, resolveAccess: sharedResolveAccess, resolveDocLink },
   // workspace-project S-003: project routes under /api/w/:workspaceId/projects.
   projects: { db, resolveSession, resolveWorkspaceRole },
   // workspaces S-005: per-workspace member directory + role management under
