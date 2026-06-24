@@ -8,7 +8,15 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { annotations, comments, docs, notifications, user } from "../../src/db/schema";
+import {
+  annotations,
+  comments,
+  docs,
+  notifications,
+  projects,
+  user,
+  workspaces,
+} from "../../src/db/schema";
 import { createNotificationReadRepo } from "../../src/notify/read-repo";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
@@ -152,5 +160,75 @@ describe.skipIf(!RUN)("notification panel enrichment (real Postgres)", () => {
     expect(invitedRow?.snippet).toBeNull();
     expect(orphanRow?.actorName).toBeNull(); // comment gone → no actor (AS-029)
     expect(orphanRow?.snippet).toBeNull(); // comment gone → no excerpt
+  });
+
+  // your-activity-inbox S-001 (BE-enrich): workspaceId+workspaceName flow through the read so the
+  // cross-workspace For-you inbox renders a per-item workspace chip (AS-003). Two derivation paths:
+  // the doc chain (annotation → doc → project → workspace) and the `workspace_*` refId/refLabel path.
+  describe("your-activity-inbox S-001 — workspace enrichment", () => {
+    test("AS-003: a doc-backed row carries its owning workspace via the doc→project→workspace chain", async () => {
+      const repo = createNotificationReadRepo(h.db);
+      const [ws] = await h.db
+        .insert(workspaces)
+        .values({ name: "Acme Platform", slug: `acme-${process.pid}`, settings: {} })
+        .returning({ id: workspaces.id });
+      const [proj] = await h.db
+        .insert(projects)
+        .values({ workspaceId: ws!.id, name: "Core", ownerId: MARA })
+        .returning({ id: projects.id });
+      const [doc2] = await h.db
+        .insert(docs)
+        .values({
+          slug: `web-core-${process.pid}`,
+          title: "Web-core behavior contract",
+          kind: "html",
+          projectId: proj!.id,
+        })
+        .returning({ id: docs.id });
+      const [ann2] = await h.db
+        .insert(annotations)
+        .values({ docId: doc2!.id, type: "range", anchor: {} })
+        .returning({ id: annotations.id });
+      const [ins] = await h.db
+        .insert(notifications)
+        .values({ userId: BOB, type: "reply", refId: ann2!.id, commentId: memberCommentId })
+        .returning({ id: notifications.id });
+
+      const rows = await repo.listForUser(BOB, { offset: 0, limit: 50 });
+      const row = rows.find((r) => r.id === ins!.id);
+      expect(row?.workspaceId).toBe(ws!.id);
+      expect(row?.workspaceName).toBe("Acme Platform");
+    });
+
+    test("BE-enrich: a workspace_invited row takes workspaceId from refId + name from refLabel (no doc chain)", async () => {
+      const repo = createNotificationReadRepo(h.db);
+      const [ws] = await h.db
+        .insert(workspaces)
+        .values({ name: "Field IO", slug: `field-${process.pid}`, settings: {} })
+        .returning({ id: workspaces.id });
+      const [ins] = await h.db
+        .insert(notifications)
+        .values({ userId: BOB, type: "workspace_invited", refId: ws!.id, refLabel: "Field IO" })
+        .returning({ id: notifications.id });
+
+      const rows = await repo.listForUser(BOB, { offset: 0, limit: 50 });
+      const row = rows.find((r) => r.id === ins!.id);
+      // refId IS the workspace id; refLabel is the emit-time name snapshot.
+      expect(row?.workspaceId).toBe(ws!.id);
+      expect(row?.workspaceName).toBe("Field IO");
+    });
+
+    test("BE-enrich: a doc-less, non-workspace row resolves workspaceId/Name to null (NULL-safe)", async () => {
+      const repo = createNotificationReadRepo(h.db);
+      const [ins] = await h.db
+        .insert(notifications)
+        .values({ userId: BOB, type: "invited", refId: `nows-${process.pid}`, commentId: null })
+        .returning({ id: notifications.id });
+
+      const rows = await repo.listForUser(BOB, { offset: 0, limit: 50 });
+      const row = rows.find((r) => r.id === ins!.id);
+      expect(row?.workspaceId).toBeNull();
+      expect(row?.workspaceName).toBeNull();
+    });
   });
 });

@@ -84,6 +84,20 @@ export function UserMenu({ foldedItems }: { foldedItems?: ReactNode }) {
         {foldedItems}
         <button
           type="button"
+          data-testid="menu-your-activity"
+          // your-activity-inbox S-001: open the account-scoped "Your activity" page (For-you
+          // inbox). Same pattern as Settings — close the menu, then navigate to /me/activity.
+          onClick={() => {
+            setOpen(false);
+            navigate("/me/activity");
+          }}
+          className={MENU_ITEM}
+        >
+          <Icon name="inbox" size={16} />
+          Your activity
+        </button>
+        <button
+          type="button"
           data-testid="menu-settings"
           // account-settings S-001 (AS-001): open the account-level Settings area (Account
           // section by default). Close the menu, then navigate to /settings.

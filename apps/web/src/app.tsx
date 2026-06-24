@@ -24,6 +24,7 @@ import { SearchScreen } from "./features/docs/components/search-screen";
 import { ViewerScreen } from "./features/viewer/components/viewer-screen";
 import { CapabilityRedeemScreen } from "./features/viewer/components/capability-redeem-screen";
 import { SettingsPage } from "./features/settings/components/settings-page";
+import { YourActivityPage } from "./features/your-activity/components/your-activity-page";
 import { Toaster } from "./components/ui/sonner";
 
 // One shared QueryClient for the app's server-state layer (S-002). Its cache-level onError
@@ -76,6 +77,9 @@ export function AppRoutes() {
         <Route element={<AppShell sidebarSlot={<WorkspaceSidebar />} />}>
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/:section" element={<SettingsPage />} />
+          {/* your-activity-inbox S-001: the account-scoped "Your activity" page (For-you inbox),
+              a sibling of /settings — account-level, NOT workspace-scoped, inside the AppShell. */}
+          <Route path="/me/activity" element={<YourActivityPage />} />
         </Route>
 
         {/* doc-access-routing S-003: the old workspace-scoped viewer route is retired — the viewer

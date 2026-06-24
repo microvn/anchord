@@ -8,7 +8,7 @@
 // monotonic): set { read: true } re-applied is idempotent.
 
 import { and, count, desc, eq, sql } from "drizzle-orm";
-import { annotations, comments, docs, notifications, user } from "../db/schema";
+import { annotations, comments, docs, notifications, projects, user, workspaces } from "../db/schema";
 import type { DB } from "../db/client";
 import type { NotificationType } from "./types";
 
@@ -52,6 +52,49 @@ export interface NotificationRow {
   docTitle: string | null;
   actorName: string | null;
   snippet: string | null;
+  /**
+   * your-activity-inbox S-001: the workspace that OWNS this notification's target, so the
+   * cross-workspace For-you inbox can render a per-item workspace chip (C-001/AS-003). Derived
+   * read-time, no schema change:
+   * - doc/annotation rows → via the enrichment chain `annotation → doc → project → workspace`.
+   * - `workspace_*` rows → `refId` IS the workspace id; `refLabel` snapshots the name at emit.
+   * NULL-safe (mirrors the C-014 style): a row with neither chain resolves to null/null and the
+   * inbox simply omits the chip. The bell ignores these extra fields (additive — M8).
+   */
+  workspaceId: string | null;
+  workspaceName: string | null;
+}
+
+// your-activity-inbox S-001: the `workspace_*` membership types whose `refId` IS the workspace id
+// (workspace-notifications) — for these the workspace is read straight off refId/refLabel, not the
+// doc chain. Hand-synced with notify/types.ts's NotificationType union (F3).
+const WORKSPACE_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
+  "workspace_invited",
+  "workspace_member_joined",
+  "workspace_member_removed",
+  "workspace_renamed",
+]);
+
+/**
+ * your-activity-inbox S-001 (AS-003): derive the owning workspace for one notification row. The doc
+ * chain wins (a doc/annotation row resolves a real workspace via project → workspace); else, for a
+ * `workspace_*` row, `refId` IS the workspace id and `refLabel` is the emit-time name snapshot; else
+ * null/null (no chip). Pure + NULL-safe (C-014) so it is directly unit-testable without a DB.
+ */
+export function deriveWorkspace(row: {
+  type: NotificationType;
+  refId: string;
+  refLabel: string | null;
+  docWorkspaceId: string | null;
+  docWorkspaceName: string | null;
+}): { workspaceId: string | null; workspaceName: string | null } {
+  if (row.docWorkspaceId) {
+    return { workspaceId: row.docWorkspaceId, workspaceName: row.docWorkspaceName ?? null };
+  }
+  if (WORKSPACE_TYPES.has(row.type)) {
+    return { workspaceId: row.refId, workspaceName: row.refLabel ?? null };
+  }
+  return { workspaceId: null, workspaceName: null };
 }
 
 export interface NotificationReadRepo {
@@ -102,29 +145,48 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
           // AS-028: a truncated excerpt of the comment body — built in SQL so a long body never
           // ships in full. IN-APP ONLY (C-012/C-014). NULL when there is no resolvable comment.
           snippet: sql<string | null>`left(${comments.body}, ${SNIPPET_MAX})`,
+          // your-activity-inbox S-001 (AS-003): the owning workspace via the doc chain
+          // (annotation → doc → project → workspace). NULL for a non-doc row (e.g. a workspace_*
+          // row, whose workspace comes off refId/refLabel below). Both joins LEFT + NULL-safe.
+          docWorkspaceId: projects.workspaceId,
+          docWorkspaceName: workspaces.name,
         })
         .from(notifications)
         .leftJoin(annotations, eq(annotations.id, notifications.refId))
         .leftJoin(docs, eq(docs.id, annotations.docId))
+        .leftJoin(projects, eq(projects.id, docs.projectId))
+        .leftJoin(workspaces, eq(workspaces.id, projects.workspaceId))
         .leftJoin(comments, eq(comments.id, notifications.commentId))
         .leftJoin(user, eq(user.id, comments.authorId))
         .where(eq(notifications.userId, userId))
         .orderBy(desc(notifications.createdAt), desc(notifications.id))
         .offset(offset)
         .limit(limit);
-      return rows.map((r) => ({
-        id: r.id,
-        type: r.type,
-        refId: r.refId,
-        read: r.read,
-        createdAt: r.createdAt,
-        slug: r.slug ?? null,
-        docTitle: r.docTitle ?? null,
-        refLabel: r.refLabel ?? null,
-        // Member name wins; else the guest's typed name; else null (no resolvable comment, AS-029).
-        actorName: r.memberName ?? r.guestName ?? null,
-        snippet: r.snippet ?? null,
-      })) as NotificationRow[];
+      return rows.map((r) => {
+        // your-activity-inbox S-001 (AS-003): doc chain wins, else workspace_* refId/refLabel, else null.
+        const { workspaceId, workspaceName } = deriveWorkspace({
+          type: r.type,
+          refId: r.refId,
+          refLabel: r.refLabel ?? null,
+          docWorkspaceId: r.docWorkspaceId ?? null,
+          docWorkspaceName: r.docWorkspaceName ?? null,
+        });
+        return {
+          id: r.id,
+          type: r.type,
+          refId: r.refId,
+          read: r.read,
+          createdAt: r.createdAt,
+          slug: r.slug ?? null,
+          docTitle: r.docTitle ?? null,
+          refLabel: r.refLabel ?? null,
+          // Member name wins; else the guest's typed name; else null (no resolvable comment, AS-029).
+          actorName: r.memberName ?? r.guestName ?? null,
+          snippet: r.snippet ?? null,
+          workspaceId,
+          workspaceName,
+        };
+      }) as NotificationRow[];
     },
 
     async countUnreadForUser(userId) {

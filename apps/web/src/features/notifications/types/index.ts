@@ -8,7 +8,14 @@ export type NotificationType =
   | "suggestion_decided"
   | "resolved"
   | "detached"
-  | "invited";
+  | "invited"
+  // workspace-notifications membership events (your-activity-inbox H1 type sync). The backend
+  // (notify/types.ts) already produces these — adding them so a `workspace_invited` row renders
+  // and typechecks. Additive: the bell ignores the ones it doesn't map.
+  | "workspace_invited"
+  | "workspace_member_joined"
+  | "workspace_member_removed"
+  | "workspace_renamed";
 
 /**
  * One notification row as the bell renders it. The deep-link target is `/d/:slug#annotation-:refId`
@@ -33,6 +40,20 @@ export interface NotificationItem {
   docTitle?: string | null;
   actorName?: string | null;
   snippet?: string | null;
+  /**
+   * workspace-notifications: the display label SNAPSHOTTED at emit (e.g. the workspace name for a
+   * `workspace_invited` row). For a `workspace_*` row `refId` is the workspace id and `refLabel` is
+   * its name. Additive — the bell ignores it.
+   */
+  refLabel?: string | null;
+  /**
+   * your-activity-inbox S-001 (BE-enrich, AS-003): the workspace that OWNS this notification's
+   * target, so the cross-workspace For-you inbox can render a per-item workspace chip. Derived
+   * read-time on the backend (doc→project→workspace chain, or `workspace_*` refId/refLabel). Both
+   * NULL when neither resolves. Additive — the bell ignores them.
+   */
+  workspaceId?: string | null;
+  workspaceName?: string | null;
 }
 
 /** The paginated list payload (`{ items, pagination }`) the backend returns. */

@@ -28,6 +28,12 @@ const SUMMARY: Record<NotificationType, string> = {
   resolved: "A thread you're in was resolved",
   detached: "A comment lost its anchor after an edit",
   invited: "You were invited to a document",
+  // workspace-notifications membership events (your-activity-inbox H1 type sync). The cross-workspace
+  // For-you inbox renders these; the bell ignores them. Headlines read consistently with the email.
+  workspace_invited: "You were invited to a workspace",
+  workspace_member_joined: "A new member joined a workspace",
+  workspace_member_removed: "You were removed from a workspace",
+  workspace_renamed: "A workspace was renamed",
 };
 
 export function summaryFor(type: NotificationType): string {
