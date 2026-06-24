@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { Icon } from "@/components/icon";
 import { initials, avatarColor } from "@/lib/initials";
 import {
@@ -8,7 +9,20 @@ import {
   relativeTime,
   deepLinkFor,
 } from "@/features/notifications/lib/format";
-import type { NotificationItem } from "@/features/notifications/types";
+import type { NotificationItem, NotificationType } from "@/features/notifications/types";
+import {
+  useReplyToThread,
+  useResolveThread,
+} from "@/features/your-activity/hooks/use-inbox-actions";
+
+// S-004: the comment-type rows whose detail offers a reply composer + resolve. A reply-eligible item
+// is one of these AND carries a non-null `slug` (the doc the thread lives in). A `workspace_invited`
+// row (or any no-slug / non-comment row) gets no composer.
+const REPLY_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
+  "reply",
+  "thread_activity",
+  "new_feedback",
+]);
 
 // your-activity-inbox S-003 — an inbox item's DETAIL (Anchord-Design `PersonalDetail`): a back link,
 // a hero (type node-icon + actor avatar + headline sentence + a type badge + time), then a card with
@@ -54,6 +68,50 @@ export function InboxDetail({
   const workspace = item.workspaceName ?? null;
   const doc = item.docTitle ?? null;
   const deepLink = deepLinkFor(item);
+
+  // S-004 (C-003): reply/resolve are offered for a comment-type item with a resolvable slug. The
+  // backend re-authorizes every write — there is NO client-side role gate here (a refusal surfaces).
+  const replyEligible = item.slug != null && REPLY_TYPES.has(item.type);
+  const reply = useReplyToThread();
+  const resolve = useResolveThread();
+  const [draft, setDraft] = useState("");
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [resolved, setResolved] = useState(false);
+
+  const submitReply = () => {
+    const body = draft.trim();
+    if (!body || !item.slug) return;
+    setRefusal(null);
+    reply.mutate(
+      { slug: item.slug, annotationId: item.refId, body },
+      {
+        onSuccess: () => {
+          // AS-013: clear the composer and ensure the item is read (idempotent — the detail already
+          // marks read on open via C-008).
+          setDraft("");
+          onMarkRead?.(item.id);
+        },
+        // AS-015 / C-003: a server refusal (viewer role / revoked) surfaces a visible message; the
+        // failed reply does NOT mark the item read.
+        onError: () => setRefusal("You can't reply on this thread."),
+      },
+    );
+  };
+
+  const submitResolve = () => {
+    if (!item.slug || resolved) return;
+    resolve.mutate(
+      { slug: item.slug, annotationId: item.refId },
+      {
+        // AS-014: reflect the resolved state (disable the control) + a confirmation.
+        onSuccess: () => {
+          setResolved(true);
+          toast("Thread resolved");
+        },
+        onError: () => toast.error("Couldn't resolve this thread"),
+      },
+    );
+  };
 
   const kv: Array<{ label: string; node: React.ReactNode; value: string }> = [];
   if (actor) {
@@ -158,9 +216,11 @@ export function InboxDetail({
           ))}
         </div>
 
-        {/* AS-012 / C-003: "Open in doc" — shown ONLY for a doc-backed item with a resolvable slug
-            (deepLinkFor returns null for workspace_invited + deleted-doc rows). It only navigates. */}
-        {deepLink && (
+        {/* AS-012 / C-003: "Open in doc" — shown for a doc-backed item with a resolvable slug
+            (deepLinkFor returns null for workspace_invited + deleted-doc rows). It only navigates.
+            For a reply-eligible item the link moves INTO the composer foot (below), so this
+            standalone control is suppressed to avoid a duplicate. */}
+        {deepLink && !replyEligible && (
           <div className="mt-4 flex">
             <Link
               to={deepLink}
@@ -170,6 +230,74 @@ export function InboxDetail({
               <Icon name="arrowRight" size={14} />
               Open in doc
             </Link>
+          </div>
+        )}
+
+        {/* S-004 — reply composer + resolve (prototype `.me-reply`). Reply/resolve go through the
+            existing annotation routes (C-003); the backend authorizes — no client-side role gate. */}
+        {replyEligible && (
+          <div data-testid="inbox-detail-reply" className="mt-4 border-t border-line pt-4">
+            <label
+              htmlFor="inbox-reply"
+              className="mb-1.5 block font-mono text-[10.5px] uppercase tracking-[0.05em] text-subtle"
+            >
+              Reply
+            </label>
+            <textarea
+              id="inbox-reply"
+              data-testid="inbox-reply-input"
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                if (refusal) setRefusal(null);
+              }}
+              placeholder={actor ? `Reply to ${actor}…` : "Write a reply…"}
+              rows={3}
+              className="w-full resize-y rounded-md border border-line bg-elev px-3 py-2 text-sm text-ink outline-none transition-colors placeholder:text-subtle focus:border-accent"
+            />
+
+            {/* AS-015: a visible refusal when the backend's comment gate refuses (not swallowed). */}
+            {refusal && (
+              <p
+                data-testid="inbox-reply-error"
+                role="alert"
+                className="mt-1.5 text-[13px] text-error"
+              >
+                {refusal}
+              </p>
+            )}
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                data-testid="inbox-reply-resolve"
+                onClick={submitResolve}
+                disabled={resolved || resolve.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-elev hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Icon name="check" size={15} />
+                {resolved ? "Resolved" : "Resolve"}
+              </button>
+              {deepLink && (
+                <Link
+                  to={deepLink}
+                  data-testid="inbox-detail-open-doc"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-line bg-elev px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-accent-soft hover:text-accent-ink"
+                >
+                  Open in doc
+                </Link>
+              )}
+              <button
+                type="button"
+                data-testid="inbox-reply-submit"
+                onClick={submitReply}
+                disabled={!draft.trim() || reply.isPending}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-on-accent transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Icon name="arrowRight" size={14} />
+                Reply
+              </button>
+            </div>
           </div>
         )}
       </div>

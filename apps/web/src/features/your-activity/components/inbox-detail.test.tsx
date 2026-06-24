@@ -1,8 +1,13 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { InboxDetail } from "@/features/your-activity/components/inbox-detail";
 import type { NotificationItem } from "@/features/notifications/types";
+
+// S-004 added reply/resolve mutations (useMutation) to the detail, so it now needs a QueryClient in
+// context. This single-subject test stays presentational — it just supplies a provider; the reply
+// flow itself (post/resolve/refusal) is covered by tests/reply-from-inbox.test.tsx.
 
 // your-activity-inbox S-003 — single-subject test for the item DETAIL. The detail is a pure
 // presentational component over the REAL `NotificationItem`: it shows the metadata that EXISTS
@@ -30,9 +35,11 @@ function renderDetail(it: NotificationItem, onMarkRead = mock(() => {})) {
   return {
     onMarkRead,
     ...render(
-      <MemoryRouter>
-        <InboxDetail item={it} onMarkRead={onMarkRead} />
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <InboxDetail item={it} onMarkRead={onMarkRead} />
+        </MemoryRouter>
+      </QueryClientProvider>,
     ),
   };
 }
