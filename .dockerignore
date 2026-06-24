@@ -1,0 +1,23 @@
+# Keep the host's node_modules out of the build context. Without this, the
+# release stage's `COPY . .` overwrites the clean Linux production deps installed
+# in the `deps` stage with macOS-arch host modules, breaking module resolution
+# at boot (e.g. `Cannot find module 'drizzle-orm/postgres-js'`).
+node_modules
+**/node_modules
+
+# Build artifacts produced inside the image, never copy from host.
+apps/web/dist
+**/dist
+
+# VCS, local env, and editor cruft — irrelevant to the image, faster context.
+.git
+.gitignore
+.env
+.env.*
+**/*.log
+
+# Local tooling / specs not needed at runtime.
+.build-checklist
+.build-progress
+**/.build-checklist
+**/.build-progress

@@ -30,6 +30,11 @@ ENV NODE_ENV=production
 # back to its index.html for client-side routes; backend surfaces are never shadowed).
 ENV WEB_ROOT=/app/apps/web/dist
 COPY --from=deps /app/node_modules ./node_modules
+# Workspace-member deps live in the member's OWN node_modules (a symlink farm into
+# the root .bun store), NOT hoisted to root — so the backend's node_modules must be
+# copied too, or `drizzle-orm/postgres-js` (and every other backend dep) fails to
+# resolve at boot. anchor has no deps and web isn't run at release, so only backend.
+COPY --from=deps /app/apps/backend/node_modules ./apps/backend/node_modules
 COPY . .
 # Overlay the built SPA (apps/web/dist is not in the build context — it's produced in webbuild).
 COPY --from=webbuild /app/apps/web/dist ./apps/web/dist
