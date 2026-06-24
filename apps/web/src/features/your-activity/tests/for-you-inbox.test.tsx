@@ -229,14 +229,17 @@ describe("For-you inbox (your-activity-inbox S-001)", () => {
     expect(screen.getByTestId("inbox-chip-workspace-left1")).toHaveTextContent("Former Co");
   });
 
-  it("C-005: the page renders the For-you surface with NO 'Your actions' tab (single-surface, M7)", async () => {
+  it("C-005: the page defaults to the For-you surface, mention-free (two-tab page since 2b S-002)", async () => {
+    // your-activity-actions S-002 SUPERSEDES the original single-surface assertion: the page is now a
+    // two-tab shell ("For you" | "Your actions"), so a "Your actions" TAB legitimately exists. What 2a
+    // still owns: For you is the DEFAULT surface, and the page copy stays mention-free (C-005).
     pages = { 1: [row("x1", { workspaceName: "Acme Platform" })] };
     total = 1;
     renderContent(<YourActivityPage />);
     await waitFor(() => expect(screen.getByTestId("your-activity-page")).toBeInTheDocument());
-    // No dead second tab.
-    expect(screen.queryByText(/your actions/i)).not.toBeInTheDocument();
-    // Subtitle is mention-free (C-005).
+    // Default surface is the For-you inbox (2a's content).
+    await waitFor(() => expect(screen.getByTestId("for-you-content")).toBeInTheDocument());
+    // Subtitle / page copy is mention-free (C-005).
     expect(screen.getByTestId("your-activity-page").textContent ?? "").not.toMatch(/mention/i);
   });
 });
