@@ -2,9 +2,10 @@ import { format, formatDistanceToNow } from "date-fns";
 import { Link } from "react-router-dom";
 import { Icon } from "@/components/icon";
 import { ActivityRow } from "@/features/activity/components/activity-row";
-import { PublishDiffMini } from "@/features/activity/components/publish-diff-mini";
+import { PublishDiffMini, versionLabel } from "@/features/activity/components/publish-diff-mini";
 import { openDocHref } from "@/features/activity/lib/open-doc-href";
 import type {
+  ActivityRowMeta,
   ActivityEventDetail,
   ActivityEventRow,
   ActivityPublishMeta,
@@ -46,14 +47,25 @@ function whenText(iso: string): string {
   return `${format(d, "MMM d, yyyy 'at' h:mm a")} · ${formatDistanceToNow(d, { addSuffix: true })}`;
 }
 
-/** The hero sentence "<actor> <summary> <target>" — all plain text (escaped). */
+/** The hero sentence "<actor> <summary> <target> in <doc>" — all plain text (escaped). Emphasis
+ *  mirrors the feed row: muted base, actor ink-semibold, target + doc accent-ink-semibold. */
 function Sentence({ event }: { event: ActivityEventDetail }) {
-  const namesTarget = event.target && event.type !== "publish" && event.type !== "restore";
+  const showInDoc =
+    event.docTitle &&
+    event.docTitle !== event.target &&
+    event.type !== "publish" &&
+    event.type !== "restore";
   return (
-    <span className="text-[15px] leading-snug text-ink">
-      <b className="font-medium">{event.actorName}</b>
-      {event.summary ? ` ${event.summary}` : ""}
-      {namesTarget ? <span className="text-muted"> {event.target}</span> : null}
+    <span className="text-[15px] leading-snug text-muted">
+      <b className="font-semibold text-ink">{event.actorName}</b>
+      {event.summary ? ` ${event.summary} ` : " "}
+      {event.target ? <span className="font-semibold text-accent-ink">{event.target}</span> : null}
+      {showInDoc ? (
+        <>
+          {" in "}
+          <span className="font-semibold text-accent-ink">{event.docTitle}</span>
+        </>
+      ) : null}
     </span>
   );
 }
@@ -71,13 +83,17 @@ export function ActivityDetailPage({
   const meta = TYPE_META[event.type] ?? TYPE_META.comment;
   const href = openDocHref(event);
   const publishMeta = (event.meta ?? {}) as ActivityPublishMeta;
+  const detailMeta = (event.meta ?? {}) as ActivityRowMeta;
 
   // Metadata key-value rows (AS-014: actor, document, project, version, when).
   const kv: { k: string; v: string }[] = [];
   kv.push({ k: "Actor", v: event.actorName });
-  if (event.target) kv.push({ k: "Document", v: event.target });
+  // Prefer the read-enriched doc title; fall back to target (legacy rows where target = doc title).
+  const docName = event.docTitle ?? (event.type !== "publish" && event.type !== "restore" ? event.target : null);
+  if (docName) kv.push({ k: "Document", v: docName });
   if (event.projectName) kv.push({ k: "Project", v: event.projectName });
-  if (event.type === "publish" && publishMeta.to) kv.push({ k: "Version", v: publishMeta.to });
+  if (event.type === "publish" && publishMeta.to != null)
+    kv.push({ k: "Version", v: versionLabel(publishMeta.to) });
   kv.push({ k: "When", v: whenText(event.createdAt) });
 
   return (
@@ -112,12 +128,20 @@ export function ActivityDetailPage({
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_320px]">
-        {/* body card */}
+        {/* body card: the annotated quote (if any) + the event body, then the publish diff. Mirrors
+            the prototype .detail-body-card (.quote-ref + .body-text + .diff-mini). */}
         <div className="rounded-[11px] border border-line bg-surface p-5">
-          {event.summary && (
+          {detailMeta.quote ? (
+            <div className="mb-3 border-l-2 border-accent pl-3 text-[13px] italic leading-relaxed text-muted">
+              “{detailMeta.quote}”
+            </div>
+          ) : null}
+          {detailMeta.body ? (
+            <p className="text-[14.5px] leading-relaxed text-ink">{detailMeta.body}</p>
+          ) : (
             <p className="text-[13.5px] leading-relaxed text-muted">
-              <b className="font-medium text-ink">{event.actorName}</b> {event.summary}
-              {event.target ? <span> {event.target}</span> : null}.
+              <b className="font-semibold text-ink">{event.actorName}</b> {event.summary}
+              {event.target ? <span className="font-semibold text-accent-ink"> {event.target}</span> : null}.
             </p>
           )}
           {event.type === "publish" && <PublishDiffMini slug={event.docSlug} meta={publishMeta} />}
@@ -145,14 +169,14 @@ export function ActivityDetailPage({
               </div>
             </div>
           )}
-          {event.target && (
+          {docName && (
             <div className="rounded-[11px] border border-line bg-surface p-4">
               <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-subtle">Document</div>
-              <div className="text-[13.5px] font-semibold leading-snug text-ink">{event.target}</div>
-              {(event.projectName || (event.type === "publish" && publishMeta.to)) && (
+              <div className="text-[13.5px] font-semibold leading-snug text-ink">{docName}</div>
+              {(event.projectName || (event.type === "publish" && publishMeta.to != null)) && (
                 <div className="mt-1 font-mono text-[11.5px] text-subtle">
                   {event.projectName}
-                  {event.type === "publish" && publishMeta.to ? ` · ${publishMeta.to}` : ""}
+                  {event.type === "publish" && publishMeta.to != null ? ` · ${versionLabel(publishMeta.to)}` : ""}
                 </div>
               )}
               <div className="mt-3">

@@ -45,8 +45,23 @@ export interface ActivityEventRow {
   summary: string | null;
   target: string | null;
   meta: unknown;
+  /** Read-time enrichment (the feed joins docs + projects): the doc's title and project name, so a
+   *  row can render "… in <doc>" and the doc/project chips like the prototype. Null on a
+   *  workspace-level event or a deleted doc/project. */
+  docTitle?: string | null;
+  projectName?: string | null;
   /** ISO timestamp string from the API envelope (parsed client-side for day-grouping). */
   createdAt: string;
+}
+
+/** Type-specific `meta` fields a row reads for its quote/body preview + chips. */
+export interface ActivityRowMeta {
+  /** the event's body/description preview (e.g. the comment text). */
+  body?: string;
+  /** the quoted/annotated text a comment anchors to (rendered as a blockquote). */
+  quote?: string;
+  thread?: "open" | "resolved";
+  replies?: number;
 }
 
 /**
@@ -88,8 +103,10 @@ export interface ActivityStats {
 
 /** The type-specific `meta` JSON a publish event carries (S-004 PublishDiffMini reads from/to/adds/dels). */
 export interface ActivityPublishMeta {
-  from?: string;
-  to?: string;
+  // The backend publish emit (S-005) writes from/to as version NUMBERS (e.g. 3, 4).
+  // Accept string too (defensive — a future emit could carry a "v4"-style label).
+  from?: number | string;
+  to?: number | string;
   adds?: number;
   dels?: number;
 }

@@ -496,8 +496,24 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
     commentId?: string | null;
     summary?: string | null;
     target?: string | null;
+    /** the comment text → meta.body, rendered as the row's preview line (prototype .act-preview). */
+    body?: string | null;
+    /** the annotated text the comment anchors to → meta.quote (prototype .act-quote). */
+    quote?: string | null;
   }) {
     if (!activityDeps) return;
+    // Trim the preview text so a long comment never bloats the feed row (the FE also clamps to 2
+    // lines); plain text only (F-12 — rendered escaped, never as HTML).
+    const clip = (s: string | null | undefined, n: number) =>
+      s && s.trim() ? s.trim().slice(0, n) : undefined;
+    const meta: Record<string, unknown> = {};
+    const body = clip(input.body, 280);
+    const quote = clip(input.quote, 200);
+    if (body) meta.body = body;
+    if (quote) meta.quote = quote;
+    // comment/reply open a thread (the prototype's "Open"/"N replies" chip); resolve closes it.
+    if (input.type === "resolve") meta.thread = "resolved";
+    else meta.thread = "open";
     await emitActivity(
       {
         type: input.type,
@@ -508,6 +524,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         commentId: input.commentId ?? null,
         summary: input.summary ?? null,
         target: input.target ?? null,
+        meta: Object.keys(meta).length ? meta : undefined,
       },
       activityDeps,
     );
@@ -762,6 +779,8 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         commentId: result.commentId,
         summary: "commented on",
         target: doc.title,
+        body: body.comment?.body ?? null,
+        quote: body.anchor && "textSnippet" in body.anchor ? body.anchor.textSnippet : null,
       });
     }
     set.status = 201;
@@ -1054,6 +1073,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         annotationId: params.id,
         commentId: result.id,
         summary: body.parentId ? "replied to a comment" : "commented",
+        body: body.body,
       });
       set.status = 201;
       return { commentId: result.id };
@@ -1122,6 +1142,7 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
       annotationId: params.id,
       commentId: result.id,
       summary: body.parentId ? "replied to a comment" : "commented",
+      body: body.body,
     });
     set.status = 201;
     return { commentId: result.id };
@@ -1227,6 +1248,8 @@ export function annotationsRoutes(deps: AnnotationsRoutesDeps) {
         commentId: result.commentId,
         summary: "commented on",
         target: doc.title,
+        body: body.comment?.body ?? null,
+        quote: body.anchor && "textSnippet" in body.anchor ? body.anchor.textSnippet : null,
       });
     }
     set.status = 201;

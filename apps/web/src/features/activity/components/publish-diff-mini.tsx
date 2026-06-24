@@ -13,11 +13,18 @@ import type { ActivityPublishMeta } from "@/features/activity/types";
 // body fills in once loaded. If the diff read fails OR there is no slug (deleted doc), the mini
 // DEGRADES to the counts header alone (C-001 — never a broken/blank diff).
 
-/** Parse a version label ("v4", "4") into its number; null if unparseable. */
-function versionNumber(label: string | undefined): number | null {
-  if (!label) return null;
-  const n = Number.parseInt(label.replace(/^v/i, ""), 10);
+/** Parse a version label into its number; null if unparseable. The publish emit (S-005)
+ *  writes from/to as NUMBERS; a string label ("v4"/"4") is also accepted defensively. */
+function versionNumber(label: number | string | undefined | null): number | null {
+  if (label == null) return null;
+  const n = typeof label === "number" ? label : Number.parseInt(label.replace(/^v/i, ""), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Render a version as a "v{n}" label for display; falls back to "?" when absent. */
+export function versionLabel(label: number | string | undefined | null): string {
+  const n = versionNumber(label);
+  return n != null ? `v${n}` : "?";
 }
 
 export function PublishDiffMini({ slug, meta }: { slug: string | null | undefined; meta: ActivityPublishMeta }) {
@@ -33,7 +40,7 @@ export function PublishDiffMini({ slug, meta }: { slug: string | null | undefine
       <div className="flex items-center gap-1.5 border-b border-line bg-elev px-3 py-1.5 font-mono text-[11px] text-subtle">
         <Icon name="list" size={13} />
         <span>
-          Source · {meta.from ?? "?"} → {meta.to ?? "?"}
+          Source · {versionLabel(meta.from)} → {versionLabel(meta.to)}
         </span>
         <span className="ml-auto flex items-center gap-2 tabular-nums">
           {meta.adds != null && <span className="text-success">+{meta.adds}</span>}
@@ -46,7 +53,7 @@ export function PublishDiffMini({ slug, meta }: { slug: string | null | undefine
           <Skeleton rows={3} delayMs={0} />
         </div>
       ) : query.isError || lines.length === 0 ? null : (
-        <SourceLineDiff lines={lines} fromLabel={meta.from ?? "from"} toLabel={meta.to ?? "to"} />
+        <SourceLineDiff lines={lines} fromLabel={versionLabel(meta.from)} toLabel={versionLabel(meta.to)} hideHeader />
       )}
     </div>
   );

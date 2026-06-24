@@ -32,7 +32,9 @@ function publishEvent(over: Record<string, unknown> = {}) {
     annotationId: "anno-1",
     summary: "published",
     target: "Render + publish pipeline RFC",
-    meta: { from: "v3", to: "v4", adds: 5, dels: 2 },
+    // Numbers — the real backend publish emit (S-005) writes from/to as version NUMBERS,
+    // not "v3"/"v4" strings. (Regression guard: a string fixture hid a crash in versionNumber.)
+    meta: { from: 3, to: 4, adds: 5, dels: 2 },
     createdAt: new Date(2026, 5, 23, 12, 0, 0).toISOString(),
     docSlug: "render-pipeline-rfc",
     projectName: "web-core",

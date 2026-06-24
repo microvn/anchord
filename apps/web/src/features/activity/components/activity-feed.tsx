@@ -73,6 +73,8 @@ export function ActivityFeed({
               {group.rows.length} {group.rows.length === 1 ? "event" : "events"}
             </span>
           </div>
+          {/* .act-list: the timeline spine is drawn PER-ROW (a connector from each node down to the
+              next), so it ends exactly at the last node instead of trailing past the last card. */}
           <div className="flex flex-col gap-2">
             {group.rows.map((event) => (
               <ActivityRow key={event.id} event={event} onOpen={onOpen} />

@@ -8,16 +8,22 @@ export function SourceLineDiff({
   lines,
   fromLabel,
   toLabel,
+  hideHeader = false,
 }: {
   lines: DiffLine[];
   fromLabel: string;
   toLabel: string;
+  // Suppress the built-in "Source · from → to" header when the caller already renders one
+  // (e.g. activity's PublishDiffMini, whose header carries the +adds/−dels counts).
+  hideHeader?: boolean;
 }) {
   return (
     <div data-testid="source-line-diff" className="flex min-h-0 flex-col">
-      <div className="flex-none border-b border-line px-3 py-1.5 font-mono text-[11px] text-subtle">
-        Source · {fromLabel} → {toLabel}
-      </div>
+      {!hideHeader && (
+        <div className="flex-none border-b border-line px-3 py-1.5 font-mono text-[11px] text-subtle">
+          Source · {fromLabel} → {toLabel}
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-auto py-1 font-mono text-[12px] leading-[1.55]">
         {lines.map((line, i) => {
           const added = line.type === "added";

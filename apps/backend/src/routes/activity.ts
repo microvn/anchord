@@ -21,11 +21,13 @@
 // row whose stored workspaceId disagrees with the doc's real workspace can never surface.
 
 import { Elysia } from "elysia";
+import { eq, inArray } from "drizzle-orm";
 import { apiEnvelope } from "../http/envelope";
 import { requireSession, requireWorkspaceMember, type SessionResolver, type WorkspaceRoleResolver, type WorkspaceScope } from "../http/auth-gate";
 import { NotFoundError } from "../http/errors";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
-import { createActivityRepo, type ActivityRepo } from "../activity/repo";
+import { docs, projects } from "../db/schema";
+import { createActivityRepo, type ActivityRepo, type ActivityRow } from "../activity/repo";
 import { createActivityVisibility, type ResolveDocAccess } from "../activity/visibility";
 import { countByCategory, filterByCategory, isActivityCategory } from "../activity/category";
 import { computeStats } from "../activity/stats";
@@ -103,9 +105,13 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       const matching = filterByCategory(visible, category);
       const offset = (page.page - 1) * page.limit;
       const items = matching.slice(offset, offset + page.limit);
+      // Enrich JUST the page (≤ limit rows) with the doc title + project name so each row renders
+      // "… in <doc>" + the doc/project chips like the prototype. A bounded 2-query batch, not a join
+      // on the full-log scan above. Workspace-level rows (no docId/projectId) resolve to null.
+      const enriched = await enrichRows(deps.db, items);
       // `counts` (per-category, over the visible set) + the active `category` ride alongside the
       // standard {items, pagination} so the FE renders the segment with counts without a 2nd request.
-      return { ...paginate(items, { page: page.page, limit: page.limit, total: matching.length }), counts, category };
+      return { ...paginate(enriched, { page: page.page, limit: page.limit, total: matching.length }), counts, category };
     })
     // GET /api/w/:workspaceId/activity/stats — the stats rail (S-007). The FOURTH surface that MUST
     // route through the SAME shared visibility gate (C-003/F-7): load the whole workspace log, filter
@@ -122,7 +128,14 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       const visible = await visibility.filterVisible(all, { userId: actor.userId, role: ws.role });
       // GAP-001 (deferred): per-viewer filtered aggregates cost a full visible-set load + in-process
       // aggregate on every request — the SAME shape the feed already uses; no cache/cap in v0.
-      return computeStats(visible);
+      const stats = computeStats(visible);
+      // The busiest-doc NAME must be the doc's TITLE, not the row `target` (which now carries the
+      // comment's section/anchor, e.g. "§ Sanitization"). Resolve the title at read time (one query).
+      if (stats.busiestDoc && deps.db) {
+        const [doc] = await deps.db.select({ title: docs.title }).from(docs).where(eq(docs.id, stats.busiestDoc.docId)).limit(1);
+        if (doc) stats.busiestDoc = { ...stats.busiestDoc, name: doc.title };
+      }
+      return stats;
     })
     // GET /api/w/:workspaceId/activity/:eventId — one event's row (the detail-url surface, S-002 +
     // S-004). C-003 / AS-010: an event the viewer can't see returns NOT-FOUND (existence-hiding),
@@ -141,12 +154,19 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       // deleted doc (resolver → null) both yield a null slug, and the FE degrades the button (AS-018).
       let docSlug: string | null = null;
       let projectName: string | null = null;
+      let docTitle: string | null = null;
       if (event.docId != null && deps.resolveDocLink) {
         const link = await deps.resolveDocLink(event.docId);
         docSlug = link?.slug ?? null;
         projectName = link?.projectName ?? null;
       }
-      return { event: { ...event, docSlug, projectName } };
+      // The doc TITLE for the detail's "Document" row + the "… in <doc>" sentence (target now carries
+      // the section/anchor, not the doc name). One read-time lookup; a deleted doc resolves to null.
+      if (event.docId != null && deps.db) {
+        const [doc] = await deps.db.select({ title: docs.title }).from(docs).where(eq(docs.id, event.docId)).limit(1);
+        docTitle = doc?.title ?? null;
+      }
+      return { event: { ...event, docSlug, projectName, docTitle } };
     })
     // GET /api/w/:workspaceId/activity/:eventId/related — "More on this doc" (S-004). Other events on
     // the SAME doc as :eventId, recent-first, capped at 5, EXCLUDING the viewed event. Gated through
@@ -173,4 +193,35 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
 function scope(ctx: unknown): { actor: Actor; ws: WorkspaceScope } {
   const c = ctx as { actor: Actor; ws: WorkspaceScope };
   return { actor: c.actor, ws: c.ws };
+}
+
+/** A read row plus the doc title + project name resolved at READ time for the feed's chips/sentence. */
+type EnrichedRow = ActivityRow & { docTitle: string | null; projectName: string | null };
+
+/**
+ * Batch-resolve the doc title + project name for a page of rows (≤ page limit). Two `IN (...)`
+ * queries, not a join on the full-log scan — bounded per request. Without `db` (tests that inject a
+ * pre-built repo) the rows pass through unchanged (the FE renders without the extra chips). A deleted
+ * doc/project simply resolves to null (the row survives — C-001), so "Open doc"/chips degrade.
+ */
+async function enrichRows(db: DB | undefined, rows: ActivityRow[]): Promise<EnrichedRow[]> {
+  const base = rows.map((r) => ({ ...r, docTitle: null as string | null, projectName: null as string | null }));
+  if (!db || base.length === 0) return base;
+  const docIds = [...new Set(base.map((r) => r.docId).filter((x): x is string => x != null))];
+  const projIds = [...new Set(base.map((r) => r.projectId).filter((x): x is string => x != null))];
+  const titleOf = new Map<string, string>();
+  const nameOf = new Map<string, string>();
+  if (docIds.length) {
+    for (const d of await db.select({ id: docs.id, title: docs.title }).from(docs).where(inArray(docs.id, docIds)))
+      titleOf.set(d.id, d.title);
+  }
+  if (projIds.length) {
+    for (const p of await db.select({ id: projects.id, name: projects.name }).from(projects).where(inArray(projects.id, projIds)))
+      nameOf.set(p.id, p.name);
+  }
+  return base.map((r) => ({
+    ...r,
+    docTitle: r.docId ? (titleOf.get(r.docId) ?? null) : null,
+    projectName: r.projectId ? (nameOf.get(r.projectId) ?? null) : null,
+  }));
 }

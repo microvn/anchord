@@ -19,6 +19,7 @@ import { DocsScreen } from "./features/docs/components/docs-screen";
 import { ProjectsScreen } from "./features/docs/components/projects-screen";
 import { ProjectDocsScreen } from "./features/docs/components/project-docs-screen";
 import { ActivityScreen } from "./features/activity/components/activity-screen";
+import { ActivityDetailScreen } from "./features/activity/components/activity-detail-screen";
 import { SearchScreen } from "./features/docs/components/search-screen";
 import { ViewerScreen } from "./features/viewer/components/viewer-screen";
 import { CapabilityRedeemScreen } from "./features/viewer/components/capability-redeem-screen";
@@ -102,6 +103,9 @@ export function AppRoutes() {
                 project's docs), not the workspace-wide union. */}
             <Route path="projects/:projectId" element={<ProjectDocsScreen />} />
             <Route path="activity" element={<ActivityScreen />} />
+            {/* workspace-activity S-004: a feed row opens its detail page (metadata + publish diff +
+                "More on this doc" + "Open doc" deep-link). */}
+            <Route path="activity/:eventId" element={<ActivityDetailScreen />} />
             <Route path="search" element={<SearchScreen />} />
           </Route>
         </Route>
