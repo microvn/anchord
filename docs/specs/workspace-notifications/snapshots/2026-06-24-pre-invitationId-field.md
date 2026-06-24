@@ -1,7 +1,14 @@
+# Snapshot: Workspace Notifications
+**Date:** 2026-06-24
+**Ref:** your-activity-inbox:S-005 (Phương án C)
+**Reason:** M5, M6 — `workspace_invited` invitation id moves from `refId` to a dedicated additive `invitationId` field; `refId` becomes workspace_id uniformly across all four workspace types. AS-010 Then + Data Model + Linked Fields changed.
+
+---
+
 # Spec: Workspace Notifications
 
 **Created:** 2026-06-23
-**Last updated:** 2026-06-24
+**Last updated:** 2026-06-23
 **Status:** Active
 **Snapshot limit:** 5
 
@@ -26,9 +33,10 @@ hardcoded high/low-signal policy (no per-user override yet).
   (idempotent on crash-restart; forward-only — no down-migration), owned by S-001. The
   TS union `NotificationType` lives separately in `notify/types.ts` and MUST be widened in
   lockstep — the pgEnum and the union are hand-synced (F3).
-- **`notifications.refId`** — holds the type's action/deep-link target. For ALL FOUR workspace types this is the **`workspace_id`** (uniform — `workspace_invited` included). CORRECTED 2026-06-24 (Phương án C): the invitation id no longer rides `refId`; it moves to the dedicated `invitationId` field below. Keeping `refId` = workspace_id uniformly means the consumer's workspace-chip enrichment (`your-activity-inbox:S-001`, which derives `workspaceId = refId` for every workspace type) works for invited rows too, and the four types stay consistent.
-  - NOTE the existing read surface (`notify/read-repo.ts listForUser`) enriches every row by joining `refId → annotations → docs`; a workspace_id matches no annotation, so doc-based enrichment returns null for these rows (unchanged). The read path must NOT live-join `workspaces` (that would leak the workspace's CURRENT name to a member who was since removed — F1).
-- **`notifications.invitationId` (NEW column, text, nullable)** — the actionable invitation target for a `workspace_invited` row (the invitation row already exists at emit time via the `workspaces:S-004` invite flow); NULL for every other type. This is what lets the For-you inbox accept/decline a specific invitation (consumed by `your-activity-inbox:S-005` — see Linked Fields). Added additively (no overload of `refId`); persisted + served on every `GET /api/me/notifications` read so a re-opened inbox still carries it. (C-007)
+- **`notifications.refId`** — holds the type's action/deep-link target:
+  - `workspace_member_joined` / `workspace_member_removed` / `workspace_renamed` → the `workspace_id`.
+  - **`workspace_invited` → the `invitation_id`** (the actionable target — the row IS an invite you accept/decline; the invitation row already exists at emit time via the `workspaces:S-004` invite flow). This is what lets the For-you inbox call accept/decline directly (consumed by `your-activity-inbox:S-005` — see Linked Fields). The workspace NAME for display still comes from `refLabel` (below); the workspace id, if ever needed for an invited row, derives from the invitation.
+  - NOTE the existing read surface (`notify/read-repo.ts listForUser`) enriches every row by joining `refId → annotations → docs`; a workspace_id OR an invitation_id matches no annotation, so doc-based enrichment returns null for these rows (unchanged). The read path must NOT live-join `workspaces` (that would leak the workspace's CURRENT name to a member who was since removed — F1).
 - **Snapshot column (NEW) — `notifications.refLabel` (text, nullable)** — captures the
   human-readable display text at EMIT time so it survives membership deletion (AS-006) and
   cannot drift: the workspace name for invited/joined/removed; `"<old> → <new>"` for renamed;
@@ -89,9 +97,9 @@ second email beyond the invite itself.
 **Execution:**
 - `depends_on:` none
 - `parallel_safe:` false
-- `files:` apps/backend/src/db/schema.ts (enum migration + `refLabel` column + the nullable `invitationId` column), apps/backend/src/notify/types.ts (widen `NotificationType` union), apps/backend/src/notify/notify.ts (recipient resolvers + dispatch + `EVENT_SUBJECT`/`EVENT_SUMMARY` keys + `HIGH_SIGNAL_TYPES` + workspace deep-link builder; the `workspace_invited` emit writes `invitationId`), apps/backend/src/notify/read-repo.ts (render from `refLabel`, not a workspaces live-join; serve `invitationId` on the row) + the notify repo ports `listWorkspaceAdminIds`/`listWorkspaceMemberIds`, apps/backend/src/routes/workspaces.ts (invite handler)
+- `files:` apps/backend/src/db/schema.ts (enum migration + `refLabel` column), apps/backend/src/notify/types.ts (widen `NotificationType` union), apps/backend/src/notify/notify.ts (recipient resolvers + dispatch + `EVENT_SUBJECT`/`EVENT_SUMMARY` keys + `HIGH_SIGNAL_TYPES` + workspace deep-link builder), apps/backend/src/notify/read-repo.ts (render from `refLabel`, not a workspaces live-join) + the notify repo ports `listWorkspaceAdminIds`/`listWorkspaceMemberIds`, apps/backend/src/routes/workspaces.ts (invite handler)
 - `autonomous:` checkpoint
-- `verify:` invite an email that has an account → that account gets one in-app row carrying the workspace name (from `refLabel`), `refId` = the workspace id, AND `invitationId` = the pending invitation's id, and no extra email; invite an email with no account → no in-app row, invite email still sent; a test asserts every email-eligible type has a non-fallback subject + body (no `?? "anchord notification"` leak).
+- `verify:` invite an email that has an account → that account gets one in-app row carrying the workspace name (from `refLabel`) AND `refId` = the invitation id, and no extra email; invite an email with no account → no in-app row, invite email still sent; a test asserts every email-eligible type has a non-fallback subject + body (no `?? "anchord notification"` leak).
 
 **Acceptance Scenarios:**
 
@@ -113,11 +121,11 @@ AS-003: The inviting admin is never a recipient
 - **Then:** Alice gets no in-app notification for this invite
 - **Data:** actor = Alice (admin)
 
-AS-010: The invited row carries the invitation id (in `invitationId`) so it is actionable
+AS-010: The invited row carries the invitation id so it is actionable
 - **Given:** admin Alice invites bob@x (existing account) to "Acme" — a pending invitation row exists
 - **When:** Bob's `workspace_invited` in-app row is created
-- **Then:** the row's `invitationId` is that invitation's id, so a reader can accept/decline that exact invitation; `refId` is the workspace id (uniform across workspace types, NOT the invitation id) and `refLabel` carries the workspace name "Acme" for display
-- **Data:** invitation id = inv-123, workspace ws-acme, name "Acme"; row.invitationId = inv-123, row.refId = ws-acme, row.refLabel = "Acme"
+- **Then:** the row's `refId` is that invitation's id (not the workspace id), so a reader can accept/decline it via `POST /api/invitations/:id/accept|reject`; `refLabel` still carries the workspace name "Acme" for display
+- **Data:** invitation id = inv-123, workspace "Acme"; row.refId = inv-123, row.refLabel = "Acme"
 
 ### S-002: Notify admins when a member joins (P2)
 
@@ -240,7 +248,7 @@ of `refLabel`. (AS-009)
   `notification-preferences:S-003` (the settings section renders a row per type). ✔ the four
   types are defined in this spec's Data Model; the consumer's seam test is
   `notification-preferences:AS-012`.
-- **`invitationId`** (the invitation id, carried in the dedicated **`invitationId`** field on the `workspace_invited` row — NOT `refId`, which stays the workspace id; persisted + served on every `GET /api/me/notifications` read) — PRODUCED here (S-001 / AS-010, Data Model `invitationId` column). CONSUMED by `your-activity-inbox:S-005` (AS-016/AS-017) to accept/decline that exact invitation from the inbox (tokenless, session-email-authorized). ✔ surface (the persisted notification row, served on read) + lifecycle (durable, re-readable) match — resolves `your-activity-inbox:GAP-001` via Phương án C (CORRECTED 2026-06-24 — was `refId`; overloading `refId` would have broken the consumer's workspace-chip enrichment). Seam test: `your-activity-inbox`'s accept-from-inbox must reach the real invitation named by `invitationId` and succeed — real integration, not mocked.
+- **`invitationId`** (the invitation id, carried as `refId` on the `workspace_invited` row — persisted + served on every `GET /api/me/notifications` read) — PRODUCED here (S-001 / AS-010, Data Model `refId`). CONSUMED by `your-activity-inbox:S-005` (AS-016/AS-017) to call `POST /api/invitations/:id/accept|reject` from the inbox. ✔ surface (the persisted notification row, served on read) + lifecycle (durable, re-readable) match — resolves `your-activity-inbox:GAP-001`. Seam test: `your-activity-inbox`'s accept-from-inbox must reach the real invitation id and succeed.
 
 ## What Already Exists
 
@@ -318,4 +326,3 @@ per-workspace/admin invite rate-limit if abuse appears.
 | 2026-06-23 | /mf-challenge fixes: `refLabel` snapshot column + read path (F1); new recipient ports + corrected "no flow rewrite" (F2); expanded S-001 files — types union, total maps, HIGH_SIGNAL, workspace deep-link builder (F3); member-removed in-app locked-on (F6); C-005 fan-out batch/non-blocking + AS-009 untrusted-name + C-006 (F8/F9); idempotent enum migration (F10); GAP-003/GAP-004 added | mf-challenge |
 | 2026-06-23 | Minor doc sync (post-build S3 signals): documented impl seams in Data Model — `sanitizeRefLabel` guard on all `refLabel` writes; notify-repo ports `getWorkspaceName`/`getUserName`/`findUserIdByEmail`; `buildWorkspaceDeepLink` + `emailDeepLinkOverride` + batch `insertNotifications`. No AS/constraint/flow change; Status Draft→Active | mf-build S3 |
 | 2026-06-23 | Major (snapshot 2026-06-23-invitation-id.md) — `workspace_invited` `refId` now holds the INVITATION id (was workspace_id) so the For-you inbox can accept/decline directly; +AS-010 (row carries the invitation id, refLabel still the workspace name); +Linked Field `invitationId` → `your-activity-inbox:S-005` (resolves that spec's GAP-001). Other three workspace types keep refId=workspace_id. NOTE: feature is Active/built — the invite emit must be updated to write refId=invitation.id. | your-activity-inbox:GAP-001 |
-| 2026-06-24 | Major (snapshot 2026-06-24-pre-invitationId-field.md) — REVERSED the 2026-06-23 refId decision (it was never built, and overloading refId would break the consumer's workspace-chip enrichment). **Phương án C:** the invitation id moves to a dedicated nullable **`invitationId`** column; `refId` = workspace_id uniformly across all four workspace types. AS-010 Then + Data Model (refId bullet + new invitationId column) + S-001 files/verify + Linked Field `invitationId` corrected. Resolves `your-activity-inbox:GAP-001` via the dedicated field. The invite emit (not yet built per AS-010) writes `invitationId`, not `refId`. | your-activity-inbox:S-005 (Phương án C) |
