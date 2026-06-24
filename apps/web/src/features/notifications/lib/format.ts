@@ -57,7 +57,13 @@ export function iconFor(type: NotificationType): string {
     case "detached":
       return "alert";
     case "invited":
+    case "workspace_invited":
       return "mail";
+    case "workspace_member_joined":
+    case "workspace_member_removed":
+      return "members";
+    case "workspace_renamed":
+      return "pencil";
     default:
       return "bell";
   }

@@ -16,6 +16,13 @@ export interface InboxDayGroup {
   items: NotificationItem[];
 }
 
+/** A generic day group over any row carrying a `createdAt` ISO string. */
+export interface DayGroup<T> {
+  key: string;
+  label: string;
+  items: T[];
+}
+
 /** The viewer-local day label for one timestamp. */
 export function dayLabel(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
@@ -39,8 +46,20 @@ function dayKey(iso: string): string {
  * first within a day). Consecutive same-day items merge under one header even across page fetches.
  */
 export function groupByDay(items: NotificationItem[], now: Date = new Date()): InboxDayGroup[] {
-  const groups: InboxDayGroup[] = [];
-  const index = new Map<string, InboxDayGroup>();
+  return groupRowsByDay(items, now);
+}
+
+/**
+ * The generic day-grouper used by both the For-you inbox and the cross-workspace "Your actions" feed
+ * (your-activity-actions S-001 / C-007). Identical newest-day-first / newest-row-first semantics; the
+ * only requirement on a row is a `createdAt` ISO string.
+ */
+export function groupRowsByDay<T extends { createdAt: string }>(
+  items: T[],
+  now: Date = new Date(),
+): DayGroup<T>[] {
+  const groups: DayGroup<T>[] = [];
+  const index = new Map<string, DayGroup<T>>();
   for (const it of items) {
     const key = dayKey(it.createdAt);
     let group = index.get(key);

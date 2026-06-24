@@ -1,33 +1,29 @@
 import { Icon } from "@/components/icon";
 
 // your-activity-inbox S-002 — the For-you inbox toolbar (Anchord-Design `.me-bar`): an "Unread only"
-// toggle on the left and a "Mark all read" action on the right. The unread COUNT pill sits with the
-// "Unread only" toggle (this 2a page is single-surface — there is no tab bar, so the pill that the
-// prototype puts on the `.me-tab` lives here on the For-you label/toolbar instead; tab-pill checklist).
+// toggle on the left and a "Mark all read" action on the right. The unread COUNT pill lives ONLY on
+// the "For you" TAB (your-activity-tabs.tsx), matching the prototype's `.me-tab .pill` — NOT here on
+// the toggle (the toolbar toggle is just the faux-checkbox + "Unread only").
 //
 // Mark-all is disabled when nothing is unread (AS-008) — an idempotent no-op surface, matching the
 // bell. All state lives above (ForYouContent); this is a pure presentational control.
 
 export function InboxToolbar({
-  unreadCount,
   unreadOnly,
   onToggleUnreadOnly,
   onMarkAll,
   markAllDisabled,
   markAllPending,
 }: {
-  unreadCount: number;
   unreadOnly: boolean;
   onToggleUnreadOnly: () => void;
   onMarkAll: () => void;
   markAllDisabled: boolean;
   markAllPending?: boolean;
 }) {
-  const hasUnread = unreadCount > 0;
   return (
     <div className="mb-3.5 flex flex-wrap items-center gap-2.5" data-testid="inbox-toolbar">
-      {/* "Unread only" toggle (Anchord-Design `.unread-toggle`) — a faux checkbox + label, plus the
-          unread count pill so the count is visible without a tab bar (tab-pill). */}
+      {/* "Unread only" toggle (Anchord-Design `.unread-toggle`) — just a faux checkbox + label. */}
       <button
         type="button"
         data-testid="inbox-unread-toggle"
@@ -52,15 +48,6 @@ export function InboxToolbar({
           <Icon name="check" size={11} />
         </span>
         Unread only
-        <span
-          data-testid="inbox-unread-pill"
-          className={
-            "inline-grid h-[17px] min-w-[17px] place-items-center rounded-full px-[5px] font-mono text-[10px] " +
-            (hasUnread ? "bg-accent text-on-accent" : "bg-elev text-subtle")
-          }
-        >
-          {unreadCount > 99 ? "99+" : unreadCount}
-        </span>
       </button>
 
       {/* Mark all read (Anchord-Design `.me-mark-all`) — pinned right; disabled when nothing unread. */}

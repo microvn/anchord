@@ -6,9 +6,12 @@ import { MemoryRouter } from "react-router-dom";
 
 // your-activity-actions S-001 — the "Your actions" feed render/flow test. We mock the SERVICE CLIENT
 // (the Eden thunk `listMyActivity`), the seam the hook calls, so the REAL hook + grouping + the
-// REUSED workspace-activity feed/row/detail components run over a real QueryClient. bun's mock.module
-// is process-wide + persistent (pattern copied from your-activity/tests/for-you-inbox.test.tsx):
-// reset the store in beforeEach and the mock fns in afterEach so nothing leaks into sibling suites.
+// PERSONAL family (ActionsRow / ActionsDetail, NOT the workspace ActivityFeed) run over a real
+// QueryClient. C-007 (reversed) mandates the personal component family: per-day `.me-list` cards, a
+// verb-first sentence (no actor name / no avatar), a toned node, the chips, and the personal detail
+// with "Open in doc". bun's mock.module is process-wide + persistent (pattern copied from
+// your-activity/tests/for-you-inbox.test.tsx): reset the store in beforeEach and the mock fns in
+// afterEach so nothing leaks into sibling suites.
 
 type Row = {
   id: string;
@@ -120,14 +123,14 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     };
     total = 2;
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("activity-feed")).toBeInTheDocument());
-    // Both workspace labels render (one chip per row), in ONE feed.
+    await waitFor(() => expect(screen.getByTestId("actions-row-e-acme")).toBeInTheDocument());
+    // Both workspace labels render (one chip per row), in the personal list.
     const chips = screen.getAllByTestId("activity-chip-workspace").map((c) => c.textContent);
     expect(chips).toContain("Acme Platform");
     expect(chips).toContain("Field IO");
   });
 
-  it("AS-003: the feed groups by day, newest day first (client-side, viewer tz)", async () => {
+  it("AS-003 / C-007: the feed groups into per-day `.me-list` cards, newest day first, NO event count", async () => {
     pages = {
       1: [
         row("t1", { createdAt: "2026-06-24T12:00:00" }),
@@ -137,15 +140,18 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     };
     total = 3;
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("activity-feed")).toBeInTheDocument());
-    const labels = screen.getAllByTestId("activity-day-label").map((l) => l.textContent);
-    // Three distinct day groups; Today leads (most-recent day first).
+    await waitFor(() => expect(screen.getByTestId("actions-row-t1")).toBeInTheDocument());
+    const labels = screen.getAllByTestId("actions-day-label").map((l) => l.textContent);
+    // Three distinct day groups; Today leads (most-recent day first). NO "N events" count text.
     expect(labels[0]).toBe("Today");
     expect(labels).toContain("Yesterday");
     expect(labels).toHaveLength(3);
+    for (const l of labels) expect(l).not.toMatch(/event/i);
+    // Each day is a bordered `.me-list` card (one per group).
+    expect(screen.getAllByTestId("actions-list")).toHaveLength(3);
   });
 
-  it("AS-004: pages older actions — page 1 newest, 'Load more' loads the rest into the same feed", async () => {
+  it("AS-004: pages older actions — page 1 newest, 'Load more' loads the rest into the same list", async () => {
     pages = {
       1: [row("p1", { createdAt: "2026-06-24T12:00:00" })],
       2: [row("p2", { createdAt: "2026-06-23T11:00:00" })],
@@ -153,14 +159,37 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     total = 2; // page 1 of 1-of-2 → hasNext true
     const user = userEvent.setup();
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("activity-feed")).toBeInTheDocument());
-    expect(screen.getAllByTestId("activity-row")).toHaveLength(1); // page 2 not loaded yet
+    await waitFor(() => expect(screen.getByTestId("actions-row-p1")).toBeInTheDocument());
+    expect(screen.queryByTestId("actions-row-p2")).not.toBeInTheDocument(); // page 2 not loaded yet
     await user.click(screen.getByTestId("your-actions-load-more"));
-    await waitFor(() => expect(screen.getAllByTestId("activity-row")).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId("actions-row-p2")).toBeInTheDocument());
     expect(listMyActivity).toHaveBeenCalledWith(2);
   });
 
-  it("AS-005: opening a row shows the REUSED detail component in place", async () => {
+  it("C-007: a row's sentence is VERB-FIRST with NO actor name and NO actor avatar", async () => {
+    pages = {
+      1: [
+        row("e-verb", {
+          actorName: "Mara",
+          summary: "commented on",
+          target: "§Sanitization",
+          docTitle: "Web-core behavior contract",
+          workspaceName: "Acme Platform",
+        }),
+      ],
+    };
+    total = 1;
+    renderContent();
+    const rowEl = await screen.findByTestId("actions-row-e-verb");
+    // Verb-first: the sentence leads with the summary + target, never the actor's name.
+    expect(rowEl.textContent ?? "").toContain("commented on");
+    expect(rowEl.textContent ?? "").toContain("§Sanitization");
+    expect(rowEl.textContent ?? "").not.toContain("Mara");
+    // No actor avatar (initials) on a Your-actions row — the avatar is For-you only.
+    expect(within(rowEl).queryByText("M")).not.toBeInTheDocument();
+  });
+
+  it("AS-005: opening a row shows the PERSONAL detail in place (ActionsDetail, not the workspace detail)", async () => {
     pages = {
       1: [
         row("e-share", {
@@ -176,16 +205,17 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     total = 1;
     const user = userEvent.setup();
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("activity-row")).toBeInTheDocument());
-    await user.click(screen.getByTestId("activity-row"));
-    // The SAME workspace-activity detail component renders (its testid), with a Back control.
-    await waitFor(() => expect(screen.getByTestId("activity-detail")).toBeInTheDocument());
-    expect(screen.getByTestId("your-actions-back")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("actions-row-e-share")).toBeInTheDocument());
+    await user.click(screen.getByTestId("actions-row-e-share"));
+    // The PERSONAL detail renders (its testid), with a Back control. NOT the workspace activity-detail.
+    await waitFor(() => expect(screen.getByTestId("actions-detail")).toBeInTheDocument());
+    expect(screen.queryByTestId("activity-detail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("actions-detail-back")).toBeInTheDocument();
   });
 
   it("AS-005: an accessible row's detail has an ENABLED 'Open in doc' link targeting the doc", async () => {
     // The row carries a docSlug (BE joined it for an accessible doc-backed row) + an annotation ref,
-    // so the reused detail's "Open in doc" resolves to a real /d/:slug deep-link, not the disabled span.
+    // so the detail's "Open in doc" resolves to a real /d/:slug deep-link.
     pages = {
       1: [
         row("e-open", {
@@ -201,21 +231,19 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     total = 1;
     const user = userEvent.setup();
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("activity-row")).toBeInTheDocument());
-    await user.click(screen.getByTestId("activity-row"));
-    await waitFor(() => expect(screen.getByTestId("activity-detail")).toBeInTheDocument());
-    // The Open-doc control is an enabled <a> with a real href (NOT the disabled span — no data-degraded).
-    const openDoc = screen.getAllByTestId("open-doc");
-    for (const el of openDoc) {
-      expect(el.tagName).toBe("A");
-      expect(el).not.toHaveAttribute("data-degraded");
-      expect(el.getAttribute("href")).toBe("/d/web-core-behavior-contract#annotation-anno-7");
-    }
+    await waitFor(() => expect(screen.getByTestId("actions-row-e-open")).toBeInTheDocument());
+    await user.click(screen.getByTestId("actions-row-e-open"));
+    await waitFor(() => expect(screen.getByTestId("actions-detail")).toBeInTheDocument());
+    // The Open-in-doc control is an enabled <a> with a real href.
+    const openDoc = screen.getByTestId("actions-open-doc");
+    expect(openDoc.tagName).toBe("A");
+    expect(openDoc.getAttribute("href")).toBe("/d/web-core-behavior-contract#annotation-anno-7");
   });
 
-  it("AS-006: a lost-access row still lists, with genericized display (no current content leaked)", async () => {
-    // The BACKEND already genericized: docTitle → placeholder, target null, no quote in meta. The FE
-    // must still render the row (never hide it) and never show the original title/section/quote.
+  it("AS-006: a lost-access row still lists, genericized, with NO 'Open in doc' (slug nulled)", async () => {
+    // The BACKEND already genericized: docTitle → placeholder, target null, no quote in meta, slug
+    // null. The FE must still render the row (never hide it), never leak the original section/quote,
+    // and show NO deep-link (C-002).
     pages = {
       1: [
         row("e-lost", {
@@ -232,19 +260,15 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     total = 1;
     const user = userEvent.setup();
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("activity-row")).toBeInTheDocument());
-    const feedEl = screen.getByTestId("activity-feed");
+    await waitFor(() => expect(screen.getByTestId("actions-row-e-lost")).toBeInTheDocument());
+    const region = screen.getByTestId("your-actions");
     // The placeholder shows; no leaked section text.
-    expect(feedEl.textContent ?? "").toContain("a document you no longer have access to");
-    expect(feedEl.textContent ?? "").not.toContain("§Pricing");
-    // C-002: opening the lost-access row → "Open in doc" stays DISABLED (docSlug null → no href).
-    await user.click(screen.getByTestId("activity-row"));
-    await waitFor(() => expect(screen.getByTestId("activity-detail")).toBeInTheDocument());
-    for (const el of screen.getAllByTestId("open-doc")) {
-      expect(el.tagName).toBe("SPAN");
-      expect(el).toHaveAttribute("data-degraded", "1");
-      expect(el).not.toHaveAttribute("href");
-    }
+    expect(region.textContent ?? "").toContain("a document you no longer have access to");
+    expect(region.textContent ?? "").not.toContain("§Pricing");
+    // C-002: opening the lost-access row → no "Open in doc" control at all (slug null → href null).
+    await user.click(screen.getByTestId("actions-row-e-lost"));
+    await waitFor(() => expect(screen.getByTestId("actions-detail")).toBeInTheDocument());
+    expect(screen.queryByTestId("actions-open-doc")).not.toBeInTheDocument();
   });
 
   it("AS-007: empty state reads 'No activity yet' with the personal cross-action message", async () => {
@@ -269,19 +293,22 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     pending = true;
     renderContent();
     await waitFor(() => expect(screen.getByTestId("skeleton")).toBeInTheDocument(), { timeout: 1500 });
-    expect(screen.queryByTestId("activity-feed")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("actions-list")).not.toBeInTheDocument();
   });
 
-  it("C-007: rows render through the REUSED workspace-activity feed + detail components (no rebuild)", async () => {
+  it("C-007: rows render through the PERSONAL family (ActionsRow + ActionsDetail), not the workspace feed", async () => {
     pages = { 1: [row("e-1", { workspaceName: "Acme Platform", docTitle: "Doc A" })] };
     total = 1;
     const user = userEvent.setup();
     renderContent();
-    // The reused <ActivityFeed> + <ActivityRow> render (their own testids — not a 2b reimplementation).
-    await waitFor(() => expect(screen.getByTestId("activity-feed")).toBeInTheDocument());
-    expect(screen.getByTestId("activity-row")).toBeInTheDocument();
-    // Opening shows the reused <ActivityDetailPage> (its testid), proving the detail is reused too.
-    await user.click(screen.getByTestId("activity-row"));
-    await waitFor(() => expect(screen.getByTestId("activity-detail")).toBeInTheDocument());
+    // The personal `.me-list` card + `<ActionsRow>` render — NOT the workspace <ActivityFeed>/<ActivityRow>.
+    await waitFor(() => expect(screen.getByTestId("actions-row-e-1")).toBeInTheDocument());
+    expect(screen.queryByTestId("activity-feed")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("activity-row")).not.toBeInTheDocument();
+    expect(screen.getByTestId("actions-list")).toBeInTheDocument();
+    // Opening shows the personal <ActionsDetail> (not the workspace <ActivityDetailPage>).
+    await user.click(screen.getByTestId("actions-row-e-1"));
+    await waitFor(() => expect(screen.getByTestId("actions-detail")).toBeInTheDocument());
+    expect(screen.queryByTestId("activity-detail")).not.toBeInTheDocument();
   });
 });

@@ -96,7 +96,6 @@ export function ForYouContent({
   return (
     <div data-testid="for-you-content">
       <InboxToolbar
-        unreadCount={unreadCount}
         unreadOnly={unreadOnly}
         onToggleUnreadOnly={() => setUnreadOnly((v) => !v)}
         onMarkAll={() => markAllRead.mutate()}

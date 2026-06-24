@@ -131,7 +131,11 @@ describe("For-you inbox — open item detail (your-activity-inbox S-003)", () =>
     ];
     const user = userEvent.setup();
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("3"));
+    // The toolbar pill moved to the For-you TAB (your-activity-tabs); here ForYouContent is mounted
+    // standalone, so unread is observed via the rows' `data-unread` flag. Start: 3 unread.
+    await waitFor(() =>
+      expect(screen.getAllByTestId(/^inbox-row-/).filter((r) => r.hasAttribute("data-unread"))).toHaveLength(3),
+    );
 
     await user.click(screen.getByTestId("inbox-row-a"));
 
@@ -141,9 +145,11 @@ describe("For-you inbox — open item detail (your-activity-inbox S-003)", () =>
     expect(markNotificationRead).toHaveBeenCalledTimes(1);
     expect(store.find((r) => r.id === "a")?.read).toBe(true);
 
-    // Back to the list: the count has dropped 3 → 2.
+    // Back to the list: the unread set has dropped 3 → 2.
     await user.click(screen.getByTestId("inbox-detail-back"));
-    await waitFor(() => expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("2"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId(/^inbox-row-/).filter((r) => r.hasAttribute("data-unread"))).toHaveLength(2),
+    );
   });
 
   it("AS-012: the detail's 'Open in doc' links to the deep-link for a slug-backed item", async () => {

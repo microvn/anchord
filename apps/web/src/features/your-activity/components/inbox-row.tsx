@@ -1,6 +1,7 @@
 import { Icon } from "@/components/icon";
 import { initials, avatarColor } from "@/lib/initials";
 import { headlineParts, iconFor, relativeTime } from "@/features/notifications/lib/format";
+import { inboxNodeToneFor, NODE_TONE_CLASS } from "@/features/your-activity/lib/node-style";
 import type { NotificationItem } from "@/features/notifications/types";
 
 // your-activity-inbox S-001 — one inbox row (Anchord-Design `.me-row`): a type node-icon + actor
@@ -21,6 +22,10 @@ export function InboxRow({
   const unread = !item.read;
   const head = headlineParts(item);
   const actor = item.actorName ?? null;
+  // The node circle is TONED BY TYPE (Anchord-Design `.me-node.*`), consistent with the Your-actions
+  // node — invite/workspace_invited amber, resolved green, detached amber, comment-types accent, the
+  // rest muted — not a single hardcoded teal.
+  const nodeTone = NODE_TONE_CLASS[inboxNodeToneFor(item.type)];
 
   return (
     <div className="group relative border-b border-line last:border-b-0">
@@ -40,8 +45,8 @@ export function InboxRow({
         }
       />
 
-      {/* Type node-icon + actor avatar (col 2). */}
-      <span className="relative grid size-[34px] place-items-center rounded-full bg-accent-soft text-accent-ink">
+      {/* Type node-icon + actor avatar (col 2) — toned by notification type. */}
+      <span className={`relative grid size-[34px] place-items-center rounded-full ${nodeTone}`}>
         <Icon name={iconFor(item.type)} size={16} />
         {actor && (
           <span

@@ -92,6 +92,13 @@ function row(id: string, opts: Partial<Row> = {}): Row {
   };
 }
 
+// The unread COUNT pill moved to the For-you TAB (your-activity-tabs.tsx; its own test covers the
+// pill — tabs `C-004`). These tests mount ForYouContent standalone (no tab bar), so they observe the
+// caller's unread count via the rows' `data-unread` flag instead of the retired toolbar pill.
+function unreadRowCount(): number {
+  return screen.queryAllByTestId(/^inbox-row-/).filter((r) => r.hasAttribute("data-unread")).length;
+}
+
 beforeEach(() => {
   store = [];
 });
@@ -103,7 +110,7 @@ afterEach(() => {
 });
 
 describe("For-you inbox — manage unread (your-activity-inbox S-002)", () => {
-  it("tab-pill: the unread count pill shows the caller's unread count", async () => {
+  it("tab-pill: the toolbar carries NO unread pill (it moved to the For-you tab); unread is on the rows", async () => {
     store = [
       row("a", { createdAt: "2026-06-24T12:00:00" }),
       row("b", { createdAt: "2026-06-24T11:00:00" }),
@@ -111,7 +118,10 @@ describe("For-you inbox — manage unread (your-activity-inbox S-002)", () => {
     ];
     renderContent();
     await waitFor(() => expect(screen.getByTestId("inbox-toolbar")).toBeInTheDocument());
-    expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("2");
+    // The retired toolbar pill is gone — the count pill lives on the tab (your-activity-tabs test).
+    expect(screen.queryByTestId("inbox-unread-pill")).not.toBeInTheDocument();
+    // Two of the three rows are unread (the caller's unread count, observed on the rows).
+    expect(unreadRowCount()).toBe(2);
   });
 
   it("AS-007: a row-level mark-read clears the row's unread without opening it, and it stays in the list", async () => {
@@ -130,7 +140,7 @@ describe("For-you inbox — manage unread (your-activity-inbox S-002)", () => {
       </QueryClientProvider>,
     );
     await waitFor(() => expect(screen.getByTestId("inbox-row-a")).toHaveAttribute("data-unread"));
-    expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("2");
+    expect(unreadRowCount()).toBe(2);
 
     await user.click(screen.getByTestId("inbox-mark-read-a"));
 
@@ -143,25 +153,26 @@ describe("For-you inbox — manage unread (your-activity-inbox S-002)", () => {
       expect(screen.getByTestId("inbox-row-a")).not.toHaveAttribute("data-unread"),
     );
     expect(screen.getByTestId("inbox-row-a")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("1"));
+    await waitFor(() => expect(unreadRowCount()).toBe(1));
   });
 
   it("AS-008: 'Mark all read' marks every item read and the unread count becomes zero", async () => {
     store = [row("a"), row("b"), row("c"), row("d")];
     const user = userEvent.setup();
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("4"));
+    await waitFor(() => expect(unreadRowCount()).toBe(4));
 
     await user.click(screen.getByTestId("inbox-mark-all"));
 
     expect(markAllNotificationsRead).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("0"));
+    await waitFor(() => expect(unreadRowCount()).toBe(0));
   });
 
   it("AS-008: 'Mark all read' is disabled when there's nothing unread", async () => {
     store = [row("a", { read: true }), row("b", { read: true })];
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("0"));
+    await waitFor(() => expect(screen.getByTestId("inbox-mark-all")).toBeInTheDocument());
+    expect(unreadRowCount()).toBe(0);
     expect(screen.getByTestId("inbox-mark-all")).toBeDisabled();
   });
 
@@ -207,7 +218,7 @@ describe("For-you inbox — manage unread (your-activity-inbox S-002)", () => {
     // nothing about the row's existence. Exercise the hook/client seam directly.
     store = [row("mine", { createdAt: "2026-06-24T12:00:00" })];
     renderContent();
-    await waitFor(() => expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("1"));
+    await waitFor(() => expect(unreadRowCount()).toBe(1));
 
     // A foreign mark via the same client thunk the hook calls.
     const res = await markNotificationRead("not-mine");
@@ -215,7 +226,7 @@ describe("For-you inbox — manage unread (your-activity-inbox S-002)", () => {
     expect(res.data).toEqual({ success: true, data: { read: true } });
     // Nothing in the caller's store changed; the caller's own row is untouched and still unread.
     expect(store.find((r) => r.id === "mine")?.read).toBe(false);
-    expect(screen.getByTestId("inbox-unread-pill")).toHaveTextContent("1");
+    expect(unreadRowCount()).toBe(1);
     // No error surface anywhere in the inbox.
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
