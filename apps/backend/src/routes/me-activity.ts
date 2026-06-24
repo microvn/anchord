@@ -148,6 +148,9 @@ async function genericizeLostAccess(
       docTitle: LOST_ACCESS_PLACEHOLDER,
       projectName: null,
       target: null,
+      // C-002: drop the slug so the reused detail's "Open in doc" degrades to the disabled span
+      // (openDocHref → null) — a lost-access row never deep-links into a doc the caller can't open.
+      docSlug: null,
       meta: stripDocDerivedMeta(r.meta),
     });
   }

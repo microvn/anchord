@@ -35,6 +35,7 @@ function seedRow(over: Partial<Seed> & { id: string; actorUserId: string; worksp
     actorName: "Mara",
     workspaceName: "Acme Platform",
     docId: null,
+    docSlug: null,
     projectId: null,
     versionId: null,
     commentId: null,
@@ -191,6 +192,37 @@ describe("personal Your-actions feed (your-activity-actions S-001)", () => {
     const data = await feed(buildApp({ who: "u-mara", repo: memActorRepo(seed), resolveAccess: allow }));
     expect(data.items[0].target).toBe("§Intro"); // accessible → no genericize
     expect(data.items[0].docTitle).not.toBe(LOST_ACCESS_PLACEHOLDER);
+  });
+
+  test("AS-005: an accessible doc-backed row returns its docSlug for 'Open in doc'; a lost-access row returns null (C-002)", async () => {
+    const seed = [
+      seedRow({
+        id: "e-ok",
+        actorUserId: "u-mara",
+        workspaceId: "ws-acme",
+        type: "comment",
+        docId: "d-open",
+        docSlug: "web-core-behavior-contract", // BE joined the live slug for an accessible doc-backed row
+        annotationId: "anno-7",
+        createdAt: new Date(2026, 5, 24, 12, 0, 0),
+      }),
+      seedRow({
+        id: "e-lost",
+        actorUserId: "u-mara",
+        workspaceId: "ws-acme",
+        type: "comment",
+        docId: "d-secret",
+        docSlug: "secret-doc", // joined slug exists, but access is lost → must be nulled (C-002)
+        createdAt: new Date(2026, 5, 24, 11, 0, 0),
+      }),
+    ];
+    // Allow d-open, deny d-secret — the genericize path nulls docSlug only on deny.
+    const access: ResolveDocAccess = async (docId) =>
+      docId === "d-open" ? { role: "viewer", canView: true } : { role: null, canView: false };
+    const data = await feed(buildApp({ who: "u-mara", repo: memActorRepo(seed), resolveAccess: access }));
+    const byId = Object.fromEntries(data.items.map((r: any) => [r.id, r]));
+    expect(byId["e-ok"].docSlug).toBe("web-core-behavior-contract"); // accessible → "Open in doc" links
+    expect(byId["e-lost"].docSlug).toBeNull(); // lost access → no deep-link (C-002)
   });
 
   test("AS-012: always the session caller's own rows only — a foreign ?actorUserId is ignored (no IDOR)", async () => {

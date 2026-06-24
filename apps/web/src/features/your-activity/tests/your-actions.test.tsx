@@ -26,6 +26,7 @@ type Row = {
   docTitle?: string | null;
   projectName?: string | null;
   workspaceName?: string | null;
+  docSlug?: string | null;
   createdAt: string;
 };
 
@@ -182,6 +183,36 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     expect(screen.getByTestId("your-actions-back")).toBeInTheDocument();
   });
 
+  it("AS-005: an accessible row's detail has an ENABLED 'Open in doc' link targeting the doc", async () => {
+    // The row carries a docSlug (BE joined it for an accessible doc-backed row) + an annotation ref,
+    // so the reused detail's "Open in doc" resolves to a real /d/:slug deep-link, not the disabled span.
+    pages = {
+      1: [
+        row("e-open", {
+          summary: "commented on",
+          target: "§Sanitization",
+          docTitle: "Web-core behavior contract",
+          docSlug: "web-core-behavior-contract",
+          annotationId: "anno-7",
+          workspaceName: "Acme Platform",
+        }),
+      ],
+    };
+    total = 1;
+    const user = userEvent.setup();
+    renderContent();
+    await waitFor(() => expect(screen.getByTestId("activity-row")).toBeInTheDocument());
+    await user.click(screen.getByTestId("activity-row"));
+    await waitFor(() => expect(screen.getByTestId("activity-detail")).toBeInTheDocument());
+    // The Open-doc control is an enabled <a> with a real href (NOT the disabled span — no data-degraded).
+    const openDoc = screen.getAllByTestId("open-doc");
+    for (const el of openDoc) {
+      expect(el.tagName).toBe("A");
+      expect(el).not.toHaveAttribute("data-degraded");
+      expect(el.getAttribute("href")).toBe("/d/web-core-behavior-contract#annotation-anno-7");
+    }
+  });
+
   it("AS-006: a lost-access row still lists, with genericized display (no current content leaked)", async () => {
     // The BACKEND already genericized: docTitle → placeholder, target null, no quote in meta. The FE
     // must still render the row (never hide it) and never show the original title/section/quote.
@@ -192,18 +223,28 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
           target: null,
           docTitle: "a document you no longer have access to",
           projectName: null,
+          docSlug: null, // C-002: BE nulled the slug on lost access → no deep-link
           workspaceName: "Acme Platform",
           meta: {},
         }),
       ],
     };
     total = 1;
+    const user = userEvent.setup();
     renderContent();
     await waitFor(() => expect(screen.getByTestId("activity-row")).toBeInTheDocument());
     const feedEl = screen.getByTestId("activity-feed");
     // The placeholder shows; no leaked section text.
     expect(feedEl.textContent ?? "").toContain("a document you no longer have access to");
     expect(feedEl.textContent ?? "").not.toContain("§Pricing");
+    // C-002: opening the lost-access row → "Open in doc" stays DISABLED (docSlug null → no href).
+    await user.click(screen.getByTestId("activity-row"));
+    await waitFor(() => expect(screen.getByTestId("activity-detail")).toBeInTheDocument());
+    for (const el of screen.getAllByTestId("open-doc")) {
+      expect(el.tagName).toBe("SPAN");
+      expect(el).toHaveAttribute("data-degraded", "1");
+      expect(el).not.toHaveAttribute("href");
+    }
   });
 
   it("AS-007: empty state reads 'No activity yet' with the personal cross-action message", async () => {

@@ -14,7 +14,7 @@
 // workspace feed). Recent-first by (createdAt, id) — served by the (actorUserId, createdAt) index.
 
 import { and, count, desc, eq } from "drizzle-orm";
-import { activity, workspaceMembers, workspaces } from "../db/schema";
+import { activity, docs, workspaceMembers, workspaces } from "../db/schema";
 import type { DB } from "../db/client";
 import type { ActivityRow } from "./repo";
 
@@ -22,6 +22,13 @@ import type { ActivityRow } from "./repo";
 export interface ActorActivityRow extends ActivityRow {
   workspaceId: string;
   workspaceName: string | null;
+  /**
+   * AS-005: the doc's CURRENT viewer slug, joined at read time, so the reused detail's "Open in doc"
+   * link resolves to `/d/:slug`. Null on a workspace-level row (no docId) or a deleted doc. C-002:
+   * a row the caller can no longer access has this nulled by the route's genericize pass (NOT here) —
+   * the join itself is a plain slug lookup; the access decision stays in ONE place (resolveAccess).
+   */
+  docSlug: string | null;
 }
 
 /** Read + count ports for the cross-workspace own-actions feed. */
@@ -62,6 +69,7 @@ export function createActorActivityRepo(db: DB): ActorActivityRepo {
           workspaceId: activity.workspaceId,
           workspaceName: workspaces.name,
           docId: activity.docId,
+          docSlug: docs.slug,
           projectId: activity.projectId,
           versionId: activity.versionId,
           commentId: activity.commentId,
@@ -74,6 +82,9 @@ export function createActorActivityRepo(db: DB): ActorActivityRepo {
         .from(activity)
         .innerJoin(workspaceMembers, eq(workspaceMembers.workspaceId, activity.workspaceId))
         .leftJoin(workspaces, eq(workspaces.id, activity.workspaceId))
+        // AS-005: join the doc's current slug for the "Open in doc" deep-link. leftJoin so a
+        // workspace-level row (docId null) or a deleted doc keeps the row with a null slug.
+        .leftJoin(docs, eq(docs.id, activity.docId))
         .where(whereActor(actorUserId))
         .orderBy(desc(activity.createdAt), desc(activity.id))
         .offset(offset)
@@ -86,6 +97,7 @@ export function createActorActivityRepo(db: DB): ActorActivityRepo {
         workspaceId: r.workspaceId,
         workspaceName: r.workspaceName ?? null,
         docId: r.docId ?? null,
+        docSlug: r.docSlug ?? null,
         projectId: r.projectId ?? null,
         versionId: r.versionId ?? null,
         commentId: r.commentId ?? null,

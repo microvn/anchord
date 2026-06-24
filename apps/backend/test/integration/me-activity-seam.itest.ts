@@ -79,6 +79,32 @@ describe.skipIf(!RUN)("your-activity-actions S-001 — Your-actions seam (real P
     expect(pub!.meta).toEqual({ from: 3, to: 4, adds: 5, dels: 2 }); // version label + counts survive
   }, 60_000);
 
+  test("AS-005: listForActor joins the live doc slug for a doc-backed row; a workspace-level row has null docSlug", async () => {
+    const { workspaceId, projectId } = await seedWorkspace(h.db, { userId: MARA, role: "admin", name: "Slug WS", withProject: true });
+    const slug = `yaa-slug-${process.pid}`;
+    const [doc] = await h.db
+      .insert(docs)
+      .values({ slug, title: "Open-in-doc target", kind: "html", projectId: projectId!, ownerId: MARA })
+      .returning({ id: docs.id });
+    const repo = createActivityRepo(h.db);
+    // A doc-backed comment row → docSlug must be the doc's CURRENT viewer slug (AS-005).
+    const docEvent = await emitActivity(
+      { type: "comment", actorUserId: MARA, docId: doc!.id, summary: "commented on", target: "§Intro" },
+      { repo, workspaceOfDoc: async () => workspaceId, resolveActorName: async () => "Mara" },
+    );
+    // A workspace-level row (no docId) → docSlug stays null (left join finds no doc).
+    const wsEvent = await emitActivity(
+      { type: "workspace_renamed", actorUserId: MARA, workspaceId, summary: "renamed the workspace", target: "Slug WS" },
+      { repo, resolveActorName: async () => "Mara" },
+    );
+
+    const rows = await createActorActivityRepo(h.db).listForActor(MARA, { offset: 0, limit: 50 });
+    const docRow = rows.find((r) => r.id === docEvent!.id);
+    const wsRow = rows.find((r) => r.id === wsEvent!.id);
+    expect(docRow?.docSlug).toBe(slug); // joined the live slug for "Open in doc"
+    expect(wsRow?.docSlug).toBeNull(); // workspace-level → no doc → null
+  }, 60_000);
+
   test("C-005: the feed reads the SAME `activity` table the emit writes — no new data source", async () => {
     // A comment emit + a read-back through listForActor must round-trip on the ONE activity table
     // (no parallel store): the row the producer wrote is the row this consumer serves.

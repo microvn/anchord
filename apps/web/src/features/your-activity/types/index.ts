@@ -7,8 +7,13 @@
 
 import type { ActivityEventRow } from "@/features/activity/types";
 
-/** One "Your actions" row — the workspace feed's row shape, with workspaceName always present. */
-export type MyActivityRow = ActivityEventRow & { workspaceName?: string | null };
+/**
+ * One "Your actions" row — the workspace feed's row shape, with workspaceName always present, plus
+ * the read-time `docSlug` (AS-005) so the row passed to the reused `<ActivityDetailPage>` carries
+ * the doc's current viewer slug and "Open in doc" resolves to a real `/d/:slug` link. Null on a
+ * workspace-level row or when the caller lost access (the backend genericizes it to null — C-002).
+ */
+export type MyActivityRow = ActivityEventRow & { workspaceName?: string | null; docSlug?: string | null };
 
 /** The standard `{ items, pagination }` list payload the backend returns under the envelope. */
 export interface MyActivityPage {
