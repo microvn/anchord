@@ -51,6 +51,18 @@ export function ActivityChips({ event }: { event: ActivityEventRow }) {
     );
   }
 
+  // your-activity-actions S-001 (AS-002): the WORKSPACE chip — only the cross-workspace personal
+  // "Your actions" feed sets `workspaceName`; the workspace-scoped feed leaves it undefined (one
+  // workspace per page, no per-row label needed), so its rows render exactly as before.
+  if (event.workspaceName) {
+    chips.push(
+      <span key="ws" data-testid="activity-chip-workspace" className={`${CHIP} ${CHIP_TONE.default}`}>
+        <Icon name="members" size={11} />
+        {event.workspaceName}
+      </span>,
+    );
+  }
+
   // The project chip (.act-chip with a folder icon) — dense metadata, mirrors the prototype.
   if (event.projectName) {
     chips.push(

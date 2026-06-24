@@ -425,6 +425,11 @@ const app = createApp({
   // shared resolveAccess the doc viewer uses (admins all; members see workspace-level events plus
   // doc-scoped events on docs they can open, resolved at READ time, F-2).
   activity: { db, resolveSession, resolveWorkspaceRole, resolveAccess: sharedResolveAccess, resolveDocLink },
+  // your-activity-actions S-001: the personal cross-workspace "Your actions" feed under
+  // /api/me/activity. ACCOUNT-scoped (the caller's own actions only — C-001), current-member
+  // workspaces only (C-006). C-002: a doc-scoped row whose target the caller can no longer access
+  // still lists but genericizes its target-derived display via the SAME shared resolveAccess.
+  meActivity: { db, resolveSession, resolveAccess: sharedResolveAccess },
   // workspace-project S-003: project routes under /api/w/:workspaceId/projects.
   // workspace-activity S-006 / AS-024 (C-005): a project create logs ONE `project` event. The
   // workspace is the path workspace (passed by the route), so no workspaceOfDoc; the repo is built

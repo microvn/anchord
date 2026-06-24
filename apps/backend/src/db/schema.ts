@@ -608,6 +608,11 @@ export const activity = pgTable(
     index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt),
     // The access-filtered member query (S-002) + the detail "more on this doc" (S-004).
     index("activity_workspace_doc_idx").on(t.workspaceId, t.docId),
+    // your-activity-actions S-001 (C2): the cross-workspace own-actions feed
+    // (`GET /api/me/activity`) filters by actorUserId with NO workspaceId predicate, so the
+    // (workspaceId, createdAt) index above can't serve it. Additive (actor_user_id, created_at)
+    // B-tree — plain index, portable (no Postgres-only feature), recent-first per actor.
+    index("activity_actor_created_idx").on(t.actorUserId, t.createdAt),
   ],
 );
 

@@ -13,6 +13,7 @@ import { workspacesRoutes, type WorkspacesRoutesDeps } from "./routes/workspaces
 import { meRoutes, type MeRoutesDeps } from "./routes/me";
 import { notificationsRoutes, type NotificationsRoutesDeps } from "./routes/notifications";
 import { activityRoutes, type ActivityRoutesDeps } from "./routes/activity";
+import { meActivityRoutes, type MeActivityRoutesDeps } from "./routes/me-activity";
 import { projectsRoutes, type ProjectsRoutesDeps } from "./routes/projects";
 import { membersRoutes, type MembersRoutesDeps } from "./routes/members";
 import { searchRoutes, type SearchRoutesDeps } from "./routes/search";
@@ -166,6 +167,14 @@ export type AppDeps = {
    * route unmounted.
    */
   activity?: ActivityRoutesDeps;
+  /**
+   * your-activity-actions S-001: the personal cross-workspace "Your actions" feed under
+   * GET /api/me/activity. ACCOUNT-scoped (requireSession + actor.userId — NOT workspace-scoped):
+   * the caller's own actions across every workspace they're currently in, recent-first, paginated.
+   * C-002: a doc-scoped own-action row whose target the caller can no longer access still lists but
+   * genericizes its target-derived display (so wire `resolveAccess`). Omit to leave unmounted.
+   */
+  meActivity?: MeActivityRoutesDeps;
   /**
    * workspace-project S-003: enables the enveloped, session-gated project routes
    * (create/list/rename/archive/unarchive/delete + access-filtered browse-docs-in-
@@ -360,6 +369,13 @@ export function createApp(deps: AppDeps) {
   // list is day-grouped client-side in the viewer's timezone.
   if (deps.activity) {
     app.use(activityRoutes(deps.activity));
+  }
+
+  // /api/me/activity — your-activity-actions S-001, the personal cross-workspace "Your actions"
+  // feed. Self-enveloped + session-gated, ACCOUNT-scoped (the caller's own actions only — C-001),
+  // current-member workspaces only (C-006); recent-first, paginated (default 20 / cap 50, C-003).
+  if (deps.meActivity) {
+    app.use(meActivityRoutes(deps.meActivity));
   }
 
   // /api/projects — workspace-project S-003. Self-enveloped + session-gated, mounted

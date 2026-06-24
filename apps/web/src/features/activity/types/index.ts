@@ -50,6 +50,11 @@ export interface ActivityEventRow {
    *  workspace-level event or a deleted doc/project. */
   docTitle?: string | null;
   projectName?: string | null;
+  /** your-activity-actions S-001 (AS-002): the OWNING workspace's name, for the cross-workspace
+   *  personal "Your actions" feed where rows span workspaces and each needs its own label. Additive
+   *  + optional: the workspace-scoped feed (one workspace per page) leaves it undefined, so its rows
+   *  render unchanged; the personal feed sets it and `ActivityChips` renders one workspace chip. */
+  workspaceName?: string | null;
   /** ISO timestamp string from the API envelope (parsed client-side for day-grouping). */
   createdAt: string;
 }
