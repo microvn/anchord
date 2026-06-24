@@ -35,7 +35,9 @@ export function InboxList({
             </span>
             <span className="h-px flex-1 bg-line" />
           </div>
-          <div>
+          {/* The per-day card (Anchord-Design `.me-list`): bordered, rounded (--r-lg = 11px),
+              overflow-hidden so the rows' bottom dividers clip into one card, on the surface bg. */}
+          <div className="flex flex-col overflow-hidden rounded-[11px] border border-line bg-surface">
             {group.items.map((item) => (
               <InboxRow key={item.id} item={item} onOpen={onOpen} onMarkRead={onMarkRead} />
             ))}

@@ -46,7 +46,7 @@ export function YourActionsContent({
   // Loading: the shape-matching skeleton (not a spinner).
   if (feed.isLoading) {
     return (
-      <div data-testid="your-actions" className="rounded-[12px] border border-line bg-surface px-2 py-2">
+      <div data-testid="your-actions" className="rounded-[11px] border border-line bg-surface px-2 py-2">
         <Skeleton rows={6} />
       </div>
     );
@@ -55,7 +55,7 @@ export function YourActionsContent({
   // AS-007: a user who has done nothing yet — the personal empty copy (NOT the workspace feed's).
   if (feed.rows.length === 0) {
     return (
-      <div data-testid="your-actions" className="rounded-[12px] border border-line bg-surface">
+      <div data-testid="your-actions" className="rounded-[11px] border border-line bg-surface">
         <EmptyState
           title="No activity yet"
           description="Things you publish, comment on and share will appear here."
@@ -99,7 +99,7 @@ export function YourActionsContent({
           {/* The day's bordered rounded `.me-list` card; rows separated by hairlines. */}
           <div
             data-testid="actions-list"
-            className="overflow-hidden rounded-[12px] border border-line bg-surface"
+            className="overflow-hidden rounded-[11px] border border-line bg-surface"
           >
             {group.items.map((row) => (
               <ActionsRow key={row.id} row={row} onOpen={open} />

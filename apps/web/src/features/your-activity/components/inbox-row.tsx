@@ -34,7 +34,7 @@ export function InboxRow({
       data-testid={`inbox-row-${item.id}`}
       data-unread={unread || undefined}
       onClick={() => onOpen?.(item)}
-      className="grid w-full grid-cols-[8px_34px_1fr] items-start gap-3 px-2 py-3 text-left transition-colors hover:bg-elev data-[unread]:bg-accent-soft/30"
+      className="grid w-full grid-cols-[8px_34px_1fr] items-start gap-3 py-[13px] pl-[7px] pr-[15px] text-left transition-colors hover:bg-elev data-[unread]:bg-accent-soft/30"
     >
       {/* Unread dot (col 1) — teal when unread, transparent otherwise. */}
       <span
@@ -62,7 +62,7 @@ export function InboxRow({
       {/* Main column (col 3): headline + time, then chips. */}
       <div className="min-w-0">
         <div className="flex items-start gap-2">
-          <span className="min-w-0 text-sm leading-relaxed text-muted">
+          <span className="min-w-0 text-[12.5px] leading-[1.5] text-muted">
             {head.actor && <b className="font-semibold text-ink">{head.actor}</b>}
             {head.actor ? " " : ""}
             <span>{head.verb}</span>
@@ -82,7 +82,7 @@ export function InboxRow({
             quote marks) — the prototype reserves the italic accent-border `.me-quote` for the
             ANCHORED text, which the notification doesn't carry. */}
         {item.snippet && (
-          <div className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-ink">{item.snippet}</div>
+          <div className="mt-1.5 line-clamp-2 text-[12.5px] leading-[1.55] text-ink">{item.snippet}</div>
         )}
 
         <InboxRowChips item={item} />
@@ -120,13 +120,13 @@ function InboxRowChips({ item }: { item: NotificationItem }) {
   const ws = item.workspaceName ?? null;
   const doc = item.docTitle ?? null;
   if (!ws && !doc) return null;
+  // `.me-foot`: gap 8px, margin-top 9px. `.me-chip`: gap 5px, radius --r-sm (6px), padding 2px 7px,
+  // mono 10px, elev bg + line border.
+  const CHIP = "inline-flex items-center gap-[5px] rounded-[6px] border border-line bg-elev px-[7px] py-0.5 font-mono text-[10px]";
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+    <div className="mt-[9px] flex flex-wrap items-center gap-2">
       {ws && (
-        <span
-          data-testid={`inbox-chip-workspace-${item.id}`}
-          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-elev px-1.5 py-0.5 font-mono text-[10px] text-accent-ink"
-        >
+        <span data-testid={`inbox-chip-workspace-${item.id}`} className={`${CHIP} text-accent-ink`}>
           {/* The workspace GLYPH (Anchord-Design `.me-chip.ws .ws-glyph`): a 13px accent-soft
               rounded square with the workspace's 2-char initials — NOT a generic icon. */}
           <span className="grid size-[13px] flex-none place-items-center rounded-[3px] bg-accent-soft text-[7px] font-semibold uppercase leading-none text-accent-ink">
@@ -136,7 +136,7 @@ function InboxRowChips({ item }: { item: NotificationItem }) {
         </span>
       )}
       {doc && (
-        <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-elev px-1.5 py-0.5 font-mono text-[10px] text-ink">
+        <span className={`${CHIP} text-ink`}>
           <Icon name="docs" size={11} />
           {doc}
         </span>
