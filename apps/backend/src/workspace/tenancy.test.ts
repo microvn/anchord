@@ -333,6 +333,86 @@ test("AS-012 / C-004: an invite used by a different email is refused (email must
   expect(f.state.members.some((m) => m.userId === "u_eve")).toBe(false);
 });
 
+// your-activity-inbox S-005 — TOKENLESS accept/decline from the For-you inbox (C-003/C-007).
+// An already-authenticated invitee whose SESSION EMAIL matches the invited email accepts/declines
+// with NO token; the email-match is the authorization gate and is NEVER skipped.
+
+test("AS-016: a TOKENLESS accept (no token) joins the workspace when the session email matches", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Mercury Docs", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace(
+    { workspaceId: ws.id, actorId: "u_a", email: "bob@acme.com", role: "member" },
+    f.deps,
+  );
+  // No token supplied — authorized purely by the matching session email.
+  const out = await acceptInvitation(
+    { invitationId: inv.id, actorId: "u_bob", actorEmail: "bob@acme.com" },
+    f.deps,
+  );
+  expect(out.workspaceId).toBe(ws.id);
+  expect(out.role).toBe("member");
+  expect(f.state.members.some((m) => m.userId === "u_bob" && m.workspaceId === ws.id)).toBe(true);
+  expect(f.state.invitations[0]!.status).toBe("accepted");
+});
+
+test("AS-016 (SECURITY): a TOKENLESS accept is STILL refused when the session email does NOT match", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Mercury Docs", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace({ workspaceId: ws.id, actorId: "u_a", email: "bob@acme.com" }, f.deps);
+  // Tokenless but wrong email → the email-match gate (never skipped) refuses.
+  await expect(
+    acceptInvitation(
+      { invitationId: inv.id, actorId: "u_eve", actorEmail: "eve@acme.com" },
+      f.deps,
+    ),
+  ).rejects.toMatchObject({ code: "email_mismatch" });
+  expect(f.state.members.some((m) => m.userId === "u_eve")).toBe(false);
+});
+
+test("AS-017: a TOKENLESS decline (no token) rejects the invite when the session email matches", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Mercury Docs", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace({ workspaceId: ws.id, actorId: "u_a", email: "bob@acme.com" }, f.deps);
+  await rejectInvitation({ invitationId: inv.id, actorEmail: "bob@acme.com" }, f.deps);
+  expect(f.state.members.some((m) => m.userId === "u_bob")).toBe(false);
+  expect(f.state.invitations[0]!.status).toBe("rejected");
+});
+
+test("AS-019: a TOKENLESS accept on an already-settled (accepted) invite is refused (not_pending — no dead 404)", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Mercury Docs", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace({ workspaceId: ws.id, actorId: "u_a", email: "bob@acme.com" }, f.deps);
+  await acceptInvitation({ invitationId: inv.id, actorId: "u_bob", actorEmail: "bob@acme.com" }, f.deps);
+  // Acting again on the now-accepted invite degrades to not_pending (the FE surfaces "no longer available").
+  await expect(
+    acceptInvitation({ invitationId: inv.id, actorId: "u_bob", actorEmail: "bob@acme.com" }, f.deps),
+  ).rejects.toMatchObject({ code: "not_pending" });
+});
+
+test("the token-bearing email-link accept path still works (tokenless change is additive)", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace({ workspaceId: ws.id, actorId: "u_a", email: "bob@acme.com" }, f.deps);
+  const out = await acceptInvitation(
+    { invitationId: inv.id, token: inv.token, actorId: "u_bob", actorEmail: "bob@acme.com" },
+    f.deps,
+  );
+  expect(out.workspaceId).toBe(ws.id);
+  expect(f.state.invitations[0]!.status).toBe("accepted");
+});
+
+test("a token-bearing accept with the WRONG token is still refused (not_found — email-link path unchanged)", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps);
+  const inv = await inviteToWorkspace({ workspaceId: ws.id, actorId: "u_a", email: "bob@acme.com" }, f.deps);
+  await expect(
+    acceptInvitation(
+      { invitationId: inv.id, token: "wrong-token", actorId: "u_bob", actorEmail: "bob@acme.com" },
+      f.deps,
+    ),
+  ).rejects.toMatchObject({ code: "not_found" });
+});
+
 test("AS-014: an admin removes a member; the member loses access", async () => {
   const f = fakeRepo();
   const ws = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps);

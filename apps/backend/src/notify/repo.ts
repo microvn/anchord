@@ -229,6 +229,9 @@ export function createNotifyRepo(db: DB): NotifyRepo {
           // workspace-notifications S-001 (F1): the snapshotted display label for a workspace row
           // (e.g. the workspace name); null for annotation/doc rows (they enrich via refId→docs).
           refLabel: input.refLabel ?? null,
+          // your-activity-inbox S-005: the actionable invitation id on a `workspace_invited` row;
+          // null for every other row (the For-you inbox accepts/declines this id tokenlessly).
+          invitationId: input.invitationId ?? null,
         })
         .returning({ id: notifications.id });
       return { id: row.id };
@@ -249,6 +252,7 @@ export function createNotifyRepo(db: DB): NotifyRepo {
             refId: input.refId,
             commentId: input.commentId ?? null,
             refLabel: input.refLabel ?? null,
+            invitationId: input.invitationId ?? null,
           })),
         )
         .returning({ id: notifications.id });

@@ -13,6 +13,8 @@ import type { NotificationItem, NotificationType } from "@/features/notification
 import {
   useReplyToThread,
   useResolveThread,
+  useAcceptInvite,
+  useDeclineInvite,
 } from "@/features/your-activity/hooks/use-inbox-actions";
 
 // S-004: the comment-type rows whose detail offers a reply composer + resolve. A reply-eligible item
@@ -109,6 +111,58 @@ export function InboxDetail({
           toast("Thread resolved");
         },
         onError: () => toast.error("Couldn't resolve this thread"),
+      },
+    );
+  };
+
+  // S-005 (C-007 / AS-016/017/019): a `workspace_invited` item offers Accept / Decline ONLY — no
+  // reply composer, no "Open in doc". The action is TOKENLESS (the hooks pass only `item.invitationId`,
+  // never a token; the route authorizes by the session-email match). On success the row is marked read
+  // and we return to the list (it clears on the next fetch). On a server refusal — the invite was
+  // revoked / already settled since it landed — we surface "no longer available" and clear the row,
+  // never a dead error (AS-019). `invitationId` is the dedicated field; `refId` stays the workspace id.
+  const isInvite = item.type === "workspace_invited";
+  const accept = useAcceptInvite();
+  const decline = useDeclineInvite();
+  const [inviteGone, setInviteGone] = useState(false);
+  const inviteId = item.invitationId ?? null;
+  const invitePending = accept.isPending || decline.isPending;
+
+  const settleInvite = () => {
+    // Mark read + return to the list; the list re-fetch drops the now-settled invite.
+    onMarkRead?.(item.id);
+    onBack?.();
+  };
+  const onInviteError = () => {
+    // AS-019: degrade gracefully — never a dead error. Clear the (no-longer-actionable) row.
+    setInviteGone(true);
+    toast.error("This invitation is no longer available.");
+    onMarkRead?.(item.id);
+  };
+
+  const submitAccept = () => {
+    if (!inviteId || invitePending || inviteGone) return;
+    accept.mutate(
+      { invitationId: inviteId },
+      {
+        onSuccess: () => {
+          toast(workspace ? `Joined ${workspace}` : "Joined the workspace");
+          settleInvite();
+        },
+        onError: onInviteError,
+      },
+    );
+  };
+  const submitDecline = () => {
+    if (!inviteId || invitePending || inviteGone) return;
+    decline.mutate(
+      { invitationId: inviteId },
+      {
+        onSuccess: () => {
+          toast("Invite declined");
+          settleInvite();
+        },
+        onError: onInviteError,
       },
     );
   };
@@ -230,6 +284,41 @@ export function InboxDetail({
               <Icon name="arrowRight" size={14} />
               Open in doc
             </Link>
+          </div>
+        )}
+
+        {/* S-005 — invite Accept/Decline (prototype `.me-actions-row`). ONLY for a workspace_invited
+            item; tokenless (targets item.invitationId via the existing invitation routes, C-003/C-007). */}
+        {isInvite && (
+          <div data-testid="inbox-detail-invite-actions" className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
+            {inviteGone ? (
+              // AS-019: graceful degrade — the invite is no longer actionable.
+              <p data-testid="inbox-invite-gone" role="alert" className="text-[13px] text-muted">
+                This invitation is no longer available.
+              </p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  data-testid="inbox-invite-accept"
+                  onClick={submitAccept}
+                  disabled={invitePending || !inviteId}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-on-accent transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Icon name="check" size={15} />
+                  Accept invite
+                </button>
+                <button
+                  type="button"
+                  data-testid="inbox-invite-decline"
+                  onClick={submitDecline}
+                  disabled={invitePending || !inviteId}
+                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-elev hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Decline
+                </button>
+              </>
+            )}
           </div>
         )}
 

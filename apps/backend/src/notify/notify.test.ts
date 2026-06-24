@@ -1254,6 +1254,39 @@ describe("notifyOnWorkspaceInvited (S-001 — in-app bell row for an invited acc
 
     expect(repo.inserted[0].refLabel).not.toMatch(/[\r\n]/);
   });
+
+  test("your-activity-inbox S-005 (C-007): the row carries invitationId; refId STAYS the workspace id", async () => {
+    const repo = fakeWsRepo({ accountByEmail: { "bob@x": "u_bob" } });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceInvited(
+      {
+        workspaceId: "ws_acme",
+        inviteeEmail: "bob@x",
+        workspaceName: "Acme",
+        actorUserId: "u_alice",
+        invitationId: "inv_42",
+      },
+      { repo, mail },
+    );
+
+    // The actionable invitation id rides the dedicated field…
+    expect(repo.inserted[0].invitationId).toBe("inv_42");
+    // …and refId is UNCHANGED (the workspace id), so S-001's chip enrichment is untouched.
+    expect(repo.inserted[0].refId).toBe("ws_acme");
+  });
+
+  test("your-activity-inbox S-005: with no invitationId supplied, the row's invitationId is null/absent", async () => {
+    const repo = fakeWsRepo({ accountByEmail: { "bob@x": "u_bob" } });
+    const mail = fakeMail();
+
+    await notifyOnWorkspaceInvited(
+      { workspaceId: "ws_acme", inviteeEmail: "bob@x", workspaceName: "Acme", actorUserId: "u_alice" },
+      { repo, mail },
+    );
+
+    expect(repo.inserted[0].invitationId ?? null).toBeNull();
+  });
 });
 
 // ===========================================================================

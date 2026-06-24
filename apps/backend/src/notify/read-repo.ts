@@ -40,6 +40,12 @@ export interface NotificationRow {
    */
   refLabel: string | null;
   /**
+   * your-activity-inbox S-005 (dedicated-field design): the actionable INVITATION id on a
+   * `workspace_invited` row — the For-you inbox accepts/declines this exact invitation tokenlessly.
+   * DISTINCT from refId (which stays the workspace id). NULL for every non-invite row (NULL-safe).
+   */
+  invitationId: string | null;
+  /**
    * S-006 panel enrichment (all NULL-safe, C-014):
    * - docTitle: the row's doc title (refId→annotation→doc); null for a non-doc row (e.g. `invited`)
    *   or when the annotation/doc is gone (AS-026/AS-029).
@@ -139,6 +145,9 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
           // workspace-notifications S-001 (F1): the emit-time label snapshot, rendered as-is for
           // workspace rows. NO live workspaces join (would leak a removed member the current name).
           refLabel: notifications.refLabel,
+          // your-activity-inbox S-005: the actionable invitation id (workspace_invited rows). NULL
+          // for every other row — served on every read so a re-opened inbox still has the target.
+          invitationId: notifications.invitationId,
           // actorName = the member's name, falling back to the guest's typed name (AS-027).
           memberName: user.name,
           guestName: comments.guestName,
@@ -180,6 +189,7 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
           slug: r.slug ?? null,
           docTitle: r.docTitle ?? null,
           refLabel: r.refLabel ?? null,
+          invitationId: r.invitationId ?? null,
           // Member name wins; else the guest's typed name; else null (no resolvable comment, AS-029).
           actorName: r.memberName ?? r.guestName ?? null,
           snippet: r.snippet ?? null,

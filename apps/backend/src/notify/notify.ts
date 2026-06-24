@@ -44,6 +44,12 @@ export interface NewNotification {
    * since-removed member. Undefined/null for annotation/doc rows (they enrich via refId→docs).
    */
   refLabel?: string | null;
+  /**
+   * your-activity-inbox S-005 (dedicated-field design): the actionable INVITATION id on a
+   * `workspace_invited` row — the target the For-you inbox accepts/declines. DISTINCT from refId
+   * (which stays the workspace id). Undefined/null for every other row (persisted as NULL).
+   */
+  invitationId?: string | null;
 }
 
 /**
@@ -808,6 +814,12 @@ export interface NotifyOnWorkspaceInvitedInput {
   workspaceName: string;
   /** The inviting admin — never a recipient of their own invite (C-002). */
   actorUserId: string | null;
+  /**
+   * your-activity-inbox S-005 (dedicated-field design): the pending invitation's id — persisted on
+   * the `workspace_invited` row's `invitationId` column so the For-you inbox can accept/decline it
+   * tokenlessly. refId stays the workspaceId. Optional so existing callers/tests stay valid.
+   */
+  invitationId?: string | null;
 }
 
 /**
@@ -827,7 +839,7 @@ export async function notifyOnWorkspaceInvited(
   input: NotifyOnWorkspaceInvitedInput,
   deps: NotifyDeps,
 ): Promise<NotifyResult> {
-  const { workspaceId, inviteeEmail, workspaceName, actorUserId } = input;
+  const { workspaceId, inviteeEmail, workspaceName, actorUserId, invitationId } = input;
   const type: NotificationType = "workspace_invited"; // C-001: in-app only (low-signal).
   const log = deps.logError ?? ((msg, err) => console.error(msg, err));
   const empty: NotifyResult = { recipients: [], inAppSent: 0, emailsSent: 0 };
@@ -842,7 +854,18 @@ export async function notifyOnWorkspaceInvited(
       inviteeUserId != null && inviteeUserId !== actorUserId ? [inviteeUserId] : [];
     // F1/C-006: snapshot the sanitized workspace name so the row is inert + survives a rename/delete.
     const refLabel = sanitizeRefLabel(workspaceName);
-    return await deliverToRecipients(workspaceId, recipients, type, deps, null, refLabel);
+    // S-005: carry the invitation id (dedicated column) so the inbox accepts/declines it tokenlessly;
+    // refId stays the workspaceId (unchanged), emailDeepLinkOverride stays undefined (in-app only).
+    return await deliverToRecipients(
+      workspaceId,
+      recipients,
+      type,
+      deps,
+      null,
+      refLabel,
+      undefined,
+      invitationId ?? null,
+    );
   } catch (err) {
     log("notifyOnWorkspaceInvited failed (best-effort, invite already persisted)", err);
     return empty;
@@ -1084,6 +1107,10 @@ async function deliverToRecipients(
   // annotation-shaped link this stage would otherwise compute from the doc slug — a workspace event
   // has no slug, and its link must point at the workspace, never an annotation fragment.
   emailDeepLinkOverride?: string,
+  // your-activity-inbox S-005: the actionable invitation id for a `workspace_invited` row. Undefined
+  // for every other row — only spread into the insert when present so existing exact-equality row
+  // assertions stay valid (mirrors refLabel).
+  invitationId?: string | null,
 ): Promise<NotifyResult> {
   // C-006: email default eligibility is the MATRIX default for this type. A low-signal event
   // (resolved/detached) has no email channel → false → no mail to anyone. This is the base; the
@@ -1121,6 +1148,8 @@ async function deliverToRecipients(
         // Only carry refLabel when the caller supplied one (workspace rows) — annotation/doc rows
         // leave it undefined so their existing exact-shape assertions are unaffected.
         ...(refLabel !== undefined ? { refLabel } : {}),
+        // S-005: same — only carry invitationId for a workspace_invited row.
+        ...(invitationId !== undefined ? { invitationId } : {}),
       });
       inAppSent += 1;
     }

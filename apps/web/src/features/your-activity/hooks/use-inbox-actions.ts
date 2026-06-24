@@ -2,6 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { addComment, setResolution } from "@/features/viewer/services/client";
 import type { AddCommentResult, SetResolutionResult } from "@/features/viewer/services/client";
+import { acceptInvitation, rejectInvitation } from "@/features/workspaces/services/client";
 
 // your-activity-inbox S-004 — reply + resolve a thread straight from the inbox detail.
 //
@@ -46,6 +47,38 @@ export function useResolveThread() {
         await setResolution(slug, annotationId, { resolved: true }),
       );
       if (res.error || !res.data) throw new Error("resolve-failed");
+      return res.data;
+    },
+  });
+}
+
+// your-activity-inbox S-005 — accept / decline a workspace invite straight from the inbox detail.
+//
+// C-003 / C-007: the inbox NEVER bypasses the source action's authorization. Accept/decline go
+// through the EXISTING invitation routes (`acceptInvitation` / `rejectInvitation`), which authorize
+// by the session email matching the invited email (the email-match gate). The call is TOKENLESS —
+// the inbox passes ONLY the invitation id (read from the notification's dedicated `invitationId`
+// field), never a token. A server refusal (the invite was revoked / already settled since it landed
+// in the inbox) comes back as `EdenResult.error`; we throw so the detail can degrade gracefully
+// (AS-019: "this invitation is no longer available"), never a dead error.
+
+/** AS-016: accept a workspace invite (tokenless) targeting its dedicated invitation id. */
+export function useAcceptInvite() {
+  return useMutation<unknown, Error, { invitationId: string }>({
+    mutationFn: async ({ invitationId }) => {
+      const res = unwrapEnvelope<unknown>(await acceptInvitation(invitationId));
+      if (res.error || !res.data) throw new Error("accept-invite-failed");
+      return res.data;
+    },
+  });
+}
+
+/** AS-017: decline (reject) a workspace invite (tokenless) targeting its dedicated invitation id. */
+export function useDeclineInvite() {
+  return useMutation<unknown, Error, { invitationId: string }>({
+    mutationFn: async ({ invitationId }) => {
+      const res = unwrapEnvelope<unknown>(await rejectInvitation(invitationId));
+      if (res.error || !res.data) throw new Error("decline-invite-failed");
       return res.data;
     },
   });

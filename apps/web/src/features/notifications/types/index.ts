@@ -47,6 +47,13 @@ export interface NotificationItem {
    */
   refLabel?: string | null;
   /**
+   * your-activity-inbox S-005 (dedicated-field design): the actionable INVITATION id on a
+   * `workspace_invited` row — the For-you inbox accepts/declines this exact invitation tokenlessly.
+   * DISTINCT from refId (which stays the workspace id). Absent/null for every other row. Additive —
+   * the bell ignores it.
+   */
+  invitationId?: string | null;
+  /**
    * your-activity-inbox S-001 (BE-enrich, AS-003): the workspace that OWNS this notification's
    * target, so the cross-workspace For-you inbox can render a per-item workspace chip. Derived
    * read-time on the backend (doc→project→workspace chain, or `workspace_*` refId/refLabel). Both

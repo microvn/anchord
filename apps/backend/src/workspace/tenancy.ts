@@ -263,20 +263,25 @@ function defaultToken(): string {
 }
 
 /**
- * S-004 (AS-010/AS-012 / C-004): accept a pending invitation. The accepting email +
- * id come from the SERVER session, never the body. Guards:
- *   - the invitation must exist + be pending + unexpired (else not_pending),
- *   - the presented token must match (else not_found — no enumeration oracle),
- *   - the accepting email MUST equal the invited email (else email_mismatch, AS-012).
+ * S-004 (AS-010/AS-012 / C-004) + your-activity-inbox S-005 (C-003/C-007): accept a pending
+ * invitation. The accepting email + id come from the SERVER session, never the body. Guards:
+ *   - the invitation must exist (else not_found — no enumeration oracle),
+ *   - WHEN a token is supplied (the email-link path) it must match (else not_found); a TOKENLESS
+ *     in-app accept skips this check — authorization is the email-match below,
+ *   - the invitation must be pending + unexpired (else not_pending),
+ *   - the accepting email MUST equal the invited email (else email_mismatch, AS-012) — this is the
+ *     UNCONDITIONAL authorization gate and is NEVER skipped, even tokenless (SECURITY).
  * On success: a workspace_members row + the invitation marked accepted.
  */
 export async function acceptInvitation(
-  input: { invitationId: string; token: string; actorId: string; actorEmail: string },
+  input: { invitationId: string; token?: string; actorId: string; actorEmail: string },
   deps: TenancyDeps,
 ): Promise<{ workspaceId: string; role: WorkspaceRole }> {
   const inv = await deps.repo.findInvitation(input.invitationId);
   const now = (deps.now ?? (() => new Date()))();
-  if (!inv || inv.token !== input.token) {
+  // S-005: token check ONLY when a token was supplied (email-link path). A tokenless in-app accept
+  // is authorized purely by the email-match gate below — never by the token.
+  if (!inv || (input.token != null && inv.token !== input.token)) {
     throw new TenancyRejected("invitation not found", "not_found");
   }
   if (inv.status !== "pending" || inv.expiresAt.getTime() < now.getTime()) {
@@ -292,16 +297,18 @@ export async function acceptInvitation(
 }
 
 /**
- * S-004 (AS-011 / C-004): reject a pending invitation. The session email must match the
- * invited email (same anti-forgery as accept). Leaves NO membership; marks the
- * invitation rejected.
+ * S-004 (AS-011 / C-004) + your-activity-inbox S-005 (C-003/C-007): reject a pending invitation.
+ * The session email must match the invited email (same anti-forgery as accept) — that match is the
+ * UNCONDITIONAL gate, never skipped. WHEN a token is supplied (the email-link path) it must match;
+ * a TOKENLESS in-app decline skips the token check only. Leaves NO membership; marks it rejected.
  */
 export async function rejectInvitation(
-  input: { invitationId: string; token: string; actorEmail: string },
+  input: { invitationId: string; token?: string; actorEmail: string },
   deps: TenancyDeps,
 ): Promise<void> {
   const inv = await deps.repo.findInvitation(input.invitationId);
-  if (!inv || inv.token !== input.token) {
+  // S-005: token check only when supplied; tokenless decline is authorized by the email-match below.
+  if (!inv || (input.token != null && inv.token !== input.token)) {
     throw new TenancyRejected("invitation not found", "not_found");
   }
   if (inv.status !== "pending") {

@@ -518,6 +518,12 @@ export const notifications = pgTable(
     // to a since-removed member (and so it survives a membership delete). For workspace_invited
     // this is the workspace name. NULL for annotation/doc rows (they enrich via refId→docs).
     refLabel: text("ref_label"),
+    // your-activity-inbox S-005 (dedicated-field design): the actionable INVITATION id on a
+    // `workspace_invited` row — the dedicated additive target the For-you inbox accepts/declines
+    // tokenlessly. DISTINCT from refId (which STAYS the workspace id, so S-001's workspace-chip
+    // enrichment is untouched). NULL for every non-`workspace_invited` row (NULL-safe). Portable:
+    // a plain nullable text column, no Postgres-only feature.
+    invitationId: text("invitation_id"),
     // notifications-email S-006 (AS-027/AS-028, panel enrichment 2026-06-21): the TRIGGERING
     // comment for a comment-type row (reply/new_feedback/thread_activity). Set at emit; NULL for
     // non-comment types and (via set-null) when the comment is later removed — the read then

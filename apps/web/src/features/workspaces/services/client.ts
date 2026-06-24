@@ -76,18 +76,26 @@ export function changeMemberRole(
   >;
 }
 
-/** POST /api/invitations/:id/accept — accept an invite (S-004, AS-013). */
-export function acceptInvitation(invitationId: string, token: string): Promise<EdenResult<unknown>> {
-  return treaty.api.invitations({ id: invitationId }).accept.post({ token }) as Promise<
-    EdenResult<unknown>
-  >;
+/**
+ * POST /api/invitations/:id/accept — accept an invite (S-004, AS-013).
+ * `token` is OPTIONAL (your-activity-inbox S-005): the email-link path passes the token; the in-app
+ * For-you inbox accepts TOKENLESS — the route authorizes by the session email matching the invited
+ * email. When token is absent we post `{}` (the route's body schema makes token optional).
+ */
+export function acceptInvitation(invitationId: string, token?: string): Promise<EdenResult<unknown>> {
+  return treaty.api.invitations({ id: invitationId }).accept.post(
+    token != null ? { token } : {},
+  ) as Promise<EdenResult<unknown>>;
 }
 
-/** POST /api/invitations/:id/reject — reject an invite (S-004, AS-014). */
-export function rejectInvitation(invitationId: string, token: string): Promise<EdenResult<unknown>> {
-  return treaty.api.invitations({ id: invitationId }).reject.post({ token }) as Promise<
-    EdenResult<unknown>
-  >;
+/**
+ * POST /api/invitations/:id/reject — reject an invite (S-004, AS-014).
+ * `token` is OPTIONAL (your-activity-inbox S-005) — same tokenless rule as accept.
+ */
+export function rejectInvitation(invitationId: string, token?: string): Promise<EdenResult<unknown>> {
+  return treaty.api.invitations({ id: invitationId }).reject.post(
+    token != null ? { token } : {},
+  ) as Promise<EdenResult<unknown>>;
 }
 
 /**

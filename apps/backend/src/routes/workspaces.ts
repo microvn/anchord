@@ -54,7 +54,10 @@ export const inviteBodySchema = z.object({
   role: z.enum(["admin", "member"]).optional(),
 });
 export const invitationActionBodySchema = z.object({
-  token: z.string().min(1, "token is required"),
+  // your-activity-inbox S-005: token is now OPTIONAL. The token-bearing email-link path still
+  // supplies it (unchanged); an in-app, already-authenticated invitee accepts/declines TOKENLESS —
+  // the session email matching the invited email is the authorization gate (C-003/C-007).
+  token: z.string().min(1, "token is required").optional(),
 });
 
 /** Resolve the actor's email from their user id (SERVER read), never the body. */
@@ -252,6 +255,9 @@ export function workspacesRoutes(deps: WorkspacesRoutesDeps) {
                 inviteeEmail: email,
                 workspaceName: ws?.name ?? "",
                 actorUserId: actor.userId,
+                // your-activity-inbox S-005 (C-007): carry the invitation id so the For-you inbox
+                // can accept/decline this exact invitation tokenlessly. refId stays the workspace id.
+                invitationId: inv.id,
               },
               { repo: notifyRepo, mail: deps.notify.mail },
             );
