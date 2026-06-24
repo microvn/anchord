@@ -124,10 +124,12 @@ describe("Your actions feed (your-activity-actions S-001)", () => {
     total = 2;
     renderContent();
     await waitFor(() => expect(screen.getByTestId("actions-row-e-acme")).toBeInTheDocument());
-    // Both workspace labels render (one chip per row), in the personal list.
-    const chips = screen.getAllByTestId("activity-chip-workspace").map((c) => c.textContent);
-    expect(chips).toContain("Acme Platform");
-    expect(chips).toContain("Field IO");
+    // Both workspace labels render (one chip per row), in the personal list. Each ws chip now
+    // leads with a 2-char workspace glyph (`.ws-glyph`), so the chip text is "<GLYPH><name>" —
+    // assert the name is present as a substring.
+    const chips = screen.getAllByTestId("activity-chip-workspace").map((c) => c.textContent ?? "");
+    expect(chips.some((t) => t.includes("Acme Platform"))).toBe(true);
+    expect(chips.some((t) => t.includes("Field IO"))).toBe(true);
   });
 
   it("AS-003 / C-007: the feed groups into per-day `.me-list` cards, newest day first, NO event count", async () => {

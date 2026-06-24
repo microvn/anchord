@@ -127,7 +127,11 @@ function InboxRowChips({ item }: { item: NotificationItem }) {
           data-testid={`inbox-chip-workspace-${item.id}`}
           className="inline-flex items-center gap-1.5 rounded-md border border-line bg-elev px-1.5 py-0.5 font-mono text-[10px] text-accent-ink"
         >
-          <Icon name="dashboard" size={11} />
+          {/* The workspace GLYPH (Anchord-Design `.me-chip.ws .ws-glyph`): a 13px accent-soft
+              rounded square with the workspace's 2-char initials — NOT a generic icon. */}
+          <span className="grid size-[13px] flex-none place-items-center rounded-[3px] bg-accent-soft text-[7px] font-semibold uppercase leading-none text-accent-ink">
+            {initials(ws)}
+          </span>
           {ws}
         </span>
       )}

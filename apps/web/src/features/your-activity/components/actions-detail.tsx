@@ -1,5 +1,6 @@
 import { format, formatDistanceToNow } from "date-fns";
 import { Icon } from "@/components/icon";
+import { initials } from "@/lib/initials";
 import { ActivityChips } from "@/features/activity/components/activity-chips";
 import { openDocHref } from "@/features/activity/lib/open-doc-href";
 import { actionNodeFor, NODE_TONE_CLASS } from "@/features/your-activity/lib/node-style";
@@ -56,7 +57,15 @@ export function ActionsDetail({
   // .me-detail-kv (Workspace / Document / Project / When) — each row renders only when present.
   const kv: Array<{ label: string; node: React.ReactNode; value: string }> = [];
   if (row.workspaceName) {
-    kv.push({ label: "Workspace", node: <Icon name="members" size={13} />, value: row.workspaceName });
+    kv.push({
+      label: "Workspace",
+      node: (
+        <span className="grid size-4 flex-none place-items-center rounded-[4px] bg-accent-soft text-[8px] font-semibold uppercase leading-none text-accent-ink">
+          {initials(row.workspaceName)}
+        </span>
+      ),
+      value: row.workspaceName,
+    });
   }
   if (doc) {
     kv.push({ label: "Document", node: <Icon name="docs" size={13} />, value: doc });

@@ -190,7 +190,11 @@ export function InboxDetail({
   if (workspace) {
     kv.push({
       label: "Workspace",
-      node: <Icon name="dashboard" size={13} />,
+      node: (
+        <span className="grid size-4 flex-none place-items-center rounded-[4px] bg-accent-soft text-[8px] font-semibold uppercase leading-none text-accent-ink">
+          {initials(workspace)}
+        </span>
+      ),
       value: workspace,
     });
   }

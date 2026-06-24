@@ -1,4 +1,5 @@
 import { Icon } from "@/components/icon";
+import { initials } from "@/lib/initials";
 import { versionLabel } from "@/features/activity/components/publish-diff-mini";
 import type { ActivityEventRow } from "@/features/activity/types";
 
@@ -56,8 +57,14 @@ export function ActivityChips({ event }: { event: ActivityEventRow }) {
   // workspace per page, no per-row label needed), so its rows render exactly as before.
   if (event.workspaceName) {
     chips.push(
-      <span key="ws" data-testid="activity-chip-workspace" className={`${CHIP} ${CHIP_TONE.default}`}>
-        <Icon name="members" size={11} />
+      <span key="ws" data-testid="activity-chip-workspace" className={`${CHIP} ${CHIP_TONE.doc}`}>
+        {/* The workspace GLYPH (Anchord-Design `.me-chip.ws .ws-glyph`): a 13px accent-soft rounded
+            square with the workspace's 2-char initials — matches the personal For-you ws chip.
+            Renders only on the cross-workspace personal feed (workspaceName set); the workspace
+            screen leaves workspaceName undefined, so its rows are unaffected. */}
+        <span className="grid size-[13px] flex-none place-items-center rounded-[3px] bg-accent-soft text-[7px] font-semibold uppercase leading-none text-accent-ink">
+          {initials(event.workspaceName)}
+        </span>
         {event.workspaceName}
       </span>,
     );
