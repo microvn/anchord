@@ -253,14 +253,22 @@ export function InboxDetail({
         </div>
       </div>
 
-      {/* Card: snippet (quote-ref) + body + the key/value grid. */}
+      {/* Card: the anchored quote (`.quote-ref`) + the comment body (`.body-text`) + the KV grid. */}
       <div className="rounded-lg border border-line bg-surface px-5 py-[18px]">
+        {item.quote && (
+          <div
+            data-testid="inbox-detail-quote"
+            className="mb-3 border-l-2 border-accent py-[3px] pl-3 text-[13px] italic leading-relaxed text-muted"
+          >
+            “{item.quote}”
+          </div>
+        )}
         {item.snippet && (
           <div
             data-testid="inbox-detail-snippet"
-            className="mb-3 border-l-2 border-accent py-[3px] pl-3 text-[13px] italic leading-relaxed text-muted"
+            className="mb-3 text-[14.5px] leading-[1.7] text-ink"
           >
-            “{item.snippet}”
+            {item.snippet}
           </div>
         )}
 

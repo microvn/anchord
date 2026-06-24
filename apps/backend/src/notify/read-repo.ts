@@ -59,6 +59,12 @@ export interface NotificationRow {
   actorName: string | null;
   snippet: string | null;
   /**
+   * your-activity-inbox: the ANCHORED text the thread attaches to (the annotation's `textSnippet`),
+   * rendered as the italic accent-border quote above the comment-body preview (Anchord-Design
+   * `.me-quote`). NULL for a non-annotation row or a range with no captured snippet.
+   */
+  quote: string | null;
+  /**
    * your-activity-inbox S-001: the workspace that OWNS this notification's target, so the
    * cross-workspace For-you inbox can render a per-item workspace chip (C-001/AS-003). Derived
    * read-time, no schema change:
@@ -154,6 +160,11 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
           // AS-028: a truncated excerpt of the comment body — built in SQL so a long body never
           // ships in full. IN-APP ONLY (C-012/C-014). NULL when there is no resolvable comment.
           snippet: sql<string | null>`left(${comments.body}, ${SNIPPET_MAX})`,
+          // your-activity-inbox: the ANCHORED text the thread is attached to (Anchord-Design
+          // `.me-quote`) — read from the annotation's anchor (`textSnippet`). NULL for a non-doc /
+          // non-annotation row, or a range with no captured snippet. The inbox renders it as the
+          // italic accent-border quote ABOVE the comment-body preview.
+          quote: sql<string | null>`${annotations.anchor}->>'textSnippet'`,
           // your-activity-inbox S-001 (AS-003): the owning workspace via the doc chain
           // (annotation → doc → project → workspace). NULL for a non-doc row (e.g. a workspace_*
           // row, whose workspace comes off refId/refLabel below). Both joins LEFT + NULL-safe.
@@ -193,6 +204,7 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
           // Member name wins; else the guest's typed name; else null (no resolvable comment, AS-029).
           actorName: r.memberName ?? r.guestName ?? null,
           snippet: r.snippet ?? null,
+          quote: r.quote ?? null,
           workspaceId,
           workspaceName,
         };

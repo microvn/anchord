@@ -40,6 +40,9 @@ export interface NotificationItem {
   docTitle?: string | null;
   actorName?: string | null;
   snippet?: string | null;
+  /** your-activity-inbox: the anchored text the thread attaches to (annotation `textSnippet`),
+   *  rendered as the italic accent-border quote above the body preview (Anchord-Design `.me-quote`). */
+  quote?: string | null;
   /**
    * workspace-notifications: the display label SNAPSHOTTED at emit (e.g. the workspace name for a
    * `workspace_invited` row). For a `workspace_*` row `refId` is the workspace id and `refLabel` is

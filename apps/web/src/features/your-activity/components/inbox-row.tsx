@@ -78,9 +78,16 @@ export function InboxRow({
           </span>
         </div>
 
-        {/* The comment-body excerpt renders as the `.me-preview` line (ink, two-line clamp, no
-            quote marks) — the prototype reserves the italic accent-border `.me-quote` for the
-            ANCHORED text, which the notification doesn't carry. */}
+        {/* The anchored text (Anchord-Design `.me-quote`): italic, accent left-border, one-line
+            clamp — rendered ABOVE the body preview when the thread anchors to a snippet. */}
+        {item.quote && (
+          <div className="mt-1.5 line-clamp-1 border-l-2 border-accent pl-[9px] text-[12px] italic leading-[1.45] text-muted">
+            “{item.quote}”
+          </div>
+        )}
+
+        {/* The comment-body excerpt (Anchord-Design `.me-preview`): ink, two-line clamp, no quote
+            marks — the body of the triggering comment. */}
         {item.snippet && (
           <div className="mt-1.5 line-clamp-2 text-[12.5px] leading-[1.55] text-ink">{item.snippet}</div>
         )}
