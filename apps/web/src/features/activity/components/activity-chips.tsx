@@ -28,7 +28,7 @@ interface Meta {
 }
 
 // .act-chip base + tone variants (activity.css).
-const CHIP = "inline-flex items-center gap-1.5 rounded-md border px-[7px] py-0.5 font-mono text-[10px] [&_svg]:text-subtle";
+const CHIP = "inline-flex items-center gap-[5px] rounded-[6px] border px-[7px] py-0.5 font-mono text-[10px] [&_svg]:text-subtle";
 const CHIP_TONE = {
   default: "border-line bg-elev text-muted",
   doc: "border-line bg-elev text-accent-ink",
