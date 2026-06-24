@@ -13,12 +13,14 @@ export function InboxList({
   isFetchingMore = false,
   onLoadMore,
   onOpen,
+  onMarkRead,
 }: {
   items: NotificationItem[];
   hasMore?: boolean;
   isFetchingMore?: boolean;
   onLoadMore?: () => void;
   onOpen?: (item: NotificationItem) => void;
+  onMarkRead?: (item: NotificationItem) => void;
 }) {
   const groups = groupByDay(items);
 
@@ -35,7 +37,7 @@ export function InboxList({
           </div>
           <div>
             {group.items.map((item) => (
-              <InboxRow key={item.id} item={item} onOpen={onOpen} />
+              <InboxRow key={item.id} item={item} onOpen={onOpen} onMarkRead={onMarkRead} />
             ))}
           </div>
         </div>

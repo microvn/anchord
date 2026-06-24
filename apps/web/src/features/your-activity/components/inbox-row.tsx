@@ -11,21 +11,25 @@ import type { NotificationItem } from "@/features/notifications/types";
 export function InboxRow({
   item,
   onOpen,
+  onMarkRead,
 }: {
   item: NotificationItem;
   onOpen?: (item: NotificationItem) => void;
+  /** S-002: mark THIS row read without opening it. Rendered only while the row is unread. */
+  onMarkRead?: (item: NotificationItem) => void;
 }) {
   const unread = !item.read;
   const head = headlineParts(item);
   const actor = item.actorName ?? null;
 
   return (
+    <div className="group relative border-b border-line last:border-b-0">
     <button
       type="button"
       data-testid={`inbox-row-${item.id}`}
       data-unread={unread || undefined}
       onClick={() => onOpen?.(item)}
-      className="grid w-full grid-cols-[8px_34px_1fr] items-start gap-3 border-b border-line px-2 py-3 text-left transition-colors last:border-b-0 hover:bg-elev data-[unread]:bg-accent-soft/30"
+      className="grid w-full grid-cols-[8px_34px_1fr] items-start gap-3 px-2 py-3 text-left transition-colors hover:bg-elev data-[unread]:bg-accent-soft/30"
     >
       {/* Unread dot (col 1) — teal when unread, transparent otherwise. */}
       <span
@@ -76,6 +80,29 @@ export function InboxRow({
         <InboxRowChips item={item} />
       </div>
     </button>
+
+      {/* Row-level "mark read" control (Anchord-Design `.me-rowact`): shown only while the row is
+          unread, appears on hover (focus-visible for keyboard), and is HIDDEN on mobile (the
+          prototype's `@media (max-width:599px) { .me-rowact { display:none } }`). Clicking it marks
+          JUST this row read WITHOUT opening the detail (AS-007) — stopPropagation so the row's open
+          handler never fires. Absolutely positioned over the row so the outer click target stays one
+          element (no nested buttons). */}
+      {unread && onMarkRead && (
+        <button
+          type="button"
+          data-testid={`inbox-mark-read-${item.id}`}
+          aria-label="Mark read"
+          title="Mark read"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMarkRead(item);
+          }}
+          className="absolute right-2 top-2.5 hidden size-[26px] place-items-center rounded-md border border-line bg-surface text-muted opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 sm:grid"
+        >
+          <Icon name="check" size={14} />
+        </button>
+      )}
+    </div>
   );
 }
 
