@@ -93,7 +93,7 @@ export function UserMenu({ foldedItems }: { foldedItems?: ReactNode }) {
           }}
           className={MENU_ITEM}
         >
-          <Icon name="inbox" size={16} />
+          <Icon name="activity" size={16} />
           Your activity
         </button>
         <button
