@@ -1,7 +1,7 @@
 import { Icon } from "@/components/icon";
 import { initials, avatarColor } from "@/lib/initials";
-import { headlineParts, iconFor, relativeTime } from "@/features/notifications/lib/format";
-import { inboxNodeToneFor, NODE_TONE_CLASS } from "@/features/your-activity/lib/node-style";
+import { headlineParts, relativeTime } from "@/features/notifications/lib/format";
+import { inboxIconFor, inboxNodeToneFor, NODE_TONE_CLASS } from "@/features/your-activity/lib/node-style";
 import type { NotificationItem } from "@/features/notifications/types";
 
 // your-activity-inbox S-001 — one inbox row (Anchord-Design `.me-row`): a type node-icon + actor
@@ -47,7 +47,7 @@ export function InboxRow({
 
       {/* Type node-icon + actor avatar (col 2) — toned by notification type. */}
       <span className={`relative grid size-[34px] place-items-center rounded-full ${nodeTone}`}>
-        <Icon name={iconFor(item.type)} size={16} />
+        <Icon name={inboxIconFor(item.type)} size={16} />
         {actor && (
           <span
             aria-hidden="true"
@@ -78,8 +78,11 @@ export function InboxRow({
           </span>
         </div>
 
+        {/* The comment-body excerpt renders as the `.me-preview` line (ink, two-line clamp, no
+            quote marks) — the prototype reserves the italic accent-border `.me-quote` for the
+            ANCHORED text, which the notification doesn't carry. */}
         {item.snippet && (
-          <div className="mt-1 truncate text-[13px] text-muted">“{item.snippet}”</div>
+          <div className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-ink">{item.snippet}</div>
         )}
 
         <InboxRowChips item={item} />

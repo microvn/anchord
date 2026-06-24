@@ -60,3 +60,25 @@ export function inboxNodeToneFor(type: NotificationType): NodeTone {
       return "muted";
   }
 }
+
+// For-you: the `.me-node` GLYPH per notification type — mirrors INBOX_KINDS in personal-data.jsx
+// (mention/reply/feedback → inbox tray; resolved → check; invite → mail), NOT the bell's `iconFor`
+// (which uses a pencil for comment-types). Keeps the inbox node 1:1 with the prototype.
+export function inboxIconFor(type: NotificationType): string {
+  switch (type) {
+    case "reply":
+    case "new_feedback":
+    case "thread_activity":
+      return "inbox";
+    case "resolved":
+    case "suggestion_decided":
+      return "check";
+    case "invited":
+    case "workspace_invited":
+      return "mail";
+    case "detached":
+      return "alert";
+    default:
+      return "inbox";
+  }
+}

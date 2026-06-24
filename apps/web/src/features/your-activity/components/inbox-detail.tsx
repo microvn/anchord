@@ -5,10 +5,14 @@ import { Icon } from "@/components/icon";
 import { initials, avatarColor } from "@/lib/initials";
 import {
   headlineParts,
-  iconFor,
   relativeTime,
   deepLinkFor,
 } from "@/features/notifications/lib/format";
+import {
+  inboxIconFor,
+  inboxNodeToneFor,
+  NODE_TONE_CLASS,
+} from "@/features/your-activity/lib/node-style";
 import type { NotificationItem, NotificationType } from "@/features/notifications/types";
 import {
   useReplyToThread,
@@ -213,8 +217,8 @@ export function InboxDetail({
 
       {/* Hero: the type node-icon + actor avatar, the headline sentence, a type badge + time. */}
       <div className="mb-[18px] flex items-start gap-3.5">
-        <span className="relative grid size-[42px] flex-none place-items-center rounded-full bg-accent-soft text-accent-ink">
-          <Icon name={iconFor(item.type)} size={19} />
+        <span className={"relative grid size-[42px] flex-none place-items-center rounded-full " + NODE_TONE_CLASS[inboxNodeToneFor(item.type)]}>
+          <Icon name={inboxIconFor(item.type)} size={19} />
           {actor && (
             <span
               aria-hidden="true"
