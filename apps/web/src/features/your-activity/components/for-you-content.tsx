@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/skeleton";
 import { useForYouInbox } from "@/features/your-activity/hooks/use-for-you-inbox";
 import { InboxList } from "@/features/your-activity/components/inbox-list";
 import { InboxToolbar } from "@/features/your-activity/components/inbox-toolbar";
+import { InboxDetail } from "@/features/your-activity/components/inbox-detail";
 import {
   useUnreadCount,
   useMarkRead,
@@ -33,7 +34,12 @@ import type { NotificationItem } from "@/features/notifications/types";
 export function ForYouContent({
   onOpen,
 }: {
-  /** Open an item's detail (the detail view lands in S-003). */
+  /**
+   * S-003: open an item's detail. When provided (e.g. a 2b host that owns navigation), the parent
+   * decides what "open" means and NO in-place detail renders here. When omitted, this component
+   * manages its own `sel` state and shows `InboxDetail` IN PLACE (mirrors the prototype's
+   * `PersonalScreen` sel pattern) with a Back control returning to the list.
+   */
   onOpen?: (item: NotificationItem) => void;
 }) {
   const inbox = useForYouInbox();
@@ -41,6 +47,29 @@ export function ForYouContent({
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
   const [unreadOnly, setUnreadOnly] = useState(false);
+  // The selected item's detail (in-place). Only used when the host doesn't take over via `onOpen`.
+  const [sel, setSel] = useState<NotificationItem | null>(null);
+
+  // S-003: opening a row shows its detail in place — unless the host owns navigation (`onOpen`).
+  const open = (item: NotificationItem) => {
+    if (onOpen) onOpen(item);
+    else setSel(item);
+  };
+
+  // C-008: opening the DETAIL marks the item read (the deliberate engagement gesture). The detail
+  // fires this once on mount via the existing mark-read mutation; the row-level open here does NOT
+  // mark (mark-on-detail-open, not mark-on-row-click — distinct from the row's explicit mark button).
+  if (sel && !onOpen) {
+    return (
+      <div data-testid="for-you-content">
+        <InboxDetail
+          item={sel}
+          onBack={() => setSel(null)}
+          onMarkRead={(id) => markRead.mutate(id)}
+        />
+      </div>
+    );
+  }
 
   if (inbox.isLoading) {
     return <Skeleton rows={5} />;
@@ -87,7 +116,7 @@ export function ForYouContent({
           hasMore={!unreadOnly && inbox.hasMore}
           isFetchingMore={inbox.isFetchingMore}
           onLoadMore={inbox.loadMore}
-          onOpen={onOpen}
+          onOpen={open}
           onMarkRead={(item) => markRead.mutate(item.id)}
         />
       )}
