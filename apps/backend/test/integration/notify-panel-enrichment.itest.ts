@@ -137,6 +137,35 @@ describe.skipIf(!RUN)("notification panel enrichment (real Postgres)", () => {
     expect(row!.snippet!.length).toBeLessThanOrEqual(140);
   });
 
+  test("quote: a row carries the anchored text (annotation textSnippet); empty/non-anchor → null", async () => {
+    const repo = createNotificationReadRepo(h.db);
+    // A NEW annotation whose anchor captures the quoted text, on the same doc.
+    const [quotedAnn] = await h.db
+      .insert(annotations)
+      .values({
+        docId,
+        type: "range",
+        anchor: { blockId: "b1", offset: 0, length: 12, textSnippet: "All AI-generated HTML is sanitized." },
+      })
+      .returning({ id: annotations.id });
+    const ins = await h.db
+      .insert(notifications)
+      .values([
+        { userId: BOB, type: "reply", refId: quotedAnn!.id, commentId: memberCommentId },
+        // The shared `annId` annotation has an EMPTY anchor → quote must be null (null-safe).
+        { userId: BOB, type: "reply", refId: annId, commentId: memberCommentId },
+        // A non-annotation row (invited) → quote null.
+        { userId: BOB, type: "invited", refId: `ws-q-${process.pid}`, commentId: null },
+      ])
+      .returning({ id: notifications.id });
+
+    const rows = await repo.listForUser(BOB, { offset: 0, limit: 100 });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(ins[0]!.id)?.quote).toBe("All AI-generated HTML is sanitized.");
+    expect(byId.get(ins[1]!.id)?.quote).toBeNull(); // empty anchor → no textSnippet
+    expect(byId.get(ins[2]!.id)?.quote).toBeNull(); // non-annotation row
+  });
+
   test("AS-029: a non-comment row and a deleted-comment row carry no actor/snippet, no error", async () => {
     const repo = createNotificationReadRepo(h.db);
     // An `invited` row (no comment) + a comment-type row whose comment is then DELETED (set-null FK).

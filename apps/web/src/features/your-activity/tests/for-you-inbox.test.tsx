@@ -20,6 +20,7 @@ type Row = {
   docTitle?: string | null;
   actorName?: string | null;
   snippet?: string | null;
+  quote?: string | null;
   refLabel?: string | null;
   workspaceId?: string | null;
   workspaceName?: string | null;
@@ -172,6 +173,28 @@ describe("For-you inbox (your-activity-inbox S-001)", () => {
     await waitFor(() => expect(screen.getByTestId("inbox-row-r1")).toBeInTheDocument());
     const chip = screen.getByTestId("inbox-chip-workspace-r1");
     expect(chip).toHaveTextContent("Acme Platform");
+  });
+
+  it("a reply row renders the anchored quote AND the comment-body preview as distinct lines", async () => {
+    pages = {
+      1: [
+        row("rq", {
+          type: "reply",
+          actorName: "Devin",
+          docTitle: "Render + publish pipeline RFC",
+          workspaceName: "Acme Platform",
+          quote: "All AI-generated HTML is sanitized server-side before storage.",
+          snippet: "Should we sanitize before the render step or after?",
+        }),
+      ],
+    };
+    total = 1;
+    renderContent();
+    await waitFor(() => expect(screen.getByTestId("inbox-row-rq")).toBeInTheDocument());
+    // Both the anchored quote and the body preview render (the quote is NOT a data gap — it comes
+    // from the read-repo `quote` enrichment off the annotation's textSnippet).
+    expect(screen.getByText(/All AI-generated HTML is sanitized/)).toBeInTheDocument();
+    expect(screen.getByText(/Should we sanitize before the render step/)).toBeInTheDocument();
   });
 
   it("AS-004: empty state reads 'You're all caught up' with a cross-workspace, mention-free message", async () => {

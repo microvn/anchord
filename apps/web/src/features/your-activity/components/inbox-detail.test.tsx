@@ -71,6 +71,22 @@ describe("Inbox item detail (your-activity-inbox S-003)", () => {
     expect(screen.getByText("Acme Platform")).toBeInTheDocument();
   });
 
+  it("AS-011: the anchored quote renders as a quote-ref ABOVE the body, distinct from the snippet", () => {
+    renderDetail(item({ quote: "All AI-generated HTML is sanitized server-side before storage." }));
+    // The anchored quote (`item.quote`) shows in its own quote-ref block...
+    expect(screen.getByTestId("inbox-detail-quote")).toHaveTextContent(
+      "All AI-generated HTML is sanitized server-side before storage.",
+    );
+    // ...separate from the comment-body preview (`item.snippet`).
+    expect(screen.getByTestId("inbox-detail-snippet")).toHaveTextContent("Agreed — shipping in v3");
+  });
+
+  it("AS-011: no anchored quote → the quote-ref block is absent (null-safe), body still shows", () => {
+    renderDetail(item({ quote: null }));
+    expect(screen.queryByTestId("inbox-detail-quote")).not.toBeInTheDocument();
+    expect(screen.getByTestId("inbox-detail-snippet")).toHaveTextContent("Agreed — shipping in v3");
+  });
+
   it("AS-012: 'Open in doc' is shown with the deep-link href for a doc-backed item with a slug", () => {
     renderDetail(item({ slug: "the-doc", refId: "anno-42" }));
     const link = screen.getByTestId("inbox-detail-open-doc");
