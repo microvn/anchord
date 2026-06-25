@@ -51,6 +51,14 @@ describe("DocModeToolbar S-001 mode relabel", () => {
     await userEvent.click(within(toolbar).getByRole("button", { name: "Focus" }));
     expect(onWidth).toHaveBeenCalledWith("focus");
   });
+
+  it("hides the Wide / Focus measure switch when showWidth is false (HTML/image docs)", () => {
+    render(<DocModeToolbar width="wide" onWidth={() => {}} showWidth={false} onPinpointUnavailable={() => {}} />);
+    // The column measure does not apply to a sandbox-framed doc — the segment is gone entirely.
+    expect(screen.queryByTestId("doc-width-seg")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Wide" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Focus" })).toBeNull();
+  });
 });
 
 describe("DocModeToolbar S-006 markup tool palette (C-009)", () => {

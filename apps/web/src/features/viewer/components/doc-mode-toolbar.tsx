@@ -210,12 +210,16 @@ function Seg({
 export function DocModeToolbar({
   width,
   onWidth,
+  showWidth = true,
   onPinpointUnavailable,
   activeTool = "markup",
   onTool,
 }: {
   width: DocWidth;
   onWidth: (w: DocWidth) => void;
+  /** Show the Wide|Focus measure toggle. Only meaningful for markdown (the .doc-prose column);
+   *  an HTML/image doc renders in its own sandbox frame, so the caller hides it there. Default true. */
+  showWidth?: boolean;
   /** Pinpoint mode is Phase 2 — surface a "coming" note instead of a no-op toggle. */
   onPinpointUnavailable: () => void;
   /** S-006/C-009: the active markup tool — exactly one. Defaults to Markup (preserves S-001: Markup +
@@ -309,17 +313,20 @@ export function DocModeToolbar({
       </div>
 
       {/* Wide | Focus — pushed to the FAR RIGHT (ml-auto), the doc measure. Plain text segmented
-          toggle (kept on transition-colors — NOT converted to chips). */}
-      <div data-testid="doc-width-seg" className="ml-auto">
-        <Seg
-          options={[
-            { key: "wide", label: "Wide" },
-            { key: "focus", label: "Focus" },
-          ]}
-          value={width}
-          onChange={(k) => onWidth(k as DocWidth)}
-        />
-      </div>
+          toggle (kept on transition-colors — NOT converted to chips). Hidden for non-markdown docs
+          (HTML/image render in a sandbox frame where the column measure does not apply). */}
+      {showWidth && (
+        <div data-testid="doc-width-seg" className="ml-auto">
+          <Seg
+            options={[
+              { key: "wide", label: "Wide" },
+              { key: "focus", label: "Focus" },
+            ]}
+            value={width}
+            onChange={(k) => onWidth(k as DocWidth)}
+          />
+        </div>
+      )}
     </div>
   );
 }

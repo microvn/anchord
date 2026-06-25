@@ -632,6 +632,9 @@ function ViewerShell({
             <DocModeToolbar
               width={docWidth}
               onWidth={setDocWidth}
+              // Wide/Focus is the markdown column measure (.doc-prose max-width); an HTML/image doc
+              // renders in its own sandbox frame, so the toggle is meaningless there — hide it.
+              showWidth={isMarkdown}
               onPinpointUnavailable={() => toast("Pinpoint mode is coming soon")}
               // S-006/C-009: the markup tool palette — the active tool routes the selection (effect above).
               activeTool={activeTool}
