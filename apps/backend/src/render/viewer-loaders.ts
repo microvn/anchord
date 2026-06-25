@@ -18,9 +18,11 @@
 // anyone_in_workspace doc (AS-002). canView ⇔ resolveAccess returns a non-null role.
 
 import { desc, eq } from "drizzle-orm";
-import { docs, docVersions } from "../db/schema";
+import { docs, docVersions, shareLinks } from "../db/schema";
+import { deriveLevel } from "../sharing/derive-level";
 import type { DB } from "../db/client";
 import type { GeneralAccessLevel, Viewer } from "../sharing/access";
+import type { AxisRole } from "../sharing/share";
 import type { Role } from "../sharing/roles";
 import type { AccessResult } from "../sharing/resolve-access";
 import type { ViewerDoc } from "../app";
@@ -82,7 +84,20 @@ export interface ViewerDocPayload {
    * one) is "published". Derived, not a stored column — see the S-005 spec signal.
    */
   status: "published";
+  /**
+   * doc-access-two-axis S-006 / C-008: the DERIVED legacy general-access summary (deriveLevel),
+   * never stored. LOSSY — it collapses {workspace=set, link=set} and {workspace=off, link=set}
+   * both to "anyone_with_link", so the raw axes below accompany it (AS-027).
+   */
   generalAccess: GeneralAccessLevel;
+  /**
+   * doc-access-two-axis S-006 / C-008: the RAW two-axis state read straight off share_links —
+   * `workspaceRole`/`linkRole` (null = that axis is off). Carried ALONGSIDE the lossy
+   * `generalAccess` summary so a richer client (the Share dialog) can tell a workspace-shared doc
+   * from a link-only one — the distinction the 3-value summary drops (AS-021/022/027).
+   */
+  workspaceRole: AxisRole;
+  linkRole: AxisRole;
   /**
    * The logged-in caller's effective role on this doc (owner/editor/commenter/viewer), resolved
    * via the authoritative `resolveDocRole` (highest-wins over membership + invite + link + owner).
@@ -113,17 +128,29 @@ export function createLoadViewerDoc(
   deps: ViewerLoaderDeps,
 ): (slug: string, viewer: Viewer) => Promise<ViewerDocPayload | null> {
   return async (slug, viewer) => {
-    const [doc] = await deps.db
+    const [row] = await deps.db
       .select({
         id: docs.id,
         title: docs.title,
         kind: docs.kind,
-        generalAccess: docs.generalAccess,
+        // doc-access-two-axis S-001 stopgap: derive the legacy level from the two axes.
+        workspaceRole: shareLinks.workspaceRole,
+        linkRole: shareLinks.linkRole,
       })
       .from(docs)
+      .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
       .where(eq(docs.slug, slug))
       .limit(1);
-    if (!doc) return null;
+    if (!row) return null;
+    const doc = {
+      id: row.id,
+      title: row.title,
+      kind: row.kind,
+      // doc-access-two-axis S-006 / C-008: carry BOTH the raw axes and the derived summary.
+      workspaceRole: row.workspaceRole,
+      linkRole: row.linkRole,
+      generalAccess: deriveLevel(row.workspaceRole, row.linkRole),
+    };
     // doc-access-routing S-001: ONE resolveAccess call gives BOTH the view gate AND the
     // caller's effective role (for the viewer's Share gate, S-001/C-002) — no second read.
     const access = await deps.resolveAccess(doc.id, viewer);
@@ -151,6 +178,9 @@ export function createLoadViewerDoc(
       version: ver.version,
       status: "published",
       generalAccess: doc.generalAccess,
+      // S-006 / C-008: raw axes alongside the lossy summary (AS-027).
+      workspaceRole: doc.workspaceRole,
+      linkRole: doc.linkRole,
       effectiveRole,
       workspaceId,
       content: ver.content,
@@ -168,14 +198,18 @@ export function createLoadContent(
         content: docVersions.content,
         docId: docs.id,
         kind: docs.kind,
-        generalAccess: docs.generalAccess,
+        // doc-access-two-axis S-001 stopgap: derive the legacy level from the two axes.
+        workspaceRole: shareLinks.workspaceRole,
+        linkRole: shareLinks.linkRole,
       })
       .from(docVersions)
       .innerJoin(docs, eq(docs.id, docVersions.docId))
+      .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
       .where(eq(docVersions.id, versionId))
       .limit(1);
     if (!row) return null;
-    if (!(await canViewVisible(deps, row.docId, row.generalAccess, viewer))) return null;
+    const generalAccess = deriveLevel(row.workspaceRole, row.linkRole);
+    if (!(await canViewVisible(deps, row.docId, generalAccess, viewer))) return null;
     return { content: row.content, kind: row.kind };
   };
 }

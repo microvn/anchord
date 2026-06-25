@@ -24,11 +24,16 @@ const treaty = api as any;
 // peeled there). Reading `res.data` WITHOUT unwrapping reads the envelope, not the payload (the bug
 // peelEnvelope exists to prevent) — so every sharing call site unwraps.
 
-/** The general-access level a doc is shared at (mirrors `docs.general_access`). */
+/** The general-access level a doc is shared at — DERIVED on read from the two axes
+ *  (`deriveLevel`), never stored (doc-access-two-axis C-008). Kept for simpler displays. */
 export type GeneralAccessLevel = "restricted" | "anyone_in_workspace" | "anyone_with_link";
 
 /** The role attached to general access / an invite — never `owner` (C-004). */
 export type ShareRole = "viewer" | "commenter" | "editor";
+
+/** A single access axis (workspace OR link). A share role, or `null` = that axis is OFF
+ *  (doc-access-two-axis S-001/C-001). */
+export type AxisRole = ShareRole | null;
 
 /** A person row in the share state — active member or pending invite. */
 export interface SharePerson {
@@ -57,7 +62,14 @@ export interface ShareLink {
 
 /** The full prefill state the dialog reads on OPEN (backend S-006, AS-018). */
 export interface ShareState {
+  /** doc-access-two-axis S-006/AS-023: the two RAW axes the dialog renders as two separate
+   *  controls. `null` on an axis = that axis is off. The dialog prefills each control from these. */
+  workspaceRole: AxisRole;
+  linkRole: AxisRole;
+  /** The DERIVED legacy summary (kept for simpler displays — viewer badge, docs facet). Never
+   *  stored; derived from the two axes server-side (C-008). */
   level: GeneralAccessLevel;
+  /** @deprecated legacy single role — mirrors the link axis. Use `linkRole`/`workspaceRole`. */
   role: ShareRole;
   /** owner-only editable; drives the EDITOR manage-eligibility (C-002 / S-001 AS-004). */
   editorsCanShare: boolean;
@@ -95,20 +107,24 @@ export function isForbidden(error: unknown): boolean {
   );
 }
 
-/** The general-access write payload (S-002). `level` + `role` are always sent; `editorsCanShare`
- *  (owner-only, C-003) is optional — only included when that control is the one being changed.
+/** The access write payload (doc-access-two-axis S-001/C-001/C-011). The two axes are independent
+ *  and written per-axis: send ONLY the axis being changed (partial update) — an ABSENT axis is left
+ *  unchanged (so a stale single-axis edit never reverts the other axis), `null` turns that axis OFF,
+ *  a role SETS it. `editorsCanShare` (owner-only, C-003) is included only when that control changed.
  *  (No guest-commenting field — a commenter+ link role IS the grant for guests, reversal
  *  2026-06-20.) */
 export interface SetAccessInput {
-  level: GeneralAccessLevel;
-  role: ShareRole;
+  workspaceRole?: AxisRole;
+  linkRole?: AxisRole;
   editorsCanShare?: boolean;
 }
 
-/** What the backend echoes back from a successful access write (mirrors the request). */
+/** What the backend echoes back from a successful access write — the two raw axes + the derived
+ *  legacy summary (doc-access-two-axis S-001). */
 export interface AccessResult {
+  workspaceRole: AxisRole;
+  linkRole: AxisRole;
   level: GeneralAccessLevel;
-  role: ShareRole;
   editorsCanShare: boolean;
   /** the EXTERNAL capability link (`/s/<token>`) AFTER this write — present (a fresh token) when the
    *  new level is anyone_with_link, null when it was cleared (restricted / anyone_in_workspace). The

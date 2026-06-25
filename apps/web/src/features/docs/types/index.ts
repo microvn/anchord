@@ -69,11 +69,14 @@ export interface PublishResult {
   url: string;
 }
 
-/** The format chip label + Anchord-Design icon for a doc kind. */
-export const FORMAT_META: Record<DocKind, { label: string; icon: string }> = {
-  markdown: { label: "MD", icon: "docs" },
-  html: { label: "HTML", icon: "link" },
-  image: { label: "IMG", icon: "docs" },
+/** The format chip label + Anchord-Design icon + label tone for a doc kind. `tone` tints the
+ *  format label so the three kinds read apart at a glance, using design tokens only:
+ *  MD→blue, HTML→amber, IMG→success(green). All three reuse DESIGN.md hues (Pinpoint blue /
+ *  amber / Like green); accent(teal) and error(red) stay reserved. */
+export const FORMAT_META: Record<DocKind, { label: string; icon: string; tone: string }> = {
+  markdown: { label: "MD", icon: "docs", tone: "text-blue" },
+  html: { label: "HTML", icon: "code", tone: "text-amber" },
+  image: { label: "IMG", icon: "image", tone: "text-success" },
 };
 
 /** The per-card access indicator label + Anchord-Design icon for a general-access level

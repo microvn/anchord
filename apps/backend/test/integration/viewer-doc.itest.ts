@@ -19,8 +19,9 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { docs, docVersions } from "../../src/db/schema";
+import { docs, docVersions, shareLinks } from "../../src/db/schema";
 import { createApp } from "../../src/app";
+import { deriveLevel } from "../../src/sharing/share";
 import { createLoadViewerDoc } from "../../src/render/viewer-loaders";
 import { createResolveAccess } from "../../src/sharing/resolve-access";
 import type { Viewer } from "../../src/sharing/access";
@@ -45,8 +46,20 @@ async function seedDoc(
   const slug = `vdoc-${process.pid}-${++seq}`;
   const [doc] = await h.db
     .insert(docs)
-    .values({ slug, title: `Doc ${slug}`, kind: opts.kind, generalAccess: opts.generalAccess })
+    .values({ slug, title: `Doc ${slug}`, kind: opts.kind })
     .returning({ id: docs.id });
+  // doc-access-two-axis S-001: access is the two axes on the share_links row, not a docs column.
+  // restricted={null,null} (no row); anyone_in_workspace={workspace,null}; anyone_with_link={null,link}.
+  if (opts.generalAccess !== "restricted") {
+    const axes =
+      opts.generalAccess === "anyone_in_workspace"
+        ? { workspaceRole: "commenter" as const, linkRole: null }
+        : { workspaceRole: null, linkRole: "commenter" as const };
+    await h.db
+      .insert(shareLinks)
+      .values({ docId: doc!.id, ...axes })
+      .onConflictDoUpdate({ target: shareLinks.docId, set: axes });
+  }
   let lastVersionId = "";
   for (let i = 0; i < opts.versions.length; i++) {
     const [ver] = await h.db
@@ -78,14 +91,15 @@ describe.skipIf(!RUN)("render-publish S-005: in-app viewer doc loader (real Post
     // from the seeded row so the per-test knob `docRole` overrides only when set.
     const resolveDocRole = async (docId: string, _userId: string): Promise<Role | null> => {
       if (docRole !== null) return docRole;
-      const [doc] = await h.db
-        .select({ ga: docs.generalAccess })
-        .from(docs)
-        .where(eq(docs.id, docId))
+      const [link] = await h.db
+        .select({ workspaceRole: shareLinks.workspaceRole, linkRole: shareLinks.linkRole })
+        .from(shareLinks)
+        .where(eq(shareLinks.docId, docId))
         .limit(1);
       // anyone_with_link admits a logged-in caller at the link role (default commenter),
       // mirroring resolve-doc-role-repo.generalAccessAdmits; restricted → no role.
-      return doc?.ga === "anyone_with_link" ? "commenter" : null;
+      const ga = deriveLevel(link?.workspaceRole ?? null, link?.linkRole ?? null);
+      return ga === "anyone_with_link" ? "commenter" : null;
     };
     const loaderDeps = {
       db: h.db,

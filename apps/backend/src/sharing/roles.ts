@@ -51,6 +51,24 @@ export function maxRole(a: Role, b: Role): Role {
   return roleRank(a) >= roleRank(b) ? a : b;
 }
 
+/** The less-capable of two roles (the ceiling clamp — ties return either). */
+export function minRole(a: Role, b: Role): Role {
+  return roleRank(a) <= roleRank(b) ? a : b;
+}
+
+/**
+ * The guest cap (doc-access-two-axis S-003 / C-004). A no-account guest is never allowed
+ * to EDIT: their role is clamped to AT MOST commenter — `min(role, commenter)`. This is a
+ * CEILING, not a floor: a viewer link stays viewer (AS-011), a commenter/editor link
+ * collapses to commenter (AS-009). Applied at the single anonymous-admission seam
+ * (resolve-access anon branch) so every read AND write surface inherits one capped role
+ * and no route re-implements the cap.
+ */
+export const GUEST_ROLE_CEILING: Role = "commenter";
+export function capAnonRole(role: Role): Role {
+  return minRole(role, GUEST_ROLE_CEILING);
+}
+
 /**
  * The effective role when access reaches a person from multiple sources (C-002,
  * AS-013): the HIGHEST role wins. Sources may include the general-access link role,

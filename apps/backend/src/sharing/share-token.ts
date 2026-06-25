@@ -10,14 +10,15 @@
 // AS-001 / AS-002 / C-001: the token is crypto-random (Web Crypto getRandomValues),
 //   carries ≥128 bits of entropy, is URL-safe (base64url, no `+` `/` `=`), and is
 //   derived purely from random bytes — it can contain NO part of any doc title.
-// AS-003: a doc that is NOT `anyone_with_link` (restricted / anyone_in_workspace) has
-//   no capability token — `capabilityTokenFor` resolves to null for those levels.
+// The token LIFECYCLE is keyed on the LINK AXIS (doc-access-two-axis S-001/S-005):
+//   `capabilityTokenForLinkAxis` mints/keeps a token while `link_role` is set and clears
+//   it when `link_role` is null; `rotateCapabilityTokenForLinkAxis` is the explicit replace.
 //
 // This module is PURE (no DB): the transition logic + the generator are unit-testable
 // in isolation. The persistence (the share_links.capability_token column write +
 // global-uniqueness retry) is thin Drizzle glue layered on top in share-repo.ts.
 
-import type { GeneralAccessLevel } from "./share";
+import type { AxisRole } from "./share";
 
 /**
  * 16 bytes = 128 bits of crypto-random entropy — the floor C-001 requires. base64url
@@ -60,48 +61,37 @@ export function isWellFormedCapabilityToken(token: string): boolean {
 }
 
 /**
- * Resolve the capability token for a general-access transition (PURE — no DB).
- *
- *  - `anyone_with_link`  → a token MUST be present. If the doc already has a live
- *    token (`existing`) it is kept (re-saving the same access level does not silently
- *    rotate the link — rotation is S-004's explicit action); otherwise a fresh one is
- *    minted (AS-001).
- *  - any other level (`restricted` / `anyone_in_workspace`) → null: the doc has NO
- *    capability link (AS-003). Going back to a shared level later mints a NEW token,
- *    so the old link stays dead (S-004 leans on this).
- *
- * @param level     the general-access level being set
- * @param existing  the doc's current capability_token, if any (null when none)
+ * Resolve the capability token for the LINK AXIS (doc-access-two-axis S-001). The link's
+ * existence is now driven by the link axis directly, not the derived level: link_role set
+ * (ON) ⇒ keep a live token or mint a fresh one; link_role null (OFF) ⇒ null (the token is
+ * cleared with the link axis — the old link dies). Independent of the workspace axis.
  */
-export function capabilityTokenFor(
-  level: GeneralAccessLevel,
+export function capabilityTokenForLinkAxis(
+  linkRole: AxisRole,
   existing: string | null = null,
 ): string | null {
-  if (level !== "anyone_with_link") return null;
+  if (linkRole == null) return null;
   return existing ?? mintCapabilityToken();
 }
 
 /**
- * Resolve the capability token for an EXPLICIT rotate (PURE — no DB). Unlike
- * `capabilityTokenFor`, which KEEPS a live token when the level is unchanged, rotate always
- * mints a FRESH token — the whole point is to replace the secret so the old link (and every
- * admission cookie minted from it) dies (C-004 / AS-011).
+ * Resolve the capability token for an EXPLICIT rotate, keyed on the LINK AXIS
+ * (doc-access-two-axis S-005 / C-003). The link-axis analogue of `rotateCapabilityTokenFor`:
+ * the rotate decision reads `link_role` directly, not the derived level.
  *
- *  - `anyone_with_link` → a brand-new crypto-random token, distinct from `_existing` (the old
- *    value is never resurrected — a fresh mint cannot collide with overwhelming probability).
- *  - any other level → null: a doc that is not link-shared has no capability link, so there is
- *    nothing to rotate. The DB layer / route turns this null into a no-op / 409 (C-004 edge),
- *    never a crash. The `_existing` value is irrelevant here (a leftover token is being cleared,
- *    not rotated).
+ *  - `link_role` set (ON)  → a brand-new crypto-random token over the old one — the whole point
+ *    of a rotate is to replace the secret so the old link dies. The existing value is irrelevant
+ *    (a fresh mint cannot collide with overwhelming probability).
+ *  - `link_role` null (OFF) → null: a doc with no link axis has no capability link, so there is
+ *    nothing to rotate. The DB layer / route turns this null into a no-op / 409, never a crash.
  *
- * @param level     the doc's CURRENT general-access level
- * @param _existing the doc's current token (only used to make the intent explicit; the result
- *                  on anyone_with_link is always a NEW value regardless)
+ * This differs from `capabilityTokenForLinkAxis`, which KEEPS a live token while the link axis
+ * stays set (a role change must NOT rotate, AS-020); rotate is the explicit "replace the secret".
  */
-export function rotateCapabilityTokenFor(
-  level: GeneralAccessLevel,
+export function rotateCapabilityTokenForLinkAxis(
+  linkRole: AxisRole,
   _existing: string | null = null,
 ): string | null {
-  if (level !== "anyone_with_link") return null;
+  if (linkRole == null) return null;
   return mintCapabilityToken();
 }

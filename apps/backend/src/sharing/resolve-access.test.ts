@@ -13,6 +13,7 @@ import { describe, expect, test } from "bun:test";
 import { docs, docMembers, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
 import type { Viewer } from "./access";
+import { can, type Role } from "./roles";
 import { createResolveDocRole } from "./resolve-doc-role-repo";
 import { createResolveAccess } from "./resolve-access";
 import { mintAdmissionCookie } from "./capability-cookie";
@@ -21,7 +22,10 @@ import { mintAdmissionCookie } from "./capability-cookie";
 function fakeDb(seed: {
   docRows?: Array<Record<string, unknown>>;
   memberRows?: Array<{ role: string }>;
-  linkRows?: Array<{ role: string; capabilityToken?: string }>;
+  // doc-access-two-axis S-001: the share_links row now carries the two axes. A row whose
+  // workspace_role is set models anyone_in_workspace; whose link_role is set models
+  // anyone_with_link; both null = restricted (deriveLevel).
+  linkRows?: Array<Record<string, unknown>>;
 }): DB {
   const rowsFor = (table: unknown): Array<Record<string, unknown>> => {
     if (table === docs) return seed.docRows ?? [];
@@ -88,7 +92,7 @@ describe("resolveAccess — the single doc-access gate (S-001)", () => {
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_in_workspace", ownerId: null }],
       memberRows: [{ role: "commenter" }],
-      linkRows: [{ role: "viewer" }],
+      linkRows: [{ workspaceRole: "viewer", linkRole: null }],
     });
     const gate = buildGate(db, { isOwner: async () => false, isWorkspaceMember: () => false });
     const r = await gate("doc_1", asUser("u_bob"));
@@ -99,7 +103,7 @@ describe("resolveAccess — the single doc-access gate (S-001)", () => {
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_in_workspace", ownerId: null }],
       memberRows: [],
-      linkRows: [{ role: "viewer" }],
+      linkRows: [{ workspaceRole: "viewer", linkRole: null }],
     });
     // Carol is a member of THIS doc's workspace → the anyone_in_workspace link admits her.
     const gate = buildGate(db, { isOwner: async () => false, isWorkspaceMember: (d) => d === "doc_1" });
@@ -116,7 +120,7 @@ describe("resolveAccess — the single doc-access gate (S-001)", () => {
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
       memberRows: [],
-      linkRows: [{ role: "commenter" }],
+      linkRows: [{ workspaceRole: null, linkRole: "commenter" }],
     });
     const gate = buildGate(db, { isOwner: async () => false, isWorkspaceMember: () => false });
     const r = await gate("doc_1", anon);
@@ -145,7 +149,7 @@ describe("resolveAccess — the single doc-access gate (S-001)", () => {
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_in_workspace", ownerId: null }],
       memberRows: [],
-      linkRows: [{ role: "viewer" }],
+      linkRows: [{ workspaceRole: "viewer", linkRole: null }],
     });
     // A workspace member of SOME workspace, but the doc has no workspace → membership-of-doc false.
     const gate = buildGate(db, { isOwner: async () => false, isWorkspaceMember: async () => false });
@@ -167,8 +171,8 @@ describe("resolveAccess — the single doc-access gate (S-001)", () => {
   });
 
   test("C-003 edge: anon denied on restricted / anyone_in_workspace (only anyone_with_link admits anon)", async () => {
-    const restricted = fakeDb({ docRows: [{ generalAccess: "restricted", ownerId: null }], linkRows: [{ role: "viewer" }] });
-    const inWs = fakeDb({ docRows: [{ generalAccess: "anyone_in_workspace", ownerId: null }], linkRows: [{ role: "viewer" }] });
+    const restricted = fakeDb({ docRows: [{ generalAccess: "restricted", ownerId: null }], linkRows: [{ workspaceRole: null, linkRole: null }] });
+    const inWs = fakeDb({ docRows: [{ generalAccess: "anyone_in_workspace", ownerId: null }], linkRows: [{ workspaceRole: "viewer", linkRole: null }] });
     const gateR = buildGate(restricted, { isOwner: async () => false, isWorkspaceMember: () => false });
     const gateW = buildGate(inWs, { isOwner: async () => false, isWorkspaceMember: () => false });
     expect(await gateR("doc_r", anon)).toEqual({ role: null, canView: false });
@@ -210,7 +214,7 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
       memberRows: [],
-      linkRows: [{ role: "commenter", capabilityToken: TOKEN }],
+      linkRows: [{ workspaceRole: null, linkRole: "commenter", capabilityToken: TOKEN }],
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
     expect(await gate("doc_1", anon)).toEqual({ role: null, canView: false });
@@ -219,7 +223,7 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
   test("AS-007 edge: anon with a GARBAGE/forged cookie (invalid type / not our signature) → denied, no throw", async () => {
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
-      linkRows: [{ role: "commenter", capabilityToken: TOKEN }],
+      linkRows: [{ workspaceRole: null, linkRole: "commenter", capabilityToken: TOKEN }],
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
     // empty string, malformed, and a structurally-plausible-but-unsigned value all → denied.
@@ -235,7 +239,7 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
     );
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
-      linkRows: [{ role: "viewer", capabilityToken: TOKEN }], // link-role row irrelevant — cookie role wins.
+      linkRows: [{ workspaceRole: null, linkRole: "viewer", capabilityToken: TOKEN }], // link-role row irrelevant — cookie role wins.
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
     expect(await gate("doc_1", anonWithCookie(cookie))).toEqual({ role: "commenter", canView: true });
@@ -250,7 +254,7 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
     );
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
-      linkRows: [{ role: "commenter", capabilityToken: TOKEN }],
+      linkRows: [{ workspaceRole: null, linkRole: "commenter", capabilityToken: TOKEN }],
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
     expect(await gate("doc_1", anonWithCookie(cookie))).toEqual({ role: null, canView: false });
@@ -265,7 +269,7 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
     );
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
-      linkRows: [{ role: "commenter", capabilityToken: TOKEN }], // current token rotated.
+      linkRows: [{ workspaceRole: null, linkRole: "commenter", capabilityToken: TOKEN }], // current token rotated.
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
     expect(await gate("doc_1", anonWithCookie(cookie))).toEqual({ role: null, canView: false });
@@ -277,7 +281,7 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_with_link", ownerId: "u_owner" }],
       memberRows: [],
-      linkRows: [{ role: "viewer", capabilityToken: TOKEN }],
+      linkRows: [{ workspaceRole: null, linkRole: "viewer", capabilityToken: TOKEN }],
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async (_d, u) => u === "u_owner", isWorkspaceMember: () => false });
     expect(await gate("doc_1", asUser("u_owner"))).toEqual({ role: "owner", canView: true });
@@ -287,7 +291,7 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
       memberRows: [{ role: "commenter" }], // active invited doc_members row.
-      linkRows: [{ role: "viewer", capabilityToken: TOKEN }],
+      linkRows: [{ workspaceRole: null, linkRole: "viewer", capabilityToken: TOKEN }],
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
     expect(await gate("doc_1", asUser("u_invited"))).toEqual({ role: "commenter", canView: true });
@@ -297,7 +301,7 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_in_workspace", ownerId: null }],
       memberRows: [],
-      linkRows: [{ role: "viewer", capabilityToken: TOKEN }],
+      linkRows: [{ workspaceRole: "viewer", linkRole: null, capabilityToken: TOKEN }],
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: (d) => d === "doc_1" });
     expect(await gate("doc_1", asUser("u_member"))).toEqual({ role: "viewer", canView: true });
@@ -316,13 +320,13 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
       // Hostile link state: expired yesterday, password set, view limit already hit.
       linkRows: [
         {
-          role: "viewer",
+          workspaceRole: null, linkRole: "viewer",
           capabilityToken: TOKEN,
           passwordHash: "$argon2id$dummy",
           expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
           viewLimit: 5,
           viewCount: 5,
-        } as { role: string; capabilityToken: string },
+        } as Record<string, unknown>,
       ],
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async (_d, u) => u === "u_owner", isWorkspaceMember: () => false });
@@ -336,16 +340,66 @@ describe("resolveAccess — readable address stops admitting anon (S-003)", () =
       memberRows: [{ role: "commenter" }],
       linkRows: [
         {
-          role: "viewer",
+          workspaceRole: null, linkRole: "viewer",
           capabilityToken: TOKEN,
           passwordHash: "$argon2id$dummy",
           expiresAt: new Date(Date.now() - 1000),
           viewLimit: 1,
           viewCount: 1,
-        } as { role: string; capabilityToken: string },
+        } as Record<string, unknown>,
       ],
     });
     const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
     expect(await gate("doc_1", asUser("u_invited"))).toEqual({ role: "commenter", canView: true });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// doc-access-two-axis S-003 (C-004): the GUEST CAP. A no-account guest admitted via the
+// link/admission cookie is clamped to commenter at THIS anon seam — editing always
+// requires a logged-in account. The clamp lives here so every anon-reachable write
+// surface (comment / resolve / version publish) inherits one capped role; no route
+// re-implements it. (AS-009, AS-011)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("resolveAccess — guest cap at the anon seam (S-003 / C-004)", () => {
+  const SECRET = "test-app-secret-s003-cap";
+  const TOKEN = "cap_tok_cap_s003";
+
+  test("AS-009: a no-account guest on an EDITOR link is capped at commenter (publish denied)", async () => {
+    // Given an anyone_with_link doc at link=editor and a guest who redeemed it: the cookie
+    // was minted at the link role (editor). When the guest is admitted at the anon seam the
+    // role is CLAMPED to commenter — so no write surface ever sees the guest as editor and
+    // publishing a version (an `edit` action) is denied. Negating the clamp returns editor → red.
+    const cookie = mintAdmissionCookie(
+      { docId: "doc_1", token: TOKEN, role: "editor", pwdCleared: true, exp: Date.now() + 60_000 },
+      SECRET,
+    );
+    const db = fakeDb({
+      docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
+      linkRows: [{ workspaceRole: null, linkRole: "editor", capabilityToken: TOKEN }],
+    });
+    const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
+    const r = await gate("doc_1", anonWithCookie(cookie));
+    // Capped: commenter (view + comment + resolve), NEVER editor. canEdit is false at commenter.
+    expect(r).toEqual({ role: "commenter", canView: true });
+    expect(can(r.role as Role, "edit")).toBe(false); // publish (edit) denied — the C-004 cap holds.
+  });
+
+  test("AS-011: a no-account guest on a VIEWER link can view only (comment denied) — clamp does not raise", async () => {
+    // Given an anyone_with_link doc at link=viewer and a guest who redeemed it (cookie at
+    // viewer): admitted at viewer. The commenter cap is a CEILING, not a floor — it never
+    // promotes a viewer to commenter. So the guest may view but the comment action is denied.
+    const cookie = mintAdmissionCookie(
+      { docId: "doc_1", token: TOKEN, role: "viewer", pwdCleared: true, exp: Date.now() + 60_000 },
+      SECRET,
+    );
+    const db = fakeDb({
+      docRows: [{ generalAccess: "anyone_with_link", ownerId: null }],
+      linkRows: [{ workspaceRole: null, linkRole: "viewer", capabilityToken: TOKEN }],
+    });
+    const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
+    const r = await gate("doc_1", anonWithCookie(cookie));
+    expect(r).toEqual({ role: "viewer", canView: true });
+    expect(can(r.role as Role, "comment")).toBe(false); // viewer cannot comment.
   });
 });

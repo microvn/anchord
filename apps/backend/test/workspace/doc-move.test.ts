@@ -217,24 +217,18 @@ describe("copyDoc (workspace-project S-004)", () => {
     expect(f.state.setProjectIdCalls).toBe(0);
   });
 
-  test("AS-013: copy inherits the workspace defaultAccess (anyone_in_workspace), not restricted", async () => {
-    // shared-workspace model (workspace-project C-008, workspaces:C-007): a copy is a fresh doc that
-    // inherits the target workspace's defaultAccess — same as a publish, NOT hard restricted.
+  test("C-007: copy carries no per-doc access into createCopy — the repo applies the fixed new-doc default", async () => {
+    // doc-access-two-axis S-002 (C-007): a copy is a fresh doc whose share_links access
+    // config is created by the repo with the FIXED new-doc default (workspace_role=
+    // commenter, link_role=null), NOT inherited from the source and NOT a per-workspace
+    // setting. So the service must NOT plumb any access value into createCopy.
     const f = fakeRepo();
     await copyDoc(
       { slug: "billing-doc", targetProjectId: "p_payments", actorId: "u_reader" },
-      deps(f.repo, "viewer", { resolveDefaultAccess: async () => "anyone_in_workspace" }),
+      deps(f.repo, "viewer"),
     );
-    expect(f.state.copies[0]!.generalAccess).toBe("anyone_in_workspace");
-  });
-
-  test("AS-013: copy inherits a restricted-default workspace as restricted", async () => {
-    const f = fakeRepo();
-    await copyDoc(
-      { slug: "billing-doc", targetProjectId: "p_payments", actorId: "u_reader" },
-      deps(f.repo, "viewer", { resolveDefaultAccess: async () => "restricted" }),
-    );
-    expect(f.state.copies[0]!.generalAccess).toBe("restricted");
+    expect(f.state.copies).toHaveLength(1);
+    expect(f.state.copies[0]!).not.toHaveProperty("generalAccess");
   });
 
   test("AS-013: read access (viewer) is enough to copy", async () => {

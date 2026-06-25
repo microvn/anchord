@@ -64,6 +64,12 @@ const ICONS: Record<string, string> = {
   shield:
     '<path d="M12 3 4 6v6c0 4.5 3.4 7.8 8 9 4.6-1.2 8-4.5 8-9V6Z"/><polyline points="9 12 11.5 14.5 16 9.5"/>',
   docs: '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2Z"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/>',
+  // doc-kind glyphs (FormatBadge/FormatTag). `code` = the </> chevrons for HTML (replaces the
+  // misleading `link`, which collides with the anyone_with_link access indicator); `image` = the
+  // picture frame + peak for image docs (so it no longer shares `docs` with markdown).
+  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  image:
+    '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
   share:
     '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><line x1="8.2" y1="10.8" x2="15.8" y2="6.2"/><line x1="8.2" y1="13.2" x2="15.8" y2="17.8"/>',
   // Brand-colored provider glyphs (fill set explicitly inside the path data).

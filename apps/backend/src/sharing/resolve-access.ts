@@ -23,9 +23,9 @@
 //     every general-access level (no role, no view) — existence-hiding upstream.
 
 import { eq } from "drizzle-orm";
-import { docs, shareLinks } from "../db/schema";
+import { shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
-import type { Role } from "./roles";
+import { capAnonRole, type Role } from "./roles";
 import type { Viewer } from "./access";
 import { resolveAdmission } from "./capability-cookie";
 
@@ -80,12 +80,15 @@ export function createResolveAccess(
       // the readable address is not enough. (Before S-003 an anon with no cookie was admitted
       // here whenever generalAccess === "anyone_with_link"; that is the behaviour this story
       // removes — see resolve-access.test.ts AS-007 for the boundary regression test.)
-      const [doc] = await db
-        .select({ generalAccess: docs.generalAccess })
-        .from(docs)
-        .where(eq(docs.id, docId))
+      // doc-access-two-axis S-001 stopgap: the dropped docs.general_access is derived from
+      // the link axis — an anon can only reach a doc whose link axis is ON (link_role set,
+      // i.e. derived level anyone_with_link).
+      const [linkAxis] = await db
+        .select({ linkRole: shareLinks.linkRole })
+        .from(shareLinks)
+        .where(eq(shareLinks.docId, docId))
         .limit(1);
-      if (!doc || doc.generalAccess !== "anyone_with_link") return DENIED;
+      if (!linkAxis || linkAxis.linkRole == null) return DENIED;
 
       // capability-share-link S-002 / C-006: the ONLY anon admit now. When the anon carries a
       // VALID admission cookie for THIS doc (bound to its docId + minted from its CURRENT
@@ -106,7 +109,17 @@ export function createResolveAccess(
           link?.capabilityToken ?? null,
           deps.secret,
         );
-        if (claims) return { role: claims.role as Role, canView: true };
+        if (claims) {
+          // doc-access-two-axis S-003 / C-004 — THE GUEST CAP SEAM. A no-account guest is
+          // never allowed to edit: clamp the admitted link role to AT MOST commenter here,
+          // at the single anonymous-admission seam, BEFORE returning. Because every anon-
+          // reachable surface (doc read, comment, resolve, version publish) resolves access
+          // through this one branch, capping here means no write route ever sees a guest as
+          // editor — the cap is inherited, not re-implemented per route. We clamp at READ
+          // time (not at cookie mint) so a link_role lowered after a cookie was minted still
+          // caps correctly, and the ceiling never depends on stale cookie state.
+          return { role: capAnonRole(claims.role as Role), canView: true };
+        }
       }
 
       // No valid admission cookie → the anon is refused at the readable address (AS-007 / C-002).

@@ -47,6 +47,7 @@
   --amber-bg: #26200f;
   --red: #f1655d;
   --green: #43b873;
+  --blue: #5b9cf0; /* = DESIGN.md Pinpoint blue; doc-kind label hue for Markdown */
 
   --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -8px rgba(0, 0, 0, 0.6);
   --shadow-modal: 0 2px 6px rgba(0, 0, 0, 0.5), 0 28px 64px -16px rgba(0, 0, 0, 0.7);
@@ -79,6 +80,7 @@
   --amber-bg: #fdf3da;
   --red: #b3251f;
   --green: #1c7a4a;
+  --blue: #2f6fd0; /* darker than the dark-mode blue for contrast on the white surface */
 
   --shadow-pop: 0 1px 2px rgba(20, 24, 26, 0.06), 0 8px 24px -8px rgba(20, 24, 26, 0.16);
   --shadow-modal: 0 1px 3px rgba(20, 24, 26, 0.08), 0 24px 56px -16px rgba(20, 24, 26, 0.28);
@@ -119,6 +121,7 @@
   --color-amber-bg: #26200f;
   --color-error: #f1655d;
   --color-success: #43b873;
+  --color-blue: #5b9cf0;
 
   /* Type — Anchord-Design "Dev · IBM Plex" preset (user-selected over DESIGN.md's
      Fraunces/Geist): IBM Plex Sans (body/UI), IBM Plex Mono (headings/title + data). */
@@ -161,6 +164,7 @@
   --color-amber-bg: var(--amber-bg);
   --color-error: var(--red);
   --color-success: var(--green);
+  --color-blue: var(--blue);
 
   /* shadcn/ui contract → anchord tokens (light + dark both, via the vars above) */
   --radius: var(--radius-md);

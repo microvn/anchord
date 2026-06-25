@@ -39,7 +39,7 @@ export function DocCard({
       <div className="flex items-center gap-[9px] px-[14px] pt-[13px]">
         <FormatBadge kind={doc.kind} />
         <VersionTag version={doc.version} />
-        <span className="ml-auto font-mono text-[12.5px] uppercase tracking-[0.06em] text-muted">
+        <span className={`ml-auto font-mono text-[12.5px] font-medium uppercase tracking-[0.06em] ${meta.tone}`}>
           {meta.label}
         </span>
         {workspaceId && projects && (

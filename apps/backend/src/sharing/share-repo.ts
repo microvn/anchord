@@ -1,29 +1,35 @@
-// Drizzle-backed ShareRepo (sharing S-001). THIN glue between the share service
-// (share.ts setGeneralAccess — the C-003/role guards) and Postgres. No business
+// Drizzle-backed ShareRepo (doc-access-two-axis S-001). THIN glue between the share
+// service (share.ts setGeneralAccess — the C-009/C-015 guards) and Postgres. No business
 // logic lives here: validation already ran in the service before this is called.
 //
-// One write touches TWO places, atomically (one transaction):
-//   - docs.general_access = level (the access LEVEL lives on the doc row).
-//   - the doc's single share_links row (role) — upserted on the unique docId
-//     (C-001: one general-access config per doc, never a second row).
-// The link controls (password/expiry/view-limit, S-004) attach to the SAME row but
-// are untouched here (only role + the level), per C-001.
+// The write touches the doc's single share_links row with PER-AXIS, COLUMN-SCOPED
+// updates (C-011): workspace_role and link_role are each set on their own column, never
+// via a read-modify-write of the whole row — so two managers editing DIFFERENT axes do
+// not clobber each other (AS-007). The legacy `docs.general_access` write is GONE (the
+// column is dropped); the level is derived on read (deriveLevel).
+//
+// The link controls (password/expiry/view-limit, S-004) attach to the link axis and are
+// untouched here (only the two axis columns + the capability token + editors_can_share).
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { docs, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
-import type { ShareRepo, ResolvedShareSetting } from "./share";
-import { capabilityTokenFor, rotateCapabilityTokenFor } from "./share-token";
+import type { ShareRepo, ResolvedShareSetting, AxisRole } from "./share";
+import { deriveLevel } from "./derive-level";
+import { capabilityTokenForLinkAxis, rotateCapabilityTokenForLinkAxis } from "./share-token";
 import type { RedeemTarget } from "../routes/share-redeem";
 
 /**
  * capability-share-link S-002: resolve a capability token → its doc (or null when no doc
- * carries that token). Keyed on share_links.capability_token (the partial-unique index), and
- * GUARDED on the doc still being anyone_with_link AND the token being non-null — so a token
- * that was cleared/rotated (S-004) or a doc that left link-sharing no longer resolves, even if
- * a stale row somehow lingered. Returns the readable slug + the link role + the link expiry so
- * the redeem route can mint a cookie capped at the link's own expiry. Existence-hiding: a
- * no-match is null, never an error that distinguishes "no such token" from "wrong shape".
+ * carries that token). Keyed on share_links.capability_token (the partial-unique index),
+ * GUARDED on the LINK AXIS still being ON (link_role non-null) AND the token being
+ * non-null — so a token cleared when the link axis was turned off no longer resolves.
+ * Returns the readable slug + the LINK role + the link expiry. Existence-hiding: a
+ * no-match is null, never an error.
+ *
+ * doc-access-two-axis S-001 stopgap: gates on share_links.link_role (the link axis) and
+ * returns it as the redeem role — replaces the dropped docs.general_access gate. The full
+ * anon-admission rework is S-003's job.
  */
 export function createCapabilityTokenRepo(
   db: DB,
@@ -33,32 +39,23 @@ export function createCapabilityTokenRepo(
       .select({
         docId: shareLinks.docId,
         slug: docs.slug,
-        role: shareLinks.role,
-        generalAccess: docs.generalAccess,
+        linkRole: shareLinks.linkRole,
         capabilityToken: shareLinks.capabilityToken,
         expiresAt: shareLinks.expiresAt,
-        // S-006: the link controls the redeem route enforces before serving — the password hash
-        // (gated against a visitor-supplied password) and the total-open limit (gating the
-        // atomic view consume). The plaintext password is never read here.
         passwordHash: shareLinks.passwordHash,
         viewLimit: shareLinks.viewLimit,
       })
       .from(shareLinks)
       .innerJoin(docs, eq(docs.id, shareLinks.docId))
-      .where(
-        and(
-          eq(shareLinks.capabilityToken, token),
-          // Defense in depth: only an anyone_with_link doc admits an anon via the token. A
-          // doc that left link-sharing has its token cleared (S-004), but gate the level too.
-          eq(docs.generalAccess, "anyone_with_link"),
-        ),
-      )
+      .where(eq(shareLinks.capabilityToken, token))
       .limit(1);
-    if (!row || !row.capabilityToken) return null;
+    // Defense in depth: only a doc whose LINK AXIS is on (link_role set) admits an anon
+    // via the token; a token that lingered after the link axis was turned off is refused.
+    if (!row || !row.capabilityToken || row.linkRole == null) return null;
     return {
       docId: row.docId,
       slug: row.slug,
-      role: row.role,
+      role: row.linkRole,
       expiresAt: row.expiresAt ?? null,
       passwordHash: row.passwordHash ?? null,
       viewLimit: row.viewLimit ?? null,
@@ -68,45 +65,32 @@ export function createCapabilityTokenRepo(
 
 /**
  * The result of an explicit rotate (capability-share-link S-004 / AS-011 / C-004).
- *  - `rotated: true`  → the doc was anyone_with_link; its capability_token was REPLACED with a
- *    fresh one (`token`). The old token is permanently dead and every admission cookie minted
- *    from it is now refused (its bound token-hash no longer matches the live token).
- *  - `rotated: false` → the doc is NOT anyone_with_link (no capability link to rotate). The
- *    column is left as-is (null); the caller (route) turns this into a 409, never a crash.
  */
 export type RotateResult =
   | { rotated: true; token: string }
   | { rotated: false };
 
 /**
- * Explicit rotate of a doc's capability token (capability-share-link S-004 / AS-011 / C-004).
+ * Explicit rotate of a doc's capability token (capability-share-link S-004 / AS-011).
  *
- * This is the owner action that REPLACES the live link's secret while keeping general access
- * anyone_with_link and the link role UNCHANGED. It reads the doc's current level (the source of
- * truth on the doc row), and — only when it is still anyone_with_link — writes a brand-new
- * crypto-random token over the old one in ONE transaction. The minted value is distinct from the
- * old one (a fresh CSPRNG mint), so the previously-shared link stays dead and every admission
- * cookie minted from it is refused thereafter (the cookie binds a HASH of the now-replaced token).
- *
- * A doc that is not anyone_with_link (restricted / anyone_in_workspace) has no capability link, so
- * there is nothing to rotate: this returns `{ rotated: false }` and leaves the column untouched —
- * the route surfaces a 409, never a crash (C-004 edge). Only the role/level-agnostic token column
- * is touched; the link role + controls (password/expiry/view-limit) are left as-is.
+ * doc-access-two-axis S-005: the rotate decision reads the LINK AXIS (share_links.link_role)
+ * directly via `rotateCapabilityTokenForLinkAxis` — NOT the dropped docs.general_access, and no
+ * longer through the level-shaped helper. A doc whose link axis is ON (link_role set) has a
+ * capability link → mint a fresh token over the old one; a doc whose link axis is off (link_role
+ * null) has no link to rotate → `{ rotated: false }` (the route turns this into a 409). Only the
+ * token column moves; the axes/controls are untouched.
  */
 export async function rotateCapabilityToken(db: DB, docId: string): Promise<RotateResult> {
   return db.transaction(async (tx) => {
-    const [doc] = await tx
-      .select({ generalAccess: docs.generalAccess })
-      .from(docs)
-      .where(eq(docs.id, docId))
+    const [link] = await tx
+      .select({ linkRole: shareLinks.linkRole })
+      .from(shareLinks)
+      .where(eq(shareLinks.docId, docId))
       .limit(1);
-    // Nothing to rotate when the doc isn't link-shared (or doesn't exist): no-op, no crash.
-    const next = doc ? rotateCapabilityTokenFor(doc.generalAccess) : null;
+    // Keyed on the link axis directly: rotate only when link_role is set, else nothing to rotate.
+    const next = rotateCapabilityTokenForLinkAxis(link?.linkRole ?? null);
     if (next === null) return { rotated: false };
 
-    // Replace the token on the doc's single share_links row (C-001 unique docId). The row
-    // exists already (it is anyone_with_link), but upsert defensively so a missing row can't
-    // crash the rotate; the role/controls are left untouched (only the token column moves).
     await tx
       .insert(shareLinks)
       .values({ docId, capabilityToken: next })
@@ -123,42 +107,46 @@ export function createShareRepo(db: DB): ShareRepo {
   return {
     async setGeneralAccess(docId, setting): Promise<ResolvedShareSetting> {
       return db.transaction(async (tx) => {
-        // 1. The access LEVEL lives on the doc row.
-        await tx.update(docs).set({ generalAccess: setting.level }).where(eq(docs.id, docId));
-
-        // 1b. Capability token (capability-share-link S-001 / C-001). Read the doc's
-        //     current token so re-saving the SAME anyone_with_link level keeps the live
-        //     link (no silent rotation — that is S-004's explicit action); a transition
-        //     INTO anyone_with_link from no token mints a fresh one, and any non-shared
-        //     level clears it (the old link dies). The partial-unique index on the column
-        //     is the global-uniqueness guarantee behind the minted secret.
+        // Read the doc's CURRENT row first. Two reasons:
+        //  1. The capability token follows the LINK AXIS (C-003): keeping the link axis on
+        //     does NOT silently rotate (rotation is S-004's explicit action); turning it on
+        //     from nothing mints a fresh token; turning it off clears it (the old link dies).
+        //  2. PARTIAL-UPDATE (C-011): when the linkRole axis is ABSENT, the resulting link
+        //     state is the CURRENT column value — so the token side-effect must be computed
+        //     against that current value (mint when it becomes set, clear when it becomes
+        //     null), not against an absent intent.
         const [existing] = await tx
-          .select({ capabilityToken: shareLinks.capabilityToken })
+          .select({
+            capabilityToken: shareLinks.capabilityToken,
+            linkRole: shareLinks.linkRole,
+          })
           .from(shareLinks)
           .where(eq(shareLinks.docId, docId));
-        const capabilityToken = capabilityTokenFor(
-          setting.level,
+        // The link role that will be in effect AFTER this write: the provided value when the
+        // linkRole axis is present, else the current column value (left untouched).
+        const resultingLinkRole =
+          setting.linkRole !== undefined ? setting.linkRole : existing?.linkRole ?? null;
+        const capabilityToken = capabilityTokenForLinkAxis(
+          resultingLinkRole,
           existing?.capabilityToken ?? null,
         );
 
-        // 2. Upsert the doc's single share_links row (C-001 unique docId). Only the
-        //    link role is set here; password/expiry/view-limit are S-004's controls and
-        //    are left as-is on conflict. (The guest_commenting column is no longer
-        //    written — guest access is decided by the link role, sharing reversal
-        //    2026-06-20.)
-        //    editors_can_share (C-015): set it ONLY when the caller provided it (owner
-        //    flipping the toggle). When undefined, leave the column untouched on update
-        //    and let the column DEFAULT (true) apply on first insert — so an editor's
-        //    normal manage-sharing write never disturbs the owner's toggle.
+        // PER-AXIS, COLUMN-SCOPED write (C-011 / AS-007). Each column is set on its OWN
+        // field — never a read-modify-write of a whole-row snapshot. PARTIAL-UPDATE: an
+        // axis (or editors_can_share) that the caller did NOT provide is OMITTED from the
+        // onConflict `set`, so its current column value is LEFT UNTOUCHED — two managers
+        // editing DIFFERENT axes each write only their own column and neither reverts the
+        // other. On first INSERT an omitted axis falls back to its default (the INSERT
+        // `values` carries workspace_role=commenter — the new-doc default — and leaves
+        // link_role at its null column default when neither was provided).
         const setOnConflict: {
-          role: typeof setting.role;
+          workspaceRole?: AxisRole;
+          linkRole?: AxisRole;
           editorsCanShare?: boolean;
           capabilityToken: string | null;
-        } = {
-          role: setting.role,
-          // Always written: mint/keep on anyone_with_link, clear (null) otherwise (C-001).
-          capabilityToken,
-        };
+        } = { capabilityToken };
+        if (setting.workspaceRole !== undefined) setOnConflict.workspaceRole = setting.workspaceRole;
+        if (setting.linkRole !== undefined) setOnConflict.linkRole = setting.linkRole;
         if (setting.editorsCanShare !== undefined) {
           setOnConflict.editorsCanShare = setting.editorsCanShare;
         }
@@ -166,9 +154,11 @@ export function createShareRepo(db: DB): ShareRepo {
           .insert(shareLinks)
           .values({
             docId,
-            role: setting.role,
+            // INSERT defaults for an absent axis (no prior row): workspace_role=commenter
+            // is the new-doc default; link_role stays null (off).
+            workspaceRole: setting.workspaceRole !== undefined ? setting.workspaceRole : "commenter",
+            ...(setting.linkRole !== undefined ? { linkRole: setting.linkRole } : {}),
             capabilityToken,
-            // On INSERT, undefined falls through to the column default (true).
             ...(setting.editorsCanShare !== undefined
               ? { editorsCanShare: setting.editorsCanShare }
               : {}),
@@ -178,18 +168,20 @@ export function createShareRepo(db: DB): ShareRepo {
             set: setOnConflict,
           })
           .returning({
-            role: shareLinks.role,
+            workspaceRole: shareLinks.workspaceRole,
+            linkRole: shareLinks.linkRole,
             editorsCanShare: shareLinks.editorsCanShare,
             capabilityToken: shareLinks.capabilityToken,
           });
 
+        const workspaceRole = row?.workspaceRole ?? null;
+        const linkRole = row?.linkRole ?? null;
         return {
           docId,
-          level: setting.level,
-          role: row?.role ?? setting.role,
+          workspaceRole,
+          linkRole,
+          level: deriveLevel(workspaceRole, linkRole),
           editorsCanShare: row?.editorsCanShare ?? setting.editorsCanShare ?? true,
-          // The resulting token (minted/kept on anyone_with_link, cleared null otherwise — C-001).
-          // Fall back to the computed value so the result is correct even if RETURNING is empty.
           capabilityToken: row?.capabilityToken ?? capabilityToken,
         };
       });

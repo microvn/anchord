@@ -71,6 +71,18 @@ element at the same time.
 | Like | green `#43b873` | = the positive/resolved family |
 | Pinpoint *(Phase 2)* | blue `#5b9cf0` | forward-looking; not yet active in v0 |
 
+**Doc-kind label colors (PO-approved deviation, 2026-06-25):**
+The format label beside a doc title (cards + list rows) is tinted per kind so MD/HTML/IMG read apart
+at a glance — a **KIND** dimension, orthogonal to status + annotation-type. Reuses existing hues; never
+teal (chrome accent) or red (error). The kind icon is also distinct: MD `docs`, HTML `code` (`</>`),
+IMG `image`.
+
+| Kind | Hue (dark / light) | Token | Note |
+|---|---|---|---|
+| Markdown | blue `#5b9cf0` / `#2f6fd0` | `--blue` | = the Pinpoint blue; light value added here (DESIGN.md previously specced dark only) |
+| HTML | amber `#d6a23e` / `#9a6700` | `--amber` | reuses the existing amber token |
+| Image | green `#43b873` / `#1c7a4a` | `--green` | reuses the resolved/Like green |
+
 **Affordance pattern (toolbar tools + selection popover):** a tool/type chip is **collapsed to icon-only at
 rest**; the **active** tool and any **hovered** tool **expand to icon + label + its hue** (soft bg tint +
 coloured icon/text). Inactive chips stay icon-only + muted. Redline applies its red strike to the selected

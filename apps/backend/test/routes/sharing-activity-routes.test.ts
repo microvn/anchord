@@ -12,6 +12,7 @@ import { createApp } from "../../src/app";
 import type { SessionResolver } from "../../src/http/auth-gate";
 import type { NewActivity, ActivityRepo, ActivityRow } from "../../src/activity/repo";
 import type { ShareRepo } from "../../src/sharing/share";
+import { deriveLevel } from "../../src/sharing/share";
 import type { DocLookupRepo } from "../../src/routes/versions";
 
 const owner: SessionResolver = async () => ({ userId: "u_devin" });
@@ -46,12 +47,16 @@ function fakeActivityRepo() {
 /** A share repo that just echoes the requested level+role back (the stored setting). */
 const fakeShareRepo: ShareRepo = {
   async setGeneralAccess(_docId, input) {
+    // Partial-update (C-011): an absent axis resolves to null (the route sends both here).
+    const workspaceRole = input.workspaceRole ?? null;
+    const linkRole = input.linkRole ?? null;
     return {
       docId: _docId,
-      level: input.level,
-      role: input.role,
+      workspaceRole,
+      linkRole,
+      level: deriveLevel(workspaceRole, linkRole),
       editorsCanShare: input.editorsCanShare ?? false,
-      capabilityToken: input.level === "anyone_with_link" ? "tok_new" : null,
+      capabilityToken: linkRole != null ? "tok_new" : null,
     };
   },
 };
@@ -80,10 +85,9 @@ function buildApp(act: ReturnType<typeof fakeActivityRepo>, opts: { noActivity?:
       resolveWorkspaceRole: async () => "member",
       resolveDocRole: async () => "owner",
       loadShareConfig: async () => ({ editorsCanShare: false }),
-      accessDeps: {
-        isInvited: async () => false,
-        isWorkspaceMember: async () => true,
-      } as never,
+      // doc-access-two-axis S-004 / C-010: read gate via the ONE authoritative resolveAccess
+      // (canViewDoc retired). The owner sees the visible doc; the manage gate still decides.
+      resolveAccess: async () => ({ role: "owner", canView: true }),
       activity: opts.noActivity
         ? undefined
         : {
@@ -109,7 +113,7 @@ describe("workspace-activity S-006: doc sharing-change event (AS-022)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/render-pipeline-rfc/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter" }),
       }),
     );
     expect(res.status).toBe(200);
@@ -121,8 +125,8 @@ describe("workspace-activity S-006: doc sharing-change event (AS-022)", () => {
     expect(row.actorUserId).toBe("u_devin");
     expect(row.docId).toBe("doc_1");
     expect(row.workspaceId).toBe("ws_1");
-    // F-10: NEW state only — meta carries the new access + role, no from/to.
-    expect(row.meta).toEqual({ access: "anyone_with_link", role: "commenter" });
+    // F-10: NEW state only — meta carries the new derived access + both raw axes, no from/to.
+    expect(row.meta).toEqual({ access: "anyone_with_link", workspaceRole: null, linkRole: "commenter" });
   });
 
   test("C-002: the share change still succeeds (200) when no activity block is wired — no row, no throw", async () => {
@@ -131,7 +135,7 @@ describe("workspace-activity S-006: doc sharing-change event (AS-022)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/render-pipeline-rfc/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "restricted", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: null }),
       }),
     );
     expect(res.status).toBe(200);

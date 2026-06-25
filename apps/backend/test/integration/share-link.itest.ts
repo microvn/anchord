@@ -30,7 +30,7 @@ async function newDoc(h: MigratedDb): Promise<string> {
 
 /** Insert a share_links row for a doc with the given view_limit (null = unlimited). */
 async function newShareLink(h: MigratedDb, docId: string, viewLimit: number | null) {
-  await h.db.insert(shareLinks).values({ docId, role: "viewer", viewLimit });
+  await h.db.insert(shareLinks).values({ docId, linkRole: "viewer", viewLimit });
 }
 
 describe.skipIf(!RUN)("share-link view-limit (real Postgres)", () => {

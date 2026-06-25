@@ -35,9 +35,46 @@ function markdownPayload(): ViewerDocPayload {
     version: 1,
     status: "published",
     generalAccess: "anyone_with_link",
+    // doc-access-two-axis S-006: doc X — workspace-shared AND link-shared.
+    workspaceRole: "commenter",
+    linkRole: "viewer",
     effectiveRole: "viewer",
     workspaceId: "ws_md",
     content: "# Release Notes\n\n- one\n\n<script>alert(1)</script>",
+  };
+}
+
+/** doc-access-two-axis S-006: a workspace-shared, link-OFF markdown payload (AS-021). */
+function workspaceOnlyPayload(): ViewerDocPayload {
+  return {
+    versionId: "ver_ws_1",
+    title: "Team Spec",
+    kind: "markdown",
+    version: 1,
+    status: "published",
+    generalAccess: "anyone_in_workspace",
+    workspaceRole: "commenter",
+    linkRole: null,
+    effectiveRole: "commenter",
+    workspaceId: "ws_team",
+    content: "# Team Spec",
+  };
+}
+
+/** doc-access-two-axis S-006: doc Y — link-ONLY (workspace off), same link role as doc X (AS-027). */
+function linkOnlyPayload(): ViewerDocPayload {
+  return {
+    versionId: "ver_link_1",
+    title: "Link Only",
+    kind: "markdown",
+    version: 1,
+    status: "published",
+    generalAccess: "anyone_with_link",
+    workspaceRole: null,
+    linkRole: "viewer",
+    effectiveRole: "viewer",
+    workspaceId: "ws_link",
+    content: "# Link Only",
   };
 }
 
@@ -50,6 +87,8 @@ function htmlPayload(): ViewerDocPayload {
     version: 1,
     status: "published",
     generalAccess: "anyone_with_link",
+    workspaceRole: null,
+    linkRole: "viewer",
     effectiveRole: null,
     workspaceId: null,
     content: "<h1>untrusted</h1><script>document.cookie</script>",
@@ -195,5 +234,47 @@ describe("GET /api/docs/:slug — doc-addressed viewer route glue", () => {
     const { app: app2, calls: calls2 } = buildApp({ resolveViewerSession: signedIn, grant: markdownPayload() });
     await app2.handle(new Request("http://localhost/api/w/ws_1/docs/only-a-slug"));
     expect(calls2).toHaveLength(0);
+  });
+
+  // doc-access-two-axis S-006 / C-008: the doc-read response carries BOTH the derived
+  // `generalAccess` summary AND the raw {workspaceRole, linkRole} axes (AS-021/022/027).
+  test("AS-021: a workspace-shared, link-off doc summarizes as 'anyone_in_workspace' + carries raw axes", async () => {
+    const { app } = buildApp({ resolveViewerSession: signedIn, grant: workspaceOnlyPayload() });
+    const res = await app.handle(get("team-spec"));
+
+    expect(res.status).toBe(200);
+    const { doc } = ((await res.json()) as any).data;
+    expect(doc.generalAccess).toBe("anyone_in_workspace");
+    expect(doc.workspaceRole).toBe("commenter");
+    expect(doc.linkRole).toBeNull();
+  });
+
+  test("AS-022: a link-on doc summarizes as 'anyone_with_link' + carries raw axes", async () => {
+    // markdownPayload = workspace=commenter, link=viewer → link axis dominates the summary.
+    const { app } = buildApp({ resolveViewerSession: signedIn, grant: markdownPayload() });
+    const res = await app.handle(get("release-notes"));
+
+    expect(res.status).toBe(200);
+    const { doc } = ((await res.json()) as any).data;
+    expect(doc.generalAccess).toBe("anyone_with_link");
+    expect(doc.workspaceRole).toBe("commenter");
+    expect(doc.linkRole).toBe("viewer");
+  });
+
+  test("AS-027: two docs both summarize 'anyone_with_link' but the raw axes tell workspace-shared from link-only", async () => {
+    // Doc X: workspace=commenter, link=viewer. Doc Y: workspace=off, link=viewer.
+    const x = ((await (await buildApp({ resolveViewerSession: signedIn, grant: markdownPayload() }).app
+      .handle(get("release-notes"))).json()) as any).data.doc;
+    const y = ((await (await buildApp({ resolveViewerSession: signedIn, grant: linkOnlyPayload() }).app
+      .handle(get("link-only"))).json()) as any).data.doc;
+
+    // The lossy summary collapses both to the same value...
+    expect(x.generalAccess).toBe("anyone_with_link");
+    expect(y.generalAccess).toBe("anyone_with_link");
+
+    // ...but the raw axes carried alongside it keep the distinction (C-008).
+    expect(x.workspaceRole).toBe("commenter");
+    expect(y.workspaceRole).toBeNull();
+    expect(x.workspaceRole).not.toBe(y.workspaceRole);
   });
 });

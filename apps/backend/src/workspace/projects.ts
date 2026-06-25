@@ -17,8 +17,6 @@
 // integration-verified against real Postgres; this file is the logic the unit
 // suite drives with a fake repo.
 
-import type { GeneralAccessLevel } from "../sharing/access";
-
 /** A project row as the service sees it. */
 export interface ProjectRow {
   id: string;
@@ -223,22 +221,32 @@ export async function deleteProject(
   await deps.repo.delete(project.id);
 }
 
-// ── browse access filter (C-003 / AS-006) ──────────────────────────────────
-// A doc is VISIBLE in browse to user X iff X can access it via a BROWSE grant:
-//   - X is the doc owner, OR
-//   - general_access = anyone_in_workspace AND X is a workspace member, OR
-//   - X is individually invited (an ACTIVE doc_members row).
-// anyone_with_link is NOT a browse grant: a link is for direct-link holders, not
-// workspace browse. A restricted doc the user is not invited to is ABSENT — not a
-// 403 row — so "no access" is indistinguishable from "does not exist" (no existence
-// leak, no title/metadata leaked). This MATCHES src/sharing/access.ts's canViewDoc,
-// minus the anon/anyone_with_link branch (browse is always an authenticated member).
+// ── browse access filter — the ONE shared workspace-visibility predicate (C-006) ─────
+// doc-access-two-axis S-004 / C-006: a doc is visible in the workspace to user X iff
+//   - X is the doc OWNER, OR
+//   - X is individually invited (an ACTIVE doc_members row), OR
+//   - the doc's WORKSPACE axis is on (share_links.workspace_role IS NOT NULL) AND X is a
+//     workspace member.
+// The LINK axis is IRRELEVANT to workspace visibility: turning a doc's public link on (or
+// off) never adds it to, nor removes it from, the workspace browse — that independence is
+// the bug this redesign fixes (AS-013). Keying on the raw `workspaceShared` axis (not the
+// derived `generalAccess` level) is what makes this correct: a doc shared with BOTH the
+// workspace AND a link derives to "anyone_with_link" (the lossy legacy level — the link axis
+// dominates), which would WRONGLY drop it from the workspace if we keyed on the level. We key
+// on the axis instead. A doc the user can't browse is ABSENT — not a 403 row — so "no access"
+// is indistinguishable from "does not exist" (existence-hiding; no title/metadata leak).
+//
+// This is the SINGLE predicate every workspace-listing surface (dashboard list, search,
+// project doc counts, MCP browse, list payload) must apply identically — in SQL the same
+// rule is inlined as `sl.workspace_role IS NOT NULL` (search-repo, repo stats, MCP wiring).
 
 /** A doc as the browse filter sees it (only what the visibility decision needs). */
 export interface BrowseDoc {
   id: string;
   ownerId: string | null;
-  generalAccess: GeneralAccessLevel;
+  /** The WORKSPACE axis: true iff `share_links.workspace_role IS NOT NULL` (C-006). The
+   *  doc is shared with its own workspace. The link axis plays NO part in this decision. */
+  workspaceShared: boolean;
 }
 
 export interface BrowseFilterDeps {
@@ -248,18 +256,18 @@ export interface BrowseFilterDeps {
   isWorkspaceMember(userId: string): boolean | Promise<boolean>;
 }
 
-/** Whether `userId` may SEE `doc` in browse (the browse-grant rule above). */
+/** Whether `userId` may SEE `doc` in the workspace (the ONE shared C-006 rule above). */
 export async function canBrowseDoc(
   userId: string,
   doc: BrowseDoc,
   deps: BrowseFilterDeps,
 ): Promise<boolean> {
   if (doc.ownerId != null && doc.ownerId === userId) return true;
-  if (doc.generalAccess === "anyone_in_workspace") {
-    return !!(await deps.isWorkspaceMember(userId));
-  }
-  // restricted OR anyone_with_link → only an individually-invited user is listed.
-  return !!(await deps.isInvited(doc.id, userId));
+  // Individually invited → visible regardless of either axis.
+  if (await deps.isInvited(doc.id, userId)) return true;
+  // Workspace axis on AND the caller is a member → visible. The link axis is ignored here.
+  if (doc.workspaceShared) return !!(await deps.isWorkspaceMember(userId));
+  return false;
 }
 
 /** Filter a doc list down to the ones `userId` may see in browse (existence-hiding). */

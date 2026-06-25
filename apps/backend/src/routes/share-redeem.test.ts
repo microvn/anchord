@@ -3,9 +3,10 @@ import { Elysia } from "elysia";
 import { shareRedeemRoutes, type RedeemTarget } from "./share-redeem";
 import {
   mintCapabilityToken,
-  capabilityTokenFor,
-  rotateCapabilityTokenFor,
+  capabilityTokenForLinkAxis,
+  rotateCapabilityTokenForLinkAxis,
 } from "../sharing/share-token";
+import type { AxisRole } from "../sharing/share";
 import { verifyAdmissionCookie, ADMISSION_COOKIE_NAME } from "../sharing/capability-cookie";
 
 // capability-share-link S-002: opening a doc through its capability link.
@@ -144,7 +145,7 @@ function lifecycleApp() {
     slug: "lifecycle-spec-1a2b",
     role: "commenter" as const,
     level: "anyone_with_link" as "anyone_with_link" | "restricted",
-    token: capabilityTokenFor("anyone_with_link", null), // freshly minted on enter
+    token: capabilityTokenForLinkAxis("commenter", null), // freshly minted on enter
   };
   const resolveCapabilityToken = async (token: string): Promise<RedeemTarget | null> => {
     if (doc.level !== "anyone_with_link" || !doc.token || token !== doc.token) return null;
@@ -164,7 +165,7 @@ test("AS-009: setting access back to restricted clears the token → the old cap
 
   // Owner sets general access back to restricted → token cleared (the production transition).
   doc.level = "restricted";
-  doc.token = capabilityTokenFor("restricted", old); // → null
+  doc.token = capabilityTokenForLinkAxis(null, old); // → null
 
   // The previously-shared link no longer serves the doc.
   const res = await redeem(app, old);
@@ -177,12 +178,12 @@ test("AS-010: re-enabling anyone_with_link mints a NEW token (≠ old) that reso
   const old = doc.token!;
   // Turn it off (old link dead)…
   doc.level = "restricted";
-  doc.token = capabilityTokenFor("restricted", old);
+  doc.token = capabilityTokenForLinkAxis(null, old);
   expect((await redeem(app, old)).status).toBe(404);
 
   // …then re-enable. Re-entering from no token mints a fresh one, NOT the resurrected old.
   doc.level = "anyone_with_link";
-  doc.token = capabilityTokenFor("anyone_with_link", doc.token);
+  doc.token = capabilityTokenForLinkAxis("commenter", doc.token);
   const fresh = doc.token!;
   expect(fresh).not.toBe(old);
 
@@ -198,7 +199,7 @@ test("AS-011: rotating while sharing stays ON → old token stops resolving, the
   expect((await redeem(app, old)).status).toBe(200);
 
   // Explicit rotate while still anyone_with_link.
-  doc.token = rotateCapabilityTokenFor("anyone_with_link", old);
+  doc.token = rotateCapabilityTokenForLinkAxis("commenter", old);
   const fresh = doc.token!;
   expect(fresh).not.toBe(old);
 
@@ -208,6 +209,100 @@ test("AS-011: rotating while sharing stays ON → old token stops resolving, the
   expect(res.status).toBe(200);
   expect((await res.json()).role).toBe(roleBefore);
   expect(doc.level).toBe("anyone_with_link");
+});
+
+// ── doc-access-two-axis S-005: the link's existence is keyed on the LINK AXIS ──
+//
+// Same approach as the S-004 lifecycle block above, but the mutable "doc" tracks its
+// link_role (the link axis) and its token follows that axis via capabilityTokenForLinkAxis.
+// The resolver mirrors createCapabilityTokenRepo's REAL gate: a token resolves only when it
+// equals the doc's CURRENT token AND the link axis is ON (link_role IS NOT NULL) — NOT the
+// old `general_access = 'anyone_with_link'` gate. This proves the redeem gate admits on the
+// link axis, the token clears with it, and a role change keeps the same link working.
+
+function linkAxisLifecycleApp() {
+  const doc = {
+    docId: "doc_LA",
+    slug: "two-axis-spec-9z8y",
+    linkRole: "commenter" as AxisRole,
+    token: capabilityTokenForLinkAxis("commenter", null), // minted on enter (link axis on)
+  };
+  const resolveCapabilityToken = async (token: string): Promise<RedeemTarget | null> => {
+    // The S-001/S-005 gate: link_role IS NOT NULL (not the dropped general_access level).
+    if (doc.linkRole == null || !doc.token || token !== doc.token) return null;
+    return { docId: doc.docId, slug: doc.slug, role: doc.linkRole };
+  };
+  const app = new Elysia().use(
+    shareRedeemRoutes({ resolveCapabilityToken, secret: SECRET, secure: false }),
+  );
+  return { app, doc };
+}
+
+test("AS-018: turning link access on (off→commenter) mints a token that redeems at the commenter level — even with workspace off (link-keyed, not level-keyed)", async () => {
+  // Given a doc with link access OFF and no token (workspace may be off too).
+  const doc = {
+    docId: "doc_WSoff",
+    slug: "link-only-spec-3c4d",
+    linkRole: null as AxisRole,
+    token: null as string | null,
+  };
+  const resolveCapabilityToken = async (token: string): Promise<RedeemTarget | null> => {
+    if (doc.linkRole == null || !doc.token || token !== doc.token) return null;
+    return { docId: doc.docId, slug: doc.slug, role: doc.linkRole };
+  };
+  const app = new Elysia().use(
+    shareRedeemRoutes({ resolveCapabilityToken, secret: SECRET, secure: false }),
+  );
+
+  // Before turning link on, there is no token to redeem.
+  expect((await redeem(app, mintCapabilityToken())).status).toBe(404);
+
+  // When link access is set ON at commenter (workspace stays OFF — proves link-keyed mint).
+  doc.linkRole = "commenter";
+  doc.token = capabilityTokenForLinkAxis("commenter", doc.token);
+  const minted = doc.token!;
+  expect(minted).not.toBeNull();
+
+  // Then the minted link redeems and opens the doc at the COMMENTER level.
+  const res = await redeem(app, minted);
+  expect(res.status).toBe(200);
+  expect((await res.json()).role).toBe("commenter");
+});
+
+test("AS-019: turning link access off (set→null) clears the token → the previously issued link is DENIED", async () => {
+  const { app, doc } = linkAxisLifecycleApp();
+  const old = doc.token!;
+  // The live link redeems first.
+  expect((await redeem(app, old)).status).toBe(200);
+
+  // When the caller turns link access OFF (link_role → null) the token clears with the axis.
+  doc.linkRole = null;
+  doc.token = capabilityTokenForLinkAxis(null, old); // → null
+  expect(doc.token).toBeNull();
+
+  // Then redeeming the previously issued link is denied (no doc, no cookie).
+  const res = await redeem(app, old);
+  expect(res.status).toBe(404);
+  expect(res.headers.get("set-cookie")).toBeNull();
+});
+
+test("AS-020: changing the link role (commenter→viewer) keeps the SAME token, now redeeming at viewer (no rotation)", async () => {
+  const { app, doc } = linkAxisLifecycleApp();
+  const same = doc.token!;
+  // Redeems at commenter first.
+  const before = await redeem(app, same);
+  expect(before.status).toBe(200);
+  expect((await before.json()).role).toBe("commenter");
+
+  // When the link role changes to viewer (still SET), the token is KEPT (no rotation).
+  doc.linkRole = "viewer";
+  doc.token = capabilityTokenForLinkAxis("viewer", doc.token);
+  expect(doc.token).toBe(same); // SAME token — the link did not rotate.
+
+  // Then the same link still redeems, now at the VIEWER level.
+  const after = await redeem(app, same);
+  expect(after.status).toBe(200);
+  expect((await after.json()).role).toBe("viewer");
 });
 
 test("S-006-shape: the admission cookie lifetime is capped at the link's own expiry when sooner", async () => {

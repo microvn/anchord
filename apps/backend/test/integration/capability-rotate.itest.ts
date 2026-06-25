@@ -18,11 +18,11 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { docs, shareLinks, user } from "../../src/db/schema";
+import { shareLinks, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import { createCapabilityTokenRepo, rotateCapabilityToken } from "../../src/sharing/share-repo";
-import { setGeneralAccess } from "../../src/sharing/share";
+import { setGeneralAccess, deriveLevel } from "../../src/sharing/share";
 import { createShareRepo } from "../../src/sharing/share-repo";
 import { ADMISSION_COOKIE_NAME } from "../../src/sharing/capability-cookie";
 import { createResolveAccess } from "../../src/sharing/resolve-access";
@@ -64,7 +64,7 @@ describe.skipIf(!RUN)("S-004 capability rotate/off (real Postgres, real resolveA
     // Enter anyone_with_link via the REAL service → mints the first capability token.
     await setGeneralAccess(
       docId,
-      { level: "anyone_with_link", role: "commenter" },
+      { workspaceRole: null, linkRole: "commenter" },
       createShareRepo(h.db),
       { actorIsOwner: true },
     );
@@ -91,7 +91,9 @@ describe.skipIf(!RUN)("S-004 capability rotate/off (real Postgres, real resolveA
         resolveSession,
         resolveWorkspaceRole: asMember,
         resolveDocRole: docRoleForGate,
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        // doc-access-two-axis S-004 / C-010: route the read gate through the ONE authoritative
+        // resolveAccess (canViewDoc retired) — the same instance the doc-content routes use.
+        resolveAccess,
       },
       annotations: {
         db: h.db,
@@ -169,9 +171,13 @@ describe.skipIf(!RUN)("S-004 capability rotate/off (real Postgres, real resolveA
     const r = await redeem(fresh);
     expect(r.status).toBe(200);
     expect(r.role).toBe("commenter"); // link role unchanged
-    // generalAccess unchanged.
-    const [doc] = await h.db.select({ ga: docs.generalAccess }).from(docs).where(eq(docs.id, docId));
-    expect(doc!.ga).toBe("anyone_with_link");
+    // Access unchanged: the link axis is still on (anyone_with_link derived).
+    const [sl] = await h.db
+      .select({ workspaceRole: shareLinks.workspaceRole, linkRole: shareLinks.linkRole })
+      .from(shareLinks)
+      .where(eq(shareLinks.docId, docId));
+    expect(deriveLevel(sl!.workspaceRole, sl!.linkRole)).toBe("anyone_with_link");
+    expect(sl!.linkRole).toBe("commenter");
   });
 
   test("AS-021 / C-007.b: a guest's admission cookie minted from the OLD token is REFUSED on read AND write after rotate (stale token-hash, real gate)", async () => {
@@ -206,7 +212,7 @@ describe.skipIf(!RUN)("S-004 capability rotate/off (real Postgres, real resolveA
     // Re-enable a clean link, open it as a guest.
     await setGeneralAccess(
       docId,
-      { level: "anyone_with_link", role: "commenter" },
+      { workspaceRole: null, linkRole: "commenter" },
       createShareRepo(h.db),
       { actorIsOwner: true },
     );
@@ -217,7 +223,7 @@ describe.skipIf(!RUN)("S-004 capability rotate/off (real Postgres, real resolveA
     // Turn sharing OFF.
     await setGeneralAccess(
       docId,
-      { level: "restricted", role: "commenter" },
+      { workspaceRole: null, linkRole: null },
       createShareRepo(h.db),
       { actorIsOwner: true },
     );
@@ -234,14 +240,14 @@ describe.skipIf(!RUN)("S-004 capability rotate/off (real Postgres, real resolveA
     // Ensure off first.
     await setGeneralAccess(
       docId,
-      { level: "restricted", role: "commenter" },
+      { workspaceRole: null, linkRole: null },
       createShareRepo(h.db),
       { actorIsOwner: true },
     );
     // Re-enable.
     await setGeneralAccess(
       docId,
-      { level: "anyone_with_link", role: "commenter" },
+      { workspaceRole: null, linkRole: "commenter" },
       createShareRepo(h.db),
       { actorIsOwner: true },
     );
@@ -263,7 +269,7 @@ describe.skipIf(!RUN)("S-004 capability rotate/off (real Postgres, real resolveA
     actingRole = "owner";
     await setGeneralAccess(
       docId,
-      { level: "restricted", role: "commenter" },
+      { workspaceRole: null, linkRole: null },
       createShareRepo(h.db),
       { actorIsOwner: true },
     );

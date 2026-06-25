@@ -13,7 +13,7 @@
 //   404 — a doc the caller cannot access OR a missing slug, indistinguishable (existence-hiding).
 //
 // The access gate REUSES the same loader/access model as the /d viewer + annotation routes
-// (createLoadViewerDoc → canViewVisible → canViewDoc + resolveDocRole): a missing doc OR one
+// (createLoadViewerDoc → canViewVisible → resolveAccess): a missing doc OR one
 // the caller cannot view BOTH come back null → 404 (AS-018, C-008).
 
 import { Elysia } from "elysia";
@@ -62,6 +62,9 @@ function toResponse(payload: ViewerDocPayload): {
     version: number;
     status: "published";
     generalAccess: ViewerDocPayload["generalAccess"];
+    // doc-access-two-axis S-006 / C-008: raw axes carried alongside the lossy summary (AS-027).
+    workspaceRole: ViewerDocPayload["workspaceRole"];
+    linkRole: ViewerDocPayload["linkRole"];
     effectiveRole?: ViewerDocPayload["effectiveRole"];
     workspaceId: ViewerDocPayload["workspaceId"];
   };
@@ -73,6 +76,11 @@ function toResponse(payload: ViewerDocPayload): {
     version: payload.version,
     status: payload.status,
     generalAccess: payload.generalAccess,
+    // doc-access-two-axis S-006 / C-008: the raw two-axis state alongside the derived
+    // `generalAccess` summary, so the Share dialog can tell workspace-shared from link-only —
+    // the distinction the lossy 3-value summary drops (AS-027). Always present (may be null).
+    workspaceRole: payload.workspaceRole,
+    linkRole: payload.linkRole,
     // S-001/C-002: the consumer (ShareDialog gate) reads this to show the Share affordance for an
     // owner/editor. Omit when null (anon) so the optional FE field stays absent rather than null.
     ...(payload.effectiveRole ? { effectiveRole: payload.effectiveRole } : {}),

@@ -12,11 +12,6 @@ const id = () => text("id").primaryKey().$defaultFn(() => newId());
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
 export const docKind = pgEnum("doc_kind", ["html", "markdown", "image"]);
-export const generalAccess = pgEnum("general_access", [
-  "restricted",
-  "anyone_in_workspace",
-  "anyone_with_link",
-]);
 
 // The role granted to "anyone with the link" (sharing S-001). NOT "owner":
 // owner is conferred by ownership, never by a link. Roles ordered low→high.
@@ -35,7 +30,11 @@ export const docs = pgTable(
     // (mirrors the published_by pattern). Immutable in v0 (transfer is v0.5): no
     // update-owner path exists — owner is written once at create.
     ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
-    generalAccess: generalAccess("general_access").notNull().default("restricted"),
+    // NOTE (doc-access-two-axis S-001): the legacy single `general_access` enum column is
+    // DROPPED. A doc's access now lives entirely on its share_links row as TWO independent
+    // axes (workspace_role + link_role); the legacy 3-value level is DERIVED on read via
+    // deriveLevel(workspace_role, link_role) — see src/sharing/derive-level.ts. There is no
+    // stored level anywhere on the doc row.
     // project_id (workspace-project S-003): the project this doc belongs to. The spec
     // said this is "defined in render-publish" but it was never added to the schema;
     // S-003 adds it here. NULLABLE at the column level (a legacy/seeded doc may lack
@@ -127,24 +126,34 @@ export const docVersions = pgTable(
   (t) => [uniqueIndex("doc_version_uq").on(t.docId, t.version)],
 );
 
-// share_links (sharing S-001): the general-access config for a doc — the role
-// granted to anyone-with-link + the guest-commenting sub-toggle. One row per doc
-// (unique docId, C-001): a doc has exactly one general-access config. The actual
-// access *level* lives on docs.general_access; this row carries the link-scoped
-// role + guest toggle (and, later, S-004's link controls).
+// share_links (doc-access-two-axis S-001): the per-doc access config — now TWO
+// independent access axes that REPLACE the single legacy `role` column. One row per
+// doc (unique docId, C-001). The legacy `docs.general_access` level is DROPPED and
+// DERIVED on read from these two axes (deriveLevel — src/sharing/derive-level.ts).
 //
-// password_hash / expires_at / view_limit / view_count are S-004's link controls.
-// Added now as NULLABLE so S-004 attaches without a schema migration; they are
-// independent of the general-access setting (C-001) and untouched by S-001.
+//   - workspace_role: viewer|commenter|editor or NULL. The role granted to every
+//     member of the doc's OWN workspace. NULL = the doc is NOT shared with the
+//     workspace (only the owner + individually-invited members reach it). (C-002)
+//   - link_role: viewer|commenter|editor or NULL. The role granted to anyone holding
+//     the link. NULL = no public link (and no capability token). (C-003)
+//
+// The two are INDEPENDENT (C-001): setting one never changes the other. New-doc
+// default (seed + the eventual publish, S-002): workspace_role=commenter, link_role=null.
+//
+// password_hash / expires_at / view_limit / view_count are S-004's link controls; they
+// attach to the link axis and are independent of the workspace axis (C-001).
 export const shareLinks = pgTable(
   "share_links",
   {
     id: id(),
     docId: text("doc_id")
       .notNull()
-      .unique() // C-001: one general-access config per doc
+      .unique() // C-001: one access config per doc
       .references(() => docs.id, { onDelete: "cascade" }),
-    role: shareRole("role").notNull().default("viewer"),
+    // ── the two independent access axes (doc-access-two-axis S-001) ──
+    // Nullable: NULL = that axis is OFF. "owner" is never assignable to either axis (C-009).
+    workspaceRole: shareRole("workspace_role"),
+    linkRole: shareRole("link_role"),
     guestCommenting: boolean("guest_commenting").notNull().default(false),
     // capability_token (capability-share-link S-001 / C-001): the high-entropy,
     // crypto-random, URL-safe secret that addresses the doc at /s/<token> when general

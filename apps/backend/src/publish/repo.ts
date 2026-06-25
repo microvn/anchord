@@ -6,7 +6,7 @@
 // Integration-verified-later: this is exercised against a real Postgres in an
 // integration test, not in the fast unit suite (no DB needed for S-001 unit tests).
 
-import { docs, docVersions } from "../db/schema";
+import { docs, docVersions, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
 import type { DocRepo, CreateDocInput } from "./service";
 
@@ -26,10 +26,6 @@ export function createDocRepo(db: DB): DocRepo {
             // workspace-project S-003 (AS-005 / C-009): the resolved project (explicit
             // or the publisher's default); null only for a session-less seed.
             projectId: input.projectId ?? null,
-            // shared-workspace model (render-publish:C-011 / mcp-roundtrip:C-006): inherit the
-            // workspace's default access when the publish path resolved one; omitted on
-            // the seed path → the docs.general_access column default (restricted floor).
-            ...(input.generalAccess ? { generalAccess: input.generalAccess } : {}),
           })
           .returning({ id: docs.id });
 
@@ -43,6 +39,22 @@ export function createDocRepo(db: DB): DocRepo {
           extractedText: input.extractedText ?? null,
           // C-007: version 1's publisher = the same authenticated user (text id).
           publishedBy: input.ownerId ?? null,
+        });
+
+        // doc-access-two-axis S-002 (C-007): the doc's access config (share_links row)
+        // is created HERE, at publish, in the SAME transaction — with the fixed new-doc
+        // defaults: workspace_role = commenter (shared with the doc's workspace at the
+        // comment level), link_role = null (no public link, no capability token). This
+        // is what makes a freshly published doc immediately viewable + commentable by
+        // every workspace member with no sharing edit, and closes the latent no-access
+        // gap (the row used to be created lazily on the first sharing edit). The default
+        // is identical at every publish surface (web + MCP) because both route through
+        // this repo. (editors_can_share / guest_commenting / view_count keep their
+        // column defaults.)
+        await tx.insert(shareLinks).values({
+          docId: doc.id,
+          workspaceRole: "commenter",
+          linkRole: null,
         });
 
         return { id: doc.id };

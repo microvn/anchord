@@ -47,9 +47,14 @@ describe.skipIf(!RUN)("versioning-diff routes (real Postgres)", () => {
       content: "# v1\n",
       contentHash: "hash-v1",
     });
-    // Make it link-visible so canViewDoc allows the member.
-    const { docs } = await import("../../src/db/schema");
-    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.slug, slug));
+    // Make it link-visible so canViewDoc allows the member: a link axis on (link_role set)
+    // derives anyone_with_link.
+    const { docs, shareLinks } = await import("../../src/db/schema");
+    const [d] = await h.db.select({ id: docs.id }).from(docs).where(eq(docs.slug, slug));
+    await h.db
+      .insert(shareLinks)
+      .values({ docId: d!.id, linkRole: "commenter" })
+      .onConflictDoUpdate({ target: shareLinks.docId, set: { linkRole: "commenter" } });
 
     app = createApp({
       dbCheck: async () => {},

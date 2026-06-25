@@ -22,7 +22,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq, isNull } from "drizzle-orm";
-import { annotations, comments, docs, shareLinks } from "../../src/db/schema";
+import { annotations, comments, shareLinks } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import { createCapabilityTokenRepo } from "../../src/sharing/share-repo";
@@ -75,14 +75,12 @@ describe.skipIf(!RUN)("capability-link redeem → admission seam (real Postgres,
 
     tokenA = mintCapabilityToken();
     tokenB = mintCapabilityToken();
-    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.id, docIdA));
-    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.id, docIdB));
     await h.db
       .insert(shareLinks)
-      .values({ docId: docIdA, role: "commenter", capabilityToken: tokenA });
+      .values({ docId: docIdA, linkRole: "commenter", capabilityToken: tokenA });
     await h.db
       .insert(shareLinks)
-      .values({ docId: docIdB, role: "viewer", capabilityToken: tokenB });
+      .values({ docId: docIdB, linkRole: "viewer", capabilityToken: tokenB });
 
     // The PRODUCTION access gate: createResolveAccess over the real createResolveDocRole, wired
     // with APP_SECRET so the anon branch validates the admission cookie (resolveAdmission) against

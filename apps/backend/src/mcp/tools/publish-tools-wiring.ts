@@ -3,9 +3,10 @@
 // Maps the tools' injectable ports onto the EXISTING domain services (no new behaviour):
 //   • create → publish/service.ts `publishDoc` with the workspace-scoped
 //     `createPublishProjectResolver` (AS-003 default-project fallback / AS-018 explicit /
-//     AS-019 foreign-rejected) — general_access INHERITS the token's workspace
-//     settings.defaultAccess (default anyone_in_workspace, shared-workspace model / C-006), not a
-//     hard-coded restricted; visibility is still never *chosen* via MCP in v0.
+//     AS-019 foreign-rejected) — the doc's access config (share_links row) is created by
+//     the publish repo with the FIXED new-doc default (workspace_role = commenter,
+//     link_role = null — doc-access-two-axis S-002 / C-007), identical to the web surface
+//     (NOT the old `restricted` default); visibility is still never *chosen* via MCP in v0.
 //   • update → services/version-repo.ts `appendVersionTx` (per-doc advisory lock +
 //     UNIQUE(doc_id, version) backstop = C-011) + the doc lookup + resolveAccess role gate
 //     + the same re-anchor seam routes/versions.ts fires (C-012).
@@ -19,7 +20,6 @@ import type { DB } from "../../db/client";
 import { publishDoc } from "../../publish/service";
 import { createDocRepo } from "../../publish/repo";
 import { createPublishProjectResolver } from "../../workspace/repo";
-import { readWorkspaceDefaultAccess } from "../../workspace/settings";
 import { appendVersionTx, appendVersionTxPinned, VersionConflictError } from "../../services/version-repo";
 import { docVersions } from "../../db/schema";
 import { desc } from "drizzle-orm";
@@ -48,7 +48,6 @@ import type { ToolDef } from "../server";
 export function createMcpCreateDocumentPort(db: DB, appUrl: string): CreateDocumentPort {
   const repo = createDocRepo(db);
   const resolveProjectId = createPublishProjectResolver(db);
-  const resolveDefaultAccess = (workspaceId: string) => readWorkspaceDefaultAccess(db, workspaceId);
   return async (input) => {
     const res = await publishDoc(
       {
@@ -59,10 +58,12 @@ export function createMcpCreateDocumentPort(db: DB, appUrl: string): CreateDocum
         workspaceId: input.workspaceId,
         projectId: input.projectId,
       },
-      { repo, resolveProjectId, resolveDefaultAccess },
+      { repo, resolveProjectId },
     );
-    // shared-workspace model (C-006): the doc INHERITS the token's workspace default access
-    // (anyone_in_workspace by default) — visibility is never *chosen* via MCP in v0.
+    // doc-access-two-axis S-002 (C-007): the doc's share_links row is created by the
+    // publish repo with the FIXED new-doc default (workspace_role = commenter, link_role =
+    // null) — the SAME default as the web publish surface, not the old `restricted`.
+    // Visibility is never *chosen* via MCP in v0.
     // Return the agent-facing shape (AS-003.T4). The publish service returns a RELATIVE
     // `/d/:slug`; the agent has no origin context, so make it ABSOLUTE against APP_URL — else
     // the returned link is unusable outside the browser (e.g. `/d/foo` with no domain).

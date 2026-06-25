@@ -5,7 +5,7 @@
 // (now workspace-scoped), and the browse-context repo (isInvited + docsInProject).
 
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { annotations, docs, docVersions, projects, user } from "../db/schema";
+import { annotations, docs, docVersions, projects, user, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
 import { ensureDefaultProject, ProjectRejected, type ProjectRepo, type ProjectRow } from "./projects";
 import { activeRolesFor } from "../sharing/doc-member-repo";
@@ -129,7 +129,20 @@ export interface ProjectDocRow {
   title: string;
   kind: "html" | "markdown" | "image";
   ownerId: string | null;
+  // doc-access-two-axis S-004 / C-006: the raw WORKSPACE axis (share_links.workspace_role IS
+  // NOT NULL) — the ONE field canBrowseDoc keys workspace visibility on (the link axis is
+  // irrelevant). Kept distinct from the derived `generalAccess` display level, which the link
+  // axis dominates (and so cannot be used for the workspace-visibility decision — AS-013).
+  workspaceShared: boolean;
+  // The derived legacy level — for DISPLAY only (status badge + access summary, AS-026), never
+  // the browse decision. C-008: derived on read, never stored.
   generalAccess: "restricted" | "anyone_in_workspace" | "anyone_with_link";
+  // doc-access-two-axis S-006 / C-008: the RAW two-axis state (share_links.workspace_role /
+  // link_role, null = axis off) carried ALONGSIDE the lossy `generalAccess` summary, so a richer
+  // browse consumer (the Share dialog reached from a list row) can tell workspace-shared from
+  // link-only — the distinction the 3-value summary drops once the link axis is on (AS-027).
+  workspaceRole: "viewer" | "commenter" | "editor" | null;
+  linkRole: "viewer" | "commenter" | "editor" | null;
   // Browse columns (workspace-project dashboard rows, Anchord-Design columnar layout).
   // Derived in one query via correlated subqueries — no N+1. Honest values: latestVersion is
   // the doc's highest published version number (0 if none yet); annotationCount counts the
@@ -213,7 +226,11 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
           title: docs.title,
           kind: docs.kind,
           ownerId: docs.ownerId,
-          generalAccess: docs.generalAccess,
+          workspaceShared: workspaceSharedSql(),
+          generalAccess: derivedLevelSql(),
+          // S-006 / C-008: the raw axes alongside the derived summary (AS-027).
+          workspaceRole: shareLinks.workspaceRole,
+          linkRole: shareLinks.linkRole,
           latestVersion,
           annotationCount,
           ownerName: user.name,
@@ -222,6 +239,7 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
         })
         .from(docs)
         .leftJoin(user, eq(user.id, docs.ownerId))
+        .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
         .where(eq(docs.projectId, projectId));
       // Drizzle returns the count/max as strings from postgres.js — coerce to number.
       return rows.map((r) => ({
@@ -253,7 +271,11 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
           title: docs.title,
           kind: docs.kind,
           ownerId: docs.ownerId,
-          generalAccess: docs.generalAccess,
+          workspaceShared: workspaceSharedSql(),
+          generalAccess: derivedLevelSql(),
+          // S-006 / C-008: the raw axes alongside the derived summary (AS-027).
+          workspaceRole: shareLinks.workspaceRole,
+          linkRole: shareLinks.linkRole,
           latestVersion,
           annotationCount,
           ownerName: user.name,
@@ -268,6 +290,7 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
           and(eq(projects.id, docs.projectId), isNull(projects.archivedAt)),
         )
         .leftJoin(user, eq(user.id, docs.ownerId))
+        .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
         .where(eq(projects.workspaceId, workspaceId))
         .orderBy(sql`${docs.updatedAt} desc`, sql`${docs.id} desc`);
       return rows.map((r) => ({
@@ -277,21 +300,24 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
       }));
     },
     async countDocsByProject(workspaceId, userId): Promise<Map<string, number>> {
-      // ONE GROUP BY (no per-project loop): count each project's docs that pass the SAME
-      // access predicate as canBrowseDoc (C-003) — owner OR (anyone_in_workspace AND the
-      // caller is a member of THIS workspace) OR an active doc_members invite. anyone_with_link
-      // is NOT a browse grant, so it only counts when the caller is the owner/invited. The
-      // predicate is inlined in SQL with BOUND params (mirrors search-repo's accessible CTE), so
-      // an out-of-access doc is never counted — existence-hiding holds by construction.
+      // ONE GROUP BY (no per-project loop): count each project's docs that pass the ONE shared
+      // C-006 workspace-visibility predicate (canBrowseDoc) — owner OR active doc_members invite
+      // OR (the WORKSPACE axis is on AND the caller is a member of THIS workspace). The LINK axis
+      // is irrelevant: a link-only doc is NOT counted unless the caller is the owner/invited (AS-016).
+      // doc-access-two-axis S-004: the workspace grant is `share_links.workspace_role IS NOT NULL`
+      // (left-join the doc's share_links row and key on that). The predicate is inlined in SQL with
+      // BOUND params (mirrors search-repo's accessible CTE), so an out-of-access doc is never
+      // counted — the count and the listed rows come from the SAME filtered set (existence-hiding).
       const rows = await db.execute(sql`
         select d.project_id as project_id, count(*)::int as n
         from docs d
         join projects p on p.id = d.project_id
+        left join share_links sl on sl.doc_id = d.id
         where p.workspace_id = ${workspaceId}
           and (
             d.owner_id = ${userId}
             or (
-              d.general_access = 'anyone_in_workspace'
+              sl.workspace_role is not null
               and exists (
                 select 1 from workspace_members wm
                 where wm.user_id = ${userId}
@@ -349,4 +375,25 @@ export function createPublishProjectResolver(db: DB) {
     );
     return def.id;
   };
+}
+
+// doc-access-two-axis S-004 / C-006: the raw WORKSPACE axis — the doc is shared with its own
+// workspace iff share_links.workspace_role IS NOT NULL. This is the field canBrowseDoc keys
+// workspace visibility on; the route applies the membership/owner/invite parts of the rule. A
+// doc with no share_links row (left join → NULL) is NOT workspace-shared. The link axis is
+// deliberately NOT consulted here.
+function workspaceSharedSql() {
+  return sql<boolean>`(${shareLinks.workspaceRole} is not null)`;
+}
+
+// doc-access-two-axis S-001 / C-008: the dropped docs.general_access level is DERIVED in SQL
+// from the two share_links axes (deriveLevel's logic, expressed as a CASE) for DISPLAY only —
+// the status badge + access summary (AS-026). It is NEVER the browse decision (use
+// workspaceSharedSql for that): the link axis dominates this 3-value summary, so a
+// workspace+link doc reads as anyone_with_link here even though it IS workspace-shared.
+function derivedLevelSql() {
+  return sql<"restricted" | "anyone_in_workspace" | "anyone_with_link">`(case
+    when ${shareLinks.linkRole} is not null then 'anyone_with_link'
+    when ${shareLinks.workspaceRole} is not null then 'anyone_in_workspace'
+    else 'restricted' end)`;
 }

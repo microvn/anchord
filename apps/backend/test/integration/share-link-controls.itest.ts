@@ -16,7 +16,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { docs, shareLinks } from "../../src/db/schema";
+import { shareLinks } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import { createCapabilityTokenRepo } from "../../src/sharing/share-repo";
@@ -89,10 +89,9 @@ describe.skipIf(!RUN)("capability-link controls enforced at redeem (real Postgre
       contentHash: `hash-${opts.slug}`,
     });
     const token = mintCapabilityToken();
-    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.id, d.id));
     await h.db.insert(shareLinks).values({
       docId: d.id,
-      role: "commenter",
+      linkRole: "commenter",
       capabilityToken: token,
       viewLimit: opts.viewLimit ?? null,
     });

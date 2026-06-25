@@ -47,7 +47,8 @@ import type { VersionRepo } from "../services/version";
 import { createVersionRepo } from "../services/version-repo";
 import { emitActivity, type ActivityEmitDeps, SYSTEM_ACTOR_NAME } from "../activity/emit";
 import { createActivityRepo, type ActivityRepo } from "../activity/repo";
-import { docs, docVersions } from "../db/schema";
+import { docs, docVersions, shareLinks } from "../db/schema";
+import { deriveLevel } from "../sharing/derive-level";
 import type { DB } from "../db/client";
 import type { GeneralAccessLevel } from "../sharing/access";
 
@@ -86,16 +87,22 @@ export interface DocLookupRepo {
 export function createDocLookupRepo(db: DB): DocLookupRepo {
   return {
     async findDocBySlug(slug) {
+      // doc-access-two-axis S-001 stopgap: docs.general_access is dropped — derive the
+      // legacy level from the share_links axes (leftJoin so a doc with no row → restricted).
       const [row] = await db
         .select({
           id: docs.id,
           title: docs.title,
           kind: docs.kind,
-          generalAccess: docs.generalAccess,
+          workspaceRole: shareLinks.workspaceRole,
+          linkRole: shareLinks.linkRole,
         })
         .from(docs)
+        .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
         .where(eq(docs.slug, slug));
-      return row ?? null;
+      if (!row) return null;
+      const { workspaceRole, linkRole, ...rest } = row;
+      return { ...rest, generalAccess: deriveLevel(workspaceRole, linkRole) };
     },
     async getVersionContent(docId, version) {
       const [row] = await db
@@ -509,7 +516,7 @@ export function versionsRoutes(deps: VersionsRoutesDeps) {
       .get(
         "/api/w/:workspaceId/docs/:slug/versions",
         async ({ params, actor, query }) => {
-          const doc = await loadVisibleDoc(params.slug, actor.userId); // viewer+ via canViewDoc
+          const doc = await loadVisibleDoc(params.slug, actor.userId); // viewer+ via resolveAccess
           const page = paginationQuery().parse(query) as PaginationParams;
           const all = await listVersionHistory(doc.id, versionRepo);
           const total = all.length;

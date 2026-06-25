@@ -14,8 +14,8 @@
 //
 // Usage in a read-route:
 //   const doc = await repo.findDoc(slug);                 // null if missing
-//   const access = canViewDoc({ docId, generalAccess, viewer, deps });
-//   const readable = enforceReadAccess({ doc, allowed: access.allowed });
+//   const access = await resolveAccess(doc.id, viewer);   // the single authoritative gate
+//   const readable = enforceReadAccess({ doc, allowed: access.canView });
 //   // ^ throws NotFoundError (404/NOT_FOUND) for BOTH missing AND denied;
 //   //   returns the doc only when it exists AND access is allowed.
 
@@ -32,7 +32,7 @@ export const READ_NOT_FOUND_MESSAGE = "Not found";
 export interface EnforceReadAccessArgs<T> {
   /** The doc lookup result: the doc object, or null/undefined if it does not exist. */
   doc: T | null | undefined;
-  /** The access decision for this caller (e.g. `canViewDoc(...).allowed`). */
+  /** The access decision for this caller (e.g. `resolveAccess(...).canView`). */
   allowed: boolean;
 }
 

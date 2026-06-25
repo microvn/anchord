@@ -16,6 +16,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { docs, docMembers, shareLinks, user } from "../../src/db/schema";
+import { deriveLevel } from "../../src/sharing/share";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import {
@@ -34,6 +35,18 @@ const asMember: WorkspaceRoleResolver = async () => "member";
 let WS = "";
 let WS2 = "";
 const asOwner = async (): Promise<Role | null> => "owner";
+// doc-access-two-axis S-004 / C-010: the share routes' read gate routes through the ONE
+// authoritative resolveAccess (canViewDoc retired). For a logged-in owner this admits the doc
+// iff a role resolves — faithfully mirrors production (no permissive isInvited/isWorkspaceMember
+// stub). Built over the same asOwner resolver these tests already inject.
+const itestResolveAccess = async (
+  _docId: string,
+  viewer: { kind: "anon" } | { kind: "user"; userId: string },
+): Promise<{ role: Role | null; canView: boolean }> => {
+  if (viewer.kind === "anon") return { role: null, canView: false };
+  const role = await asOwner();
+  return { role, canView: role !== null };
+};
 
 describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
   let h: MigratedDb;
@@ -58,8 +71,12 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
       contentHash: "hash-v1",
     });
     docId = created.id;
-    // anyone_with_link so the fake owner member can view (existence-hiding passes).
-    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.id, docId));
+    // anyone_with_link so the fake owner member can view (existence-hiding passes):
+    // a link axis on (link_role set) derives anyone_with_link.
+    await h.db
+      .insert(shareLinks)
+      .values({ docId, linkRole: "commenter" })
+      .onConflictDoUpdate({ target: shareLinks.docId, set: { linkRole: "commenter" } });
     ({ workspaceId: WS } = await seedWorkspace(h.db, { userId: "u_owner_itest" }));
 
     app = createApp({
@@ -69,7 +86,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
         resolveSession: owner,
         resolveWorkspaceRole: asMember,
         resolveDocRole: asOwner, // owner gate; the owner SOURCE is the auth seam.
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        resolveAccess: itestResolveAccess,
       },
     });
   });
@@ -88,27 +105,29 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     });
   }
 
-  test("PUT access → docs.general_access updated + share_links row persisted (role + guest)", async () => {
+  test("PUT access → both axes persisted on the share_links row; derived level returned", async () => {
     const res = await app.handle(
       req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter", guestCommenting: true }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter" }),
       }),
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.data).toEqual({
+      workspaceRole: null,
+      linkRole: "commenter",
       level: "anyone_with_link",
-      role: "commenter",
-      guestCommenting: true,
       editorsCanShare: true, // default on (C-015), no toggle in this request
+      capabilityUrl: json.data.capabilityUrl, // link axis on → a /s/<token> link exists
     });
+    expect(json.data.capabilityUrl).toMatch(/^\/s\//);
 
-    const [doc] = await h.db.select().from(docs).where(eq(docs.id, docId));
-    expect(doc?.generalAccess).toBe("anyone_with_link");
     const [link] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, docId));
-    expect(link?.role).toBe("commenter");
-    expect(link?.guestCommenting).toBe(true);
+    expect(link?.linkRole).toBe("commenter");
+    expect(link?.workspaceRole).toBeNull();
+    // The derived legacy level off the stored axes.
+    expect(deriveLevel(link!.workspaceRole, link!.linkRole)).toBe("anyone_with_link");
     expect(link?.editorsCanShare).toBe(true); // default-on column persisted
   });
 
@@ -116,7 +135,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     const res = await app.handle(
       req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: false }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter", editorsCanShare: false }),
       }),
     );
     expect(res.status).toBe(200);
@@ -135,7 +154,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     await app.handle(
       req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: true }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter", editorsCanShare: true }),
       }),
     );
   });
@@ -219,7 +238,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     await app.handle(
       req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter", editorsCanShare: true }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter", editorsCanShare: true }),
       }),
     );
 
@@ -237,14 +256,14 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
         resolveWorkspaceRole: asMember,
         resolveDocRole: realResolve,
         loadShareConfig: createLoadShareConfig(h.db),
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        resolveAccess: itestResolveAccess,
       },
     });
 
     const res = await editorApp.handle(
       req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "editor" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "editor" }),
       }),
     );
     expect(res.status).toBe(200); // editor manages sharing (toggle on, real role resolution)
@@ -253,7 +272,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
     const toggleRes = await editorApp.handle(
       req(`/api/w/${WS}/docs/${slug}/access`, {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "editor", editorsCanShare: false }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "editor", editorsCanShare: false }),
       }),
     );
     expect(toggleRes.status).toBe(403);
@@ -276,7 +295,9 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
       const d = json.data;
       expect(d.level).toBe("anyone_with_link");
       expect(d.role).toBe("editor");
-      expect(typeof d.guestCommenting).toBe("boolean");
+      // doc-access-two-axis S-001: the read carries both raw axes — link on at editor.
+      expect(d.linkRole).toBe("editor");
+      expect(d.workspaceRole).toBeNull();
       expect(d.editorsCanShare).toBe(true);
       // The link controls: password is a boolean only; viewLimit/viewCount echoed.
       expect(d.link.hasPassword).toBe(true);
@@ -307,7 +328,7 @@ describe.skipIf(!RUN)("sharing-permissions routes (real Postgres)", () => {
         resolveWorkspaceRole: asMember,
         resolveDocRole: async () => "commenter",
         loadShareConfig: createLoadShareConfig(h.db),
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        resolveAccess: itestResolveAccess,
       },
     });
     const res = await commenterApp.handle(
@@ -346,8 +367,7 @@ describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner
       ownerId: "u_A_owner",
     });
     ownerDocId = created.id;
-    // restricted: no link role → A's role comes purely from the owner source.
-    await h.db.update(docs).set({ generalAccess: "restricted" }).where(eq(docs.id, ownerDocId));
+    // restricted: both axes off (no share_links row) → A's role comes purely from the owner source.
     ({ workspaceId: WS2 } = await seedWorkspace(h.db, { userId: "u_A_owner" }));
     await h.db
       .insert(schema2.workspaceMembers)
@@ -412,18 +432,19 @@ describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner
           isWorkspaceMember: () => true,
         }),
         loadShareConfig: createLoadShareConfig(h.db),
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        resolveAccess: itestResolveAccess,
       },
     });
     const res = await ownerApp.handle(
       req(`/api/w/${WS2}/docs/${ownerSlug}/access`, {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter" }),
       }),
     );
     expect(res.status).toBe(200);
-    const [doc] = await h.db.select().from(docs).where(eq(docs.id, ownerDocId));
-    expect(doc?.generalAccess).toBe("anyone_with_link"); // saved
+    const [link] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, ownerDocId));
+    expect(deriveLevel(link!.workspaceRole, link!.linkRole)).toBe("anyone_with_link"); // saved
+    expect(link?.linkRole).toBe("commenter");
   });
 
   test("AS-004 / C-004: B (viewer, not owner) CANNOT PUT access → 403", async () => {
@@ -449,13 +470,13 @@ describe.skipIf(!RUN)("auth-routes S-002 — owner role resolved from docs.owner
           isWorkspaceMember: () => true,
         }),
         loadShareConfig: createLoadShareConfig(h.db),
-        accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+        resolveAccess: itestResolveAccess,
       },
     });
     const res = await viewerApp.handle(
       req(`/api/w/${WS2}/docs/${ownerSlug}/access`, {
         method: "PUT",
-        body: JSON.stringify({ level: "restricted", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: null }),
       }),
     );
     expect(res.status).toBe(403);

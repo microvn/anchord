@@ -13,10 +13,11 @@
 // COMMENT body matches — never leaves the database: no title, no snippet, no id. This
 // is existence-hiding by construction, not a post-fetch JS filter over leaked rows.
 //
-// The access predicate MIRRORS S-003's browse rule (canBrowseDoc): a doc is visible
-// to user X iff X owns it, OR general_access = 'anyone_in_workspace' AND X is a
-// workspace member, OR X is individually invited (an active doc_members row).
-// `anyone_with_link` is NOT a search/browse grant (S-003 decided this — match it).
+// The access predicate is the ONE shared C-006 workspace-visibility rule (canBrowseDoc):
+// a doc is visible to user X iff X owns it, OR X is individually invited (active doc_members),
+// OR the doc's WORKSPACE axis is on (share_links.workspace_role IS NOT NULL) AND X is a
+// workspace member. The LINK axis is irrelevant to search visibility (doc-access-two-axis
+// S-004): a link-only doc is absent from search exactly as from the dashboard (AS-015).
 
 import { sql } from "drizzle-orm";
 import type { DB } from "../db/client";
@@ -85,14 +86,18 @@ export function createSearchRepo(db: DB): SearchRepo {
       // current version per doc (max version). LATERAL keeps it to one row per doc.
       const rows = await db.execute(sql`
         with accessible as (
-          select d.id, d.slug, d.title, d.kind, d.project_id, d.owner_id, d.general_access
+          select d.id, d.slug, d.title, d.kind, d.project_id, d.owner_id
           from docs d
           join projects p on p.id = d.project_id
+          -- doc-access-two-axis S-004 / C-006: the workspace axis lives on share_links, not on
+          -- docs (docs.general_access is dropped). Left join so a doc with no share_links row is
+          -- simply not workspace-shared (NULL → the predicate's IS NOT NULL is false).
+          left join share_links sl on sl.doc_id = d.id
           where p.workspace_id = ${q.workspaceId}
             and (
               d.owner_id = ${q.userId}
               or (
-                d.general_access = 'anyone_in_workspace'
+                sl.workspace_role is not null
                 and exists (
                   select 1 from workspace_members wm
                   where wm.user_id = ${q.userId}

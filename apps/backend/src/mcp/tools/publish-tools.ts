@@ -12,7 +12,9 @@
 //               idempotent ledger) — C-012/AS-004/AS-028.
 //
 // Authorization is the per-RESOURCE gate INSIDE the tool, AFTER the scope check (C-001):
-//   • create: the doc lands in the token-owner's workspace, restricted (C-006); the
+//   • create: the doc lands in the token-owner's workspace with the new-doc access
+//             default (workspace_role=commenter, link_role=null — doc-access-two-axis
+//             S-002/C-007, set by the publish repo); the
 //             project resolver rejects a foreign/invalid projectId (AS-019).
 //   • update: editor+ rights on the target doc via resolveAccess (AS-004/AS-005); a
 //             missing doc or too-low role is rejected with a create_document hint.
@@ -44,11 +46,13 @@ export interface CreateDocumentResult {
 
 /**
  * The create port — an API-surface adapter over publish/service.ts `publishDoc`. It
- * MUST: create the doc in `workspaceId` as the token-owner (`ownerId`), general_access
- * = restricted (the docs.general_access column default — C-006), version 1 with an
- * immutable slug; resolve placement (explicit writable projectId honored, foreign/invalid
- * rejected, missing → owner's default project — C-006); and return `{ docId, slug, url }`.
- * A foreign/invalid projectId MUST throw (never silently default — AS-019).
+ * MUST: create the doc in `workspaceId` as the token-owner (`ownerId`) with the new-doc
+ * access default (workspace_role = commenter, link_role = null — doc-access-two-axis
+ * S-002 / C-007, applied by the publish repo, identical to the web surface), version 1
+ * with an immutable slug; resolve placement (explicit writable projectId honored,
+ * foreign/invalid rejected, missing → owner's default project — C-006); and return
+ * `{ docId, slug, url }`. A foreign/invalid projectId MUST throw (never silently default
+ * — AS-019).
  */
 export type CreateDocumentPort = (input: {
   workspaceId: string;
@@ -79,7 +83,8 @@ function optionalString(v: unknown, field: string): string | undefined {
 /**
  * Build the `anchord_create_document` tool. The handler reads identity from the resolved
  * ToolContext (userId + workspaceId derived from the token, never from params — C-001) and
- * never lets the caller set visibility (C-006: docs default to restricted).
+ * never lets the caller set visibility (the new-doc default — workspace_role=commenter,
+ * link_role=null — is applied by the publish repo: doc-access-two-axis S-002/C-007).
  */
 export function createDocumentHandler(
   port: CreateDocumentPort,

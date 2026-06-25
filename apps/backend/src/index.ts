@@ -146,13 +146,10 @@ const mcpRateLimiter = new McpRateLimiter();
 // permissive ports no longer decide anything on the doc read / annotation / version
 // paths — closing the cross-tenant bypass the stubs left behind (F1).
 //
-// The sharing (management) routes keep their own structural existence-hiding `canViewDoc`
-// ports for now (they sit behind requireWorkspaceMember + the owner/admin manage gate, so
-// they are not part of S-001's doc-centric READ list); a local accessDeps is built there.
-const sharingAccessDeps = {
-  isInvited: () => true,
-  isWorkspaceMember: () => true,
-};
+// doc-access-two-axis S-004 / C-010: the sharing (management) routes' read gate now routes
+// through the SAME authoritative `sharedResolveAccess` as every doc-read route — the old
+// permissive `canViewDoc` stub (isInvited/isWorkspaceMember → true) is GONE. One access
+// decision, no parallel path that could disagree with the resolver.
 
 // SHARING SEAMS CLOSED (sharing-permissions). The interim placeholders the earlier
 // route clusters used (resolveDocRole → "owner"/"editor"; loadShareConfig → OFF) are
@@ -477,7 +474,7 @@ const app = createApp({
     // Manage-sharing gate (C-007) reads editors_can_share from here (reuses the same
     // concrete loader as annotation-core; the superset return shape covers both).
     loadShareConfig: concreteLoadShareConfig,
-    accessDeps: sharingAccessDeps,
+    resolveAccess: sharedResolveAccess,
     // workspace-project S-002 (AS-012/C-007): the workspace-admin override. When a doc's
     // owner is REMOVED from the workspace they can no longer manage its sharing; the admin
     // becomes the fallback manager and can change the doc's general access.

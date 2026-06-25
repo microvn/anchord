@@ -32,6 +32,7 @@ import {
   createIsDocOwner,
 } from "../../src/sharing/resolve-doc-role-repo";
 import { createResolveAccess } from "../../src/sharing/resolve-access";
+import { deriveLevel } from "../../src/sharing/derive-level";
 import { withMigratedDb, type MigratedDb } from "./harness";
 
 const RUN = !!process.env.RUN_INTEGRATION;
@@ -171,7 +172,7 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     }
 
     // Attach a sharing config + an annotation with a comment to the source.
-    await h.db.insert(shareLinks).values({ docId, role: "commenter", guestCommenting: true });
+    await h.db.insert(shareLinks).values({ docId, linkRole: "commenter", guestCommenting: true });
     const [an] = await h.db
       .insert(annotations)
       .values({ docId, type: "range", anchor: { block_id: "b1", text_snippet: "x" } })
@@ -212,7 +213,7 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     const annAfter = await h.db.select().from(annotations).where(eq(annotations.docId, docId));
     expect(annAfter).toHaveLength(1);
     const [link] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, docId));
-    expect(link!.role).toBe("commenter");
+    expect(link!.linkRole).toBe("commenter");
     expect(link!.guestCommenting).toBe(true);
   });
 
@@ -232,8 +233,16 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     expect(copyDocRow!.projectId).toBe(paymentsId);
     expect(copyDocRow!.ownerId).toBe(A.userId); // owner = the copier
     // shared-workspace model (C-008): a copy inherits the target workspace's defaultAccess
-    // (anyone_in_workspace), like a fresh publish — NOT the old hard `restricted`.
-    expect(copyDocRow!.generalAccess).toBe("anyone_in_workspace");
+    // (anyone_in_workspace), like a fresh publish — NOT the old hard `restricted`. Access now
+    // lives on the share_links row as the two axes; anyone_in_workspace = workspace axis on,
+    // link axis off (deriveLevel).
+    const [copyShare] = await h.db
+      .select({ workspaceRole: shareLinks.workspaceRole, linkRole: shareLinks.linkRole })
+      .from(shareLinks)
+      .where(eq(shareLinks.docId, copyId));
+    expect(deriveLevel(copyShare?.workspaceRole ?? null, copyShare?.linkRole ?? null)).toBe(
+      "anyone_in_workspace",
+    );
     expect(copyDocRow!.title).toBe("Billing Spec"); // source title kept
 
     // Exactly ONE version, and its content = the source's CURRENT (v3) content.

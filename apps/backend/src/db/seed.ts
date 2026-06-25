@@ -136,15 +136,17 @@ async function main() {
     .limit(1);
   const projectId = defaultProject!.id;
 
-  // 3. Docs. Each is anyone_with_link · commenter so a no-account visitor can view AND comment
-  //    via the /s/<token> capability link (printed below).
+  // 3. Docs. doc-access-two-axis S-001: access lives on the share_links axes (the
+  //    docs.general_access column is dropped). Each seed doc sets BOTH axes explicitly:
+  //    workspace_role=commenter (shared with the workspace) AND link_role=commenter so a
+  //    no-account visitor can view AND comment via the /s/<token> capability link (printed below).
   const hash = (s: string) => new Bun.CryptoHasher("sha256").update(s).digest("hex");
 
   const seedDoc = async (title: string, slug: string, kind: "markdown" | "html", versions: string[]) => {
     let [doc] = await db.select().from(docsTable).where(eq(docsTable.slug, slug));
     if (!doc) {
       [doc] = await db.insert(docsTable)
-        .values({ slug, title, kind, ownerId: demo.id, projectId, generalAccess: "anyone_with_link" })
+        .values({ slug, title, kind, ownerId: demo.id, projectId })
         .returning();
     }
     const rows = await db.select().from(docVersions).where(eq(docVersions.docId, doc!.id));
@@ -156,9 +158,9 @@ async function main() {
     }
     const [link] = await db.select().from(shareLinks).where(eq(shareLinks.docId, doc!.id));
     if (!link) {
-      await db.insert(shareLinks).values({ docId: doc!.id, role: "commenter", guestCommenting: true, capabilityToken: mintCapabilityToken() });
+      await db.insert(shareLinks).values({ docId: doc!.id, workspaceRole: "commenter", linkRole: "commenter", capabilityToken: mintCapabilityToken() });
     } else {
-      await db.update(shareLinks).set({ role: "commenter", guestCommenting: true, capabilityToken: link.capabilityToken ?? mintCapabilityToken() }).where(eq(shareLinks.docId, doc!.id));
+      await db.update(shareLinks).set({ workspaceRole: "commenter", linkRole: "commenter", capabilityToken: link.capabilityToken ?? mintCapabilityToken() }).where(eq(shareLinks.docId, doc!.id));
     }
     return doc!.id;
   };

@@ -32,6 +32,8 @@ import type { ToolContext, ToolDef } from "../server";
 import { can, type Role } from "../../sharing/roles";
 import { McpToolError } from "./publish-tools";
 import { addressableBlocks, type AddressableBlock } from "../../render/markdown";
+import type { GeneralAccessLevel, AxisRole } from "../../sharing/share";
+import { deriveLevel } from "../../sharing/derive-level";
 
 // ── shared pagination (page + limit — AS-006.T2) ────────────────────────────
 
@@ -74,6 +76,19 @@ export interface ReadDocumentResult {
   version: number;
   content: string;
   /**
+   * doc-access-two-axis S-006 / C-008: the DERIVED legacy general-access summary (deriveLevel),
+   * never stored. LOSSY — workspace-shared and link-only both collapse to "anyone_with_link"
+   * once the link axis is on, which is why the raw axes accompany it below (AS-021/022/027).
+   */
+  generalAccess: GeneralAccessLevel;
+  /**
+   * doc-access-two-axis S-006 / C-008: the RAW two-axis state (null = that axis is off), carried
+   * ALONGSIDE the lossy `generalAccess` so an MCP client can tell a workspace-shared doc from a
+   * link-only one — the distinction the 3-value summary drops (AS-027).
+   */
+  workspaceRole: AxisRole;
+  linkRole: AxisRole;
+  /**
    * The doc's addressable blocks (mcp-patch-document S-001), each `{ blockId, sourceText? }` in
    * document order — the agent's edit-addressing surface for `anchord_patch_document`. `sourceText`
    * is the block's SOURCE-LEVEL string (markdown source for md, innerHTML for html); it is OMITTED
@@ -97,6 +112,14 @@ export interface ResolvedReadDoc {
   workspaceId: string;
   /** The token-owner's effective role on the doc (resolveAccess), or null when none grants one. */
   role: Role | null;
+  /**
+   * doc-access-two-axis S-006 / C-008: the doc's RAW two-axis state (null = axis off), read from
+   * share_links. The handler derives `generalAccess` (deriveLevel) from these and returns BOTH on
+   * the read result, so the lossy summary keeps simple displays working while the raw axes let a
+   * richer client distinguish workspace-shared from link-only (AS-021/022/027).
+   */
+  workspaceRole: AxisRole;
+  linkRole: AxisRole;
 }
 
 export interface ReadPorts {
@@ -207,6 +230,13 @@ export function readDocumentHandler(
       kind: doc.kind,
       version: doc.version,
       content: doc.content,
+      // doc-access-two-axis S-006 / C-008: the derived summary (deriveLevel — never stored) PLUS
+      // the raw axes, so the lossy "anyone_with_link" summary keeps simple displays working while
+      // the raw {workspaceRole, linkRole} let an MCP client tell workspace-shared from link-only
+      // (AS-021/022/027). Computed only AFTER the auth gate above, so an unreadable doc leaks none.
+      generalAccess: deriveLevel(doc.workspaceRole, doc.linkRole),
+      workspaceRole: doc.workspaceRole,
+      linkRole: doc.linkRole,
       // Additive (S-001): the addressable blocks for patch-addressing. Derived purely from the
       // current version's content + kind; a non-patchable block omits sourceText (AS-023). Computed
       // ONLY after the auth gate above, so an unreadable doc leaks no block data (AS-004).

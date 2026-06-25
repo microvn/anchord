@@ -158,7 +158,8 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       title: "Payment Spec",
       projectId: billingId,
     });
-    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, payId));
+    // anyone_in_workspace = workspace axis on, link off (access lives on the share_links row).
+    await h.db.insert(schema.shareLinks).values({ docId: payId, workspaceRole: "commenter" });
 
     // Doc "Secret Memo": RESTRICTED, X NOT invited; "refund" ONLY in a COMMENT.
     const secretId = await publish(A.cookie, {
@@ -175,7 +176,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       title: "Invoice Guide",
       projectId: billingId,
     });
-    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, invId));
+    await h.db.insert(schema.shareLinks).values({ docId: invId, workspaceRole: "commenter" });
 
     // Doc "Shared Notes" (anyone_in_workspace): "refund" ONLY in a COMMENT → comment match
     // on an ACCESSIBLE doc (C-006 comment source surfaces a doc the user CAN access).
@@ -184,7 +185,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       title: "Shared Notes",
       projectId: billingId,
     });
-    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, notesId));
+    await h.db.insert(schema.shareLinks).values({ docId: notesId, workspaceRole: "commenter" });
     await addComment(h.db, notesId, "the refund timeline was agreed");
   });
 
@@ -261,7 +262,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       content: "# Delete Search\n\nnothing matchable in content here",
       title: "Delete Search Doc",
     });
-    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, docId));
+    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" });
     const [an] = await h.db
       .insert(annotations)
       .values({ docId, type: "doc", anchor: {} })
@@ -288,7 +289,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       content: "# Edit Saga\n\nThe word zephyralpha appears in version one only.",
       title: "Edit Saga",
     });
-    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, docId));
+    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" });
 
     // Sanity: v1 token is findable while v1 is current.
     let r = await searchAs(X.cookie, "zephyralpha");
@@ -315,7 +316,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       content: "# Restore Saga\n\nThe token gammafox is in version one.",
       title: "Restore Saga",
     });
-    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, docId));
+    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" });
 
     const repo = createVersionRepo(h.db);
     // v2 replaces the content (gammafox no longer current).

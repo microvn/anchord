@@ -14,7 +14,8 @@
 //         `hasPassword` (derived from password_hash != null) is exposed; the hash is
 //         not part of the repo's read shape at all.
 
-import type { GeneralAccessLevel, ShareRole } from "./share";
+import type { GeneralAccessLevel, ShareRole, AxisRole } from "./share";
+import { deriveLevel } from "./derive-level";
 import type { Role } from "./roles";
 
 /** One row of the people list — an invited member (active) or a pending invite. */
@@ -41,7 +42,12 @@ export interface ShareLinkState {
 
 /** The full share state the GET …/share route returns (AS-025). */
 export interface ShareState {
+  /** doc-access-two-axis S-001: the two raw axes the dialog renders as separate controls. */
+  workspaceRole: AxisRole;
+  linkRole: AxisRole;
+  /** The DERIVED legacy summary (deriveLevel) — kept for simpler displays. */
   level: GeneralAccessLevel;
+  /** @deprecated legacy single role — mirrors the link axis until callers move to linkRole. */
   role: ShareRole;
   editorsCanShare: boolean;
   people: SharePerson[];
@@ -68,9 +74,9 @@ export interface ShareState {
  * never part of this shape, so it cannot leak into the response (AS-026 / C-016).
  */
 export interface ShareStateRow {
-  level: GeneralAccessLevel;
-  /** From the share_links row; defaults to "viewer" when no link row exists yet. */
-  role: ShareRole;
+  /** doc-access-two-axis S-001: the two raw axes read straight off the share_links row. */
+  workspaceRole: AxisRole;
+  linkRole: AxisRole;
   editorsCanShare: boolean;
   people: SharePerson[];
   link: {
@@ -107,8 +113,12 @@ export async function readShareState(
 ): Promise<ShareState> {
   const row = await repo.readShareState(docId);
   return {
-    level: row.level,
-    role: row.role,
+    workspaceRole: row.workspaceRole,
+    linkRole: row.linkRole,
+    level: deriveLevel(row.workspaceRole, row.linkRole),
+    // Legacy single role mirrors the link axis (the old `role` was the anyone-with-link role),
+    // defaulting to "viewer" when the link axis is off — kept until callers move to linkRole.
+    role: row.linkRole ?? "viewer",
     editorsCanShare: row.editorsCanShare,
     people: row.people,
     viewerRole,

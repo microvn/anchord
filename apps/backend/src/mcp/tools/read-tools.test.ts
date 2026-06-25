@@ -58,6 +58,9 @@ interface StoreDoc extends DocumentSummary {
   content: string;
   /** matches a search for this term (simulates the SQL FTS match). */
   searchTerm?: string;
+  /** doc-access-two-axis S-006: the doc's raw two-axis state (default both off → restricted). */
+  workspaceRole?: "viewer" | "commenter" | "editor" | null;
+  linkRole?: "viewer" | "commenter" | "editor" | null;
 }
 
 function fakeRead(docs: StoreDoc[]): { ports: ReadPorts; calls: { listWs: string[]; searchWs: string[] } } {
@@ -92,6 +95,9 @@ function fakeRead(docs: StoreDoc[]): { ports: ReadPorts; calls: { listWs: string
         content: d.content,
         workspaceId: d.workspaceId, // the doc's OWN workspace (gated against the token's)
         role: d.role, // resolveAccess role against the doc's own workspace
+        // doc-access-two-axis S-006: the raw axes (default both off → restricted).
+        workspaceRole: d.workspaceRole ?? null,
+        linkRole: d.linkRole ?? null,
       };
       return out;
     },
@@ -202,6 +208,25 @@ describe("anchord_list_documents", () => {
     expect(big.pagination.limit).toBe(100); // MAX_LIMIT
   });
 
+  test("AS-017: MCP browse lists a workspace-shared doc, not a link-only one, for a non-invited member", async () => {
+    // doc-access-two-axis S-004 / C-006: listAccessibleDocs uses the SAME workspace-visibility
+    // rule as the dashboard — a doc surfaces iff workspace_role IS NOT NULL (or owner/invited).
+    // The fake mirrors that SQL: a link-only doc the member is NOT invited to resolves role=null
+    // (no workspace grant) so it never lists; the workspace-shared doc does. (The concrete SQL —
+    // the `left join share_links … workspace_role is not null` predicate — is integration-only;
+    // no Docker here, so this gates the CONTRACT that MCP browse applies the C-006 rule.)
+    const store: StoreDoc[] = [
+      { docId: "d_ws", slug: "ws", title: "Workspace Doc", kind: "html", workspaceId: "W1",
+        role: "commenter", version: 1, content: "x" }, // workspace axis on → a browse grant
+      { docId: "d_link", slug: "link", title: "Link Only", kind: "html", workspaceId: "W1",
+        role: null, version: 1, content: "y" }, // workspace off + link on, not invited → no grant
+    ];
+    const { ports } = fakeRead(store);
+    const res = await listDocumentsHandler(ports)({}, ctx({ workspaceId: "W1" }));
+    expect(res.items.map((i) => i.docId)).toEqual(["d_ws"]);
+    expect(res.items.map((i) => i.docId)).not.toContain("d_link");
+  });
+
   test("AS-029: a W1 token never lists a W2 anyone_in_workspace doc", async () => {
     const { ports, calls } = fakeRead(STORE);
     const res = await listDocumentsHandler(ports)({}, ctx({ workspaceId: "W1" }));
@@ -247,6 +272,83 @@ describe("anchord_read_document", () => {
       ctx({ workspaceId: "W2" }),
     );
     expect(w2.docId).toBe("d_w2_anyone");
+  });
+});
+
+// doc-access-two-axis S-006 / C-008 — read_document carries BOTH the derived legacy
+// `generalAccess` summary AND the raw {workspaceRole, linkRole} axes, so a simple MCP display
+// keeps the summary while a richer one can tell workspace-shared from link-only (AS-021/022/027).
+describe("anchord_read_document — two-axis access on read (doc-access-two-axis S-006)", () => {
+  const TWO_AXIS: StoreDoc[] = [
+    // Doc X: workspace=commenter, link=viewer → summary "anyone_with_link", workspace-shared too.
+    {
+      docId: "d_x",
+      slug: "doc-x",
+      title: "X",
+      kind: "markdown",
+      workspaceId: "W1",
+      role: "owner",
+      version: 1,
+      content: "x",
+      workspaceRole: "commenter",
+      linkRole: "viewer",
+    },
+    // Doc Y: workspace=off, link=viewer → summary "anyone_with_link", but link-ONLY.
+    {
+      docId: "d_y",
+      slug: "doc-y",
+      title: "Y",
+      kind: "markdown",
+      workspaceId: "W1",
+      role: "viewer",
+      version: 1,
+      content: "y",
+      workspaceRole: null,
+      linkRole: "viewer",
+    },
+    // Doc W: workspace=commenter, link=off → summary "anyone_in_workspace".
+    {
+      docId: "d_w",
+      slug: "doc-w",
+      title: "W",
+      kind: "markdown",
+      workspaceId: "W1",
+      role: "owner",
+      version: 1,
+      content: "w",
+      workspaceRole: "commenter",
+      linkRole: null,
+    },
+  ];
+
+  test("AS-021: a workspace-shared, link-off doc summarizes as 'anyone_in_workspace' + carries raw axes", async () => {
+    const { ports } = fakeRead(TWO_AXIS);
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_w" }, ctx());
+    expect(res.generalAccess).toBe("anyone_in_workspace");
+    expect(res.workspaceRole).toBe("commenter");
+    expect(res.linkRole).toBeNull();
+  });
+
+  test("AS-022: a link-on doc summarizes as 'anyone_with_link' + carries raw axes", async () => {
+    const { ports } = fakeRead(TWO_AXIS);
+    const res = await readDocumentHandler(ports)({ idOrSlug: "d_x" }, ctx());
+    expect(res.generalAccess).toBe("anyone_with_link");
+    expect(res.workspaceRole).toBe("commenter");
+    expect(res.linkRole).toBe("viewer");
+  });
+
+  test("AS-027: two docs both summarize 'anyone_with_link' but raw axes tell workspace-shared from link-only", async () => {
+    const { ports } = fakeRead(TWO_AXIS);
+    const x = await readDocumentHandler(ports)({ idOrSlug: "d_x" }, ctx());
+    const y = await readDocumentHandler(ports)({ idOrSlug: "d_y" }, ctx());
+
+    // Same lossy summary...
+    expect(x.generalAccess).toBe("anyone_with_link");
+    expect(y.generalAccess).toBe("anyone_with_link");
+    // ...distinguished only by the raw axes (C-008): X is workspace-shared, Y is link-only.
+    expect(x.workspaceRole).toBe("commenter");
+    expect(y.workspaceRole).toBeNull();
+    expect(x.workspaceRole).not.toBe(y.workspaceRole);
   });
 });
 

@@ -276,35 +276,29 @@ describe("browse access filter (workspace-project S-003, C-003/AS-006)", () => {
   });
 
   test("AS-006: owner sees their own restricted doc", async () => {
-    const doc: BrowseDoc = { id: "d1", ownerId: "u_a", generalAccess: "restricted" };
+    const doc: BrowseDoc = { id: "d1", ownerId: "u_a", workspaceShared: false };
     expect(await canBrowseDoc("u_a", doc, deps({}))).toBe(true);
   });
 
-  test("AS-006: anyone_in_workspace doc is visible to a workspace member", async () => {
-    const doc: BrowseDoc = { id: "dB", ownerId: "u_a", generalAccess: "anyone_in_workspace" };
+  test("AS-006: a workspace-shared doc is visible to a workspace member", async () => {
+    const doc: BrowseDoc = { id: "dB", ownerId: "u_a", workspaceShared: true };
     expect(await canBrowseDoc("u_x", doc, deps({ members: new Set(["u_x"]) }))).toBe(true);
   });
 
   test("AS-006: a restricted doc the viewer is NOT invited to is hidden", async () => {
-    const doc: BrowseDoc = { id: "dA", ownerId: "u_a", generalAccess: "restricted" };
+    const doc: BrowseDoc = { id: "dA", ownerId: "u_a", workspaceShared: false };
     expect(await canBrowseDoc("u_x", doc, deps({ members: new Set(["u_x"]) }))).toBe(false);
   });
 
   test("AS-006: a restricted doc the viewer IS invited to is visible", async () => {
-    const doc: BrowseDoc = { id: "dA", ownerId: "u_a", generalAccess: "restricted" };
+    const doc: BrowseDoc = { id: "dA", ownerId: "u_a", workspaceShared: false };
     expect(await canBrowseDoc("u_x", doc, deps({ invited: new Set(["dA:u_x"]) }))).toBe(true);
-  });
-
-  test("C-003: anyone_with_link is NOT a browse grant (link is for direct-link holders)", async () => {
-    const doc: BrowseDoc = { id: "dL", ownerId: "u_a", generalAccess: "anyone_with_link" };
-    // A non-owner, non-invited workspace member does NOT see a link-only doc in browse.
-    expect(await canBrowseDoc("u_x", doc, deps({ members: new Set(["u_x"]) }))).toBe(false);
   });
 
   test("AS-006: filterBrowsableDocs drops the out-of-access doc (existence-hiding)", async () => {
     const docs: BrowseDoc[] = [
-      { id: "dA", ownerId: "u_a", generalAccess: "restricted" },
-      { id: "dB", ownerId: "u_a", generalAccess: "anyone_in_workspace" },
+      { id: "dA", ownerId: "u_a", workspaceShared: false },
+      { id: "dB", ownerId: "u_a", workspaceShared: true },
     ];
     const visible = await filterBrowsableDocs("u_x", docs, deps({ members: new Set(["u_x"]) }));
     expect(visible.map((d) => d.id)).toEqual(["dB"]);
@@ -313,5 +307,51 @@ describe("browse access filter (workspace-project S-003, C-003/AS-006)", () => {
   test("AS-006: empty project → empty list (not an error)", async () => {
     const visible = await filterBrowsableDocs("u_x", [], deps({}));
     expect(visible).toEqual([]);
+  });
+});
+
+// doc-access-two-axis S-004 — the ONE shared workspace-visibility predicate (C-006). A doc is
+// visible in the workspace iff owner OR individually-invited OR `workspace_role IS NOT NULL`
+// (workspaceShared) AND a member. The LINK axis is irrelevant — keying on the raw workspace axis
+// (not the derived level, which the link axis dominates) is what makes AS-013 correct.
+describe("workspace visibility predicate (doc-access-two-axis S-004, C-006)", () => {
+  const deps = (opts: { invited?: Set<string>; members?: Set<string> }) => ({
+    isInvited: (docId: string, userId: string) => !!opts.invited?.has(`${docId}:${userId}`),
+    isWorkspaceMember: (userId: string) => !!opts.members?.has(userId),
+  });
+
+  test("AS-012: a workspace-shared doc is listed in every member's dashboard", async () => {
+    // workspace_role on (workspaceShared:true) → any workspace member sees it.
+    const doc: BrowseDoc = { id: "dWs", ownerId: "u_owner", workspaceShared: true };
+    expect(await canBrowseDoc("u_member1", doc, deps({ members: new Set(["u_member1"]) }))).toBe(true);
+    expect(await canBrowseDoc("u_member2", doc, deps({ members: new Set(["u_member2"]) }))).toBe(true);
+  });
+
+  test("AS-013: turning the link on does NOT remove a workspace-shared doc from the workspace", async () => {
+    // The predicate keys on workspaceShared ALONE; the link axis is not an input here. A doc that
+    // is workspace=commenter + link=viewer (the derived level would be anyone_with_link, link wins)
+    // is STILL workspaceShared:true → still listed for a member. This is the bug the redesign fixes.
+    const doc: BrowseDoc = { id: "dWsLink", ownerId: "u_owner", workspaceShared: true };
+    expect(await canBrowseDoc("u_member", doc, deps({ members: new Set(["u_member"]) }))).toBe(true);
+  });
+
+  test("AS-014: a link-only (workspace off) doc is hidden from a non-invited member, shown to an invited one", async () => {
+    // workspace_role null (workspaceShared:false) + link on → NOT a workspace grant.
+    const linkOnly: BrowseDoc = { id: "dLink", ownerId: "u_owner", workspaceShared: false };
+    // A workspace member who is NOT individually invited does not see it.
+    expect(await canBrowseDoc("u_member", linkOnly, deps({ members: new Set(["u_member"]) }))).toBe(false);
+    // An individually-invited member DOES see it (the invite grant, independent of either axis).
+    expect(
+      await canBrowseDoc("u_invited", linkOnly, deps({ members: new Set(["u_invited"]), invited: new Set(["dLink:u_invited"]) })),
+    ).toBe(true);
+  });
+
+  test("C-006: the link axis is irrelevant — a member of the workspace is not admitted by link alone", async () => {
+    // Even a workspace member is denied a link-only doc (only invite/owner/workspace-axis admit in browse).
+    const linkOnly: BrowseDoc = { id: "dL", ownerId: "u_owner", workspaceShared: false };
+    expect(await canBrowseDoc("u_member", linkOnly, deps({ members: new Set(["u_member"]) }))).toBe(false);
+    // A workspace-shared doc, by contrast, IS admitted — proving the decision is the workspace axis.
+    const wsShared: BrowseDoc = { id: "dW", ownerId: "u_owner", workspaceShared: true };
+    expect(await canBrowseDoc("u_member", wsShared, deps({ members: new Set(["u_member"]) }))).toBe(true);
   });
 });

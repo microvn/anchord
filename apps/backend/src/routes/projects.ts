@@ -282,9 +282,11 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       return {
         docs: pageDocs.map((v) => {
           const d = byId.get(v.id)!;
-          // status maps from general_access: a doc shared beyond "restricted" is LIVE
-          // (reachable by its audience); a restricted doc is still a private DRAFT. This is
-          // the honest published-state signal available without a separate publish flag.
+          // doc-access-two-axis S-004 / AS-026 / C-008: status + access summary derive from the
+          // TWO axes (deriveLevel, computed in SQL — no stored level). A doc shared beyond
+          // "restricted" (either axis on) is LIVE; both axes off → still a private DRAFT. The
+          // link-only doc never reaches this map at all — it was dropped by the C-006 filter
+          // above, so the listed rows and the `total` count come from the SAME filtered set.
           const status = d.generalAccess === "restricted" ? "draft" : "live";
           return {
             id: d.id,
@@ -299,6 +301,11 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
             // anyone_with_link) so the FE AccessIndicator (workspace-project-ui:S-006) can show
             // the 3-way badge — `status` collapses link vs workspace, this does not.
             generalAccess: d.generalAccess,
+            // doc-access-two-axis S-006 / C-008: the raw two-axis state alongside the lossy
+            // `generalAccess` summary, so a list row that opens the Share dialog can tell
+            // workspace-shared from link-only — the distinction the summary drops (AS-027).
+            workspaceRole: d.workspaceRole,
+            linkRole: d.linkRole,
             // S-003/AS-022: created + last-updated times so the browse can sort by Created /
             // Updated (workspace-project-browse:S-003) without a second fetch.
             createdAt: d.createdAt,
@@ -319,9 +326,10 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       const page = browsePage.parse(query) as PaginationParams;
       // ONE union pass (repo joins docs → active projects + browse columns; no per-project loop).
       const union = await ctx.workspaceDocs(ws.workspaceId);
-      // Same access filter the per-project browse uses (C-003) — applied to the WHOLE union
-      // before any paging or counting. `filterBrowsableDocs` reads only id/ownerId/generalAccess,
-      // so the WorkspaceDocRow rows pass straight through and keep their project annotation.
+      // Same access filter the per-project browse uses (C-006) — applied to the WHOLE union
+      // before any paging or counting. `filterBrowsableDocs` reads only id/ownerId/workspaceShared
+      // (the raw workspace axis), so the WorkspaceDocRow rows pass straight through and keep their
+      // project annotation.
       const visible = (await filterBrowsableDocs(actor.userId, union, {
         isInvited: (docId, userId) => ctx.isInvited(docId, userId),
         // The caller is a member of ws.workspaceId (gate proved it) and every union doc lives in
@@ -355,6 +363,9 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
           authorName: d.ownerName,
           status: d.generalAccess === "restricted" ? "draft" : "live",
           generalAccess: d.generalAccess,
+          // doc-access-two-axis S-006 / C-008: raw axes alongside the lossy summary (AS-027).
+          workspaceRole: d.workspaceRole,
+          linkRole: d.linkRole,
           createdAt: d.createdAt,
           updatedAt: d.updatedAt,
           // S-008/AS-023: each doc carries the project it belongs to (name joined in the union

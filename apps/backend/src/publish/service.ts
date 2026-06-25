@@ -13,7 +13,6 @@ import { deriveTitle } from "./title";
 import { generateSlug } from "./slug";
 import { sniffKind, validateSize, PublishRejected, type DocKind } from "./sniff";
 import { extractText } from "../render/extract-text";
-import type { GeneralAccessLevel } from "../workspace/settings";
 
 export interface CreateDocInput {
   slug: string;
@@ -45,13 +44,6 @@ export interface CreateDocInput {
    * omitted). NULL only for a session-less seed that has no project context.
    */
   projectId?: string | null;
-  /**
-   * shared-workspace model (render-publish:C-011 / sharing-permissions:C-018): the doc's initial
-   * general_access, inherited from the target workspace's settings.defaultAccess. Set by
-   * the publish service from resolveDefaultAccess when a workspace is in scope; omitted on
-   * the session-less seed path (→ the docs.general_access column default).
-   */
-  generalAccess?: GeneralAccessLevel;
 }
 
 /** Persistence port. The real implementation (repo.ts) is thin Drizzle glue. */
@@ -84,14 +76,6 @@ export interface PublishDeps {
    * The route always supplies it so a published doc always lands in a project.
    */
   resolveProjectId?: ProjectResolver;
-  /**
-   * shared-workspace model (render-publish:C-011 / mcp-roundtrip:C-006): resolves the target
-   * workspace's default doc access, which a new doc inherits as its general_access.
-   * Optional so the seed path (no workspace) can omit it → the column default. The web
-   * route and the MCP create port both supply it (reading workspaces.settings.defaultAccess,
-   * which defaults to anyone_in_workspace).
-   */
-  resolveDefaultAccess?: (workspaceId: string) => Promise<GeneralAccessLevel>;
 }
 
 export interface PublishInput {
@@ -193,14 +177,13 @@ export async function publishDoc(
     });
   }
 
-  // shared-workspace model (render-publish:C-011 / mcp-roundtrip:C-006): a new doc inherits the
-  // target workspace's default access (anyone_in_workspace by default) instead of the
-  // hard-coded restricted column default. Omitted on the seed path (no workspace).
-  let generalAccess: GeneralAccessLevel | undefined;
-  if (deps.resolveDefaultAccess && workspaceId) {
-    generalAccess = await deps.resolveDefaultAccess(workspaceId);
-  }
-
+  // doc-access-two-axis S-002 (C-007): a new doc's access config (share_links row) is
+  // created BY the repo with the fixed new-doc defaults — workspace_role = commenter,
+  // link_role = null — so a freshly published doc is shared with its workspace at the
+  // comment level and has no public link, with no sharing edit needed. The default is
+  // FIXED at publish (not inherited from a workspace setting), applied identically at
+  // every publish surface (web + MCP). The legacy general_access column is dropped, so
+  // there is no per-doc access value to plumb through here any more.
   const { id } = await deps.repo.createDocWithV1({
     slug,
     title: finalTitle,
@@ -213,8 +196,6 @@ export async function publishDoc(
     projectId: resolvedProjectId,
     // S-005: the searchable text for this version (empty string for empty content).
     extractedText,
-    // shared-workspace model: the workspace's default access (undefined on the seed path).
-    generalAccess,
   });
 
   return {

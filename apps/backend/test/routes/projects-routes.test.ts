@@ -167,13 +167,15 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     ]);
     const docA: ProjectDocRow = {
       id: "dA", slug: "doc-a", title: "Secret A", kind: "markdown",
-      ownerId: "u_a", generalAccess: "restricted",
+      ownerId: "u_a", workspaceShared: false, generalAccess: "restricted",
+      workspaceRole: null, linkRole: null,
       latestVersion: 1, annotationCount: 0, ownerName: "Alice",
       createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
     const docB: ProjectDocRow = {
       id: "dB", slug: "doc-b", title: "Shared B", kind: "markdown",
-      ownerId: "u_a", generalAccess: "anyone_in_workspace",
+      ownerId: "u_a", workspaceShared: true, generalAccess: "anyone_in_workspace",
+      workspaceRole: "commenter", linkRole: null,
       latestVersion: 3, annotationCount: 5, ownerName: "Alice",
       createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
@@ -209,7 +211,8 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     ]);
     const wsDoc: ProjectDocRow = {
       id: "dWs", slug: "doc-ws", title: "Workspace Doc", kind: "markdown",
-      ownerId: "u_a", generalAccess: "anyone_in_workspace",
+      ownerId: "u_a", workspaceShared: true, generalAccess: "anyone_in_workspace",
+      workspaceRole: "commenter", linkRole: null,
       latestVersion: 1, annotationCount: 0, ownerName: "Alice",
       createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
@@ -217,7 +220,8 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
       // owned by the caller (u_x) so it is browsable — an anyone_with_link doc is reachable by link
       // but only LISTED in browse for its owner/invitee, not for every workspace member.
       id: "dLink", slug: "doc-link", title: "Link Doc", kind: "markdown",
-      ownerId: "u_x", generalAccess: "anyone_with_link",
+      ownerId: "u_x", workspaceShared: false, generalAccess: "anyone_with_link",
+      workspaceRole: null, linkRole: "viewer",
       latestVersion: 1, annotationCount: 0, ownerName: "Xavier",
       createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
@@ -235,20 +239,78 @@ describe("/api/projects route glue (workspace-project S-003)", () => {
     expect(rowFor("dLink").status).toBe("live");
   });
 
+  test("AS-026: list payload derives status/access from the two axes; a link-only doc is in neither the rows NOR the count", async () => {
+    // doc-access-two-axis S-004: a non-invited member browses a project holding a workspace-shared
+    // doc (workspace_role on) + a link-only doc (workspace off, link on). The link-only doc must be
+    // absent from the rows AND from the total — count and rows come from the SAME filtered set.
+    const f = fakeRepo([
+      { id: "p_1", workspaceId: WS, name: "Billing", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const wsShared: ProjectDocRow = {
+      id: "dWs", slug: "doc-ws", title: "Workspace Doc", kind: "markdown",
+      ownerId: "u_a", workspaceShared: true, generalAccess: "anyone_in_workspace",
+      workspaceRole: "commenter", linkRole: null,
+      latestVersion: 2, annotationCount: 1, ownerName: "Alice",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    };
+    const linkOnly: ProjectDocRow = {
+      // workspace axis OFF, link axis ON → derived level anyone_with_link, but NOT a workspace grant.
+      // Owned by someone else and the browsing member (u_x) is NOT invited → must be hidden.
+      id: "dLink", slug: "doc-link", title: "Link Only", kind: "markdown",
+      ownerId: "u_a", workspaceShared: false, generalAccess: "anyone_with_link",
+      workspaceRole: null, linkRole: "viewer",
+      latestVersion: 1, annotationCount: 0, ownerName: "Alice",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"), updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    };
+    const ctx = fakeCtx({ docs: new Map([["p_1", [wsShared, linkOnly]]]) });
+    const app = buildApp(asUser("u_x"), f.repo, ctx);
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects/p_1/docs"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    // Rows: only the workspace-shared doc. The link-only doc leaks nowhere.
+    expect(json.data.docs.map((d: any) => d.id)).toEqual(["dWs"]);
+    // Count (total) comes from the SAME filtered set as the rows — the hidden doc is not counted.
+    expect(json.data.pagination.total).toBe(1);
+    // Status + access summary are DERIVED from the two axes (no stored level): workspace on → live.
+    expect(json.data.docs[0]).toMatchObject({ status: "live", generalAccess: "anyone_in_workspace" });
+    // No byte of the link-only doc survives anywhere in the response.
+    const raw = JSON.stringify(json);
+    expect(raw).not.toContain("Link Only");
+    expect(raw).not.toContain("doc-link");
+  });
+
+  test("AS-016: project doc count includes the workspace-shared doc, not the link-only one, for a non-invited member", async () => {
+    // doc-access-two-axis S-004: countDocsByProject applies the SAME C-006 predicate in SQL. The
+    // route reads it straight through; here the repo's GROUP BY is faked to the value the real SQL
+    // (workspace_role IS NOT NULL) would yield — 1 (only the workspace-shared doc counts).
+    const f = fakeRepo([
+      { id: "p_1", workspaceId: WS, name: "Billing", ownerId: "u_a", isDefault: false, archivedAt: null },
+    ]);
+    const ctx = fakeCtx({ docCounts: new Map([["p_1", 1]]) });
+    const app = buildApp(asUser("u_x"), f.repo, ctx);
+    const res = await app.handle(req("GET", "/api/w/ws_1/projects"));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    const p1 = json.data.projects.find((p: any) => p.id === "p_1");
+    expect(p1.docCount).toBe(1); // the link-only doc is NOT counted (workspace axis off)
+  });
+
   test("AS-022: each browse row carries the doc's created + updated times (for Created/Updated sort)", async () => {
     const f = fakeRepo([
       { id: "p_1", workspaceId: WS, name: "Billing", ownerId: "u_a", isDefault: false, archivedAt: null },
     ]);
     const older: ProjectDocRow = {
       id: "dOld", slug: "doc-old", title: "Older", kind: "markdown",
-      ownerId: "u_a", generalAccess: "anyone_in_workspace",
+      ownerId: "u_a", workspaceShared: true, generalAccess: "anyone_in_workspace",
+      workspaceRole: "commenter", linkRole: null,
       latestVersion: 1, annotationCount: 0, ownerName: "Alice",
       createdAt: new Date("2026-06-01T00:00:00.000Z"),
       updatedAt: new Date("2026-06-18T00:00:00.000Z"),
     };
     const newer: ProjectDocRow = {
       id: "dNew", slug: "doc-new", title: "Newer", kind: "markdown",
-      ownerId: "u_a", generalAccess: "anyone_in_workspace",
+      ownerId: "u_a", workspaceShared: true, generalAccess: "anyone_in_workspace",
+      workspaceRole: "commenter", linkRole: null,
       latestVersion: 1, annotationCount: 0, ownerName: "Alice",
       createdAt: new Date("2026-06-10T00:00:00.000Z"),
       updatedAt: new Date("2026-06-12T00:00:00.000Z"),
@@ -367,7 +429,10 @@ describe("/api/projects pagination (workspace-project S-007)", () => {
       title: `Doc ${i + 1}`,
       kind: "markdown" as const,
       ownerId: "u_a",
+      workspaceShared: access === "anyone_in_workspace",
       generalAccess: access,
+      workspaceRole: access === "anyone_in_workspace" ? "commenter" : null,
+      linkRole: access === "anyone_with_link" ? "viewer" : null,
       latestVersion: 1,
       annotationCount: 0,
       ownerName: "Alice",
@@ -451,7 +516,10 @@ describe("/api/projects pagination (workspace-project S-007)", () => {
       title: `Secret ${i + 1}`,
       kind: "markdown" as const,
       ownerId: "u_a",
+      workspaceShared: false,
       generalAccess: "restricted" as const,
+      workspaceRole: null,
+      linkRole: null,
       latestVersion: 1,
       annotationCount: 0,
       ownerName: "Alice",
@@ -496,7 +564,10 @@ describe("/api/w/:id/docs workspace-wide read (workspace-project S-008)", () => 
     title: `Doc ${n}`,
     kind: "markdown",
     ownerId: "u_a",
+    workspaceShared: true,
     generalAccess: "anyone_in_workspace",
+    workspaceRole: "commenter",
+    linkRole: null,
     latestVersion: 1,
     annotationCount: 0,
     ownerName: "Alice",
@@ -598,7 +669,10 @@ describe("/api/w/:id/docs workspace-wide read (workspace-project S-008)", () => 
         id: `secret${n}`,
         slug: `secret-${n}`,
         title: `Secret ${n}`,
+        workspaceShared: false,
         generalAccess: "restricted",
+        workspaceRole: null,
+        linkRole: null,
       });
     const union: WorkspaceDocRow[] = [
       ...Array.from({ length: 12 }, (_, i) => wDoc(i + 1, "pA", "Alpha")),

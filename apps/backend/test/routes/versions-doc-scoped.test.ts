@@ -194,9 +194,12 @@ describe("GET /api/docs/:slug/versions + /diff (doc-scoped, S-005)", () => {
 describe("createLoadContent serves the requested historical version (AS-026)", () => {
   // Two versions of doc_1: v1 (historical) and v2 (current/highest). Each row keyed by its
   // OWN version-row id, joined to the doc — exactly the shape createLoadContent SELECTs.
-  const VERSION_ROWS: Record<string, { content: string; docId: string; kind: "html" | "markdown" | "image"; generalAccess: "anyone_with_link" | "restricted" | "anyone_in_workspace" }> = {
-    ver_v1: { content: "<h1>V1 historical body</h1>", docId: "doc_1", kind: "html", generalAccess: "anyone_with_link" },
-    ver_v2: { content: "<h1>V2 current body</h1>", docId: "doc_1", kind: "html", generalAccess: "anyone_with_link" },
+  // doc-access-two-axis S-001: the join now reads the two share_links axes (a link axis on
+  // models the old anyone_with_link). The access decision is delegated to resolveAccess (stubbed
+  // per test), so the axes here only need to make deriveLevel non-throwing.
+  const VERSION_ROWS: Record<string, { content: string; docId: string; kind: "html" | "markdown" | "image"; workspaceRole: "viewer" | "commenter" | "editor" | null; linkRole: "viewer" | "commenter" | "editor" | null }> = {
+    ver_v1: { content: "<h1>V1 historical body</h1>", docId: "doc_1", kind: "html", workspaceRole: null, linkRole: "commenter" },
+    ver_v2: { content: "<h1>V2 current body</h1>", docId: "doc_1", kind: "html", workspaceRole: null, linkRole: "commenter" },
   };
 
   // Minimal fake of the Drizzle chain createLoadContent uses:
@@ -208,6 +211,7 @@ describe("createLoadContent serves the requested historical version (AS-026)", (
       select: () => chain,
       from: () => chain,
       innerJoin: () => chain,
+      leftJoin: () => chain,
       where: (clause: any) => {
         // drizzle's eq(col, val) exposes the bound value; grab it however it's shaped.
         const val =

@@ -43,7 +43,8 @@ import {
 import { withValidation } from "../http/validate";
 import { ValidationError, ForbiddenError, NotFoundError, ConflictError } from "../http/errors";
 import { enforceReadAccess } from "../http/access-result";
-import { canViewDoc, type AccessDeps, type Viewer } from "../sharing/access";
+import type { Viewer } from "../sharing/access";
+import type { AccessResult } from "../sharing/resolve-access";
 import { type Role, canManageSharing } from "../sharing/roles";
 import { setGeneralAccess, ShareRejected, type ShareRepo } from "../sharing/share";
 import { createShareRepo, rotateCapabilityToken } from "../sharing/share-repo";
@@ -68,11 +69,16 @@ import type { DB } from "../db/client";
 
 // ── Zod request schemas ─────────────────────────────────────────────────────
 
+// doc-access-two-axis S-001: PUT access carries the TWO independent axes. Each is a share
+// role, `null` (off), or ABSENT. Partial-update semantics (C-011): absent = "leave this
+// axis unchanged"; null = "turn this axis off"; a role string = set it. Each axis is
+// `.nullable().optional()` so the three states stay distinct — a stale client that PUTs
+// only the axis it changed cannot revert a concurrent edit to the OTHER axis. The role
+// shape is validated loosely (string) so an invalid value (e.g. "owner", AS-004) surfaces
+// as the service's ShareRejected → 400, matching the contract's wording.
 const accessBodySchema = z.object({
-  level: z.enum(["restricted", "anyone_in_workspace", "anyone_with_link"]),
-  // `role` shape is validated loosely here (string) so an invalid value (AS-018)
-  // surfaces as the service's ShareRejected → 400, matching the contract's wording.
-  role: z.string(),
+  workspaceRole: z.string().nullable().optional(),
+  linkRole: z.string().nullable().optional(),
   // C-015/AS-022: owner-only toggle. Present → the actor wants to change it; a non-owner
   // sending it is 403 (gated below), an owner's change threads through to the service.
   editorsCanShare: z.boolean().optional(),
@@ -151,8 +157,13 @@ export interface SharingRoutesDeps {
    * the handler without a real Postgres.
    */
   setLinkControls?: (docId: string, update: LinkControlsUpdate) => Promise<PersistedLinkControls>;
-  /** Access deps for `canViewDoc` (existence-hiding). */
-  accessDeps: AccessDeps;
+  /**
+   * doc-access-two-axis S-004 / C-010: the ONE authoritative access decision (the same
+   * `resolveAccess` the doc-read/annotation/version routes gate on). The share-management read
+   * gate (`loadVisibleDoc`) routes through THIS — the parallel level-switching `canViewDoc` is
+   * retired, so the share dialog's existence-hiding can never disagree with the resolver.
+   */
+  resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
   /** Mail wiring for the real enqueueInvite (prod). Omitted in tests (enqueueInvite injected). */
   mailQueue?: MailQueue;
   mailTransport?: MailTransport;
@@ -232,13 +243,16 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
         }
       : null;
 
-  /** Resolve :slug → a visible DocLookup or throw 404 (existence-hiding, C-006). */
+  /**
+   * Resolve :slug → a visible DocLookup or throw 404 (existence-hiding, C-006).
+   * doc-access-two-axis S-004 / C-010: gated by the SINGLE authoritative `resolveAccess`
+   * (NOT the retired level-switching `canViewDoc` stub), so the share-management read gate and
+   * every doc-read route make the SAME visibility decision against the two axes.
+   */
   async function loadVisibleDoc(slug: string, userId: string) {
     const doc = await lookupRepo.findDocBySlug(slug);
     const viewer: Viewer = { kind: "user", userId };
-    const allowed =
-      doc !== null &&
-      canViewDoc({ docId: doc.id, generalAccess: doc.generalAccess, viewer, deps: deps.accessDeps }).allowed;
+    const allowed = doc !== null && (await deps.resolveAccess(doc.id, viewer)).canView;
     return enforceReadAccess({ doc, allowed });
   }
 
@@ -307,17 +321,23 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
               const result = await setGeneralAccess(
                 doc.id,
                 {
-                  level: body.level,
-                  // role validity (AS-018) is the service's guard → ShareRejected → 400.
-                  role: body.role as never,
+                  // Partial-update (C-011): thread an axis ONLY when the body carries it —
+                  // an absent axis stays `undefined` so the write leaves it unchanged, never
+                  // reverting a concurrent single-axis edit. axis validity (AS-004) is the
+                  // service's guard → ShareRejected → 400.
+                  ...(body.workspaceRole !== undefined
+                    ? { workspaceRole: body.workspaceRole as never }
+                    : {}),
+                  ...(body.linkRole !== undefined ? { linkRole: body.linkRole as never } : {}),
                   editorsCanShare: body.editorsCanShare,
                 },
                 shareRepo,
                 { actorIsOwner },
               );
-              // workspace-activity S-006 / AS-022 (C-005 / F-10): a SUCCESSFUL general-access
-              // change logs ONE `share` event recording the NEW access + role only (no from/to).
+              // workspace-activity S-006 / AS-022 (C-005 / F-10): a SUCCESSFUL access change
+              // logs ONE `share` event recording the NEW access only (new-state-only, F-10).
               // Best-effort post-commit — never blocks the change (emitActivity swallows + logs).
+              // doc-access-two-axis S-001: record the derived level + both raw axes.
               if (activityDeps) {
                 await emitActivity(
                   {
@@ -326,19 +346,24 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
                     docId: doc.id,
                     summary: "changed sharing on",
                     target: doc.title,
-                    meta: { access: result.level, role: result.role },
+                    meta: {
+                      access: result.level,
+                      workspaceRole: result.workspaceRole,
+                      linkRole: result.linkRole,
+                    },
                   },
                   activityDeps,
                 );
               }
               return {
+                // The two raw axes (S-006 reads lean on these) + the derived legacy summary.
+                workspaceRole: result.workspaceRole,
+                linkRole: result.linkRole,
                 level: result.level,
-                role: result.role,
                 editorsCanShare: result.editorsCanShare,
-                // AS-027/AS-028: the resulting capability link — `/s/<token>` for the just-minted
-                // anyone_with_link token, or null when it was cleared (restricted / workspace). The FE
-                // uses this as the single live source so the link surfaces on an in-session access
-                // change without re-reading …/share.
+                // AS-018/capability: the resulting capability link — `/s/<token>` when the link
+                // axis is on, or null when it was cleared. The FE uses this as the single live
+                // source so the link surfaces on an in-session change without re-reading …/share.
                 capabilityUrl: capabilityShareUrl(result.capabilityToken),
               };
             } catch (err) {

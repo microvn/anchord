@@ -18,6 +18,7 @@ import type { SessionResolver } from "../../src/http/auth-gate";
 import { createResolveDocRole } from "../../src/sharing/resolve-doc-role-repo";
 import type { DocLookup, DocLookupRepo } from "../../src/routes/versions";
 import type { ShareRepo, ResolvedShareSetting } from "../../src/sharing/share";
+import { deriveLevel } from "../../src/sharing/share";
 
 const session: SessionResolver = async () => ({ userId: "u_actor" });
 
@@ -63,11 +64,16 @@ function fakeShareRepo() {
   const calls: ResolvedShareSetting[] = [];
   const repo: ShareRepo = {
     async setGeneralAccess(docId, setting) {
+      // Partial-update (C-011): an absent axis resolves to null (the route sends both here).
+      const workspaceRole = setting.workspaceRole ?? null;
+      const linkRole = setting.linkRole ?? null;
       const resolved: ResolvedShareSetting = {
         docId,
-        ...setting,
+        workspaceRole,
+        linkRole,
+        level: deriveLevel(workspaceRole, linkRole),
         editorsCanShare: setting.editorsCanShare ?? true,
-        capabilityToken: setting.level === "anyone_with_link" ? "Hk3vQ2pLm8rT5wXyZ0aBcD" : null,
+        capabilityToken: linkRole != null ? "Hk3vQ2pLm8rT5wXyZ0aBcD" : null,
       };
       calls.push(resolved);
       return resolved;
@@ -103,7 +109,9 @@ function buildApp(opts: { isOwner: boolean; memberRows?: Array<{ role: string }>
       resolveWorkspaceRole: async () => "member",
       resolveDocRole,
       loadShareConfig: async () => ({ editorsCanShare: false }), // toggle OFF → only owner can manage
-      accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      // doc-access-two-axis S-004 / C-010: read gate via the ONE authoritative resolveAccess
+      // (canViewDoc retired). VISIBLE_DOC is admitted; the manage gate (resolveDocRole) still decides.
+      resolveAccess: async () => ({ role: "owner", canView: true }),
     },
   });
   return { app, share };
@@ -115,7 +123,7 @@ describe("PUT /api/docs/:slug/access — owner source resolved for real (auth-ro
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter" }),
       }),
     );
     expect(res.status).toBe(200);
@@ -128,7 +136,7 @@ describe("PUT /api/docs/:slug/access — owner source resolved for real (auth-ro
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter" }),
       }),
     );
     expect(res.status).toBe(403);
@@ -142,7 +150,7 @@ describe("PUT /api/docs/:slug/access — owner source resolved for real (auth-ro
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter" }),
       }),
     );
     expect(res.status).toBe(403);

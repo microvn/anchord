@@ -78,7 +78,8 @@ import { createNotifyRepo } from "../notify/repo";
 import { emitActivity, type ActivityEmitDeps } from "../activity/emit";
 import { createActivityRepo, type ActivityRepo } from "../activity/repo";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { annotations as annotationsTable, docs as docsTable, docVersions, docMembers, user } from "../db/schema";
+import { annotations as annotationsTable, docs as docsTable, docVersions, docMembers, user, shareLinks } from "../db/schema";
+import { deriveLevel } from "../sharing/derive-level";
 import type { DB } from "../db/client";
 
 /**
@@ -123,7 +124,9 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
     const [row] = await db
       .select({
         docId: annotationsTable.docId,
-        generalAccess: docsTable.generalAccess,
+        // doc-access-two-axis S-001 stopgap: derive the legacy level from the share_links axes.
+        workspaceRole: shareLinks.workspaceRole,
+        linkRole: shareLinks.linkRole,
         // S-004/C-006: the durable creator, so the delete route can gate delete-own.
         authorId: annotationsTable.authorId,
         // S-005/C-007: the tombstone, so resolution refuses a deleted (terminal) annotation
@@ -132,8 +135,16 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
       })
       .from(annotationsTable)
       .innerJoin(docsTable, eq(docsTable.id, annotationsTable.docId))
+      .leftJoin(shareLinks, eq(shareLinks.docId, annotationsTable.docId))
       .where(eq(annotationsTable.id, annotationId));
-    return row ? { ...row, authorId: row.authorId ?? null, deletedAt: row.deletedAt ?? null } : null;
+    return row
+      ? {
+          docId: row.docId,
+          generalAccess: deriveLevel(row.workspaceRole, row.linkRole),
+          authorId: row.authorId ?? null,
+          deletedAt: row.deletedAt ?? null,
+        }
+      : null;
   }
 
   return {
@@ -144,7 +155,9 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
       const [row] = await db
         .select({
           docId: annotationsTable.docId,
-          generalAccess: docsTable.generalAccess,
+          // doc-access-two-axis S-001 stopgap: derive the legacy level from the share_links axes.
+          workspaceRole: shareLinks.workspaceRole,
+          linkRole: shareLinks.linkRole,
           // S-003/C-004: the durable creator, so the decide route can refuse owner self-approve.
           authorId: annotationsTable.authorId,
           // S-005/C-007: surfaced (not filtered) so the resolution route can refuse a deleted one.
@@ -152,8 +165,16 @@ export function createAnnotationLookupRepo(db: DB): AnnotationLookupRepo {
         })
         .from(annotationsTable)
         .innerJoin(docsTable, eq(docsTable.id, annotationsTable.docId))
+        .leftJoin(shareLinks, eq(shareLinks.docId, annotationsTable.docId))
         .where(and(eq(annotationsTable.id, suggestionId), eq(annotationsTable.type, "suggestion")));
-      return row ? { ...row, authorId: row.authorId ?? null, deletedAt: row.deletedAt ?? null } : null;
+      return row
+        ? {
+            docId: row.docId,
+            generalAccess: deriveLevel(row.workspaceRole, row.linkRole),
+            authorId: row.authorId ?? null,
+            deletedAt: row.deletedAt ?? null,
+          }
+        : null;
     },
     async getCurrentVersionContent(docId) {
       const [row] = await db

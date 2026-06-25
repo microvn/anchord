@@ -13,7 +13,7 @@
 
 import { beforeAll, afterAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { docs, projects, user as userTable } from "../../src/db/schema";
+import { docs, projects, shareLinks, user as userTable } from "../../src/db/schema";
 import { createDocRepo } from "../../src/publish/repo";
 import { createProjectsRouteRepo, type WorkspaceDocRow } from "../../src/workspace/repo";
 import { filterBrowsableDocs } from "../../src/workspace/projects";
@@ -47,10 +47,21 @@ describe.skipIf(!RUN)("workspace-project S-008: workspace-wide docs union (real 
       ownerId: opts.ownerId,
       projectId: opts.projectId,
     });
-    await h.db
-      .update(docs)
-      .set({ generalAccess: opts.access, updatedAt: opts.updatedAt })
-      .where(eq(docs.id, id));
+    await h.db.update(docs).set({ updatedAt: opts.updatedAt }).where(eq(docs.id, id));
+    // doc-access-two-axis S-001: access lives on the share_links row as two axes.
+    // restricted={null,null}; anyone_in_workspace={workspace,null}; anyone_with_link={null,link}.
+    const axes =
+      opts.access === "anyone_in_workspace"
+        ? { workspaceRole: "commenter" as const, linkRole: null }
+        : opts.access === "anyone_with_link"
+          ? { workspaceRole: null, linkRole: "commenter" as const }
+          : { workspaceRole: null, linkRole: null };
+    if (axes.workspaceRole != null || axes.linkRole != null) {
+      await h.db
+        .insert(shareLinks)
+        .values({ docId: id, ...axes })
+        .onConflictDoUpdate({ target: shareLinks.docId, set: axes });
+    }
     return id;
   }
 

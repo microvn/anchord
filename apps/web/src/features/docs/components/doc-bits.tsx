@@ -30,7 +30,7 @@ export function FormatBadge({ kind, size = 30 }: { kind: DocKind; size?: number 
 export function FormatTag({ kind }: { kind: DocKind }) {
   const meta = FORMAT_META[kind] ?? FORMAT_META.markdown;
   return (
-    <span className="font-mono text-[9.5px] uppercase tracking-[0.06em] text-muted">
+    <span className={`font-mono text-[9.5px] font-medium uppercase tracking-[0.06em] ${meta.tone}`}>
       {meta.label}
     </span>
   );

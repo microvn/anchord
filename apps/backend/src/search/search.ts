@@ -15,7 +15,6 @@
 // imported from src/workspace/projects.ts — one access rule for browse AND search.
 
 import { canBrowseDoc, type BrowseFilterDeps } from "../workspace/projects";
-import type { GeneralAccessLevel } from "../sharing/access";
 import type { SearchHit, SearchRepo } from "./search-repo";
 
 /** Max rows a single search returns. Capped (never unbounded) — over-cap is logged. */
@@ -55,10 +54,11 @@ export interface SearchInput {
  * second DB round-trip. (For a repo that already SQL-filters, this is belt-and-braces.)
  */
 export interface SearchAccessDeps extends BrowseFilterDeps {
-  /** owner_id + general_access for a doc id returned by the repo. */
+  /** owner_id + the raw WORKSPACE axis (share_links.workspace_role IS NOT NULL) for a doc id
+   *  the repo returned — the fields the ONE shared C-006 predicate (canBrowseDoc) re-checks. */
   accessFieldsFor(
     docId: string,
-  ): { ownerId: string | null; generalAccess: GeneralAccessLevel } | Promise<{ ownerId: string | null; generalAccess: GeneralAccessLevel }>;
+  ): { ownerId: string | null; workspaceShared: boolean } | Promise<{ ownerId: string | null; workspaceShared: boolean }>;
 }
 
 export interface SearchDeps {
@@ -113,7 +113,7 @@ export async function search(input: SearchInput, deps: SearchDeps): Promise<Sear
       const fields = await access.accessFieldsFor(hit.docId);
       const ok = await canBrowseDoc(
         input.userId,
-        { id: hit.docId, ownerId: fields.ownerId, generalAccess: fields.generalAccess },
+        { id: hit.docId, ownerId: fields.ownerId, workspaceShared: fields.workspaceShared },
         access,
       );
       if (ok) filtered.push(hit);

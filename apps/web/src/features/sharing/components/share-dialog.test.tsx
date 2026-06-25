@@ -22,7 +22,7 @@ const getShareState = mock(async () => ({ data: RESTRICTED_OWNER_STATE, error: n
 const setAccess = mock(async () => ({
   data: {
     success: true,
-    data: { level: "anyone_with_link", role: "commenter", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
+    data: { workspaceRole: "commenter", linkRole: "commenter", level: "anyone_with_link", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
   },
   error: null,
 }));
@@ -37,6 +37,8 @@ mock.module("@/features/sharing/services/client", () => ({
 mock.module("sonner", () => ({ toast: Object.assign(mock(() => {}), { success: mock(() => {}), error: mock(() => {}) }) }));
 
 const RESTRICTED_OWNER_STATE = {
+  workspaceRole: null,
+  linkRole: null,
   level: "restricted" as const,
   role: "viewer" as const,
   editorsCanShare: false,
@@ -46,8 +48,24 @@ const RESTRICTED_OWNER_STATE = {
   link: { hasPassword: false, url: "anchord.local/d/web-core" },
 };
 
+// A doc shared with the workspace at the comment level, no public link — the new-doc default.
+const WORKSPACE_COMMENTER_STATE = {
+  workspaceRole: "commenter" as const,
+  linkRole: null,
+  level: "anyone_in_workspace" as const,
+  role: "viewer" as const,
+  editorsCanShare: false,
+  people: [
+    { userId: "u-own", email: "owner@acme.com", name: "Owner Olu", role: "owner" as const, status: "active" as const },
+  ],
+  link: { hasPassword: false, url: "/d/web-core" },
+  capabilityUrl: null,
+};
+
 // AS-018 prefill data: anyone-with-link / commenter, guest on, 1 active + 1 pending, password link.
 const LINK_STATE = {
+  workspaceRole: "commenter" as const,
+  linkRole: "commenter" as const,
   level: "anyone_with_link" as const,
   role: "commenter" as const,
   editorsCanShare: false,
@@ -64,6 +82,8 @@ const LINK_STATE = {
 // AS-013 fixture: anyone_in_workspace — link section never shows, and crucially NO capability link
 // even if the level were link-shaped. (capabilityUrl absent — the backend sends null for non-link.)
 const WORKSPACE_STATE = {
+  workspaceRole: "viewer" as const,
+  linkRole: null,
   level: "anyone_in_workspace" as const,
   role: "viewer" as const,
   editorsCanShare: false,
@@ -104,6 +124,13 @@ function renderDialog(props: Partial<Parameters<typeof ShareDialog>[0]> = {}) {
   );
 }
 
+// Open an axis Select (workspace | link) and pick an option by its visible label (Off | Viewer |
+// Commenter | Editor). The axis controls are Radix Selects (role=option in the listbox).
+async function chooseAxisRole(axis: "workspace" | "link", label: string) {
+  await userEvent.click(screen.getByTestId(`share-axis-${axis}-trigger`));
+  await userEvent.click(await screen.findByRole("option", { name: label }));
+}
+
 describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
   it("AS-001: owner opens the share dialog showing the sections, prefilled from current state", async () => {
     renderDialog({ effectiveRole: "owner" });
@@ -120,8 +147,9 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     // guest commenting lives on the Options tab now, not the Sharing tab.
     expect(screen.queryByTestId("share-sec-guest")).not.toBeInTheDocument();
 
-    // Prefilled from the CURRENT state — restricted, not a blank form (the Restricted row is active).
-    expect(screen.getByTestId("share-access-opt-restricted")).toHaveAttribute("data-active", "1");
+    // Prefilled from the CURRENT state — restricted = both axes Off, not a blank form.
+    expect(screen.getByTestId("share-axis-workspace")).toHaveAttribute("data-on", "0");
+    expect(screen.getByTestId("share-axis-link")).toHaveAttribute("data-on", "0");
     // The title is the doc-scoped "Share doc" header.
     expect(screen.getByTestId("share-dialog")).toHaveTextContent(/share doc/i);
   });
@@ -206,9 +234,11 @@ describe("sharing-permissions-ui S-001 — open the Share dialog", () => {
     renderDialog({ effectiveRole: "owner" });
 
     await screen.findByTestId("share-sections");
-    // SHARING tab: level + role from the read (active access row + role trigger value)
-    expect(screen.getByTestId("share-access-opt-anyone_with_link")).toHaveAttribute("data-active", "1");
-    expect(screen.getByTestId("share-access-role-trigger")).toHaveTextContent(/commenter/i);
+    // SHARING tab: both axes from the read — workspace=commenter, link=commenter (both On).
+    expect(screen.getByTestId("share-axis-workspace")).toHaveAttribute("data-on", "1");
+    expect(screen.getByTestId("share-axis-workspace-trigger")).toHaveTextContent(/commenter/i);
+    expect(screen.getByTestId("share-axis-link")).toHaveAttribute("data-on", "1");
+    expect(screen.getByTestId("share-axis-link-trigger")).toHaveTextContent(/commenter/i);
     // people: 1 active + 1 pending (+ owner) — the pending one carries a Pending tag
     expect(screen.getByTestId("share-person-dev@acme.com")).toBeInTheDocument();
     expect(screen.getByTestId("share-person-pending-bob@x.com")).toBeInTheDocument();
@@ -279,11 +309,11 @@ describe("capability-share-link S-005 — the Share box surfaces the capability 
     expect(screen.queryByTestId("share-capability-url")).not.toBeInTheDocument();
   });
 
-  it("AS-027: switching to anyone-with-link in-session surfaces the /s/<token> link from the write response", async () => {
+  it("AS-027: turning the link axis on in-session surfaces the /s/<token> link from the write response", async () => {
     // Opened on a RESTRICTED doc — the share-state read carries no capabilityUrl → no link yet.
     getShareState.mockImplementation(async () => ({ data: RESTRICTED_OWNER_STATE, error: null }));
     setAccess.mockImplementation(async () => ({
-      data: { level: "anyone_with_link", role: "viewer", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
+      data: { workspaceRole: null, linkRole: "viewer", level: "anyone_with_link", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
       error: null,
     }));
     renderDialog({ effectiveRole: "owner" });
@@ -291,19 +321,19 @@ describe("capability-share-link S-005 — the Share box surfaces the capability 
     await screen.findByTestId("share-sections");
     expect(screen.queryByTestId("share-capability-url")).not.toBeInTheDocument();
 
-    // Switch general access to anyone-with-link from WITHIN the open dialog.
-    await userEvent.click(screen.getByTestId("share-access-opt-anyone_with_link"));
+    // Turn the LINK axis on (set it to Viewer) from WITHIN the open dialog.
+    await chooseAxisRole("link", "Viewer");
 
     // The capability link now appears, sourced from the write's fresh token (not a re-open).
     const cap = await screen.findByTestId("share-capability-url");
     expect(cap).toHaveTextContent("/s/Hk3vQ2pLm8rT5wXyZ0aBcD");
   });
 
-  it("AS-028: switching away from anyone-with-link in-session removes the capability link", async () => {
+  it("AS-028: turning the link axis off in-session removes the capability link", async () => {
     // Opened on an anyone-with-link doc — the link is shown.
     getShareState.mockImplementation(async () => ({ data: LINK_STATE, error: null }));
     setAccess.mockImplementation(async () => ({
-      data: { level: "restricted", role: "viewer", editorsCanShare: false, capabilityUrl: null },
+      data: { workspaceRole: "commenter", linkRole: null, level: "anyone_in_workspace", editorsCanShare: false, capabilityUrl: null },
       error: null,
     }));
     renderDialog({ effectiveRole: "owner" });
@@ -311,8 +341,8 @@ describe("capability-share-link S-005 — the Share box surfaces the capability 
     await screen.findByTestId("share-sections");
     await screen.findByTestId("share-capability-url");
 
-    // Switch to restricted from WITHIN the open dialog.
-    await userEvent.click(screen.getByTestId("share-access-opt-restricted"));
+    // Turn the LINK axis Off from WITHIN the open dialog.
+    await chooseAxisRole("link", "Off");
 
     // The capability link disappears (the write returned capabilityUrl null).
     await waitFor(() => expect(screen.queryByTestId("share-capability-url")).not.toBeInTheDocument());
@@ -367,5 +397,70 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
     await userEvent.click(screen.getByTestId("doc-more-share-auth-spec"));
     await screen.findByTestId("share-dialog");
     await waitFor(() => expect(getShareState).toHaveBeenCalledWith("ws-acme", "auth-spec"));
+  });
+});
+
+describe("doc-access-two-axis S-007 — the share dialog shows two independent controls", () => {
+  it("AS-023: the dialog presents Workspace access and Link access as two separate controls, each with a role choice + an off option, prefilled from the two-axis state", async () => {
+    // The doc is shared with the workspace at the comment level, no public link (the new-doc
+    // default): workspace=commenter, link=off.
+    getShareState.mockImplementation(async () => ({ data: WORKSPACE_COMMENTER_STATE, error: null }));
+    renderDialog({ effectiveRole: "owner" });
+
+    await screen.findByTestId("share-sections");
+
+    // TWO separate controls exist — a Workspace access control AND a Link access control.
+    const workspace = screen.getByTestId("share-axis-workspace");
+    const link = screen.getByTestId("share-axis-link");
+    expect(workspace).toBeInTheDocument();
+    expect(link).toBeInTheDocument();
+
+    // Each prefills from the doc's current two-axis state: workspace ON at Commenter, link OFF.
+    expect(workspace).toHaveAttribute("data-on", "1");
+    expect(screen.getByTestId("share-axis-workspace-trigger")).toHaveTextContent(/commenter/i);
+    expect(link).toHaveAttribute("data-on", "0");
+    expect(screen.getByTestId("share-axis-link-trigger")).toHaveTextContent(/off/i);
+
+    // Each control offers its own role choice (viewer/commenter/editor) AND an off option — open the
+    // link Select and assert all four, owner NEVER among them (C-004/C-009).
+    await userEvent.click(screen.getByTestId("share-axis-link-trigger"));
+    await screen.findByRole("option", { name: "Off" });
+    expect(screen.getByRole("option", { name: "Viewer" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Commenter" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Editor" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Owner" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toHaveLength(4);
+  });
+
+  it("AS-024: setting link access lower than workspace access persists both independently — the PUT sends ONLY the link axis and the workspace axis is unchanged (C-001 FE-side)", async () => {
+    // Workspace access = commenter, link off. The write echoes both axes back: workspace STILL
+    // commenter, link now viewer (the backend persisted both independently).
+    getShareState.mockImplementation(async () => ({ data: WORKSPACE_COMMENTER_STATE, error: null }));
+    setAccess.mockImplementation(async () => ({
+      data: { workspaceRole: "commenter", linkRole: "viewer", level: "anyone_with_link", editorsCanShare: false, capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD" },
+      error: null,
+    }));
+    renderDialog({ effectiveRole: "owner" });
+
+    await screen.findByTestId("share-sections");
+
+    // Set LINK access = viewer (lower than the workspace commenter).
+    await chooseAxisRole("link", "Viewer");
+
+    // The PUT carries ONLY the link axis — the workspace axis is NOT in the request (C-001/C-011):
+    // changing one control never sends (or reverts) the other.
+    await waitFor(() => expect(setAccess).toHaveBeenCalled());
+    const body = setAccess.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(body).toHaveProperty("linkRole", "viewer");
+    expect(body).not.toHaveProperty("workspaceRole");
+
+    // The dialog reflects BOTH after the save: workspace STILL commenter, link now viewer — neither
+    // control overrode the other.
+    await waitFor(() =>
+      expect(screen.getByTestId("share-axis-link-trigger")).toHaveTextContent(/viewer/i),
+    );
+    expect(screen.getByTestId("share-axis-workspace")).toHaveAttribute("data-on", "1");
+    expect(screen.getByTestId("share-axis-workspace-trigger")).toHaveTextContent(/commenter/i);
+    expect(screen.getByTestId("share-axis-link")).toHaveAttribute("data-on", "1");
   });
 });

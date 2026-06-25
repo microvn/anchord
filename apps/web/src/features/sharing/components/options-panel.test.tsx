@@ -16,9 +16,9 @@ const setLinkControls = mock(async () => ({ data: { hasPassword: true, url: "x" 
 mock.module("@/features/sharing/services/client", () => ({ ...sharingClient, setAccess, setLinkControls }));
 mock.module("sonner", () => ({ toast: Object.assign(mock(() => {}), { success: mock(() => {}), error: mock(() => {}) }) }));
 
-const OK = { level: "anyone_with_link" as const, role: "commenter" as const, editorsCanShare: false };
+const OK = { workspaceRole: null, linkRole: "commenter" as const, level: "anyone_with_link" as const, editorsCanShare: false };
 const LINK = { hasPassword: false, url: "anchord.local/d/web-core" };
-const base = (over = {}) => ({ level: "restricted" as const, role: "viewer" as const, editorsCanShare: false, people: [], link: LINK, ...over });
+const base = (over = {}) => ({ workspaceRole: null, linkRole: null, level: "restricted" as const, role: "viewer" as const, editorsCanShare: false, people: [], link: LINK, ...over });
 
 const { OptionsPanel } = await import("@/features/sharing/components/options-panel");
 const { useAccessControls } = await import("@/features/sharing/hooks/use-access-controls");

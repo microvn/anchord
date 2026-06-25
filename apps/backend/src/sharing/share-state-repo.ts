@@ -14,7 +14,7 @@
 // field — guest access is decided by the link role, sharing reversal 2026-06-20.)
 
 import { eq } from "drizzle-orm";
-import { docs, shareLinks, docMembers, user } from "../db/schema";
+import { shareLinks, docMembers, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { ShareStateRepo, ShareStateRow, SharePerson } from "./share-state";
 
@@ -22,18 +22,15 @@ import type { ShareStateRepo, ShareStateRow, SharePerson } from "./share-state";
 export function createShareStateRepo(db: DB): ShareStateRepo {
   return {
     async readShareState(docId: string): Promise<ShareStateRow> {
-      // 1. The access LEVEL lives on the doc row.
-      const [doc] = await db
-        .select({ generalAccess: docs.generalAccess })
-        .from(docs)
-        .where(eq(docs.id, docId));
-
-      // 2. The share_links row carries the role + toggles + link controls. Note:
-      //    password_hash is read here ONLY to derive the boolean — it is never
-      //    propagated past this function (C-016).
+      // doc-access-two-axis S-001: access lives entirely on the share_links row as the two
+      // axes — there is no longer a docs.general_access column to read.
+      // The share_links row carries both axes + toggles + link controls. Note:
+      // password_hash is read here ONLY to derive the boolean — it is never propagated
+      // past this function (C-016).
       const [link] = await db
         .select({
-          role: shareLinks.role,
+          workspaceRole: shareLinks.workspaceRole,
+          linkRole: shareLinks.linkRole,
           editorsCanShare: shareLinks.editorsCanShare,
           passwordHash: shareLinks.passwordHash,
           expiresAt: shareLinks.expiresAt,
@@ -70,8 +67,8 @@ export function createShareStateRepo(db: DB): ShareStateRepo {
       }));
 
       return {
-        level: doc?.generalAccess ?? "restricted",
-        role: link?.role ?? "viewer",
+        workspaceRole: link?.workspaceRole ?? null,
+        linkRole: link?.linkRole ?? null,
         editorsCanShare: link?.editorsCanShare ?? true,
         people,
         link: {

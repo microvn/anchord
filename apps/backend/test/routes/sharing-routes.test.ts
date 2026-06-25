@@ -23,8 +23,10 @@ import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
 import type { SessionResolver } from "../../src/http/auth-gate";
 import type { Role } from "../../src/sharing/roles";
+import type { Viewer } from "../../src/sharing/access";
 import type { DocLookup, DocLookupRepo } from "../../src/routes/versions";
 import type { ShareRepo, ResolvedShareSetting } from "../../src/sharing/share";
+import { deriveLevel } from "../../src/sharing/share";
 import { createFakeDocMemberStore } from "../../src/sharing/invite";
 import type { EnqueuedInvite } from "../../src/sharing/invite";
 import type { ShareStateRepo, ShareStateRow } from "../../src/sharing/share-state";
@@ -71,12 +73,18 @@ function fakeShareRepo() {
   const calls: ResolvedShareSetting[] = [];
   const repo: ShareRepo = {
     async setGeneralAccess(docId, setting) {
+      // Partial-update (C-011): an absent axis resolves to null here (this fake holds no
+      // prior row across calls; the route always sends both axes in these tests).
+      const workspaceRole = setting.workspaceRole ?? null;
+      const linkRole = setting.linkRole ?? null;
       const resolved: ResolvedShareSetting = {
         docId,
-        ...setting,
+        workspaceRole,
+        linkRole,
+        level: deriveLevel(workspaceRole, linkRole),
         editorsCanShare: setting.editorsCanShare ?? true,
-        capabilityToken:
-          setting.level === "anyone_with_link" ? "Hk3vQ2pLm8rT5wXyZ0aBcD" : null,
+        // The link axis being on is what mints/keeps a capability token.
+        capabilityToken: linkRole != null ? "Hk3vQ2pLm8rT5wXyZ0aBcD" : null,
       };
       calls.push(resolved);
       return resolved;
@@ -90,8 +98,9 @@ function fakeShareRepo() {
 // invite, a password-protected link with expiry/view controls.
 // AS-026: the repo shape carries hasPassword (a boolean) only — never a hash.
 const SHARE_STATE_ROW: ShareStateRow = {
-  level: "anyone_with_link",
-  role: "commenter",
+  // Link axis on at commenter (the old anyone_with_link + commenter) → derives anyone_with_link.
+  workspaceRole: null,
+  linkRole: "commenter",
   editorsCanShare: true,
   people: [
     { id: "m-active", email: "active@acme.com", name: "Active Person", role: "editor", status: "active" },
@@ -130,6 +139,7 @@ function buildApp(opts: {
   members?: ReturnType<typeof createFakeDocMemberStore>;
   shareStateRepo?: ShareStateRepo;
   setLinkControls?: (docId: string, update: LinkControlsUpdate) => Promise<PersistedLinkControls>;
+  resolveAccess?: (docId: string, viewer: Viewer) => Promise<{ role: Role | null; canView: boolean }>;
 }) {
   return createApp({
     dbCheck: async () => {},
@@ -146,7 +156,11 @@ function buildApp(opts: {
       // Default toggle ON (the Google-Docs default) unless a test overrides it.
       loadShareConfig: opts.loadShareConfig ?? shareToggleOn,
       setLinkControls: opts.setLinkControls,
-      accessDeps: { isInvited: () => true, isWorkspaceMember: () => true },
+      // doc-access-two-axis S-004 / C-010: the read gate now routes through the ONE authoritative
+      // resolveAccess (canViewDoc retired). A VISIBLE doc is admitted (canView true); the 404
+      // existence-hiding cases drive `doc: null` through the lookup repo, so a permissive default
+      // here is correct — visibility is decided by whether findDocBySlug returns a row.
+      resolveAccess: opts.resolveAccess ?? (async () => ({ role: "owner", canView: true })),
     },
   });
 }
@@ -222,14 +236,15 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter" }),
       }),
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.data).toEqual({
+      workspaceRole: null,
+      linkRole: "commenter",
       level: "anyone_with_link",
-      role: "commenter",
       editorsCanShare: true,
       capabilityUrl: "/s/Hk3vQ2pLm8rT5wXyZ0aBcD",
     });
@@ -245,7 +260,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "owner" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "owner" }),
       }),
     );
     expect(res.status).toBe(400);
@@ -264,7 +279,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "viewer" }),
       }),
     );
     expect(res.status).toBe(200);
@@ -277,7 +292,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "viewer" }),
       }),
     );
     expect(res.status).toBe(403);
@@ -291,7 +306,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "viewer" }),
       }),
     );
     expect(res.status).toBe(403);
@@ -302,7 +317,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "viewer" }),
       }),
     );
     expect(res.status).toBe(403);
@@ -314,7 +329,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "viewer", editorsCanShare: false }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "viewer", editorsCanShare: false }),
       }),
     );
     expect(res.status).toBe(200);
@@ -330,7 +345,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "viewer", editorsCanShare: false }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "viewer", editorsCanShare: false }),
       }),
     );
     expect(res.status).toBe(403);
@@ -345,7 +360,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "commenter" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "commenter" }),
       }),
     );
     expect(res.status).toBe(200);
@@ -359,7 +374,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "restricted", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: null }),
       }),
     );
     expect(res.status).toBe(200);
@@ -372,7 +387,7 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/doc-one/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "viewer" }),
       }),
     );
     expect(res.status).toBe(401);
@@ -383,18 +398,32 @@ describe("PUT /api/docs/:slug/access (S-001)", () => {
     const res = await app.handle(
       req("/api/w/ws_1/docs/nope/access", {
         method: "PUT",
-        body: JSON.stringify({ level: "anyone_with_link", role: "viewer" }),
+        body: JSON.stringify({ workspaceRole: null, linkRole: "viewer" }),
       }),
     );
     expect(res.status).toBe(404);
   });
 
-  test("bad body (missing level) → 400 VALIDATION_ERROR", async () => {
+  // doc-access-two-axis C-011 (partial update): each axis is OPTIONAL — absent = "leave
+  // unchanged". A body carrying NO axis is a valid no-op (200), not a 400. What still 400s
+  // is a PRESENT axis with an invalid value (AS-004 — "owner" is never assignable).
+  test("invalid value on a PRESENT axis → 400 VALIDATION_ERROR (AS-004)", async () => {
     const app = buildApp({});
     const res = await app.handle(
-      req("/api/w/ws_1/docs/doc-one/access", { method: "PUT", body: JSON.stringify({ role: "viewer" }) }),
+      req("/api/w/ws_1/docs/doc-one/access", {
+        method: "PUT",
+        body: JSON.stringify({ workspaceRole: "owner" }),
+      }),
     );
     expect(res.status).toBe(400);
+  });
+
+  test("body with NO axis (both absent) → 200 no-op (partial-update, C-011)", async () => {
+    const app = buildApp({});
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/access", { method: "PUT", body: JSON.stringify({}) }),
+    );
+    expect(res.status).toBe(200);
   });
 });
 

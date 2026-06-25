@@ -58,10 +58,8 @@ describe.skipIf(!RUN)("notify on reply (real Postgres)", () => {
     });
     docId = created.id;
     // C is the owner; doc is anyone-with-link so the reply route's access gate passes.
-    await h.db
-      .update(docs)
-      .set({ generalAccess: "anyone_with_link", ownerId: C })
-      .where(eq(docs.id, docId));
+    await h.db.update(docs).set({ ownerId: C }).where(eq(docs.id, docId));
+    await h.db.insert(schema.shareLinks).values({ docId, linkRole: "commenter" });
   });
 
   afterAll(async () => {

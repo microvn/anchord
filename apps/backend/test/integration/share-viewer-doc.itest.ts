@@ -16,8 +16,7 @@
 // Run: RUN_INTEGRATION=1 bun test ./test/integration/share-viewer-doc.itest.ts
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
-import { docs, shareLinks } from "../../src/db/schema";
+import { shareLinks } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import { createCapabilityTokenRepo } from "../../src/sharing/share-repo";
@@ -67,10 +66,8 @@ describe.skipIf(!RUN)("C-006: admission cookie authorizes the viewer doc-read (r
 
     tokenA = mintCapabilityToken();
     tokenB = mintCapabilityToken();
-    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.id, docIdA));
-    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.id, docIdB));
-    await h.db.insert(shareLinks).values({ docId: docIdA, role: "viewer", capabilityToken: tokenA });
-    await h.db.insert(shareLinks).values({ docId: docIdB, role: "viewer", capabilityToken: tokenB });
+    await h.db.insert(shareLinks).values({ docId: docIdA, linkRole: "viewer", capabilityToken: tokenA });
+    await h.db.insert(shareLinks).values({ docId: docIdB, linkRole: "viewer", capabilityToken: tokenB });
 
     const resolveDocRole = createResolveDocRole(h.db, {
       isOwner: createIsDocOwner(h.db),

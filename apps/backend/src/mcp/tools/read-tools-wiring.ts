@@ -5,12 +5,14 @@
 //
 //   • listAccessibleDocs → a NEW SQL read (the web FE assembled the accessible set as a
 //     per-project union, paginated client-side — there was no workspace-wide server query).
-//     The access predicate MIRRORS search-repo's `accessible` CTE (= canBrowseDoc): a doc is
-//     visible to the owner iff they own it, OR general_access = anyone_in_workspace AND they
-//     are a member of THE TOKEN's workspace, OR they are individually invited (active
-//     doc_members). Scoped by the TOKEN's workspace_id (C-013) — only docs whose project
-//     belongs to that workspace are considered, and anyone_in_workspace resolves against
-//     membership of THAT workspace, never "any" (the cross-tenant invariant).
+//     The access predicate is the ONE shared C-006 workspace-visibility rule (= canBrowseDoc):
+//     a doc is visible to the caller iff they own it, OR they are individually invited (active
+//     doc_members), OR the doc's WORKSPACE axis is on (share_links.workspace_role IS NOT NULL)
+//     AND they are a member of THE TOKEN's workspace. The link axis is irrelevant — a link-only
+//     doc is absent from MCP browse exactly as from the dashboard (doc-access-two-axis S-004,
+//     AS-017). Scoped by the TOKEN's workspace_id (C-013) — only docs whose project belongs to
+//     that workspace are considered, the workspace axis resolves against membership of THAT
+//     workspace, never "any" (the cross-tenant invariant).
 //   • findReadableDoc → resolve by id OR slug, then the shared authoritative `resolveAccess`
 //     (doc-access-routing S-001) for the per-doc role, plus the doc's OWN workspace (for the
 //     handler's token-workspace gate — C-013). The current version's content is read for the
@@ -24,7 +26,7 @@
 
 import { and, desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { docs, docVersions } from "../../db/schema";
+import { docs, docVersions, shareLinks } from "../../db/schema";
 import type { DB } from "../../db/client";
 import type { Viewer } from "../../sharing/access";
 import type { AccessResult } from "../../sharing/resolve-access";
@@ -68,11 +70,14 @@ export function createMcpReadPorts(deps: ReadToolsWiringDeps): ReadPorts {
         select d.id, d.slug, d.title, d.kind
         from docs d
         join projects p on p.id = d.project_id
+        -- doc-access-two-axis S-004 / C-006: the workspace axis is on share_links, not docs.
+        -- Left join so a doc with no share_links row is simply not workspace-shared.
+        left join share_links sl on sl.doc_id = d.id
         where p.workspace_id = ${input.workspaceId}
           and (
             d.owner_id = ${input.userId}
             or (
-              d.general_access = 'anyone_in_workspace'
+              sl.workspace_role is not null
               and exists (
                 select 1 from workspace_members wm
                 where wm.user_id = ${input.userId}
@@ -111,8 +116,13 @@ export function createMcpReadPorts(deps: ReadToolsWiringDeps): ReadPorts {
           slug: docs.slug,
           title: docs.title,
           kind: docs.kind,
+          // doc-access-two-axis S-006 / C-008: the raw two-axis state for the read display. The
+          // handler derives the legacy `generalAccess` summary from these and returns BOTH.
+          workspaceRole: shareLinks.workspaceRole,
+          linkRole: shareLinks.linkRole,
         })
         .from(docs)
+        .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
         .where(sql`${docs.id} = ${idOrSlug} or ${docs.slug} = ${idOrSlug}`)
         .limit(1);
       if (!doc) return null;
@@ -141,6 +151,9 @@ export function createMcpReadPorts(deps: ReadToolsWiringDeps): ReadPorts {
         content: ver?.content ?? "",
         workspaceId: docWorkspace,
         role,
+        // S-006 / C-008: raw axes off the share_links left-join (null when no row / axis off).
+        workspaceRole: doc.workspaceRole ?? null,
+        linkRole: doc.linkRole ?? null,
       };
     },
 

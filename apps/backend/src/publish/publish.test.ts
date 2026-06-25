@@ -164,38 +164,28 @@ test("AS-015 / C-007: ambiguous paste (no format, no filename) defaults to markd
   expect(sniffKind(undefined, enc("line one\nline two\n- a bullet"))).toBe("markdown");
 });
 
-// ── shared-workspace model (render-publish:C-011 / AS-027): a new doc inherits the target
-//    workspace's default access via resolveDefaultAccess ───────────────────────
+// ── doc-access-two-axis S-002 (C-007): the publish service no longer plumbs any per-doc
+//    access value — the new-doc default (workspace_role=commenter, link_role=null) is FIXED
+//    and applied by the publish repo when it creates the share_links row. The full
+//    publish→share_links→resolveAccess chain (a member can view+comment, an anon is denied)
+//    is asserted against a real Postgres in test/integration/publish-repo.itest.ts (AS-005,
+//    AS-006, AS-025), because it spans the write path and the read resolver. ──────────────
 
-test("AS-027: a published doc inherits the workspace's default access (anyone_in_workspace)", async () => {
+test("C-007: the publish service plumbs no general_access / access value into createDocWithV1", async () => {
+  // The dropped docs.general_access column must not be written; access is created on the
+  // share_links row by the repo with the fixed default, so the service hands the repo NO
+  // access field at all (web/workspace path).
   const { repo, rows } = fakeRepo();
   await publishDoc(
     { bytes: enc("# Spec"), declaredKind: "markdown", ownerId: "u_a", workspaceId: "W" },
-    {
-      repo,
-      slugGen: fixedSlug,
-      resolveProjectId: async () => "proj_1",
-      resolveDefaultAccess: async (workspaceId) => {
-        expect(workspaceId).toBe("W");
-        return "anyone_in_workspace";
-      },
-    },
+    { repo, slugGen: fixedSlug, resolveProjectId: async () => "proj_1" },
   );
   expect(rows).toHaveLength(1);
-  expect(rows[0].generalAccess).toBe("anyone_in_workspace");
+  expect(rows[0]).not.toHaveProperty("generalAccess");
 });
 
-test("AS-027: a restricted-default workspace yields a restricted doc", async () => {
-  const { repo, rows } = fakeRepo();
-  await publishDoc(
-    { bytes: enc("# Spec"), declaredKind: "markdown", ownerId: "u_a", workspaceId: "W" },
-    { repo, slugGen: fixedSlug, resolveProjectId: async () => "proj_1", resolveDefaultAccess: async () => "restricted" },
-  );
-  expect(rows[0].generalAccess).toBe("restricted");
-});
-
-test("C-011: the seed path (no workspace / no resolver) leaves generalAccess unset → column default", async () => {
+test("C-007: the seed path (no workspace) also plumbs no access value", async () => {
   const { repo, rows } = fakeRepo();
   await publishDoc({ bytes: enc("# Seed"), declaredKind: "markdown" }, { repo, slugGen: fixedSlug });
-  expect(rows[0].generalAccess).toBeUndefined();
+  expect(rows[0]).not.toHaveProperty("generalAccess");
 });

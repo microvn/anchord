@@ -25,15 +25,17 @@ const projRenderPublish = await ensureProject("render-publish");
 const projWebCore = await ensureProject("web-core");
 const projAnnoCore = await ensureProject("annotation-core");
 
-// ── docs (prototype titles), anyone_in_workspace + a share_links role so a member sees them too ──
+// ── docs (prototype titles). doc-access-two-axis S-001: access lives on the share_links
+//    axes (docs.general_access dropped). workspace_role=commenter (shared with the workspace,
+//    so a member sees + comments), link_role=null (no public link — the new-doc default). ──
 async function ensureDoc(slug: string, title: string, projectId: string): Promise<string> {
   const [ex] = await db.select().from(docs).where(eq(docs.slug, slug));
   const id = ex
-    ? (await db.update(docs).set({ title, projectId, generalAccess: "anyone_in_workspace" }).where(eq(docs.id, ex.id)), ex.id)
-    : (await db.insert(docs).values({ slug, title, kind: "markdown", ownerId: demo.id, projectId, generalAccess: "anyone_in_workspace" }).returning())[0]!.id;
+    ? (await db.update(docs).set({ title, projectId }).where(eq(docs.id, ex.id)), ex.id)
+    : (await db.insert(docs).values({ slug, title, kind: "markdown", ownerId: demo.id, projectId }).returning())[0]!.id;
   const [sl] = await db.select().from(shareLinks).where(eq(shareLinks.docId, id));
-  if (sl) await db.update(shareLinks).set({ role: "commenter" }).where(eq(shareLinks.docId, id));
-  else await db.insert(shareLinks).values({ docId: id, role: "commenter" });
+  if (sl) await db.update(shareLinks).set({ workspaceRole: "commenter", linkRole: null }).where(eq(shareLinks.docId, id));
+  else await db.insert(shareLinks).values({ docId: id, workspaceRole: "commenter", linkRole: null });
   return id;
 }
 const docRfc = await ensureDoc("rp-pipeline-rfc", "Render + publish pipeline RFC", projRenderPublish);

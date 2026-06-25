@@ -19,7 +19,7 @@
 // Run: RUN_INTEGRATION=1 bun test ./test/integration/viewer.itest.ts
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { docs, docVersions } from "../../src/db/schema";
+import { docs, docVersions, shareLinks } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { CONTENT_SECURITY_POLICY } from "../../src/render/sandbox";
 import { createLoadContent } from "../../src/render/viewer-loaders";
@@ -31,7 +31,30 @@ const RUN = !!process.env.RUN_INTEGRATION;
 const BASE = "http://localhost";
 
 let seq = 0;
-/** Seed a doc + its version 1 directly (controls general_access, which createDocWithV1 can't). */
+
+/**
+ * doc-access-two-axis S-001: translate a legacy access LEVEL into the two share_links axes
+ * and persist them on the doc's row. restricted={null,null} (no row); anyone_in_workspace=
+ * {workspaceRole,null}; anyone_with_link={null,linkRole}. Roles are commenter by default
+ * (the level is independent of the specific role).
+ */
+async function seedAccess(
+  h: MigratedDb,
+  docId: string,
+  level: "restricted" | "anyone_in_workspace" | "anyone_with_link",
+): Promise<void> {
+  if (level === "restricted") return;
+  const axes =
+    level === "anyone_in_workspace"
+      ? { workspaceRole: "commenter" as const, linkRole: null }
+      : { workspaceRole: null, linkRole: "commenter" as const };
+  await h.db
+    .insert(shareLinks)
+    .values({ docId, ...axes })
+    .onConflictDoUpdate({ target: shareLinks.docId, set: axes });
+}
+
+/** Seed a doc + its version 1 directly (controls access, which createDocWithV1 can't). */
 async function seedDoc(
   h: MigratedDb,
   opts: {
@@ -47,9 +70,10 @@ async function seedDoc(
       slug,
       title: `Doc ${slug}`,
       kind: opts.kind,
-      generalAccess: opts.generalAccess,
     })
     .returning({ id: docs.id });
+  // doc-access-two-axis S-001: access is the two axes on the share_links row, not a docs column.
+  await seedAccess(h, doc!.id, opts.generalAccess);
   const [ver] = await h.db
     .insert(docVersions)
     .values({ docId: doc!.id, version: 1, content: opts.content, contentHash: `h-${slug}` })

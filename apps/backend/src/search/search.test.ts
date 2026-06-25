@@ -15,7 +15,6 @@ import {
   type SearchDeps,
   type SearchAccessDeps,
 } from "./search";
-import type { GeneralAccessLevel } from "../sharing/access";
 import type { SearchHit, SearchQuery, SearchRepo } from "./search-repo";
 
 function fakeRepo(hits: SearchHit[], onQuery?: (q: SearchQuery) => void): SearchRepo {
@@ -27,14 +26,15 @@ function fakeRepo(hits: SearchHit[], onQuery?: (q: SearchQuery) => void): Search
   };
 }
 
-/** Access deps built from a static map of doc → {ownerId, generalAccess} + membership. */
+/** Access deps built from a static map of doc → {ownerId, workspaceShared} + membership.
+ *  doc-access-two-axis S-004 / C-006: the re-check keys on the raw WORKSPACE axis. */
 function fakeAccess(opts: {
-  fields: Record<string, { ownerId: string | null; generalAccess: GeneralAccessLevel }>;
+  fields: Record<string, { ownerId: string | null; workspaceShared: boolean }>;
   invited?: Set<string>; // `${docId}:${userId}`
   members?: Set<string>;
 }): SearchAccessDeps {
   return {
-    accessFieldsFor: (docId) => opts.fields[docId] ?? { ownerId: null, generalAccess: "restricted" },
+    accessFieldsFor: (docId) => opts.fields[docId] ?? { ownerId: null, workspaceShared: false },
     isInvited: (docId, userId) => !!opts.invited?.has(`${docId}:${userId}`),
     isWorkspaceMember: (userId) => !!opts.members?.has(userId),
   };
@@ -63,9 +63,9 @@ describe("search service (S-005)", () => {
     const hits = [hit("d1", "content"), hit("d2", "title"), hit("d3", "comment")];
     const access = fakeAccess({
       fields: {
-        d1: { ownerId: "u_x", generalAccess: "restricted" }, // owner
-        d2: { ownerId: "u_a", generalAccess: "anyone_in_workspace" }, // member
-        d3: { ownerId: "u_a", generalAccess: "restricted" }, // invited
+        d1: { ownerId: "u_x", workspaceShared: false }, // owner
+        d2: { ownerId: "u_a", workspaceShared: true }, // member (workspace axis on)
+        d3: { ownerId: "u_a", workspaceShared: false }, // invited
       },
       members: new Set(["u_x"]),
       invited: new Set(["d3:u_x"]),
@@ -83,8 +83,8 @@ describe("search service (S-005)", () => {
     const hits = [hit("d_ok", "content", "Payment Spec"), hit("d_secret", "comment", "Secret")];
     const access = fakeAccess({
       fields: {
-        d_ok: { ownerId: "u_x", generalAccess: "restricted" },
-        d_secret: { ownerId: "u_a", generalAccess: "restricted" },
+        d_ok: { ownerId: "u_x", workspaceShared: false },
+        d_secret: { ownerId: "u_a", workspaceShared: false },
       },
       // u_x not invited to d_secret, not relevant member grant for it.
     });
@@ -93,6 +93,25 @@ describe("search service (S-005)", () => {
     const raw = JSON.stringify(out);
     expect(raw).not.toContain("d_secret");
     expect(raw).not.toContain("Secret");
+  });
+
+  test("AS-015: search applies the C-006 rule — a link-only doc is absent, a workspace-shared one present, for a non-invited member", async () => {
+    // doc-access-two-axis S-004: the defense-in-depth re-check uses the SAME workspace-axis
+    // predicate as the dashboard. A link-only doc (workspaceShared:false, not invited) is dropped
+    // even though the repo surfaced it; the workspace-shared doc (workspaceShared:true) survives.
+    const hits = [hit("dWs", "title", "Roadmap"), hit("dLink", "content", "Roadmap Draft")];
+    const access = fakeAccess({
+      fields: {
+        dWs: { ownerId: "u_owner", workspaceShared: true }, // workspace axis on → visible to a member
+        dLink: { ownerId: "u_owner", workspaceShared: false }, // link-only → NOT a search grant
+      },
+      members: new Set(["u_member"]), // a member, but NOT individually invited to dLink
+    });
+    const out = await search({ q: "roadmap", userId: "u_member", workspaceId: "ws_1" }, { repo: fakeRepo(hits), access });
+    expect(out.map((r) => r.docId)).toEqual(["dWs"]);
+    const raw = JSON.stringify(out);
+    expect(raw).not.toContain("dLink");
+    expect(raw).not.toContain("Roadmap Draft");
   });
 
   test("AS-010: projectId is threaded to the repo query (scope)", async () => {

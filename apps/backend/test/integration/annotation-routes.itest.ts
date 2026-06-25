@@ -11,7 +11,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { annotations, comments, docs, user } from "../../src/db/schema";
+import { annotations, comments, docs, shareLinks, user } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { createDocRepo } from "../../src/publish/repo";
 import type { SessionResolver, WorkspaceRoleResolver } from "../../src/http/auth-gate";
@@ -46,7 +46,8 @@ describe.skipIf(!RUN)("annotation-core routes (real Postgres)", () => {
       contentHash: "hash-v1",
     });
     docId = created.id;
-    await h.db.update(docs).set({ generalAccess: "anyone_with_link" }).where(eq(docs.slug, slug));
+    // anyone_with_link → the doc carries a share_links row with the link axis on.
+    await h.db.insert(shareLinks).values({ docId, linkRole: "commenter" });
 
     const base = {
       db: h.db,

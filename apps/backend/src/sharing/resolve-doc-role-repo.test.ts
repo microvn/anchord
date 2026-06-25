@@ -24,7 +24,8 @@ import { createResolveDocRole, createIsDocOwner } from "./resolve-doc-role-repo"
 function fakeDb(seed: {
   docRows?: Array<Record<string, unknown>>;
   memberRows?: Array<{ role: string }>;
-  linkRows?: Array<{ role: string }>;
+  // doc-access-two-axis S-001: share_links row carries the two axes (workspaceRole/linkRole).
+  linkRows?: Array<Record<string, unknown>>;
 }): DB {
   const rowsFor = (table: unknown): Array<Record<string, unknown>> => {
     if (table === docs) return seed.docRows ?? [];
@@ -95,7 +96,7 @@ describe("createResolveDocRole owner source (auth-routes S-002)", () => {
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_in_workspace" }],
       memberRows: [],
-      linkRows: [{ role: "viewer" }],
+      linkRows: [{ workspaceRole: "viewer", linkRole: null }],
     });
     const resolve = createResolveDocRole(db, {
       isOwner: async () => false,
@@ -111,7 +112,7 @@ describe("createResolveDocRole owner source (auth-routes S-002)", () => {
     const db = fakeDb({
       docRows: [{ generalAccess: "anyone_in_workspace" }],
       memberRows: [],
-      linkRows: [{ role: "viewer" }],
+      linkRows: [{ workspaceRole: "viewer", linkRole: null }],
     });
     const resolve = createResolveDocRole(db, {
       isOwner: async () => false,
@@ -119,6 +120,58 @@ describe("createResolveDocRole owner source (auth-routes S-002)", () => {
       isWorkspaceMember: () => false,
     });
     expect(await resolve("doc_1", "u_bob")).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// doc-access-two-axis S-003 (C-005): the LOGGED-IN resolver folds the effective role
+// from both axes (workspace_role member-gated + link_role) plus owner + invite, highest
+// wins. A logged-in caller reaches link_role unconditionally (C-005: "link_role when the
+// caller holds the link"); the anon cap (C-004) lives at the anon seam, not here.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("createResolveDocRole — effective role from both axes (S-003 / C-005)", () => {
+  test("AS-008: a logged-in person on an editor link resolves to editor (can publish)", async () => {
+    // link_role = editor, no workspace axis, no invite, not owner → the link axis is the
+    // sole source and a LOGGED-IN caller gets the full editor role (un-capped — the cap is
+    // anon-only, C-004). editor → can edit (publish a version).
+    const db = fakeDb({
+      memberRows: [],
+      linkRows: [{ workspaceRole: null, linkRole: "editor" }],
+    });
+    const resolve = createResolveDocRole(db, {
+      isOwner: async () => false,
+      isWorkspaceMember: () => false,
+    });
+    expect(await resolve("doc_1", "u_loggedin")).toBe("editor");
+  });
+
+  test("AS-010: highest role wins across sources (workspace=commenter + invite=editor → editor)", async () => {
+    // C is a workspace member of a doc shared workspace=commenter AND is individually
+    // invited as editor. Both sources contribute; effectiveRole picks the higher (editor).
+    const db = fakeDb({
+      memberRows: [{ role: "editor" }], // individual invite = editor
+      linkRows: [{ workspaceRole: "commenter", linkRole: null }], // workspace axis = commenter
+    });
+    const resolve = createResolveDocRole(db, {
+      isOwner: async () => false,
+      isWorkspaceMember: (docId) => docId === "doc_1", // C is a member of this doc's workspace
+    });
+    expect(await resolve("doc_1", "u_c")).toBe("editor");
+  });
+
+  test("AS-010 (both axes set): a logged-in member folds BOTH axes, highest wins (workspace=commenter + link=editor → editor)", async () => {
+    // A doc shared with the workspace at commenter AND link-shared at editor. A logged-in
+    // workspace member reaches both axes; the resolver must fold both (not just the one a
+    // derived level would pick) → editor wins. Negating the link-axis fold turns this red.
+    const db = fakeDb({
+      memberRows: [],
+      linkRows: [{ workspaceRole: "commenter", linkRole: "editor" }],
+    });
+    const resolve = createResolveDocRole(db, {
+      isOwner: async () => false,
+      isWorkspaceMember: (docId) => docId === "doc_1",
+    });
+    expect(await resolve("doc_1", "u_member")).toBe("editor");
   });
 });
 

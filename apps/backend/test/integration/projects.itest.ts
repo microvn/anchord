@@ -20,7 +20,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
 import { docs, projects, user as userTable } from "../../src/db/schema";
 import { createApp } from "../../src/app";
@@ -194,8 +194,14 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     const [row] = await h.db.select().from(docs).where(eq(docs.id, docId));
     expect(row!.projectId).toBe(billingId);
     expect(row!.ownerId).toBe(A.userId); // AS-005: the member is the doc owner
-    // Make it anyone_in_workspace so X can browse it.
-    await h.db.update(docs).set({ generalAccess: "anyone_in_workspace" }).where(eq(docs.id, docId));
+    // Make it anyone_in_workspace so X can browse it (workspace axis on, link off).
+    await h.db
+      .insert(schema.shareLinks)
+      .values({ docId, workspaceRole: "commenter", linkRole: null })
+      .onConflictDoUpdate({
+        target: schema.shareLinks.docId,
+        set: { workspaceRole: "commenter", linkRole: null },
+      });
   });
 
   test("AS-006/C-003: X browses 'Billing' → sees doc B (anyone_in_workspace), NOT doc A (restricted)", async () => {
@@ -210,8 +216,14 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     const docAId = ((await pubA.json()) as any).data.docId;
     // shared-workspace model (workspaces:C-007): a published doc now defaults to anyone_in_workspace,
     // so to test the restricted-hidden path doc A must be set restricted EXPLICITLY (the
-    // per-doc opt-in) — it is no longer the publish default.
-    await h.db.update(docs).set({ generalAccess: "restricted" }).where(eq(docs.id, docAId));
+    // per-doc opt-in) — it is no longer the publish default. Restricted = both axes off.
+    await h.db
+      .insert(schema.shareLinks)
+      .values({ docId: docAId, workspaceRole: null, linkRole: null })
+      .onConflictDoUpdate({
+        target: schema.shareLinks.docId,
+        set: { workspaceRole: null, linkRole: null },
+      });
 
     const browse = await app.handle(withCookie(`/api/w/${WA}/projects/${billingId}/docs`, X.cookie));
     expect(browse.status).toBe(200);
@@ -377,11 +389,19 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
   });
 
   test("AS-007/C-005: archiving 'Billing' hides it from the list; its doc still opens by slug", async () => {
-    // Find the slug of the anyone_in_workspace doc in Billing (published earlier).
+    // Find the anyone_in_workspace doc in Billing (published earlier): workspace axis on,
+    // link axis off on its share_links row.
     const [sharedDoc] = await h.db
-      .select()
+      .select({ id: docs.id, slug: docs.slug })
       .from(docs)
-      .where(and(eq(docs.projectId, billingId), eq(docs.generalAccess, "anyone_in_workspace")));
+      .innerJoin(schema.shareLinks, eq(schema.shareLinks.docId, docs.id))
+      .where(
+        and(
+          eq(docs.projectId, billingId),
+          isNotNull(schema.shareLinks.workspaceRole),
+          isNull(schema.shareLinks.linkRole),
+        ),
+      );
     expect(sharedDoc).toBeTruthy();
 
     const archive = await app.handle(
