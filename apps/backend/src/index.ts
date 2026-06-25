@@ -532,6 +532,7 @@ const app = createApp({
       ...baselineTools(),
       ...createPublishToolsForDb({
         db,
+        appUrl: cfg.APP_URL,
         resolveAccess: sharedResolveAccess,
         reanchorOnNewVersion: async ({ docId, version, content, kind, changedBlockIds }) => {
           const versionId = `${docId}:${version}`;

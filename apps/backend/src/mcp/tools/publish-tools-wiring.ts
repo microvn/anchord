@@ -24,6 +24,7 @@ import { appendVersionTx, appendVersionTxPinned, VersionConflictError } from "..
 import { docVersions } from "../../db/schema";
 import { desc } from "drizzle-orm";
 import { McpToolError } from "./publish-tools";
+import { absoluteLink } from "../../auth/mail-transport";
 import type { Viewer } from "../../sharing/access";
 import type { AccessResult } from "../../sharing/resolve-access";
 import type { Role } from "../../sharing/roles";
@@ -44,7 +45,7 @@ import type { ToolDef } from "../server";
  * foreign/invalid one (throws ProjectRejected → surfaces as a tool error), and falls back
  * to the owner's default project when omitted (C-006).
  */
-export function createMcpCreateDocumentPort(db: DB): CreateDocumentPort {
+export function createMcpCreateDocumentPort(db: DB, appUrl: string): CreateDocumentPort {
   const repo = createDocRepo(db);
   const resolveProjectId = createPublishProjectResolver(db);
   const resolveDefaultAccess = (workspaceId: string) => readWorkspaceDefaultAccess(db, workspaceId);
@@ -62,8 +63,10 @@ export function createMcpCreateDocumentPort(db: DB): CreateDocumentPort {
     );
     // shared-workspace model (C-006): the doc INHERITS the token's workspace default access
     // (anyone_in_workspace by default) — visibility is never *chosen* via MCP in v0.
-    // Return the agent-facing shape (AS-003.T4).
-    return { docId: res.docId, slug: res.slug, url: res.url };
+    // Return the agent-facing shape (AS-003.T4). The publish service returns a RELATIVE
+    // `/d/:slug`; the agent has no origin context, so make it ABSOLUTE against APP_URL — else
+    // the returned link is unusable outside the browser (e.g. `/d/foo` with no domain).
+    return { docId: res.docId, slug: res.slug, url: absoluteLink(appUrl, res.url) };
   };
 }
 
@@ -195,6 +198,8 @@ function sha256Hex(text: string): string {
 /** Build the concrete publish tool registry fragment for the MCP server. */
 export function createPublishToolsForDb(deps: {
   db: DB;
+  /** Instance public origin (cfg.APP_URL) — makes the created doc's `url` absolute for agents. */
+  appUrl: string;
   resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
   reanchorOnNewVersion?: (input: {
     docId: string;
@@ -208,7 +213,7 @@ export function createPublishToolsForDb(deps: {
   }) => Promise<unknown> | unknown;
 }): Record<string, ToolDef> {
   return publishTools({
-    create: createMcpCreateDocumentPort(deps.db),
+    create: createMcpCreateDocumentPort(deps.db, deps.appUrl),
     update: createMcpUpdateDocumentPorts({
       db: deps.db,
       resolveAccess: deps.resolveAccess,
