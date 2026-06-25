@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // `/w/:id/projects` — the Projects browser, 1:1 with Anchord-Design's ProjectsScreen
 // (browser.jsx). page-head (Workspace eyebrow + Fraunces title + New-project) · a proj-grid
@@ -32,6 +33,7 @@ import {
 // `/w/:workspaceId/projects/:id` (workspace-project-browse S-001), not the All-docs union.
 
 export function ProjectsScreen() {
+  usePageMeta("Projects");
   const { workspace } = useActiveWorkspace();
   const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);

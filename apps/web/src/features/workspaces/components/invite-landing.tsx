@@ -10,6 +10,7 @@ import { acceptInvitation, rejectInvitation, setActiveWorkspace } from "@/featur
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { toApiError } from "@/lib/api/api-error";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // S-004 WorkspaceInviteLanding (AS-013/014/015 / GAP-002 — a DISTINCT route from auth-ui's
 // per-doc invite landing). The invite link is `/invite/workspace/:invitationId?token=…&email=…`.
@@ -26,6 +27,7 @@ interface AcceptResult {
 }
 
 export function WorkspaceInviteLanding() {
+  usePageMeta("Workspace invitation");
   const { invitationId } = useParams();
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";

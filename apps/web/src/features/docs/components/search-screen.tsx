@@ -7,6 +7,7 @@ import { Pagination } from "@/components/pagination";
 import { Skeleton } from "@/components/skeleton";
 import { ErrorState } from "@/components/error-state";
 import { NoResultsState } from "@/components/no-results-state";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // `/w/:id/search?q=` — search results (workspace-project S-005), 1:1 with Anchord-Design's
 // SearchResults (browser.jsx). A search head (Fraunces "Results for …" + the "searched
@@ -16,6 +17,7 @@ import { NoResultsState } from "@/components/no-results-state";
 // the empty data state — C-007). The backend returns no snippet, so rows show the matchSource.
 
 export function SearchScreen() {
+  usePageMeta("Search");
   const { workspaceId = "" } = useParams();
   const [params, setParams] = useSearchParams();
   const q = params.get("q") ?? "";

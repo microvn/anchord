@@ -4,6 +4,7 @@ import { zodResolver } from "@/features/auth/lib/zod-resolver";
 import { Link } from "react-router-dom";
 import { signUp } from "@/lib/api/auth-client";
 import { signUpSchema, type SignUpValues } from "@/features/auth/schema/sign-up";
+import { usePageMeta } from "@/hooks/use-page-meta";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +27,7 @@ import { OAuthButtons } from "./oauth-buttons";
 // OAuthButtons (only enabled providers) are reused here too.
 
 export function SignUpScreen() {
+  usePageMeta("Sign up");
   const [formError, setFormError] = useState<string | null>(null);
   // Once sign-up succeeds we flip to the "check your inbox" state (with resend), keeping the
   // email so VerifyEmailSent can resend to it. We never navigate into the app — there is no

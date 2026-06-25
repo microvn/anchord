@@ -5,6 +5,7 @@ import { useSession } from "@/lib/api/auth-client";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { NoAccessView } from "./no-access-view";
 import { useViewerLayoutMode } from "@/hooks/use-breakpoint";
+import { usePageMeta } from "@/hooks/use-page-meta";
 import { Icon } from "@/components/icon";
 import { ErrorState } from "@/components/error-state";
 import { Skeleton } from "@/components/skeleton";
@@ -124,6 +125,8 @@ export function ViewerScreen({
     // staleTime bounds how often this fires).
     { meta: { viewerRead: true }, refetchOnWindowFocus: true },
   );
+
+  usePageMeta(query.data?.doc?.title);
 
   // AS-016: route to sign-in carrying a return-to-doc, so completing sign-in lands back on /d/:slug.
   // capability-share-link S-002 (C-009/GAP-004): on a capability (`/s/:token`) session, the return-to

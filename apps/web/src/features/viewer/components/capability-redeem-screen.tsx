@@ -5,6 +5,7 @@ import { NoAccessView } from "./no-access-view";
 import { LinkPasswordGate } from "./link-password-gate";
 import { ViewerScreen } from "./viewer-screen";
 import { redeemCapabilityLink, RedeemError } from "@/features/viewer/services/client";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // CapabilityRedeemScreen (capability-share-link S-002 + S-006): the PUBLIC `/s/:token` route
 // (outside AuthGuard). An anonymous visitor opens the capability link; this screen REDEEMS the
@@ -22,6 +23,7 @@ import { redeemCapabilityLink, RedeemError } from "@/features/viewer/services/cl
 // password (401 INCORRECT) re-prompts with an inline error; once throttled (429) the gate backs off.
 
 export function CapabilityRedeemScreen() {
+  usePageMeta("Opening document");
   const { token = "" } = useParams<{ token: string }>();
   const [state, setState] = useState<
     | { phase: "redeeming" }

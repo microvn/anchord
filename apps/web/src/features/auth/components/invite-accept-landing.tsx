@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useSession } from "@/lib/api/auth-client";
+import { usePageMeta } from "@/hooks/use-page-meta";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Brandmark, Icon } from "@/components/icon";
@@ -33,6 +34,7 @@ interface AcceptResult {
 }
 
 export function InviteAcceptLanding() {
+  usePageMeta("Document invitation");
   const { inviteId } = useParams();
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";

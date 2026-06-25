@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
 import { NoResultsState } from "@/components/no-results-state";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // `/w/:workspaceId/projects/:projectId` — the per-project doc browse (workspace-project-browse
 // S-001). Clicking a project card on the Projects screen lands here: ONLY that project's docs
@@ -31,6 +32,7 @@ export function ProjectDocsScreen() {
   // The project may not be in the active list (archived, or no longer present); fall back to a
   // neutral title so the view never renders nameless.
   const projectName = project?.name ?? "Project";
+  usePageMeta(projectName);
 
   // S-002/S-003: the SAME faceted filter + sort engine as All-docs (C-005).
   const browse = useDocBrowse(docs);

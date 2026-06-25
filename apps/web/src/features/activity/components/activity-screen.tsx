@@ -8,6 +8,7 @@ import { ActivityStatsRail } from "@/features/activity/components/activity-stats
 import { useActivity } from "@/features/activity/hooks/use-activity";
 import { useActivityStats } from "@/features/activity/hooks/use-activity-stats";
 import type { ActivityCategory } from "@/features/activity/types";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // `/w/:id/activity` — the workspace activity feed screen (workspace-activity S-001 + S-003).
 //
@@ -24,6 +25,7 @@ import type { ActivityCategory } from "@/features/activity/types";
 // All (AS-013).
 
 export function ActivityScreen() {
+  usePageMeta("Activity");
   const { workspaceId = "" } = useParams<{ workspaceId: string }>();
   const navigate = useNavigate();
   const [page, setPage] = useState(1);

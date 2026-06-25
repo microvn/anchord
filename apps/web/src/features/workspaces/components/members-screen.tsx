@@ -24,6 +24,7 @@ import {
 import { initials, avatarColor } from "@/lib/initials";
 import type { MemberRow, InvitationRow, WorkspaceRole } from "@/features/workspaces/types";
 import { inviteSchema, type InviteForm } from "@/features/workspaces/schema/invite";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // S-003 MembersScreen (AS-007..AS-012 / C-002). ADMIN-ONLY management: a non-admin sees a
 // read-only view with NO manage controls (invite/remove/change-role hidden). The directory is
@@ -50,6 +51,7 @@ const inviteResolver: Resolver<InviteForm> = async (values) => {
 };
 
 export function MembersScreen() {
+  usePageMeta("Members");
   const { workspace, isAdmin } = useActiveWorkspace();
 
   // C-002 / AS-011: the member directory endpoint is admin-only on the backend (a non-admin's

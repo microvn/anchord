@@ -4,6 +4,7 @@ import { zodResolver } from "@/features/auth/lib/zod-resolver";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { signInSchema, type SignInValues } from "@/features/auth/schema/sign-in";
+import { usePageMeta } from "@/hooks/use-page-meta";
 import { signIn, sendVerificationEmail, getSession, useSession } from "@/lib/api/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,7 @@ import { OAuthErrorBanner } from "./oauth-error-banner";
 const EMAIL_UNVERIFIED_CODE = "EMAIL_NOT_VERIFIED";
 
 export function SignInScreen() {
+  usePageMeta("Sign in");
   const navigate = useNavigate();
   const [params] = useSearchParams();
   // AS-008: better-auth appended ?error=… when it returned from a failed OAuth callback.

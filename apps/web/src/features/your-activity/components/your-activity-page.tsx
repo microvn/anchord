@@ -6,6 +6,7 @@ import {
   type YourActivityTab,
 } from "@/features/your-activity/components/your-activity-tabs";
 import { useUnreadCount } from "@/features/notifications/hooks/use-notifications";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // your-activity-actions S-002 — the two-tab "Your activity" page (M7: this story owns the tab shell,
 // built EXACTLY ONCE). The account-scoped `/me/activity` page (route mounted by 2a) becomes a
@@ -23,6 +24,7 @@ function tabFromParam(value: string | null): YourActivityTab {
 }
 
 export function YourActivityPage() {
+  usePageMeta("Your activity");
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = tabFromParam(searchParams.get("tab"));
   const unreadCountQuery = useUnreadCount();

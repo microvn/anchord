@@ -4,6 +4,7 @@ import { ErrorState } from "@/components/error-state";
 import { Skeleton } from "@/components/skeleton";
 import { ActivityDetailPage } from "@/features/activity/components/activity-detail-page";
 import { useActivityEvent, useActivityRelated } from "@/features/activity/hooks/use-activity-detail";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // `/w/:id/activity/:eventId` — the activity event detail screen (workspace-activity S-004).
 //
@@ -14,6 +15,7 @@ import { useActivityEvent, useActivityRelated } from "@/features/activity/hooks/
 // ErrorState.
 
 export function ActivityDetailScreen() {
+  usePageMeta("Activity");
   const { workspaceId = "", eventId = "" } = useParams<{ workspaceId: string; eventId: string }>();
   const eventQuery = useActivityEvent(workspaceId, eventId);
   // Only fetch related once the event resolved (avoids a parallel 404 while the event is loading).

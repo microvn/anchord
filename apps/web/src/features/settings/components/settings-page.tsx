@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import { SettingsNav } from "./settings-nav";
 import { registerDefaultSettingsSections } from "../lib/default-sections";
 import { resolveSettingsSection } from "../lib/section-registry";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // Register the shell's owned + reserved sections once, at module load — before the page reads
 // the registry. (S-002/S-003 override the owned bodies via the same registry.)
@@ -14,6 +15,7 @@ registerDefaultSettingsSections();
 // registry — S-002 (Account) / S-003 (Appearance) fill the owned slots; S-004 finalizes the
 // reserved coming-soon stubs.
 export function SettingsPage() {
+  usePageMeta("Settings");
   const { section } = useParams<{ section: string }>();
   const active = resolveSettingsSection(section);
 

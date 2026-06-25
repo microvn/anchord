@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
 import { NoResultsState } from "@/components/no-results-state";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // `/w/:id/docs` — the All-docs browser, 1:1 with Anchord-Design's ProjectBrowser
 // (browser.jsx). page-head (Workspace eyebrow + Fraunces title + New-doc) · a shared DocFilterBar
@@ -22,6 +23,7 @@ import { NoResultsState } from "@/components/no-results-state";
 // strip is gone (replaced by the faceted filter — workspace-project-browse C-005).
 
 export function DocsScreen() {
+  usePageMeta("Documents");
   const { workspace } = useActiveWorkspace();
   const [page, setPage] = useState(1);
   // S-008: the grid pages SERVER-SIDE — one workspace-docs read per page (the server `limit` is

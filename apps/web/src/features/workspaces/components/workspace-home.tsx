@@ -9,6 +9,7 @@ import { Icon } from "@/components/icon";
 import { Skeleton } from "@/components/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
+import { usePageMeta } from "@/hooks/use-page-meta";
 
 // WorkspaceHome — the `/w/:id/` dashboard, 1:1 with Anchord-Design's Dashboard (screens.jsx).
 // page-head (Workspace eyebrow + Fraunces workspace name + Rename/Members admin actions +
@@ -25,6 +26,7 @@ const RECENT_LIMIT = 6;
 
 export function WorkspaceHome() {
   const { workspace, isAdmin } = useActiveWorkspace();
+  usePageMeta(workspace.name);
   const docsQuery = useWorkspaceDocs(workspace.id);
   // The members directory is admin-only on the backend; only fetch it when we can read it.
   const membersQuery = useMembers(workspace.id);

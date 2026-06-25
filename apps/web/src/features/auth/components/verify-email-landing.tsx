@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { sendVerificationEmail, verifyEmail } from "@/lib/api/auth-client";
+import { usePageMeta } from "@/hooks/use-page-meta";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/icon";
@@ -23,6 +24,7 @@ import { AuthCenter } from "./auth-shell";
 type Status = "verifying" | "verified" | "invalid";
 
 export function VerifyEmailLanding() {
+  usePageMeta("Verify your email");
   const [params] = useSearchParams();
   const token = params.get("token");
   const [status, setStatus] = useState<Status>("verifying");
