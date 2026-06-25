@@ -10,8 +10,9 @@
 //   • a demo account (owner) + a few reviewer accounts (varied annotation authorship)
 //   • two docs — one Markdown (2 versions, for the version diff) and one HTML (rendered in the
 //     sandbox iframe with its own styling) — both shared anyone_with_link · commenter
-//   • a diverse set of annotations on EACH doc: markup highlight, plain/threaded/resolved
-//     comments, a guest comment, every label preset, and replace/delete redline suggestions
+//   • a CURATED, semantically-matched annotation set on EACH doc: each comment is written for
+//     the exact phrase it highlights (markup / plain / threaded / resolved / guest comments,
+//     every label preset, and replace/delete redline suggestions)
 //
 // Not shipped in prod images; this is a developer convenience for local resets.
 
@@ -32,7 +33,6 @@ import {
 } from "./schema";
 import { renderForAnchoring } from "../render/markdown";
 import { injectBlockIds } from "../annotation/block-id";
-import { DEFAULT_LABEL_PRESETS } from "../annotation/label-presets";
 import { mintCapabilityToken } from "../sharing/share-token";
 import { BLOCK_SELECTOR } from "@anchord/anchor";
 
@@ -49,6 +49,60 @@ const REVIEWERS = [
 
 // Doc contents live as assets next to this file so the markup is never escaped into a TS literal.
 const asset = (rel: string) => Bun.file(new URL(`./seed-assets/${rel}`, import.meta.url)).text();
+
+// ── curated annotations ────────────────────────────────────────────────────────────────────────
+// Each entry targets an EXACT phrase in the (latest-version) rendered text; `body`/`replies` are
+// written to fit THAT phrase. `q` must be a substring of one block's whitespace-normalized text.
+type Anno =
+  | { q: string; t: "highlight" | "comment"; body: string }
+  | { q: string; t: "thread"; body: string; replies: string[] }
+  | { q: string; t: "resolved"; body: string }
+  | { q: string; t: "guest"; body: string }
+  | { q: string; t: "label"; label: string; body: string }
+  | { q: string; t: "replace"; to: string; body: string }
+  | { q: string; t: "delete"; body: string };
+
+const REFUND_ANNOS: Anno[] = [
+  { q: "moves money back to the customer", t: "highlight", body: "Clear one-line definition — anchoring it for the glossary." },
+  { q: "an idempotency key the caller generates once per logical attempt", t: "comment", body: "How long is a key retained for dedup? Worth stating the window." },
+  { q: "A refund always reverses the full captured amount", t: "thread", body: "So there's no way to do a partial from this endpoint?", replies: ["Right — partial is deferred to v1.", "Then let's make the typed error on `amount` very explicit."] },
+  { q: "currency conversion are explicitly deferred to v1", t: "resolved", body: "Scope confirmed with product. Resolving." },
+  { q: "120-day processor window", t: "guest", body: "Is the 120-day window fixed, or configurable per processor?" },
+  { q: "returns the original refund resource unchanged", t: "label", label: "looks-good", body: "Clean idempotency contract — exactly what callers need." },
+  { q: "settles out of band", t: "label", label: "clarify-this", body: "Clarify how the caller learns settlement finished — webhook or poll?" },
+  { q: "what it accepts, what it guarantees", t: "label", label: "missing-overview", body: "A short TL;DR box at the top would help skimmers." },
+  { q: "returns 201 with the refund resource", t: "label", label: "verify-this", body: "Verify it's 201 (created), not 200." },
+  { q: "POST /v1/refunds", t: "label", label: "give-example", body: "Add an example response body next to the request sample." },
+  { q: "Return a typed error for every refusal", t: "label", label: "match-patterns", body: "Make the error shape match the rest of the API." },
+  { q: "kicks off the asynchronous payout reversal", t: "label", label: "consider-alternatives", body: "Consider a synchronous path for tiny amounts to simplify callers." },
+  { q: "even if the first response was lost", t: "label", label: "ensure-no-regression", body: "Add a regression test for the lost-response retry path." },
+  { q: "multi-capture orders", t: "label", label: "out-of-scope", body: "Out of scope for v0 — agreed, just flagging it." },
+  { q: "idempotency_conflict", t: "label", label: "needs-tests", body: "Each error code needs its own test case." },
+  { q: "favors correctness over coverage", t: "label", label: "nice-approach", body: "Good principle to state up front." },
+  { q: "a request we cannot prove safe is rejected", t: "replace", to: "a request we cannot prove safe is rejected outright", body: "Tiny wording tweak for emphasis." },
+  { q: "It is the contract the storefront and the support console both build against", t: "delete", body: "This restates the opening clause — could drop it." },
+];
+
+const BACKTEST_ANNOS: Anno[] = [
+  { q: "taking meaningfully less drawdown", t: "highlight", body: "The drawdown story is the real selling point — highlighting." },
+  { q: "sizing down in high-volatility regimes", t: "comment", body: "Is the vol estimate realized or implied? It changes the lag a lot." },
+  { q: "cutting the worst loss roughly in half", t: "thread", body: "Is this net of the cost model, or gross?", replies: ["Net — costs are in.", "Good, then the holdability claim stands."] },
+  { q: "next-day open, never the signal-day close", t: "resolved", body: "Confirmed there's no look-ahead here. Resolving." },
+  { q: "200 most liquid names, rebalanced monthly", t: "guest", body: "Why 200 and not 500 — where's the liquidity cutoff?" },
+  { q: "-12.4%", t: "label", label: "looks-good", body: "Half the benchmark drawdown — strong result." },
+  { q: "Sharpe near 1.7", t: "label", label: "verify-this", body: "Verify the frictionless Sharpe — that number looks high." },
+  { q: "exits on reversion to the mean or after ten trading days", t: "label", label: "clarify-this", body: "Clarify which exit wins when both trigger on the same day." },
+  { q: "two standard deviations from its 20-day mean", t: "label", label: "give-example", body: "One worked entry/exit example would make this concrete." },
+  { q: "five basis points per side", t: "label", label: "match-patterns", body: "Match the cost convention used in the other strategy reports." },
+  { q: "Position size scales inversely with trailing volatility", t: "label", label: "consider-alternatives", body: "Consider a vol floor so size doesn't blow up in dead-calm markets." },
+  { q: "reproducible from the committed config", t: "label", label: "ensure-no-regression", body: "Pin the data snapshot hash so a rerun can't drift." },
+  { q: "published by the runner as a fixed snapshot", t: "label", label: "missing-overview", body: "Add the run date and commit near the title." },
+  { q: "widen the universe to 500 names", t: "label", label: "out-of-scope", body: "Next-iteration scope — noting it here." },
+  { q: "modeled on every fill", t: "label", label: "needs-tests", body: "Add a test asserting costs apply to every fill, not just round-trips." },
+  { q: "stands aside entirely in the worst conditions", t: "label", label: "nice-approach", body: "Like the regime-filter direction." },
+  { q: "bounds how much weight to put on the headline Sharpe", t: "replace", to: "bounds how much weight to put on the headline Sharpe in isolation", body: "Soften this slightly." },
+  { q: "Treat the report as evidence the approach is worth a forward test", t: "delete", body: "Redundant with the caveats above — could cut." },
+];
 
 async function main() {
   const cfg = loadConfig();
@@ -70,7 +124,6 @@ async function main() {
   const demo = await ensureUser(DEMO_EMAIL, DEMO_NAME, DEMO_PASSWORD);
   const reviewers = [];
   for (const r of REVIEWERS) reviewers.push(await ensureUser(r.email, r.name, DEMO_PASSWORD));
-  // Authorship pool: owner first, then reviewers. A guest (null) is added per-doc.
   const authors = [demo.id, ...reviewers.map((r) => r.id)];
 
   // 2. The demo user's workspace + default project (created by the signup hook).
@@ -94,7 +147,6 @@ async function main() {
         .values({ slug, title, kind, ownerId: demo.id, projectId, generalAccess: "anyone_with_link" })
         .returning();
     }
-    // versions (idempotent: only append above the current max)
     const rows = await db.select().from(docVersions).where(eq(docVersions.docId, doc!.id));
     const maxV = rows.reduce((m, r) => Math.max(m, r.version), 0);
     for (let v = maxV + 1; v <= versions.length; v++) {
@@ -102,16 +154,11 @@ async function main() {
         docId: doc!.id, version: v, content: versions[v - 1]!, contentHash: hash(versions[v - 1]!), publishedBy: demo.id,
       });
     }
-    // anyone_with_link · commenter share config (one row per doc — upsert by docId)
     const [link] = await db.select().from(shareLinks).where(eq(shareLinks.docId, doc!.id));
     if (!link) {
-      await db.insert(shareLinks).values({
-        docId: doc!.id, role: "commenter", guestCommenting: true, capabilityToken: mintCapabilityToken(),
-      });
+      await db.insert(shareLinks).values({ docId: doc!.id, role: "commenter", guestCommenting: true, capabilityToken: mintCapabilityToken() });
     } else {
-      await db.update(shareLinks)
-        .set({ role: "commenter", guestCommenting: true, capabilityToken: link.capabilityToken ?? mintCapabilityToken() })
-        .where(eq(shareLinks.docId, doc!.id));
+      await db.update(shareLinks).set({ role: "commenter", guestCommenting: true, capabilityToken: link.capabilityToken ?? mintCapabilityToken() }).where(eq(shareLinks.docId, doc!.id));
     }
     return doc!.id;
   };
@@ -123,9 +170,9 @@ async function main() {
   const mdDocId = await seedDoc("Refund API — v0 Specification", "refund-api-spec", "markdown", [refundV1, refundV2]);
   const htmlDocId = await seedDoc("Strategy Backtest Report", "strategy-backtest-report", "html", [backtestHtml]);
 
-  // 4. Diverse annotations on each doc (clear-and-reseed so a re-run refreshes them).
-  await seedAnnotations(db, mdDocId, authors);
-  await seedAnnotations(db, htmlDocId, authors);
+  // 4. Curated annotations on each doc (clear-and-reseed so a re-run refreshes them).
+  await seedAnnotations(db, mdDocId, authors, REFUND_ANNOS);
+  await seedAnnotations(db, htmlDocId, authors, BACKTEST_ANNOS);
 
   // 5. Report the capability links so a fresh runner can open the commenter view directly.
   const links = await db.select({ docId: shareLinks.docId, token: shareLinks.capabilityToken }).from(shareLinks)
@@ -140,8 +187,8 @@ async function main() {
 
 // ── annotation seeding ───────────────────────────────────────────────────────────────────────
 
-/** Ordered [blockId, visible text] for leaf content blocks, as the viewer's locate ladder sees them. */
-function blocks(content: string, kind: "html" | "markdown") {
+/** blockId → whitespace-normalized visible text, as the viewer's locate ladder sees it. */
+function blockText(content: string, kind: "html" | "markdown"): { blockId: string; text: string }[] {
   const html = injectBlockIds(renderForAnchoring(content, kind));
   const win = new Window();
   win.document.body.innerHTML = html;
@@ -151,40 +198,36 @@ function blocks(content: string, kind: "html" | "markdown") {
     const tag = el.tagName.toLowerCase();
     const text = (el.textContent || "").replace(/\s+/g, " ").trim();
     if (!blockId || !blockId.startsWith("block-")) continue;
+    // Skip containers — anchor to the leaf block that actually holds the phrase.
     if (["ul", "ol", "table", "tr", "pre", "div", "section", "article", "figure", "aside", "nav", "header", "main"].includes(tag)) continue;
-    if (text.length < 15) continue;
     out.push({ blockId, text });
   }
   return out;
 }
 
-function anchorFor(b: { blockId: string; text: string }) {
-  let snippet = b.text, offset = 0;
-  if (b.text.length > 55) {
-    let s = b.text.indexOf(" "); s = s < 0 ? 0 : s + 1;
-    let e = Math.min(b.text.length, s + 45);
-    const ns = b.text.indexOf(" ", e); if (ns > 0 && ns - e < 12) e = ns;
-    snippet = b.text.slice(s, e); offset = s;
+/** Find the first block whose text contains the phrase; build a precise text-range anchor. */
+function anchorForPhrase(blocks: { blockId: string; text: string }[], q: string) {
+  for (const b of blocks) {
+    const offset = b.text.indexOf(q);
+    if (offset < 0) continue;
+    return {
+      blockId: b.blockId, textSnippet: q, offset, length: q.length,
+      prefix: b.text.slice(Math.max(0, offset - 32), offset),
+      suffix: b.text.slice(offset + q.length, offset + q.length + 32),
+    };
   }
-  return {
-    blockId: b.blockId, textSnippet: snippet, offset, length: snippet.length,
-    prefix: b.text.slice(Math.max(0, offset - 32), offset),
-    suffix: b.text.slice(offset + snippet.length, offset + snippet.length + 32),
-  };
+  return null;
 }
 
-async function seedAnnotations(db: ReturnType<typeof createDb>["db"], docId: string, authors: string[]) {
+async function seedAnnotations(db: ReturnType<typeof createDb>["db"], docId: string, authors: string[], entries: Anno[]) {
   await db.delete(annotationsTable).where(eq(annotationsTable.docId, docId)); // comments cascade
   const [v] = await db
     .select({ content: docVersions.content, version: docVersions.version, kind: docsTable.kind })
     .from(docVersions).innerJoin(docsTable, eq(docsTable.id, docVersions.docId))
     .where(eq(docVersions.docId, docId)).orderBy(desc(docVersions.version)).limit(1);
-  const bs = blocks(v!.content, v!.kind as "html" | "markdown");
-  if (!bs.length) return;
+  const blocks = blockText(v!.content, v!.kind as "html" | "markdown");
 
-  let bi = 0; const next = () => bs[bi++ % bs.length];
   let ui = 0; const pick = () => authors[ui++ % authors.length];
-
   const insAnn = async (o: { anchor: any; type: string; label?: string | null; authorId?: string | null; suggestion?: any; suggestionStatus?: string | null; status?: "unresolved" | "resolved" }) => {
     const [row] = await db.insert(annotationsTable).values({
       docId, type: o.type as any, anchor: o.anchor, label: o.label ?? null, authorId: o.authorId ?? null,
@@ -197,36 +240,32 @@ async function seedAnnotations(db: ReturnType<typeof createDb>["db"], docId: str
     return row!.id;
   };
 
-  // markup highlight (with a note so the author name shows)
-  { const b = next(); const a = pick(); const id = await insAnn({ anchor: anchorFor(b), type: "range", authorId: a }); await addC(id, null, a, "Highlighting this so it doesn't get missed in review."); }
-  // plain comment
-  { const b = next(); const a = pick(); const id = await insAnn({ anchor: anchorFor(b), type: "range", authorId: a }); await addC(id, null, a, "This reads a little ambiguous — can we spell out the input and output?"); }
-  // threaded (2 replies)
-  { const b = next(); const a0 = pick(), a1 = pick(), a2 = pick();
-    const id = await insAnn({ anchor: anchorFor(b), type: "range", authorId: a0 });
-    const root = await addC(id, null, a0, "Does this cover the partial case, or only the full one?");
-    await addC(id, root, a1, "Full only for v0 — partial is deferred.");
-    await addC(id, root, a2, "Got it. Let's say so explicitly so nobody assumes partial works."); }
-  // resolved
-  { const b = next(); const a = pick(); const id = await insAnn({ anchor: anchorFor(b), type: "range", authorId: a, status: "resolved" }); await addC(id, null, a, "Agreed and settled. Resolving."); }
-  // guest (no account)
-  { const b = next(); const id = await insAnn({ anchor: anchorFor(b), type: "range", authorId: null }); await addC(id, null, null, "Dropping by — a concrete example here would help a lot.", "Guest Reviewer"); }
-  // every label preset (each with a short note)
-  for (const label of DEFAULT_LABEL_PRESETS) {
-    const b = next(); const a = pick();
-    const id = await insAnn({ anchor: anchorFor(b), type: "range", label, authorId: a });
-    await addC(id, null, a, `Tagged "${label}" for the author to action.`);
+  let placed = 0, missed = 0;
+  for (const e of entries) {
+    const anchor = anchorForPhrase(blocks, e.q);
+    if (!anchor) { console.warn(`  ! phrase not found, skipped: "${e.q}"`); missed++; continue; }
+    if (e.t === "guest") {
+      const id = await insAnn({ anchor, type: "range", authorId: null });
+      await addC(id, null, null, e.body, "Guest Reviewer");
+    } else if (e.t === "thread") {
+      const a0 = pick(), a1 = pick(), a2 = pick();
+      const id = await insAnn({ anchor, type: "range", authorId: a0 });
+      const root = await addC(id, null, a0, e.body);
+      const reps = e.replies; await addC(id, root, a1, reps[0]!); if (reps[1]) await addC(id, root, a2, reps[1]!);
+    } else if (e.t === "resolved") {
+      const a = pick(); const id = await insAnn({ anchor, type: "range", authorId: a, status: "resolved" }); await addC(id, null, a, e.body);
+    } else if (e.t === "label") {
+      const a = pick(); const id = await insAnn({ anchor, type: "range", label: e.label, authorId: a }); await addC(id, null, a, e.body);
+    } else if (e.t === "replace") {
+      const a = pick(); const id = await insAnn({ anchor, type: "suggestion", authorId: a, suggestion: { kind: "replace", from: e.q, to: e.to, againstVersion: v!.version }, suggestionStatus: "pending" }); await addC(id, null, a, e.body);
+    } else if (e.t === "delete") {
+      const a = pick(); const id = await insAnn({ anchor, type: "suggestion", authorId: a, suggestion: { kind: "delete", from: e.q, againstVersion: v!.version }, suggestionStatus: "pending" }); await addC(id, null, a, e.body);
+    } else {
+      const a = pick(); const id = await insAnn({ anchor, type: "range", authorId: a }); await addC(id, null, a, e.body);
+    }
+    placed++;
   }
-  // redline suggestions (replace + delete)
-  { const b = next(); const a = pick(); const an = anchorFor(b);
-    const id = await insAnn({ anchor: an, type: "suggestion", authorId: a, suggestion: { kind: "replace", from: an.textSnippet, to: an.textSnippet.replace(/\s+/g, " ").trim() + " (clarified)", againstVersion: v!.version }, suggestionStatus: "pending" });
-    await addC(id, null, a, "Suggesting a clearer wording here."); }
-  { const b = next(); const a = pick(); const an = anchorFor(b);
-    const id = await insAnn({ anchor: an, type: "suggestion", authorId: a, suggestion: { kind: "delete", from: an.textSnippet, againstVersion: v!.version }, suggestionStatus: "pending" });
-    await addC(id, null, a, "This sentence is redundant — suggest removing it."); }
-
-  const total = await db.select({ id: annotationsTable.id }).from(annotationsTable).where(eq(annotationsTable.docId, docId));
-  console.log(`  ${docId}: seeded ${total.length} annotations across ${bi} blocks`);
+  console.log(`  ${docId}: ${placed} annotations placed${missed ? `, ${missed} phrase(s) not found` : ""}`);
 }
 
 main().catch((err) => {
