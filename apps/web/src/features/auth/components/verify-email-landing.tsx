@@ -100,7 +100,7 @@ export function VerifyEmailLanding() {
           Email verified
         </h1>
         <p className="mt-2.5 text-sm leading-relaxed text-muted">
-          Your account is active. Welcome to anchord — you can sign in now.
+          Your account is active. Welcome to Anchord — you can sign in now.
         </p>
         <div className="mt-6 flex justify-center">
           <Button size="lg" data-testid="verify-proceed" asChild>

@@ -31,7 +31,7 @@ export function AuthAside() {
         <div className="mb-[34px] flex items-center gap-2.5">
           <Brandmark size={24} />
           <span className="font-serif text-[19px] font-medium tracking-[-0.03em] text-ink">
-            anchord
+            Anchord
           </span>
         </div>
 

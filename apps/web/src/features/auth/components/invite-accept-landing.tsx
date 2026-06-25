@@ -96,7 +96,7 @@ export function InviteAcceptLanding() {
       <Card className="px-7 py-8 text-center">
         <div className="flex items-center justify-center gap-2.5">
           <Brandmark size={22} />
-          <span className="font-serif text-[19px] tracking-tight text-ink">anchord</span>
+          <span className="font-serif text-[19px] tracking-tight text-ink">Anchord</span>
         </div>
         <h1 className="mt-3.5 font-serif text-[23px] font-medium tracking-tight text-ink">
           You've been invited to a document

@@ -124,7 +124,7 @@ export function AppSidebar({
               data-testid="sidebar-brand"
               className="truncate font-serif text-[19px] font-medium tracking-[-0.03em] group-data-[collapsible=icon]:hidden"
             >
-              anchord
+              Anchord
             </span>
           </NavLink>
           <button

@@ -5,14 +5,14 @@ import { useEffect } from "react";
 // <title>/<meta>, but a hook survives the loading/error early-returns every screen has —
 // the title is correct even before data resolves). Non-JS crawlers/social unfurlers still
 // see index.html's defaults; per-doc server-side OG injection is deliberately out of scope.
-const SITE_NAME = "anchord";
+const SITE_NAME = "Anchord";
 const DEFAULT_DESCRIPTION =
   "Self-hosted platform to share and annotate AI-generated docs — own your data, comment in the margin, pull feedback back via MCP.";
 
 /**
  * Set the browser tab title (and the <meta name="description"> tag) for the current page.
- * Pass a page-specific `title` ("Documents") → renders "Documents · anchord"; omit it on the
- * root/redirect screens → bare "anchord". `description` falls back to the site default so the
+ * Pass a page-specific `title` ("Documents") → renders "Documents · Anchord"; omit it on the
+ * root/redirect screens → bare "Anchord". `description` falls back to the site default so the
  * description tag is always present and never stale across client-side navigations.
  */
 export function usePageMeta(title?: string, description?: string): void {

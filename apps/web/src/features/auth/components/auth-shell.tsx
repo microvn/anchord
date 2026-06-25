@@ -36,7 +36,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
           <div className="mb-[30px] flex items-center gap-2.5">
             <Brandmark size={22} />
             <span className="font-serif text-[19px] font-medium tracking-[-0.03em] text-ink">
-              anchord
+              Anchord
             </span>
           </div>
           {children}

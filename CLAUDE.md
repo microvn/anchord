@@ -11,7 +11,7 @@ already works; they describe the *intended* setup once the skeleton lands.
 The source of truth for product scope and decisions is the design doc:
 `~/.gstack/projects/claude/administrator-design-20260607-self-hosted-annotation.md`.
 
-## What anchord is
+## What Anchord is
 
 Self-hosted, own-your-data platform to share and **annotate docs** — HTML,
 Markdown, or images — **built for the specs, plans, and reports your AI writes**
@@ -51,7 +51,7 @@ volume). v1 may ship the app as a `bun --compile` binary pointing at an external
 Postgres. No telemetry, no phone-home, ever.
 
 ### Why Postgres over SQLite (don't relitigate)
-anchord's core workload is **multiple people commenting on one doc** — a
+Anchord's core workload is **multiple people commenting on one doc** — a
 multi-writer pattern. SQLite serializes all writes (whole-file lock); Postgres
 MVCC handles concurrent writers. Postgres is also the de-facto self-host norm
 (Cal.com, Plausible, Outline all ship compose-with-Postgres), so it costs
@@ -63,7 +63,7 @@ DB at a time to avoid doubling the test surface.
 Bun: native TS, fast cold start, and the `bun --compile` single-binary path is a
 strategic asset for self-host. Elysia is Bun-native, fastest in class, with
 end-to-end type safety (Eden). NestJS solves the large-team/many-module problem
-anchord (solo, async-annotation scope) does not have, at the cost of DI/decorator
+Anchord (solo, async-annotation scope) does not have, at the cost of DI/decorator
 weight that fights the lightweight self-host goal.
 
 ## Core domain model
@@ -129,7 +129,7 @@ editor integrations. See design doc §4 for the full versioned feature table.
 
 ## Frontend folder architecture (MANDATORY — `apps/web`)
 
-Spec: `docs/specs/web-structure/`. Adapted from feature-based principles for anchord's
+Spec: `docs/specs/web-structure/`. Adapted from feature-based principles for Anchord's
 real stack (Vite + React Router + Eden treaty + better-auth + React Query). When adding
 or moving FE code, follow this exactly — do not regress to flat features or relative imports.
 
