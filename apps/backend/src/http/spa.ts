@@ -4,10 +4,17 @@ import { getOrCreateRequestId, type ErrorEnvelope } from "./envelope";
 // self-host S-005 / C-007: the served app must never shadow the real backend surfaces. An
 // unmatched request under one of these prefixes is a genuine 404 (API/content/health), NOT the
 // SPA shell — otherwise an API client would get HTML for a mistyped endpoint.
-const RESERVED_PREFIXES = ["/api", "/v/", "/s/", "/health", "/mcp"];
+const RESERVED_PREFIXES = ["/api", "/v/", "/health", "/mcp"];
+
+// capability-share-link: the API under /s/ is ONLY the token sub-paths (/s/:token/redeem,
+// /s/:token/resolve). The bare /s/:token is the SPA redeem PAGE (CapabilityRedeemScreen) and MUST
+// fall through to index.html. A blanket "/s/" prefix wrongly 404'd that page — so reserve /s/
+// only when the path carries a sub-segment beyond the token.
+const CAPABILITY_API_SUBPATH = /^\/s\/[^/]+\/.+/;
 
 /** True when `path` belongs to a backend surface that must keep its own response (C-007). */
 export function isReservedApiPath(path: string): boolean {
+  if (CAPABILITY_API_SUBPATH.test(path)) return true;
   return RESERVED_PREFIXES.some((p) => path === p || path === p.replace(/\/$/, "") || path.startsWith(p));
 }
 
