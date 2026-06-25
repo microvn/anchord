@@ -23,6 +23,25 @@ function mcpBaseUrl(): string {
   return "http://localhost:3000";
 }
 
+// The MCP server name used in the setup snippet. A PAT is bound to ONE workspace, so suffix the
+// name with a sanitized workspace slug (`anchord-<workspace>`) — distinct per workspace so a user
+// who adds tokens for several workspaces doesn't collide on a single `anchord` server name. Falls
+// back to the bare `anchord` before a token is generated (no workspace known yet). Diacritics and
+// `đ` are folded so a Vietnamese workspace name yields a clean ASCII identifier.
+export function mcpServerName(workspaceName?: string | null): string {
+  const base = "anchord";
+  const slug = (workspaceName ?? "")
+    .toLowerCase()
+    .replace(/đ/g, "d")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "") // strip combining accents (â, é, ơ)
+    .replace(/[^a-z0-9]+/g, "-") // any other run → single dash
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+    .replace(/-+$/g, ""); // re-trim if the length cap landed mid-dash
+  return slug ? `${base}-${slug}` : base;
+}
+
 type SnippetId = "claude" | "cursor" | "codex";
 
 export function DeveloperSection() {
@@ -43,11 +62,15 @@ export function DeveloperSection() {
   // gone from state, so the snippet reverts to the `anch_pat_…` placeholder — the secret is never
   // recoverable after Done (C-008 / AS-020.T2).
   const bearer = generated?.token ?? "anch_pat_…";
+  // mcp-roundtrip: name the server per the token's workspace (anchord-<workspace>) so adding
+  // tokens for multiple workspaces gives each its own server. Bare `anchord` until a token is
+  // generated (the workspace is only known from the created token — there is no picker here).
+  const serverName = mcpServerName(generated?.workspaceName);
 
   const snippets: Record<SnippetId, string> = {
-    claude: `claude mcp add --transport http anchord \\\n  ${endpoint} \\\n  --header "Authorization: Bearer ${bearer}"`,
-    cursor: `// ~/.cursor/mcp.json\n{\n  "mcpServers": {\n    "anchord": {\n      "url": "${endpoint}",\n      "headers": { "Authorization": "Bearer ${bearer}" }\n    }\n  }\n}`,
-    codex: `# ~/.codex/config.toml\n[mcp_servers.anchord]\ntransport = "http"\nurl = "${endpoint}"\nheaders = { Authorization = "Bearer ${bearer}" }`,
+    claude: `claude mcp add --transport http ${serverName} \\\n  ${endpoint} \\\n  --header "Authorization: Bearer ${bearer}"`,
+    cursor: `// ~/.cursor/mcp.json\n{\n  "mcpServers": {\n    "${serverName}": {\n      "url": "${endpoint}",\n      "headers": { "Authorization": "Bearer ${bearer}" }\n    }\n  }\n}`,
+    codex: `# ~/.codex/config.toml\n[mcp_servers.${serverName}]\ntransport = "http"\nurl = "${endpoint}"\nheaders = { Authorization = "Bearer ${bearer}" }`,
   };
 
   function handleCreate(input: CreateTokenInput) {
