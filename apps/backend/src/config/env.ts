@@ -15,6 +15,15 @@ export class ConfigError extends Error {
 const EMAIL_PROVIDER_REQUIRED =
   "an email provider is required: set SMTP_* (HOST+PORT+USER+PASS) or RESEND_API_KEY";
 
+// Optional env strings arrive as "" when an operator leaves a key blank or docker compose
+// forwards an unset `${VAR:-}`. Treat empty/whitespace as "not set" (undefined) so a blank
+// optional credential disables its feature instead of failing boot with a min-length error
+// (a half-configured OAuth provider stays off; it never blocks the app — auth C-004).
+const optionalEnvString = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.string().min(1).optional(),
+);
+
 const schema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -37,28 +46,28 @@ const schema = z
       ),
     // SMTP — now OPTIONAL per field. A provider is "SMTP" only when the WHOLE group
     // (HOST+PORT+USER+PASS) is present; the cross-field rule below enforces that.
-    SMTP_HOST: z.string().min(1).optional(),
+    SMTP_HOST: optionalEnvString,
     SMTP_PORT: z.coerce.number().int().positive().default(587),
-    SMTP_USER: z.string().min(1).optional(),
-    SMTP_PASS: z.string().min(1).optional(),
+    SMTP_USER: optionalEnvString,
+    SMTP_PASS: optionalEnvString,
     // Resend HTTP API key — the alternative email provider (auth C-008). Both present
     // → Resend wins.
-    RESEND_API_KEY: z.string().min(1).optional(),
+    RESEND_API_KEY: optionalEnvString,
     // Images live on a volume (C-003); content text lives in Postgres.
     ASSETS_DIR: z.string().default("/data/assets"),
     CORS_ORIGIN: z.string().default("*"),
     // self-host S-005 / C-007: absolute path to the built web app (apps/web `dist`). Set by the
     // production image (Dockerfile ENV) so the instance serves the SPA + assets + deep-link
     // fallback. Unset in dev → the Vite dev server owns the FE, the backend stays API-only.
-    WEB_ROOT: z.string().min(1).optional(),
+    WEB_ROOT: optionalEnvString,
   // OAuth providers (auth S-002) are OPTIONAL per self-host: an operator who does not
   // configure a provider simply does not get that sign-in button (C-004 / S-004 owns
   // the "disabled provider not shown" UI). A provider is ENABLED only when BOTH its id
   // and secret are present — a half-configured provider stays off, never half-on.
-    GITHUB_CLIENT_ID: z.string().min(1).optional(),
-    GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
-    GOOGLE_CLIENT_ID: z.string().min(1).optional(),
-    GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+    GITHUB_CLIENT_ID: optionalEnvString,
+    GITHUB_CLIENT_SECRET: optionalEnvString,
+    GOOGLE_CLIENT_ID: optionalEnvString,
+    GOOGLE_CLIENT_SECRET: optionalEnvString,
   })
   // C-008 / self-host AS-004 + C-002: an email provider is mandatory. Valid only when
   // EITHER the full SMTP group is present OR RESEND_API_KEY is set. Neither → refuse boot.
