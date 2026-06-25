@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
 // Icons are sized 15px to match `.btn svg`. Variant/size prop NAMES stay the shadcn set so
 // existing call-sites keep type-checking.
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-[7px] whitespace-nowrap select-none rounded-[8px] border border-transparent font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[15px]",
+  "inline-flex cursor-pointer items-center justify-center gap-[7px] whitespace-nowrap select-none rounded-[8px] border border-transparent font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[15px]",
   {
     variants: {
       variant: {
