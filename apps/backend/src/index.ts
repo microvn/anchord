@@ -66,7 +66,10 @@ const pendingInviteRepo = createDocMembersPendingInviteRepo(createDocMemberRepo(
 
 const auth = createAuth(db, {
   secret: cfg.APP_SECRET,
-  baseURL: `http://localhost:${cfg.PORT}`,
+  // better-auth builds OAuth redirect URIs and callback links from baseURL, so it MUST be the
+  // instance's public origin (APP_URL) — NOT localhost, or every non-local deploy gets
+  // redirect_uri=http://localhost:… and Google/GitHub reject with redirect_uri_mismatch.
+  baseURL: cfg.APP_URL,
   oauth: cfg.oauth,
   trustedOrigins,
   // AS-001/AS-012: send a verification email on sign-up (fixes the live bug where
