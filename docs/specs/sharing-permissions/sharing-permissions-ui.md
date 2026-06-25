@@ -1,41 +1,49 @@
 # Spec: sharing-permissions-ui
 
 **Created:** 2026-06-12
-**Last updated:** 2026-06-13 (rev 5)
+**Last updated:** 2026-06-25
 **Status:** Draft
 
 ## Overview
 
 The **ShareDialog** — the FE consumer of the already-built `sharing-permissions` backend
-(producer). An owner (or an editor when `editors_can_share` is on) opens the dialog from the
-viewer's Share button, sets general access (Restricted / Anyone-in-workspace / Anyone-with-link)
-+ the associated role (viewer | commenter | editor only), toggles guest commenting (only when
-Anyone-with-link), invites people by email + role + message (no-account → pending), manages a
-people list, and — when Anyone-with-link — copies the link and sets optional password / expiry /
-view-limit controls. A viewer/commenter sees no Share affordance (or read-only). Every mutation
-is optimistic-with-rollback on a refused write.
+(producer), reconciled to the **two-axis access model** (`doc-access-two-axis`, the source of
+truth). An owner (or an editor when `editors_can_share` is on) opens the dialog from the
+viewer's Share button, sets the two INDEPENDENT access axes — **Workspace access** and **Link
+access**, each `{Off | Viewer | Commenter | Editor}` — invites people by email + role + message
+(no-account → pending), manages a people list, and — when Link access is on — copies the link and
+sets optional password / expiry / view-limit controls. There is NO separate guest-commenting
+toggle (the link role IS the grant — a commenter+ link lets no-account guests comment, capped at
+commenter — `doc-access-two-axis`:C-004). A viewer/commenter sees no Share affordance (or
+read-only). Every mutation is optimistic-with-rollback on a refused write.
 
 This spec owns only the **share dialog + its wiring**. It does NOT own backend enforcement, the
 anonymous link-open / password-prompt route (that's `render-publish`'s `/d` · `/v` viewer), the
 doc viewer itself, or the role-precedence engine. It consumes three backend mutations
-(`PUT /access`, `POST /invites`, `PUT /link`), the `GET …/share` prefill read (backend S-006),
-and the `effectiveRole` read-payload field.
+(`PUT /access` with a per-axis partial body, `POST /invites`, `PUT /link`), the `GET …/share`
+prefill read (backend S-006, which returns both raw axes + the derived level), and the
+`effectiveRole` read-payload field.
 
 ## Data Model
 
 No persistent data — a client. Local/client state only; the backend is the source of truth and
 re-authorizes every write (C-007 backend). The dialog reads `effectiveRole` from the doc read
 payload (`render-publish GET /api/w/:ws/docs/:slug`) to gate the Share affordance, then on OPEN
-reads its full prefill state (access level, role, guest, `editorsCanShare`, people list, link
-controls) from `GET /api/w/:ws/docs/:slug/share` (backend `sharing-permissions:S-006`), then
-mutates via the typed client.
+reads its full prefill state (both raw access axes, the derived level, `editorsCanShare`, people
+list, link controls) from `GET /api/w/:ws/docs/:slug/share` (backend `sharing-permissions:S-006`),
+then mutates via the typed client.
 
 Client state held by the dialog while open:
-- `generalAccess`: `restricted | anyone_in_workspace | anyone_with_link` (mirrors `docs.general_access`).
-- `accessRole`: `viewer | commenter | editor` (the role attached to the chosen general access; never `owner`).
-- `guestCommenting`: bool (only meaningful + editable when `generalAccess === anyone_with_link`).
+- `workspaceRole`: `viewer | commenter | editor | null` — the role granted to every member of the
+  doc's own workspace; `null` = Off (not shared with the workspace). One of the two access axes
+  (`doc-access-two-axis`:C-002).
+- `linkRole`: `viewer | commenter | editor | null` — the role granted to anyone holding the link;
+  `null` = Off (no public link). The other access axis (`doc-access-two-axis`:C-003).
+- `level`: `restricted | anyone_in_workspace | anyone_with_link` — the DERIVED summary
+  (`deriveLevel(workspaceRole, linkRole)`, `doc-access-two-axis`:C-008); read-only display only,
+  never stored or sent. The dialog drives its controls off the two raw axes, not this summary.
 - `editorsCanShare`: bool (visible to all who can manage; editable by the **owner only**).
-- `linkControls`: `{ password?: string; expiresAt?: string; viewLimit?: number }` (all optional, anyone-with-link only).
+- `linkControls`: `{ password?: string; expiresAt?: string; viewLimit?: number }` (all optional, shown only when `linkRole` is set).
 - `inviteDraft`: `{ email: string; role: viewer|commenter|editor; message?: string }`.
 - `people[]`: `{ userId?: string; email: string; name?: string; role; status: active|pending }` rows (read from the doc/share read).
 
@@ -76,8 +84,8 @@ sees no Share button (or it is inert); an unauthorized open is never shown the e
 AS-001: Owner opens the Share dialog
 - **Given:** an owner has a doc open in the viewer
 - **When:** they click the Share button in the top bar
-- **Then:** the ShareDialog opens showing General access, Guest commenting, Link (when anyone-with-link), and Invite people / People list sections, prefilled from the doc's current sharing state
-- **Data:** owner, doc currently restricted
+- **Then:** the ShareDialog opens showing Workspace access, Link access, Link controls (when Link access is on), and Invite people / People list sections, prefilled from the doc's current two-axis sharing state
+- **Data:** owner, doc currently restricted (both axes off)
 
 AS-002: Responsive — full-screen sheet ≤600
 - **Given:** the ShareDialog is reachable
@@ -98,13 +106,13 @@ AS-004: A manager who opens the dialog gets the editable controls (lazy gate)
 - **Data:** editor with editors_can_share on → read succeeds → editable dialog
 
 AS-018: The dialog prefills its current sharing state on open (happy path)
-- **Given:** a manager opens the Share dialog on a doc that already has a general-access level,
-  role, guest setting, people, and link controls
+- **Given:** a manager opens the Share dialog on a doc that already has a workspace access role, a
+  link access role, people, and link controls
 - **When:** the dialog opens, it reads `GET /api/w/:ws/docs/:slug/share`
-- **Then:** it shows the doc's CURRENT sharing state — general-access level, role, guest-commenting
-  toggle, `editorsCanShare`, the people list (active + pending), and the link controls (incl.
-  whether a password is set) — not a blank form
-- **Data:** anyone-with-link/commenter, guest on, 1 active + 1 pending person, a password link
+- **Then:** it shows the doc's CURRENT two-axis sharing state — the Workspace access control set to
+  `workspaceRole`, the Link access control set to `linkRole`, `editorsCanShare`, the people list
+  (active + pending), and the link controls (incl. whether a password is set) — not a blank form
+- **Data:** workspace=commenter, link=commenter, 1 active + 1 pending person, a password link
 
 AS-019: Open the Share dialog from the docs-list doc-card ⋯ menu
 - **Given:** any user on the docs list looking at a doc card's ⋯ button
@@ -115,35 +123,40 @@ AS-019: Open the Share dialog from the docs-list doc-card ⋯ menu
   decides editable vs read-only (lazy gate, AS-003/AS-004), like Google Docs
 - **Data:** a doc card in the browse list (manager → editable; non-manager → read-only surface)
 
-### S-002: Set general access + role + guest commenting (P0)
+### S-002: Set the two access axes (workspace + link) (P0)
 
-**Description:** As someone who can manage sharing, I pick the general-access level via a segmented
-control and the associated role via a dropdown (viewer | commenter | editor only — owner never
-selectable), and toggle guest commenting, which is enabled only for Anyone-with-link. The change
-persists via `PUT /access`; a refused write reverts.
-**Source:** Consumes backend S-001 (AS-001/002/003/018/022), C-003 (guest gating), C-012
-(role ∈ {viewer,commenter,editor}), C-015 (`editors_can_share` owner-only); `PUT /api/w/:ws/docs/:slug/access`.
-Prototype: `ShareDialog` `.ga-seg` + `.mini-select` + `.switch-row` (guest), `.access-hint`.
+**Description:** As someone who can manage sharing, I set the **Workspace access** axis and the
+**Link access** axis as two INDEPENDENT controls, each with an Off option and a role (viewer |
+commenter | editor only — owner never selectable). Setting one axis never touches the other. Each
+change persists via a per-axis PARTIAL `PUT /access` (`{ workspaceRole? }` or `{ linkRole? }` — the
+omitted axis is left unchanged; `null` = Off); a refused write reverts. There is NO separate
+guest-commenting toggle — a commenter+ link IS the grant for no-account guests (capped at
+commenter, `doc-access-two-axis`:C-004).
+**Source:** Consumes backend S-001 (AS-001/002/018/022) + `doc-access-two-axis` (the two-axis model,
+source of truth: C-001 independence, C-011 per-axis write), C-012 (role ∈ {viewer,commenter,editor}),
+C-015 (`editors_can_share` owner-only); `PUT /api/w/:ws/docs/:slug/access` (per-axis partial body).
+Prototype: `ShareDialog` Workspace access + Link access controls (`.access-row` role `Select` /
+`.mini-select` + an Off option), `.access-hint`.
 
 **Execution:**
 - `depends_on:` S-001
 - `parallel_safe:` false
-- `files:` new `apps/web/src/features/sharing/access-section.tsx`; new `features/sharing/client.ts` (`setAccess`); reuse the prototype `.ga-seg` segmented control + role `Select` (`components/ui/select.tsx`) + the `.switch` toggle
+- `files:` new `apps/web/src/features/sharing/access-section.tsx`; new `features/sharing/client.ts` (`setAccess`); two access controls each a role `Select` (`components/ui/select.tsx`) with an Off option
 - `autonomous:` true
-- `verify:` set Anyone-with-link + commenter → `PUT /access` fires, hint updates, guest toggle enables; set Restricted → guest toggle disables; force the PUT to fail → the segmented control reverts + an error shows.
+- `verify:` set Link access = commenter → `PUT /access` fires with `{ linkRole: "commenter" }`, the Link controls section appears, the Workspace access control is untouched; set Link access = Off → `{ linkRole: null }` fires and the Link controls hide; set Workspace access = editor → `{ workspaceRole: "editor" }` fires and the link axis is unchanged; force a PUT to fail → that axis's control reverts + an error shows.
 
 **Acceptance Scenarios:**
 
-AS-005: Set Anyone-with-link with a role (happy path)
-- **Given:** the dialog is open on a restricted doc
-- **When:** the manager selects general-access = Anyone-with-link and role = commenter
-- **Then:** `PUT /api/w/:ws/docs/:slug/access` is called with `{ level: "anyone_with_link", role: "commenter" }`; on 200 the segmented control + hint reflect the new state and the Link section appears
-- **Data:** anyone_with_link + commenter
+AS-005: Turn Link access on with a role (happy path)
+- **Given:** the dialog is open on a restricted doc (both axes Off)
+- **When:** the manager sets the Link access control to commenter
+- **Then:** `PUT /api/w/:ws/docs/:slug/access` is called with the per-axis partial `{ linkRole: "commenter" }` (the workspace axis omitted, left unchanged); on 200 the Link access control reflects the new state and the Link controls section appears
+- **Data:** linkRole = commenter, workspace axis untouched
 
-AS-006: A refused access change reverts (error path)
-- **Given:** the manager flips general-access optimistically
+AS-006: A refused axis change reverts (error path)
+- **Given:** the manager changes an access axis optimistically
 - **When:** `PUT /access` comes back 403 or fails (e.g. role revoked, network)
-- **Then:** the segmented control + role revert to the prior value and an error is shown ("couldn't update access"); no silent partial state
+- **Then:** that axis's control reverts to its prior value and an error is shown ("couldn't update access"); the other axis is untouched; no silent partial state
 - **Data:** PUT refused
 
 AS-007: Role dropdown never offers owner
@@ -152,11 +165,15 @@ AS-007: Role dropdown never offers owner
 - **Then:** only viewer, commenter, and editor are offered; owner is never selectable (mirrors backend C-012 / AS-018); a forged owner value would be rejected by the server
 - **Data:** options = {viewer, commenter, editor}
 
-AS-008: Guest commenting toggle enabled only for Anyone-with-link
+AS-008: A commenter+ link grants guest commenting with no separate toggle
 - **Given:** the dialog is open
-- **When:** general-access is Restricted or Anyone-in-workspace, then switched to Anyone-with-link
-- **Then:** the guest-commenting toggle is disabled (with the hint "Available only for Anyone with link") while not Anyone-with-link, and becomes enabled once Anyone-with-link is selected (backend C-003); enabling it sends `guestCommenting: true` on `PUT /access`
-- **Data:** restricted → toggle disabled; anyone_with_link → toggle enabled
+- **When:** the manager sets the Link access control to commenter (or editor)
+- **Then:** there is NO separate guest-commenting toggle — the link role IS the grant: a commenter+
+  link lets anyone with the link, including no-account guests (capped at commenter,
+  `doc-access-two-axis`:C-004), comment. Setting Link access to viewer means link-holders may view
+  only; setting it Off means no public link at all. (The standalone guest-commenting toggle was
+  retired 2026-06-20 — Google-Docs model.)
+- **Data:** link=viewer → view only; link=commenter → guests may comment
 
 AS-009: editors_can_share toggle is shown but owner-editable only
 - **Given:** the dialog is open (from EITHER the viewer or the docs-list ⋯ entry)
@@ -233,9 +250,9 @@ AS-014: People list renders rows with role + pending
 
 ### S-005: Link controls (P1)
 
-**Description:** As someone who can manage sharing on an Anyone-with-link doc, I copy the link and
-set optional password / expiry / view-limit controls via chips; changes persist via `PUT /link`.
-The Link section appears only when general-access is Anyone-with-link.
+**Description:** As someone who can manage sharing on a doc whose Link access axis is on, I copy the
+link and set optional password / expiry / view-limit controls via chips; changes persist via
+`PUT /link`. The Link controls section appears only when Link access is on (`linkRole !== null`).
 **Source:** Consumes backend S-004 (AS-009/010/011), C-001 (controls attach to the link, each
 independent); `PUT /api/w/:ws/docs/:slug/link`. Prototype: `ShareDialog` `.link-row` (`.link-url` code +
 Copy) + `.link-chips` (`.link-chip` Password / Expiry / View limit, `.on` when set).
@@ -245,12 +262,12 @@ Copy) + `.link-chips` (`.link-chip` Password / Expiry / View limit, `.on` when s
 - `parallel_safe:` false
 - `files:` new `apps/web/src/features/sharing/link-controls.tsx`; `features/sharing/client.ts` (`setLinkControls`); reuse `components/ui/input.tsx` for the password/expiry/limit fields
 - `autonomous:` true
-- `verify:` set Anyone-with-link → Link section shows the URL + Copy + chips; click Copy → link on clipboard + toast; set a chip (e.g. expiry) → `PUT /link` fires and the chip reads "set"; force the PUT to fail → the chip reverts + error.
+- `verify:` set Link access on → the Link controls section shows the URL + Copy + chips; click Copy → link on clipboard + toast; set a chip (e.g. expiry) → `PUT /link` fires and the chip reads "set"; force the PUT to fail → the chip reverts + error.
 
 **Acceptance Scenarios:**
 
 AS-015: Copy the link
-- **Given:** the doc is Anyone-with-link and the Link section is visible
+- **Given:** the doc's Link access is on and the Link controls section is visible
 - **When:** the manager clicks Copy
 - **Then:** the share URL is written to the clipboard and a "Link copied" toast shows
 - **Data:** clipboard write
@@ -320,9 +337,12 @@ AS-023: A refused removal restores the row (error path)
 FE-side mirrors of the backend constraints (the backend re-authorizes / enforces; these govern
 what the dialog SHOWS and SENDS, never the security boundary).
 
-- C-001 (mirror of backend C-003): The guest-commenting toggle is enabled only when
-  `generalAccess === anyone_with_link`; otherwise it is disabled with the "Available only for
-  Anyone with link" hint. (AS-008)
+- C-001 (mirror of `doc-access-two-axis`:C-001/C-011): The dialog has TWO independent access
+  controls — Workspace access and Link access — each `{Off | Viewer | Commenter | Editor}`. Each is
+  set with a per-axis PARTIAL `PUT /access` (`{ workspaceRole? }` / `{ linkRole? }`), so setting one
+  axis never changes the other. There is NO separate guest-commenting toggle: a commenter+ Link
+  access role IS the grant for no-account guests (capped at commenter,
+  `doc-access-two-axis`:C-004). (AS-005, AS-008)
 - C-002 (mirror of backend C-007, LAZY gate 2026-06-13): manage-eligibility is decided by the
   RESULT of the gated `GET …/share` prefill read, not by a pre-computed `effectiveRole` — a read that
   SUCCEEDS proves the caller can manage (the backend gated it identically to the writes, backend
@@ -347,8 +367,9 @@ what the dialog SHOWS and SENDS, never the security boundary).
   `annotation-core-ui-commenting` C-011.)
 - C-006: A malformed email is rejected inline (same Zod email check as `members-screen`) BEFORE the
   request — a bad email never reaches `POST /invites`. (AS-012)
-- C-007: The Link section (URL + Copy + chips) is shown only when `generalAccess === anyone_with_link`;
-  it is hidden for restricted / anyone-in-workspace. (AS-015, AS-016)
+- C-007: The Link controls section (URL + Copy + chips) is shown only when the Link access axis is
+  on (`linkRole !== null`); it is hidden while Link access is Off, regardless of the Workspace
+  access axis. (AS-015, AS-016)
 
 ## Linked Fields
 
@@ -356,9 +377,11 @@ what the dialog SHOWS and SENDS, never the security boundary).
 Surface = the typed Eden client `features/sharing/client.ts` calling the three management routes;
 lifecycle = on dialog mutation (per-control), optimistic then reconciled/rolled-back.
 
-- `PUT /api/w/:ws/docs/:slug/access` `{ level, role, guestCommenting?, editorsCanShare? }` → `{ level, role,
-  guestCommenting, editorsCanShare }` — consumed by S-002 (AS-005/006/008/009). Produced by backend
-  S-001. ✔ path RESOLVED (GAP-001): the backend CODE serves the workspace-scoped path
+- `PUT /api/w/:ws/docs/:slug/access` `{ workspaceRole?, linkRole?, editorsCanShare? }` (per-axis
+  PARTIAL — an omitted axis is unchanged, each value viewer|commenter|editor|null) →
+  `{ workspaceRole, linkRole, level, editorsCanShare, capabilityUrl }` (`level` = the derived
+  summary) — consumed by S-002 (AS-005/006/008/009). Produced by backend S-001 (the two-axis model,
+  `doc-access-two-axis`). ✔ path RESOLVED (GAP-001): the backend CODE serves the workspace-scoped path
   (`apps/backend/src/routes/sharing.ts:201`); the backend spec's `## API` table showing `/api/docs/:slug`
   is STALE (same class as `annotation-core-ui:GAP-001`, fixed by matching the real route).
 - `POST /api/w/:ws/docs/:slug/invites` `{ email, role, message? }` → 201 `{ status: active|pending }` —
@@ -368,9 +391,10 @@ lifecycle = on dialog mutation (per-control), optimistic then reconciled/rolled-
 - `effectiveRole` on the doc read payload (`viewer|commenter|editor|owner`) — consumed by S-001 to
   gate `canManageShare` (C-002). Produced by `render-publish`/`annotation-core-ui-commenting`'s doc
   read. ✔ field exists on the viewer read payload (`features/viewer/client.ts`).
-- `GET /api/w/:ws/docs/:slug/share` → `{ level, role, guestCommenting, editorsCanShare, people[],
-  link{ hasPassword, expiresAt, viewLimit, viewCount, url }, viewerRole }` — consumed by S-001 (AS-018) on
-  dialog OPEN to PREFILL the whole dialog state (current general-access, role, guestCommenting,
+- `GET /api/w/:ws/docs/:slug/share` → `{ workspaceRole, linkRole, level, editorsCanShare, people[],
+  link{ hasPassword, expiresAt, viewLimit, viewCount, url }, viewerRole }` (`workspaceRole`/`linkRole`
+  = the two raw axes, each viewer|commenter|editor|null; `level` = the derived summary) — consumed by
+  S-001 (AS-018) on dialog OPEN to PREFILL the whole dialog state (both axis controls,
   `editorsCanShare`, people[], link controls incl. `hasPassword`); also feeds S-002/S-004/S-005
   initial values. Produced by backend `sharing-permissions:S-006`. ✔ surface (dialog-open read) +
   lifecycle match (read once on open, then per-control writes reconcile). RESOLVED GAP-003.
@@ -391,7 +415,7 @@ lifecycle = on dialog mutation (per-control), optimistic then reconciled/rolled-
 ## UI Notes
 
 Design: prototype `Anchord-Design/viewer-dialogs.jsx` `ShareDialog` (P16) is CANONICAL, styled by
-`Anchord-Design/viewer-dialogs.css` (`.share-sec`, `.access-row`, `.ga-seg`, `.mini-select`,
+`Anchord-Design/viewer-dialogs.css` (`.share-sec`, `.access-row`, `.mini-select`,
 `.access-hint`, `.switch-row`/`.switch`, `.link-row`/`.link-url`/`.link-chips`/`.link-chip`,
 `.person-row`/`.person-info`/`.person-role`); tokens from `Anchord-Design/tokens.css` +
 `viewer.css`. The dialog uses the existing `Dialog{wide:true}` chrome. Precedence:
@@ -400,14 +424,17 @@ AS / Constraints > prototype > Tree. All components new `[N]`.
 - `ShareDialog` `[N]` *(desktop = centered `Dialog` (wide); **full-screen sheet** ≤600px via
   `components/ui/sheet.tsx`, per DESIGN.md Responsive + backend UI Notes; title "Share doc",
   doc-title subtext, a "Done" footer button)*
-  - `AccessSection` `[N]` *(`.share-sec` "General access")*: `GeneralAccessSegmented` `.ga-seg`
-    (Restricted · Anyone in workspace · Anyone with link) + role `Select` `.mini-select`
-    (viewer | commenter | editor) + `.access-hint` (icon + per-level sentence)
-  - `GuestCommentingToggle` `[N]` *(`.switch-row` `.switch`; ENABLED only when Anyone-with-link —
-    C-001; hint "Available only for Anyone with link" otherwise)*
+  - `AccessSection` `[N]` *(`.share-sec`)*: TWO independent controls —
+    `WorkspaceAccessControl` `[N]` *("Workspace access" `.access-row`: a role `Select`
+    `.mini-select` (Off | Viewer | Commenter | Editor) — the role every workspace member gets; Off
+    = not shared with the workspace)* and `LinkAccessControl` `[N]` *("Link access" `.access-row`:
+    a role `Select` (Off | Viewer | Commenter | Editor) — the link role IS the grant for anyone with
+    the link, incl. no-account guests capped at commenter; no separate guest toggle, C-001)*, plus
+    `.access-hint` (icon + per-axis sentence). The derived `level` is display-only — the controls
+    drive off the raw axes.
   - `EditorsCanShareToggle` `[N]` *(`.switch-row` `.switch`; visible to managers, EDITABLE by the
     owner only — C-003; read-only/absent for an editor)*
-  - `LinkControls` `[N]` *(`.share-sec` "Link"; shown only when Anyone-with-link — C-007)*:
+  - `LinkControls` `[N]` *(`.share-sec` "Link"; shown only when Link access is on — C-007)*:
     `.link-url` (link · Copy) + `.link-chips` (`PasswordChip` · `ExpiryChip` · `ViewLimitChip`,
     `.on` when set — all optional)
   - `InviteRow` `[N]` *(`.share-sec` "Invite people"; `.invite-field` email input + role +
@@ -430,7 +457,7 @@ docs-list doc-card ⋯ — refactored from a direct `MoveCopyDialog` open into a
 |---|---|---|
 | Share button (placeholder `onShare`) | `apps/web/src/features/viewer/viewer-top-bar.tsx` (`vt-share`) | wire it to open the new ShareDialog (S-001) |
 | Viewer screen (passes the `onShare` placeholder) | `apps/web/src/features/viewer/viewer-screen.tsx` | host the dialog open-state + pass `effectiveRole`/share state |
-| Doc read payload (`effectiveRole`, `generalAccess`) | `apps/web/src/features/viewer/client.ts` (`ViewerDocResponse`) | consume `effectiveRole` for `canManageShare`; needs `editorsCanShare` + people/link state added (GAP-003) |
+| Doc read payload (`effectiveRole`, derived `level` from the two axes) | `apps/web/src/features/viewer/client.ts` (`ViewerDocResponse`) | consume `effectiveRole` for `canManageShare`; the prefill `GET …/share` carries both raw axes + `editorsCanShare` + people/link state (GAP-003) |
 | Invite-by-email + role + pending row patterns | `apps/web/src/features/workspaces/members-screen.tsx` (`InviteRow`, `MemberRowView`, `StatusBadge`, `inviteResolver`) | reuse the Zod email validation + the person-row layout + the Pending badge |
 | Dialog primitive (desktop modal) | `apps/web/src/components/ui/dialog.tsx` | the ShareDialog shell ≥601px |
 | Sheet primitive (full-screen ≤600) | `apps/web/src/components/ui/sheet.tsx` | the ShareDialog shell ≤600px (responsive) |
@@ -480,12 +507,12 @@ docs-list doc-card ⋯ — refactored from a direct `MoveCopyDialog` open into a
   read `GET /api/w/:ws/docs/:slug/share` (backend `sharing-permissions:S-006` / AS-025), not the
   doc read payload. The editor manage-eligibility (S-001 AS-004 / C-002) is therefore decidable
   client-side once the dialog opens and reads the share state. Resolved by S-006.
-- GAP-003 (status: RESOLVED — 2026-06-12): the prefill read surface now exists — backend
-  `sharing-permissions:S-006` `GET /api/w/:ws/docs/:slug/share` returns
-  `{ level, role, guestCommenting, editorsCanShare, people[], link{ hasPassword, expiresAt,
-  viewLimit, viewCount, url } }` (AS-025; password exposed as a boolean only, C-016). The dialog
-  reads it on OPEN to prefill general-access + role, guest-commenting, `editorsCanShare`, the
-  people list (active + pending), and the link controls. Resolved by S-006.
+- GAP-003 (status: RESOLVED — 2026-06-12; updated 2026-06-25 for two-axis): the prefill read surface
+  exists — backend `sharing-permissions:S-006` `GET /api/w/:ws/docs/:slug/share` returns
+  `{ workspaceRole, linkRole, level, editorsCanShare, people[], link{ hasPassword, expiresAt,
+  viewLimit, viewCount, url }, viewerRole }` (AS-025; password exposed as a boolean only, C-016). The
+  dialog reads it on OPEN to prefill both axis controls (Workspace access + Link access),
+  `editorsCanShare`, the people list (active + pending), and the link controls. Resolved by S-006.
 - GAP-004 (status: RESOLVED — 2026-06-12): product decided v0 ADDS a docs-list Share entry. The
   doc-card ⋯ (`features/docs/move-copy-dialog.tsx` `DocMoreMenu`) is refactored from a direct
   MoveCopy open into a ⋯ dropdown (Share · Move · Copy, reusing `components/ui/dropdown-menu.tsx`,
@@ -512,8 +539,9 @@ docs-list doc-card ⋯ — refactored from a direct `MoveCopyDialog` open into a
   read) all listed. ✔
 - CC4 (constraints trace to AS): C-001→AS-008, C-002→AS-003/004, C-003→AS-009, C-004→AS-007/014,
   C-005→AS-006/013/017, C-006→AS-012, C-007→AS-015/016. ✔
-- CC5 (no backend relitigation): general-access levels, roles, guest gating, editors_can_share,
-  precedence are CONSUMED as built; no backend decision is changed. ✔
+- CC5 (no backend relitigation): the two access axes (workspace + link), roles, the link-role-IS-the-grant
+  guest model, editors_can_share, precedence are CONSUMED as built per `doc-access-two-axis` (source of
+  truth); no backend decision is changed. ✔
 - CC6 (unspecified outcomes recorded as GAPs, not invented): path mismatch (GAP-001 RESOLVED),
   `editorsCanShare` on read (GAP-002 RESOLVED via S-006), prefill read surface (GAP-003 RESOLVED
   via S-006), no docs-list entry (GAP-004 open), remove/revoke route (GAP-005 DEFERRED),
@@ -540,3 +568,4 @@ gate (AS-003 read-only + AS-004 editable, two distinct read outcomes). No bloat 
 | 2026-06-12 | GAP-004 RESOLVED (product): +AS-019 docs-list doc-card ⋯ → Share·Move·Copy dropdown opens the dialog (DocMoreMenu refactor, reuse dropdown-menu + ProjectCardMoreMenu pattern); S-001 files/UI Notes/Inventory updated. GAP-006 → DEFERRED (pending-invite expiry inherited from backend; v0 static "Pending" tag). Spec now build-ready: all Linked Fields ✔ | -- |
 | 2026-06-13 | Major: S-001 manage-gate reworked to LAZY/Google-Docs (editable iff the gated GET …/share read succeeds; 403→read-only; docs-list ⋯ shows Share unconditionally) — AS-003/004/019 + C-002 rewritten; +S-006 change/remove a person (AS-020..023, consumes backend S-007 PATCH/DELETE members) + Linked Field; GAP-005 RESOLVED. Snapshot 2026-06-13-ui.md | -- |
 | 2026-06-13 | Major: C-003 + AS-009 now source owner-ness from the `GET …/share` read's `viewerRole` (backend AS-025), not the passed `effectiveRole` — so the owner-only editors_can_share toggle is editable from ANY entry point (the docs-list ⋯ preloads no effectiveRole → it was read-only there). +Data Model `viewerRole` field + Linked Field. Snapshot 2026-06-13-ui-2.md | -- |
+| 2026-06-25 | Major: reconciled to the TWO-AXIS access model (`doc-access-two-axis`:S-007 is the built two-axis ShareDialog and the source of truth). The single general-access segmented control + one role dropdown + guest-commenting toggle are REPLACED by two independent controls — Workspace access + Link access, each `{Off\|Viewer\|Commenter\|Editor}`; the access write is a per-axis PARTIAL `PUT …/access` `{ workspaceRole?, linkRole?, editorsCanShare? }` (omitted axis unchanged, null = off); the `GET …/share` read returns both raw axes + a derived `level`. Dropped the `generalAccess`/`accessRole`/`guestCommenting` client fields (level is now a read-only derived display); the link role IS the guest-commenting grant (anon capped at commenter, retired 2026-06-20). Rewrote Overview, Data Model, S-002 (+AS-005/006/008), AS-001/018, S-005 + AS-015, C-001/C-007, UI Notes component tree, Linked Fields (`PUT …/access`, `GET …/share`), UI Inventory, GAP-003, CC5. | doc-access-two-axis cascade |

@@ -58,6 +58,8 @@ export function navDestinations(base: string): NavDestination[] {
     { to: `${base}/docs`, label: "All docs", glyph: "▤", icon: "docs" },
     { to: `${base}/projects`, label: "Projects", glyph: "◳", icon: "folder" },
     { to: `${base}/activity`, label: "Activity", glyph: "◷", icon: "activity" },
+    // doc-delete-trash S-003: the workspace Trash (deleted docs → restore / permanent delete).
+    { to: `${base}/trash`, label: "Trash", glyph: "🗑", icon: "trash" },
   ];
 }
 

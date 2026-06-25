@@ -94,6 +94,10 @@ export function createSearchRepo(db: DB): SearchRepo {
           -- simply not workspace-shared (NULL → the predicate's IS NOT NULL is false).
           left join share_links sl on sl.doc_id = d.id
           where p.workspace_id = ${q.workspaceId}
+            -- doc-delete-trash S-002 / C-002 (AS-009): a soft-deleted doc never leaves the DB
+            -- via search — filtered at the query level (not post-filtered), so no id/title/slug
+            -- of a deleted doc is ever emitted, even on a title/content/comment match.
+            and d.deleted_at is null
             and (
               d.owner_id = ${q.userId}
               or (

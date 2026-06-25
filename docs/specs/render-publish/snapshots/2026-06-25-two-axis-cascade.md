@@ -1,0 +1,469 @@
+# Snapshot: render-publish
+**Date:** 2026-06-25
+**Ref:** doc-access-two-axis cascade
+**Reason:** M6 — constraints/data-model superseded by the two-axis access model (C-011 default-access inheritance + general_access column)
+
+---
+
+# Spec: render-publish
+
+**Created:** 2026-06-07
+**Last updated:** 2026-06-23
+**Status:** Draft
+
+## Overview
+
+Accept an artifact (HTML / Markdown / image) via upload or paste, store it as a doc
+with an immutable slug + a first version, and render it safely for a recipient to read
+through a link. HTML "runs for real" in an isolated sandbox; Markdown renders nicely in
+the app theme; images are viewable with zoom/pan. This is the front door of anchord —
+without a doc there's nothing to annotate.
+
+_Ships alongside the other clusters; see `docs/explore/README.md`. Publish via MCP lives
+in `mcp-roundtrip` but produces the same artifact (doc+slug+v1) following the identity
+model defined here._
+
+## Data Model
+
+- **docs**: `id`, `slug` (immutable, generated once), `kind` (html | markdown | image),
+  `title` (mutable metadata), `general_access` (used by the sharing cluster), timestamps.
+  - `general_access` is SET AT PUBLISH from the target workspace's `settings.defaultAccess`
+    (default `anyone_in_workspace`, `workspaces`:C-007) — NOT left to fall to the column default
+    `restricted` (C-011, AS-027). The column default stays `restricted` as a safety floor, but the
+    publish path always writes the workspace default explicitly. Changing/enforcing access after
+    publish remains the sharing cluster's job.
+  - `status` (AS-016) is NOT a stored column here — the viewer derives `status: "published"` for any
+    doc served (it has ≥1 version). A real draft/published lifecycle, if added, belongs to versioning-diff.
+- **doc_versions**: `id`, `doc_id`, `version` (int, starting at 1), `content` (HTML/MD text;
+  images stored on a volume, see self-host), `content_hash`, `published_by`, `created_at`.
+  Unique (doc_id, version).
+- Block-id injection + the `anchor` column for annotation belong to the `annotation-core` cluster.
+
+## Stories
+
+### S-001: Publish an artifact (P0)
+
+**Description:** As a logged-in author, I upload a file or paste content to publish it
+as a doc with a shareable link, with an inferred title I can edit.
+**Source:** docs/explore/render-publish.md#feature, #happy-path, #decisions (item
+3 identity model, item 5 title), #business-rules (size cap, content-type).
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false
+- `files:` unknown (expected `src/routes/publish.*`, `src/services/publish.*`, `src/db/schema`)
+- `autonomous:` true
+- `verify:` publish a valid .html file → get a link, open it and see version 1; try an 8MB file → rejected.
+
+**Acceptance Scenarios:**
+
+AS-001: Publish a valid HTML file
+- **Given:** a logged-in author, on the "New doc" screen
+- **When:** they upload `spec.html` (1.2MB) and click Publish
+- **Then:** a doc is created with an immutable slug + version 1; returns a link `/d/:slug`; opening
+  the link shows the rendered content
+- **Data:** a 1.2MB HTML file with a `<title>Payment Spec v2</title>` tag
+
+AS-002: Publish via paste, format set to Markdown
+- **Given:** the author is on the "New doc" screen, selects paste + format = Markdown
+- **When:** they paste Markdown content and Publish
+- **Then:** a doc is created with kind=markdown + version 1 + a link
+- **Data:** a Markdown string with an H1 "Release Notes"
+
+AS-003: Title is inferred and editable before publishing
+- **Given:** uploading `spec.html` containing `<title>Payment Spec v2</title>`
+- **When:** the title field is pre-filled with "Payment Spec v2"; the author edits it to "Payment Spec" then Publishes
+- **Then:** the doc stores the title "Payment Spec"
+- **Data:** original title "Payment Spec v2" → edited to "Payment Spec"
+
+AS-004: An over-limit artifact is rejected
+- **Given:** the author is on the "New doc" screen
+- **When:** they upload an 8MB `dashboard.html`
+- **Then:** rejected before saving, with a message stating the actual size and the limit;
+  no doc is created
+- **Data:** 8.1MB HTML (5MB cap)
+
+AS-005: Content not matching the declared type is rejected
+- **Given:** the author is on the "New doc" screen
+- **When:** they upload a file with a `.html` extension but content that sniffs as binary
+- **Then:** rejected, not published; reports the content is not valid HTML/Markdown/image
+- **Data:** a `report.html` file containing binary bytes
+
+AS-014: Empty artifact is rejected
+- **Given:** the author is on the "New doc" screen
+- **When:** they upload/paste an empty artifact (0 bytes, or whitespace only)
+- **Then:** rejected, no doc is created; reports the content is empty
+- **Data:** empty string "" and whitespace-only "   \n"
+
+AS-015: Ambiguous paste (no format, no extension) defaults to Markdown
+- **Given:** the author pastes text content with no format selected and no filename to infer the kind from
+- **When:** they publish
+- **Then:** the doc is created with kind = markdown (safe default for ambiguous text)
+- **Data:** paste "a plain text paragraph", no declared format, no filename
+
+AS-027: A newly published doc inherits the workspace's default access
+- **Given:** a logged-in author publishing into a workspace whose `settings.defaultAccess` is `anyone_in_workspace` (the default)
+- **When:** they publish a doc
+- **Then:** the created doc's `general_access` is `anyone_in_workspace` — taken from the workspace's `settings.defaultAccess`, NOT left at the hard-coded `restricted` — so workspace members can see it immediately (sharing-permissions:C-018)
+- **Data:** workspace `defaultAccess = anyone_in_workspace` → new doc `general_access = anyone_in_workspace`
+
+### S-002: Render HTML live & isolated (P0)
+
+**Description:** As a recipient, I open an HTML doc and see it run for real (charts/tabs/
+toggles work), while that content can't reach the app's login session or data.
+**Source:** docs/explore/render-publish.md#decisions (item 1 render mode), #happy-path.
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (expected content-route serve + viewer iframe + CSP header)
+- `autonomous:` true
+- `verify:` open an HTML doc with a tab widget → clicking a tab changes the content; try a script that reads the app cookie → can't get it.
+
+**Acceptance Scenarios:**
+
+AS-006: Interactive HTML runs for real in the viewer
+- **Given:** a published HTML doc containing a tab widget that uses JavaScript
+- **When:** the recipient opens the link and clicks to another tab
+- **Then:** the tab content changes (JS actually runs in the viewer)
+- **Data:** HTML with 2 tabs + a tab-switching script
+
+AS-007: HTML content is isolated from the app
+- **Given:** a published HTML doc containing a script that tries to read the app's cookie/login
+- **When:** the recipient opens the link
+- **Then:** the script can't read the app's cookies/data/UI (isolated origin);
+  the rest of the app is unaffected
+- **Data:** HTML with a `<script>` that tries to access the parent page's storage/cookie
+
+AS-008: Structurally broken HTML still renders best-effort
+- **Given:** an HTML doc with unclosed / malformed tags
+- **When:** the recipient opens the link
+- **Then:** the viewer still renders best-effort, without crashing the page
+- **Data:** HTML missing a closing `</div>` tag
+
+### S-003: Render Markdown styled (P0)
+
+**Description:** As a recipient, I open a Markdown doc and read it nicely presented
+in the app theme; scripts embedded in the Markdown don't run.
+**Source:** docs/explore/render-publish.md#decisions (item 2 MD routing).
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (expected MD renderer + sanitize)
+- `autonomous:` true
+
+**Acceptance Scenarios:**
+
+AS-009: Markdown renders in the app theme
+- **Given:** a published Markdown doc with headings, lists, paragraphs
+- **When:** the recipient opens the link
+- **Then:** the content displays styled in the app theme (not in an iframe)
+- **Data:** Markdown with H1/H2 + a bullet list
+
+AS-010: Scripts embedded in Markdown don't run
+- **Given:** a Markdown doc containing a raw `<script>` block
+- **When:** the recipient opens the link
+- **Then:** the script is stripped and not executed; the text content still displays
+- **Data:** Markdown with `<script>alert(1)</script>`
+
+### S-004: View image with zoom/pan (P0)
+
+**Description:** As a recipient, I open an image doc and can view it with zoom/pan, laying
+the groundwork for pinning comments by coordinate later.
+**Source:** docs/explore/render-publish.md#decisions (item 4 image).
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (expected image viewer + zoom/pan)
+- `autonomous:` true
+
+**Acceptance Scenarios:**
+
+AS-011: Image displays and supports zoom/pan
+- **Given:** a published PNG image doc
+- **When:** the recipient opens the link and zooms in then drags (pan)
+- **Then:** the image zooms and moves accordingly; position is based on the original image coordinates
+- **Data:** PNG 1600×1200
+
+AS-012: A corrupt image shows a placeholder
+- **Given:** an image doc with a broken/unreadable file
+- **When:** the recipient opens the link
+- **Then:** the frame shows a placeholder "Could not read image", without crashing the page
+- **Data:** a corrupt image file
+
+AS-013: SVG renders isolated in a sandbox
+- **Given:** an SVG image doc containing a script
+- **When:** the recipient opens the link
+- **Then:** the SVG renders in a sandbox iframe; the script can't reach the app
+- **Data:** SVG with a `<script>` element
+
+### S-005: Serve a doc to the in-app viewer (P0)
+
+**Description:** As the in-app (SPA) viewer, I load a doc's metadata and rendered content so I can
+render it in the React 3-pane viewer (direction B) — Markdown comes back as sanitized app-theme HTML;
+HTML/image come back as a reference to the sandboxed content, not inline.
+**Source:** direction B (viewer is a React route, see annotation-core-ui); the current `/d` server page
++ `/v` sandbox give no JSON the SPA can render from. Resolves annotation-core-ui:GAP (doc-content API).
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (expected `src/routes/docs.*` GET-by-slug + the viewer-loader + access gate)
+- `autonomous:` true
+- `verify:` open the viewer on a markdown doc → it receives title/kind/version + sanitized HTML and renders it; an HTML/image doc → receives the sandbox content reference; a no-access slug → nothing returned (404).
+
+**Acceptance Scenarios:**
+
+AS-016: The viewer loads a doc's metadata + rendered content
+- **Given:** a published doc I can access (markdown)
+- **When:** the viewer requests the doc by slug
+- **Then:** it receives the doc's metadata (title, kind, current version, status, general-access) and the
+  rendered content — for Markdown, sanitized HTML in the app theme
+- **Data:** a markdown doc at version 3
+
+AS-017: HTML/image content comes back as a sandbox reference, not inline
+- **Given:** a published HTML doc I can access
+- **When:** the viewer requests the doc by slug
+- **Then:** the metadata comes back plus a reference to the sandboxed content (the `/v` content for the
+  iframe) — the untrusted HTML is NOT returned inline for the app origin to render
+- **Data:** an HTML doc
+
+AS-018: A doc I cannot access is not served to the viewer
+- **Given:** a restricted doc I am not invited to (or a non-existent slug)
+- **When:** the viewer requests it by slug
+- **Then:** nothing is returned and not-found is indistinguishable from no-access (existence-hiding)
+- **Data:** restricted doc, non-member requester
+
+AS-023: The read returns the caller's effective role on the doc
+- **Given:** a published doc I can access, on which I am the owner
+- **When:** the viewer requests the doc by slug
+- **Then:** the metadata also carries my effective role on this doc (owner / editor / commenter /
+  viewer — the highest-wins role over membership, invite, link, and ownership); a caller with no
+  session (anonymous link-open) gets no role field. The in-app viewer uses this to decide whether
+  to offer the Share affordance (`sharing-permissions-ui:S-001` consumes it)
+- **Data:** owner requester → role "owner"; anonymous requester → no role field
+
+### S-006: Inject block-id markers at serve time (P0)
+
+**Description:** As the annotation layer, the content served to the viewer (and the sandboxed `/v`
+content) carries a stable positional block id on each block element, so an annotation can anchor to a
+position. This serves `annotation-core`'s anchor model (C-001 there); durability still comes from
+text-snippet+fuzzy, the block id is a cheap positional hint.
+**Source:** annotation-core C-001 / GAP-002 (block_id injected server-side at serve/publish time); annotation-core-ui prerequisite (highlights can't anchor without it).
+
+**Execution:**
+- `depends_on:` S-002, S-003, S-005
+- `parallel_safe:` false
+- `files:` unknown (expected the serve-time content transform reused by `/d`, `/v`, and S-005)
+- `autonomous:` true
+- `verify:` fetch a served markdown/HTML doc → each block element carries `block-{tag}-{n}`; an element with an existing id keeps it (gets `data-block-id`); the same phrase in two blocks resolves to two different block ids.
+
+**Acceptance Scenarios:**
+
+AS-019: Served content carries positional block ids
+- **Given:** a markdown or HTML doc with several block elements
+- **When:** it is served to the viewer (or as `/v` content)
+- **Then:** each block element carries a positional id `block-{tag}-{n}` (a per-tag sequential counter in document order)
+- **Data:** a doc with 3 paragraphs + 2 headings
+
+AS-020: An element that already has an id is not clobbered
+- **Given:** a block element that already carries an `id`
+- **When:** the content is served
+- **Then:** its existing `id` is preserved and the positional marker is added as `data-block-id` instead
+- **Data:** `<h2 id="intro">` in the content
+
+AS-021: The same text in two blocks resolves to distinct block ids
+- **Given:** the phrase "see below" appears in two different blocks
+- **When:** the content is served
+- **Then:** the two occurrences sit under two different block ids (so an annotation on the second anchors to the second block, not the first)
+- **Data:** "see below" in block 3 and block 9
+
+AS-022: Malformed/empty content is injected best-effort without crashing
+- **Given:** content with malformed/unclosed tags (or empty)
+- **When:** it is served
+- **Then:** block-id injection does not crash; the content still serves (best-effort), consistent with the best-effort HTML render (AS-008)
+- **Data:** HTML missing a closing tag
+
+### S-007: An HTML doc's own client storage doesn't crash the page (P1)
+
+**Description:** As a recipient opening an HTML doc, the doc's OWN scripts that read/write client
+storage (a theme toggle remembering a preference, a collapsible remembering its state) run and the
+feature works for the session — instead of the script throwing on the isolated sandbox origin and
+aborting, which today silently kills the doc's theme toggle and anything after it.
+**Source:** conversation 2026-06-16/17 (the seeded doc's theme-toggle crashes at its own
+client-storage read on the opaque origin); annotation-html-marks.md §Not-in-Scope punts this here
+("the doc's own scripts using localStorage … fix via an in-iframe storage shim, tracked elsewhere").
+
+**Execution:**
+- `depends_on:` S-002
+- `parallel_safe:` false
+- `files:` `apps/backend/src/annotation/sandbox-bridge.ts` (a new prepend-injection step — NOT the appending bridge inject), `apps/backend/src/app.ts` (the `/v/:id` serve path), `apps/backend/src/render/sandbox.ts`
+- `autonomous:` checkpoint
+- `verify:` open an HTML doc whose script reads client storage on load (the seeded theme-toggle doc) → the toggle works and the doc renders, no crash; reload → the preference resets (session-only); confirm a script trying to reach the app session still can't (isolation unchanged).
+
+**Acceptance Scenarios:**
+
+AS-024: A doc's own storage-using script runs instead of crashing
+- **Given:** a published HTML doc whose own on-load script reads a saved preference from client storage and wires a theme toggle
+- **When:** the recipient opens the link
+- **Then:** the script runs to completion — the storage read returns a value instead of throwing, the toggle works for the session, and the rest of the doc renders
+- **Data:** an HTML doc with a theme-toggle script that reads/writes a `theme` preference on load
+
+AS-025: A doc's stored values are session-only and never leak to the app or other docs
+- **Given:** an HTML doc whose script wrote a client-storage value while open
+- **When:** the page is reloaded, or a different doc is opened in the same browser
+- **Then:** the value is gone after reload (it never persisted) and was never readable by the app or any other doc (per-frame, in-memory, not shared)
+- **Data:** a doc that writes `theme=dark`, then reload → the script sees no saved preference
+
+AS-026: A storage capability outside the shimmed set degrades without taking down the shimmed ones
+- **Given:** an HTML doc that uses both a shimmed storage capability (a theme preference) and one left unshimmed (a heavier client database)
+- **When:** the recipient opens the link
+- **Then:** the shimmed feature works (the toggle runs); the unshimmed capability fails on its own without crashing the page or the shimmed feature
+- **Data:** a doc whose theme toggle works while its client-database init is allowed to fail
+
+## Constraints & Invariants
+
+- C-001: Untrusted HTML renders in an opaque-origin sandbox iframe (no
+  `allow-same-origin`) + a `CSP: sandbox allow-scripts` header. (AS-007)
+- C-002: Content rendered in the sandbox does NOT go through dompurify (keeps JS running); content
+  rendered in the app origin (Markdown) MUST go through dompurify (strips JS). (AS-006, AS-010)
+- C-003: Artifact size cap: HTML/MD 5MB, image 25MB; over → rejected, not stored. (AS-004)
+- C-004: The slug is generated once at doc creation and is immutable. Creating a doc → version 1. (AS-001)
+  _Immutability across updates belongs to the versioning-diff cluster._
+- C-005: Content type is determined by sniffing the content, not just trusting the file extension. (AS-005)
+- C-006: An empty artifact (0 bytes / whitespace only) is rejected before any doc is created. (AS-014)
+- C-007: Ambiguous content (no declared format + no extension to infer) defaults to kind=markdown. (AS-015)
+- C-008: The in-app viewer content is access-gated (existence-hiding, like `/d`); Markdown is served as
+  sanitized app-theme HTML (dompurify, C-002), while HTML/image are served as a reference to the
+  sandboxed `/v` content — the untrusted HTML is NEVER returned inline for the app origin. (AS-016, AS-017, AS-018)
+- C-009: Block-id markers are injected at serve time on the content path: positional `block-{tag}-{n}`
+  (per-tag sequential counter, document order); an element with an existing `id` keeps it and gets
+  `data-block-id` instead; the markers appear in BOTH the viewer content (S-005) and the `/v` sandbox
+  content; injection is best-effort on malformed content. This serves annotation-core C-001 (block id is
+  a positional hint, not a stable identity). (AS-019, AS-020, AS-021, AS-022)
+- C-011: On publish, a new doc's `general_access` is set to the target workspace's
+  `settings.defaultAccess` (default `anyone_in_workspace`, `workspaces`:C-007), not left to the
+  column default `restricted`. This is the web/UI-publish enforcement of the shared-group-space
+  default (sharing-permissions:C-018); the same rule applies to MCP publish (mcp-roundtrip:AS-003).
+  (AS-027)
+- C-010: The sandbox content is prepended — before the doc's own scripts — with an in-memory
+  client-storage shim for the storage capabilities that throw on the opaque origin (per-document
+  storage, per-session storage, the cache store, the cross-tab channel), so the doc's own scripts run
+  instead of aborting. The shim is per-frame and in-memory: written values do not persist across a
+  reload and are NEVER bridged to or exposed at the app origin or to any other doc (bridging untrusted
+  doc storage to the app origin is forbidden — it would be an unbounded app-origin write + a
+  cross-doc/cross-tenant channel). The shim is a fixed payload with no doc-derived content in it, and it
+  MUST NOT weaken the sandbox isolation — no `allow-same-origin`, the opaque origin and the
+  `CSP: sandbox allow-scripts` of C-001 stay unchanged. A heavier storage capability deliberately left
+  unshimmed may still fail, but must not take down the shimmed ones or the page. (AS-024, AS-025, AS-026)
+
+## UI Notes
+
+From `docs/explore/render-publish.md` §UI sketches. Greenfield → all `[N]`. Component
+names only (no markup). Dark-operator per `DESIGN.md`. Precedence: AS > Tree.
+
+- `NewDocDialog` `[N]`
+  - `SourceTabs`: Upload · Paste · viaMCP
+  - `UploadDropzone` *(accepts .html/.md/image; cap 5MB / image 25MB → reject message)*
+  - `FormatToggle`: HTML · Markdown *(only asked on Paste)*
+  - `TitleField` *(auto-inferred from <title>/H1/filename; editable)*
+  - `PublishButton`
+- `DocRenderFrame` `[N]` *(rendered content; surrounding chrome — TopBar/TocSidebar/AnnotationsRail — belongs to annotation-core)*
+  - `HtmlSandboxFrame` *(sandbox iframe, JS runs; used for kind=html)*
+  - `MarkdownView` *(app-origin render + sanitize; kind=markdown)*
+  - `ImageViewer` *(zoom/pan, original coordinates for image-region; kind=image)*
+  - `RenderErrorState` *(corrupt image / wrong content-type → placeholder)*
+
+## API
+
+HTTP contract for this cluster. Follows `api-core` (envelope C-001, error→status C-003,
+auth gate C-005, validation C-007, existence-hiding C-006). `→` = serves which AS.
+
+| Method · Path | Serves | Auth | Request | Success | Errors |
+|---|---|---|---|---|---|
+| `POST /api/w/:workspaceId/docs` | S-001 (AS-001/002/003/014/015/027) | session (member) | multipart file OR `{ content, kind?, title?, projectId? }` (Zod) | 201 `{ docId, slug, url }` (the created doc's `general_access` is set to the workspace's `settings.defaultAccess`, default `anyone_in_workspace` — AS-027/C-011) | 400 VALIDATION_ERROR (empty AS-014; type mismatch AS-005), 413 PAYLOAD_TOO_LARGE (over-cap AS-004) |
+| `GET /api/w/:workspaceId/docs/:slug` | S-005 (AS-016/017/018/023) + S-006 (block-ids in content) | session (viewer+) | path slug | 200 `{ doc: {title,kind,version,status,generalAccess,effectiveRole?}, content }` (`effectiveRole` = caller's role, omitted for anon AS-023; markdown: sanitized HTML w/ block-ids; html/image: `{ contentUrl: /v/:id }`) | 404 (no-access → indistinguishable, C-006/C-008) |
+
+Non-`/api` routes (already mounted in `src/app.ts`, **exempt from the JSON envelope** per
+api-core C-009 — they serve HTML/sandboxed content, not JSON):
+
+| Method · Path | Serves | Notes |
+|---|---|---|
+| `GET /d/:slug` | S-002/S-003/S-004 (viewer shell) | HTML page; access-gated → a no-access/missing doc returns 404 via api-core C-006 (existence-hiding) |
+| `GET /v/:id` | S-002 (AS-007 isolation, AS-013 SVG) | raw content under CSP sandbox (opaque origin); access-gated like `/d` |
+
+## What Already Exists
+
+### System Impact & Technical Risks
+
+- Greenfield repo — no code yet. The old schema draft in `src/db/schema.ts` was reverted;
+  `docs.slug` is needed (the draft didn't have it).
+- Reuse: the viewer iframe + content-route here are reused by the `annotation-core` cluster to
+  inject the bridge + `data-block-id`. The content-route design should anticipate this hook.
+- Risk: rendering untrusted HTML is the main XSS surface — C-001/C-002 are the guardrails;
+  a mistake here is a high security risk.
+- Cross-spec: `mcp-roundtrip` creates docs/versions via MCP under the same identity model.
+
+## Not in Scope
+
+- Importing `.zip` (bundled CSS/font/images) — deferred to v0.5 (drags in zip-slip/zip-bomb/entry-point).
+- `<img src>` → asset endpoint rewrite (publish_with_assets style) — goes with zip, v0.5.
+- Understanding the mf-stack schema (S/AS/C/P, ID-as-anchor) — dropped from v0 per direction (treat mf-stack like plain HTML/MD).
+- "Island" (embedding raw-HTML/JS inside Markdown) — v2.
+- Annotating PDFs, annotating live URLs — v2.
+- Appending versions / diff / restore — versioning-diff cluster.
+- Visibility / general-access enforcement — sharing-permissions cluster. (Publish only SETS the
+  initial `general_access` from the workspace default, C-011/AS-027; changing it afterward and
+  gating reads stay in sharing-permissions.)
+- Publishing via MCP — mcp-roundtrip cluster (creates the same artifact).
+
+## Gaps
+
+- GAP-001 (status: open): `@font-face` cross-origin from the opaque-origin iframe back to the app
+  needs a CORS (ACAO) header on the content endpoint — the configuration isn't settled. Source:
+  "@font-face cross-origin … needs a CORS (ACAO) header".
+- GAP-002 (status: deferred): whether a large HTML doc (close to 5MB) needs lazy/streaming when rendering
+  — measure at build time. Owner: build-time perf. Source: "Large doc … does iframe rendering need lazy/stream".
+- GAP-003 (status: deferred): which content-type sniffing lib + the exact accepted MIME list
+  — decided at build time. Source: "which content-type sniffing lib to use".
+
+## Clarifications — 2026-06-07
+
+(Carried over from the explore doc's decision rationale; not re-asked.)
+
+- **Sandbox iframe instead of dompurify-strip for HTML:** the "HTML runs for real" requirement
+  conflicts with sanitizing away JS; origin isolation solves both. If opaque-origin isn't enough
+  → move to a dedicated sandbox origin (more expensive for self-host).
+- **iframe `src` + content-route instead of `srcdoc`:** initially because zip needs to resolve
+  relative paths; zip is deferred but `src` is kept for consistency + so that
+  annotation-core can inject `data-block-id`/bridge server-side; avoids an unwieldy srcdoc.
+- **Immutable slug + append version; visibility split out to sharing:** avoids two places
+  both controlling visibility.
+- **Defer zip + mf-stack:** reduce the v0 surface per direction.
+- **Images stored on a volume** (decided in the self-host cluster), text content in Postgres.
+
+## Spec Sizing Notes
+
+Stories=7 (at target 7). AS=27 (target 20, in the G7 overage range ≤30). The overage comes from the
+2026-06-11 additions for the React viewer (direction B), the 2026-06-13 effectiveRole atom, the
+2026-06-17 client-storage shim, and the 2026-06-23 default-access inheritance — each AS one atom:
+- S-001 publish: AS-027 (a new doc inherits the workspace `defaultAccess`).
+- S-005 viewer content: AS-016 (meta+MD html), AS-017 (html/image → sandbox ref), AS-018 (no-access), AS-023 (caller's effectiveRole).
+- S-006 block-id inject: AS-019 (positional), AS-020 (don't-clobber existing id), AS-021 (duplicate→distinct), AS-022 (malformed best-effort).
+- S-007 storage shim: AS-024 (script runs not crashes), AS-025 (session-only, no leak), AS-026 (unshimmed capability degrades in isolation).
+No bloat — each AS traces to one stated behavior.
+
+## Change Log
+
+| Date | Change | Ref |
+|------|--------|-----|
+| 2026-06-07 | Initial creation (from docs/explore/render-publish.md) | -- |
+| 2026-06-07 | + ## UI Notes (Component Tree from explore §UI sketches) — Minor | -- |
+| 2026-06-08 | + ## API (HTTP contract: POST /api/docs + /d /v exempt; per api-core) — Minor | -- |
+| 2026-06-07 | Added AS-014/AS-015 + C-006/C-007 (document reject-empty + ambiguous→markdown guards; /mf-build S3); snapshot 2026-06-07.md | -- |
+| 2026-06-11 | Major: + S-005 (serve doc to in-app React viewer, JSON meta+content, AS-016/017/018) + S-006 (serve-time block-id injection, AS-019/020/021/022) + C-008/C-009 + API `GET /api/w/:ws/docs/:slug`; POST path corrected to workspace-scoped; + Spec Sizing Notes. Snapshot 2026-06-11.md. Unblocks annotation-core-ui prerequisites #1+#2 | -- |
+| 2026-06-13 | Major: + S-005 AS-023 (viewer-doc read returns the caller's `effectiveRole`, omitted for anon) + API doc shape `effectiveRole?`. Closes the producer gap behind `sharing-permissions-ui:S-001` (the Share affordance gate consumed a field the read never delivered). Snapshot 2026-06-13.md | -- |
+| 2026-06-17 | Major: + S-007 (HTML doc's own client storage doesn't crash the page — in-memory, per-frame, non-bridged shim prepended before the doc's scripts, AS-024/025/026) + C-010. Fixes the seeded doc's theme-toggle crash on the opaque origin; claims the shim that annotation-html-marks.md punted as "tracked elsewhere". Snapshot 2026-06-17.md | -- |
+| 2026-06-23 | Major (M6+new-AS, snapshot 2026-06-23-default-access.md) — doc-access shared-workspace model: +AS-027 on S-001 (a new doc inherits the workspace `settings.defaultAccess`, default `anyone_in_workspace`) + C-011 (publish sets `general_access` from the workspace default, not the column default `restricted`). Data Model + API row + Not-in-Scope notes. Enforces the web/UI-publish surface of sharing-permissions:C-018 (MCP surface → mcp-roundtrip:AS-003). AS 26→27. | doc-access audit 2026-06-23 |

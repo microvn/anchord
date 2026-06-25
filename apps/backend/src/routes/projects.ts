@@ -48,6 +48,7 @@ import {
   type ProjectsRouteRepo,
   type WorkspaceDocRow,
 } from "../workspace/repo";
+import { can, type Role } from "../sharing/roles";
 import { paginationQuery, buildPagination, type PaginationParams } from "../http/pagination";
 import { emitActivity, type ActivityEmitDeps } from "../activity/emit";
 import { createActivityRepo, type ActivityRepo } from "../activity/repo";
@@ -71,6 +72,14 @@ export interface ProjectsRoutesDeps {
   resolveSession: SessionResolver;
   /** workspaces S-006: resolves the caller's role in :workspaceId for the path-scoped gate. */
   resolveWorkspaceRole: WorkspaceRoleResolver;
+  /**
+   * doc-delete-trash S-001 / C-003: the authoritative per-doc role resolver (same one the delete
+   * gate uses). The docs-list response carries a server-computed `canDelete` per doc so the ⋯-menu
+   * Delete item exactly mirrors the gate — `(role ∈ {owner,editor})` OR workspace-admin — instead
+   * of the FE re-deriving it from partial data. Optional: when omitted (older test wirings), the
+   * list falls back to the workspace-admin arm only.
+   */
+  resolveDocRole?: (docId: string, userId: string) => Promise<Role | null>;
   /**
    * workspace-activity S-006 / AS-024 (C-002 / C-005): emit a `project` activity row after a
    * project is CREATED. A WORKSPACE-LEVEL event (no doc target) — the row's workspaceId is the
@@ -352,6 +361,24 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       const start = (page.page - 1) * page.limit;
       const pageDocs = visible.slice(start, start + page.limit);
 
+      // doc-delete-trash S-001 / C-003: per-doc `canDelete` for THIS page only (bounded N, the
+      // route already pages server-side). Mirrors the delete gate EXACTLY — (per-doc role carries
+      // EDIT, i.e. owner/editor) OR the caller is a workspace admin — using the same authoritative
+      // resolveDocRole, so the FE never re-derives the two-axis gate. No resolver wired → admin-only.
+      const isWsAdmin = ws.role === "admin";
+      const resolveDocRole = deps.resolveDocRole;
+      const canDeleteById = new Map<string, boolean>();
+      if (resolveDocRole) {
+        await Promise.all(
+          pageDocs.map(async (d) => {
+            const role = await resolveDocRole(d.id, actor.userId);
+            canDeleteById.set(d.id, (role !== null && can(role, "edit")) || isWsAdmin);
+          }),
+        );
+      } else {
+        for (const d of pageDocs) canDeleteById.set(d.id, isWsAdmin);
+      }
+
       return {
         docs: pageDocs.map((d) => ({
           id: d.id,
@@ -372,6 +399,8 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
           // query) so the consumer needs no second projects fetch to label a card.
           projectId: d.projectId,
           projectName: d.projectName,
+          // doc-delete-trash S-001 / C-003: drives the ⋯-menu Delete item (owner/editor/admin).
+          canDelete: canDeleteById.get(d.id) ?? false,
         })),
         // S-008/AS-024: the active-project list (id + name) from the same read — for the
         // move/copy target picker + the project-count stat. NO per-project doc count (unused).

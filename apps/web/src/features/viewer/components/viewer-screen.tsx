@@ -150,6 +150,22 @@ export function ViewerScreen({
   }
 
   if (query.isError) {
+    // doc-delete-trash S-004 (AS-014): a 410 DOC_DELETED means the doc existed but was deleted
+    // AND this viewer had prior access (the backend gates that code on prior access; a viewer
+    // with none gets the existence-hiding 404 below instead — AS-015). Show the "deleted" notice,
+    // never the content. Like the no-access surface, this is meta.viewerRead-exempt so it never
+    // bounces to sign-in.
+    const docDeleted = query.error.status === 410 || query.error.code === "DOC_DELETED";
+    if (docDeleted) {
+      return (
+        <div
+          data-testid="viewer-deleted"
+          className="flex h-dvh items-center justify-center bg-paper px-4 text-ink"
+        >
+          <NoAccessView variant="deleted" slug={slug} />
+        </div>
+      );
+    }
     // C-002: a 404 (missing OR no-access) collapses to one not-found state — never the content,
     // never an empty render. Any other failure shows the retryable error surface.
     const notFound = query.error.status === 404 || query.error.code === "NOT_FOUND";

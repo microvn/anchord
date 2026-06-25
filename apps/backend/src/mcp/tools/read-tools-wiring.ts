@@ -74,6 +74,9 @@ export function createMcpReadPorts(deps: ReadToolsWiringDeps): ReadPorts {
         -- Left join so a doc with no share_links row is simply not workspace-shared.
         left join share_links sl on sl.doc_id = d.id
         where p.workspace_id = ${input.workspaceId}
+          -- doc-delete-trash S-005 / C-002 (AS-017): a soft-deleted doc never surfaces in the MCP
+          -- doc list. The partial index docs_active_idx (where deleted_at is null) backs this.
+          and d.deleted_at is null
           and (
             d.owner_id = ${input.userId}
             or (

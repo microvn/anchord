@@ -77,13 +77,22 @@ and carries a thread of **Comments**.
   (read how Plannotator solves this *before* designing your own).
 - **Anchor type 2 — image region**: point/box in normalized coordinates.
 - **Roles** (per-doc, Google-Docs style): viewer / commenter / editor / owner.
-- **General access**: restricted / anyone-with-link / anyone-in-workspace. **Default =
-  `anyone_in_workspace` (shared-workspace model, locked 2026-06-23): workspace = shared group space.** A new
-  doc inherits its workspace's `settings.defaultAccess` (default `anyone_in_workspace`) at publish —
-  web AND MCP — so workspace members see new docs by default; `restricted` is a per-doc opt-in for a
-  private doc. The `defaultAccess` setting was declared but unwired before this; an admin UI to change
-  it per workspace is deferred (v0.5+). Do not relitigate back to restricted-by-default. Specs:
-  `workspaces`:C-007, `sharing-permissions`:C-018, `render-publish`:C-011/AS-027, `mcp-roundtrip`:AS-003/C-006.
+- **General access — TWO independent axes** (locked 2026-06-25, two-axis model; supersedes the
+  2026-06-23 single-enum default). A doc's access is two nullable columns on `share_links`:
+  `workspace_role` (viewer/commenter/editor/null — the role every member of the doc's OWN workspace
+  gets; null = not shared with the workspace) and `link_role` (same set — the role anyone with the
+  link gets; null = no public link). They are independent: sharing externally never demotes members
+  or removes the doc from the workspace. The old single `docs.general_access` enum is DROPPED; the
+  legacy 3-value level (restricted = {null,null} / anyone_in_workspace = {set,null} / anyone_with_link
+  = {*,set}) is DERIVED on read via `deriveLevel`, never stored. **New-doc default =
+  `{workspace_role: commenter, link_role: null}`**, created in the `share_links` row at publish (web
+  AND MCP) — workspace = shared group space, members can view+comment on new docs by default; making a
+  doc private = both axes off ({null,null}). A no-account guest is capped at commenter (editing needs
+  an account). The workspace `settings.defaultAccess` setting is RETIRED (no longer read at publish);
+  it remains a declared, unread seam for a future per-workspace admin knob (v0.5+). Do not relitigate
+  back to a single level or restricted-by-default. Source of truth: `doc-access-two-axis`; cascade
+  also touched `sharing-permissions`:C-009/C-018, `doc-access-routing`:C-003, `render-publish`:C-011,
+  `mcp-roundtrip`:C-006, `workspaces`:C-007.
   Guest
   commenting has NO separate toggle (Google-Docs model, REVERSED 2026-06-20): an
   anyone-with-link doc whose link role is commenter+ lets anyone with the link —

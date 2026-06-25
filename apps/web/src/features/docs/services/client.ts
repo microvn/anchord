@@ -192,3 +192,52 @@ export function copyDoc(
     EdenResult<unknown>
   >;
 }
+
+/**
+ * DELETE /api/w/:workspaceId/docs/:slug — soft-delete a doc into Trash (doc-delete-trash S-001 /
+ * AS-001). The doc is tombstoned (versions + annotations preserved) and disappears from every
+ * listing; it can be restored from Trash. The backend gates on (owner/editor) OR workspace-admin
+ * and refuses a commenter/viewer with 403 (AS-004). Returns { docId, slug, deleted: true }.
+ */
+export function deleteDoc(workspaceId: string, slug: string): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).docs({ slug }).delete() as Promise<EdenResult<unknown>>;
+}
+
+/**
+ * GET /api/w/:workspaceId/trash — the workspace Trash (doc-delete-trash S-003 / AS-013). Returns
+ * `{ docs: [{ id, slug, title, deletedAt }] }`, scoped to this workspace (C-007 / AS-026); an empty
+ * list is the empty state. Membership-gated server-side.
+ */
+export function listTrash(workspaceId: string): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).trash.get() as Promise<EdenResult<unknown>>;
+}
+
+/**
+ * POST /api/w/:workspaceId/trash/:id/restore — restore a deleted doc from Trash (S-003 / AS-010).
+ * The doc returns to its original project (or the restorer's default when that project is gone,
+ * AS-011) with annotations + versions intact, and comes back PRIVATE — both access axes off + the
+ * capability token rotated (AS-023). The backend gates on (owner/editor) OR workspace-admin and
+ * refuses a commenter/viewer with 403 (AS-020). Returns { docId, slug, projectId, restored: true }.
+ */
+export function restoreDoc(workspaceId: string, docId: string): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).trash({ id: docId }).restore.post() as Promise<
+    EdenResult<unknown>
+  >;
+}
+
+/**
+ * POST /api/w/:workspaceId/trash/:id/permanent — permanently (hard) delete a doc from Trash
+ * (doc-delete-trash S-007 / AS-034). The doc row and its versions/annotations/comments/share_links
+ * are removed from the database — gone from Trash and unrecoverable. The backend gates OWNER-OR-ADMIN
+ * only (narrower than soft-delete, which also allows editors); a per-doc editor/commenter is refused
+ * with 403 (AS-035). Under /trash/:id (the /docs/:slug path can't host a second :id param — it would
+ * crash the app at boot); POST since it sits beside the restore POST. Returns { docId, slug, purged }.
+ */
+export function permanentlyDeleteDoc(
+  workspaceId: string,
+  docId: string,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).trash({ id: docId }).permanent.post() as Promise<
+    EdenResult<unknown>
+  >;
+}

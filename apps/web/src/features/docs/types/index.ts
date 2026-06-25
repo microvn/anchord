@@ -31,6 +31,10 @@ export interface DocRow {
   /** The raw general-access level — drives the per-card AccessIndicator (S-006/AS-018).
    *  `status` collapses link vs workspace into "live"; this keeps the 3-way distinction. */
   generalAccess: GeneralAccess;
+  /** doc-delete-trash S-001 / C-003: server-computed — may the current caller delete this doc
+   *  (owner/editor OR workspace-admin)? Drives the ⋯-menu Delete item. Absent on legacy/mocked
+   *  rows → treated as false (Delete hidden). */
+  canDelete?: boolean;
   /** Filled in by the workspace docs aggregator: the project this doc belongs to. */
   projectId?: string;
   /** The project's display name (joined client-side from the projects list). */

@@ -14,7 +14,7 @@ import { docs, docMembers, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
 import type { Viewer } from "./access";
 import { can, type Role } from "./roles";
-import { createResolveDocRole } from "./resolve-doc-role-repo";
+import { createResolveDocRole, createIsDocDeleted } from "./resolve-doc-role-repo";
 import { createResolveAccess } from "./resolve-access";
 import { mintAdmissionCookie } from "./capability-cookie";
 
@@ -51,7 +51,10 @@ function fakeDb(seed: {
 const anon: Viewer = { kind: "anon" };
 const asUser = (id: string): Viewer => ({ kind: "user", userId: id });
 
-/** Build resolveAccess on top of the REAL resolveDocRole, with injected ports. */
+/** Build resolveAccess on top of the REAL resolveDocRole, with injected ports.
+ *  doc-delete-trash S-004 / C-009: the deletion check is now a PORT — wire the REAL
+ *  `createIsDocDeleted` over the same fakeDb (it reads the seeded docRows' `deletedAt`),
+ *  so the S-004 tests exercise the same mechanism prod uses, not a raw `db.select`. */
 function buildGate(
   db: DB,
   ports: { isOwner: (d: string, u: string) => Promise<boolean>; isWorkspaceMember: (d: string, u: string) => boolean | Promise<boolean> },
@@ -60,7 +63,7 @@ function buildGate(
     isOwner: ports.isOwner,
     isWorkspaceMember: ports.isWorkspaceMember,
   });
-  return createResolveAccess(db, { resolveDocRole });
+  return createResolveAccess(db, { resolveDocRole, isDocDeleted: createIsDocDeleted(db) });
 }
 
 /** As buildGate, but wires the APP_SECRET so the anon capability-cookie path (S-002/S-003) is
@@ -74,7 +77,7 @@ function buildGateWithSecret(
     isOwner: ports.isOwner,
     isWorkspaceMember: ports.isWorkspaceMember,
   });
-  return createResolveAccess(db, { resolveDocRole, secret });
+  return createResolveAccess(db, { resolveDocRole, secret, isDocDeleted: createIsDocDeleted(db) });
 }
 
 const anonWithCookie = (cookie: string): Viewer => ({ kind: "anon", admissionCookie: cookie });
@@ -401,5 +404,106 @@ describe("resolveAccess — guest cap at the anon seam (S-003 / C-004)", () => {
     const r = await gate("doc_1", anonWithCookie(cookie));
     expect(r).toEqual({ role: "viewer", canView: true });
     expect(can(r.role as Role, "comment")).toBe(false); // viewer cannot comment.
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// doc-delete-trash S-004 (C-009): the `deleted_at` check lives in THIS single gate. A
+// soft-deleted doc is unreadable on EVERY id-keyed read path (canView is always false),
+// and the distinct `deleted` reason is gated on PRIOR access so it never becomes a
+// slug-enumeration oracle (AS-014/AS-015/AS-028).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("resolveAccess — soft-deleted doc, the single deletion chokepoint (S-004 / C-009)", () => {
+  const SECRET = "test-app-secret-s004";
+  const TOKEN = "cap_tok_s004";
+  const DELETED_AT = new Date("2026-06-25T00:00:00Z");
+
+  test("AS-014 / C-009: a member who WOULD HAVE had a role on a deleted doc → canView:false + reason 'deleted'", async () => {
+    // Owner Mai on a now-deleted doc: resolveLive would admit her at owner, but deleted_at is set →
+    // the gate refuses (canView:false) yet surfaces the `deleted` reason so the loader can show the
+    // gated notice. Negating the prior-access gate (returning DENIED here) would drop the reason → red.
+    const db = fakeDb({
+      docRows: [{ generalAccess: "restricted", ownerId: "u_mai", deletedAt: DELETED_AT }],
+      memberRows: [],
+      linkRows: [],
+    });
+    const gate = buildGate(db, { isOwner: async (_d, u) => u === "u_mai", isWorkspaceMember: () => false });
+    const r = await gate("doc_1", asUser("u_mai"));
+    expect(r).toEqual({ role: null, canView: false, reason: "deleted" });
+  });
+
+  test("AS-015: a signed-in NON-member on a deleted doc → plain DENIED, NO `deleted` reason (no oracle)", async () => {
+    // Stranger with no source of access on the SAME deleted doc: resolveLive denies, so the deletion
+    // gate must NOT add the reason — the result is byte-identical to a missing/no-access doc. If the
+    // reason leaked here, a stranger could probe which slugs once existed (the enumeration oracle).
+    const db = fakeDb({
+      docRows: [{ generalAccess: "restricted", ownerId: "u_mai", deletedAt: DELETED_AT }],
+      memberRows: [],
+      linkRows: [],
+    });
+    const gate = buildGate(db, { isOwner: async (_d, u) => u === "u_mai", isWorkspaceMember: () => false });
+    const r = await gate("doc_1", asUser("u_stranger"));
+    expect(r).toEqual({ role: null, canView: false });
+    expect(r.reason).toBeUndefined();
+  });
+
+  test("AS-015: an anon with NO admission cookie on a deleted doc → plain DENIED, no reason", async () => {
+    // The doc was anyone_with_link before delete, but an anon with no cookie was never admitted even
+    // when live (S-003) — so they get the plain existence-hiding deny, never the deleted notice.
+    const db = fakeDb({
+      docRows: [{ generalAccess: "anyone_with_link", ownerId: null, deletedAt: DELETED_AT }],
+      memberRows: [],
+      linkRows: [{ workspaceRole: null, linkRole: "commenter", capabilityToken: TOKEN }],
+    });
+    const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
+    const r = await gate("doc_1", anon);
+    expect(r).toEqual({ role: null, canView: false });
+    expect(r.reason).toBeUndefined();
+  });
+
+  test("AS-014: an anon carrying a VALID admission cookie for the doc → canView:false + reason 'deleted'", async () => {
+    // A guest who HAD redeemed a valid capability link (cookie bound to this doc + its token) would
+    // have been admitted at commenter when live → on the deleted doc they get the gated notice.
+    const cookie = mintAdmissionCookie(
+      { docId: "doc_1", token: TOKEN, role: "commenter", pwdCleared: true, exp: Date.now() + 60_000 },
+      SECRET,
+    );
+    const db = fakeDb({
+      docRows: [{ generalAccess: "anyone_with_link", ownerId: null, deletedAt: DELETED_AT }],
+      linkRows: [{ workspaceRole: null, linkRole: "commenter", capabilityToken: TOKEN }],
+    });
+    const gate = buildGateWithSecret(db, SECRET, { isOwner: async () => false, isWorkspaceMember: () => false });
+    const r = await gate("doc_1", anonWithCookie(cookie));
+    expect(r).toEqual({ role: null, canView: false, reason: "deleted" });
+  });
+
+  test("AS-028 / C-009: a deleted doc is canView:false even for a prior editor — so version/annotation/diff reads all refuse", async () => {
+    // The id-keyed read paths (version content, annotations GET, comment POST, diff) gate ONLY on
+    // canView. An editor who held a role pre-delete still gets canView:false here → every one of
+    // those paths refuses with no per-route re-derivation. (The reason rides along for the loader,
+    // but `can(role, ...)` is moot because role is null and canView is false.)
+    const db = fakeDb({
+      docRows: [{ generalAccess: "restricted", ownerId: null, deletedAt: DELETED_AT }],
+      memberRows: [{ role: "editor" }],
+      linkRows: [],
+    });
+    const gate = buildGate(db, { isOwner: async () => false, isWorkspaceMember: () => false });
+    const r = await gate("doc_1", asUser("u_editor"));
+    expect(r.canView).toBe(false);
+    expect(r.role).toBeNull();
+    expect(r.reason).toBe("deleted");
+  });
+
+  test("C-009 boundary: an ACTIVE doc (deleted_at null) is unaffected — normal allow, no reason", async () => {
+    // Negative control: the same owner on the SAME doc but NOT deleted → the live result is returned
+    // verbatim, with no `deleted` reason. Proves the gate only fires on a real tombstone.
+    const db = fakeDb({
+      docRows: [{ generalAccess: "restricted", ownerId: "u_mai", deletedAt: null }],
+      memberRows: [],
+      linkRows: [],
+    });
+    const gate = buildGate(db, { isOwner: async (_d, u) => u === "u_mai", isWorkspaceMember: () => false });
+    const r = await gate("doc_1", asUser("u_mai"));
+    expect(r).toEqual({ role: "owner", canView: true });
   });
 });

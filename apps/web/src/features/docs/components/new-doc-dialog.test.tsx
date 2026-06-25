@@ -28,10 +28,18 @@ mock.module("@/features/docs/services/client", () => ({
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   createProject: mock(async () => env({})),
+  // The project-mutation thunks are included so this process-global mock.module does not
+  // UNDER-shadow the real client for sibling test files (bun mock.module is process-wide — an
+  // incomplete mock here erases `renameProject`/etc. for project-manage.test).
+  renameProject: mock(async () => env({})),
+  archiveProject: mock(async () => env({})),
+  unarchiveProject: mock(async () => env({})),
+  deleteProject: mock(async () => env({})),
   searchDocs: mock(async () => env({ results: [] })),
   publishDoc,
   moveDoc: mock(async () => env({})),
   copyDoc: mock(async () => env({})),
+  deleteDoc: mock(async () => env({ docId: "d1", slug: "spec", deleted: true })),
 }));
 
 const { NewDocDialog } = await import("@/features/docs/components/new-doc-dialog");

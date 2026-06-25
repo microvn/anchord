@@ -109,10 +109,12 @@ export function createProjectRepo(db: DB): ProjectRepo {
     },
 
     async countDocs(projectId): Promise<number> {
+      // doc-delete-trash S-002 / C-002: a soft-deleted doc lives in Trash, not the project, so
+      // it is NOT counted here — a project holding only deleted docs counts as empty (deletable).
       const [row] = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(docs)
-        .where(eq(docs.projectId, projectId));
+        .where(and(eq(docs.projectId, projectId), isNull(docs.deletedAt)));
       return row?.n ?? 0;
     },
 
@@ -240,7 +242,10 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
         .from(docs)
         .leftJoin(user, eq(user.id, docs.ownerId))
         .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
-        .where(eq(docs.projectId, projectId));
+        // doc-delete-trash S-002 / C-002: exclude soft-deleted docs (deleted_at IS NOT NULL) —
+        // a deleted doc is absent from the project grid (AS-007), visible only in Trash. The
+        // docs_active_idx partial index (WHERE deleted_at IS NULL) backs this filter.
+        .where(and(eq(docs.projectId, projectId), isNull(docs.deletedAt)));
       // Drizzle returns the count/max as strings from postgres.js — coerce to number.
       return rows.map((r) => ({
         ...r,
@@ -291,7 +296,10 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
         )
         .leftJoin(user, eq(user.id, docs.ownerId))
         .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
-        .where(eq(projects.workspaceId, workspaceId))
+        // doc-delete-trash S-002 / C-002: a soft-deleted doc is absent from the workspace
+        // browse union (AS-006) — only Trash shows it. (Filtered alongside the active-project
+        // join; the docs_active_idx partial index backs the deleted_at IS NULL scan.)
+        .where(and(eq(projects.workspaceId, workspaceId), isNull(docs.deletedAt)))
         .orderBy(sql`${docs.updatedAt} desc`, sql`${docs.id} desc`);
       return rows.map((r) => ({
         ...r,
@@ -314,6 +322,9 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
         join projects p on p.id = d.project_id
         left join share_links sl on sl.doc_id = d.id
         where p.workspace_id = ${workspaceId}
+          -- doc-delete-trash S-002 / C-002: a soft-deleted doc is not counted (AS-008) — it
+          -- lives in Trash, not the project. Backed by the docs_active_idx partial index.
+          and d.deleted_at is null
           and (
             d.owner_id = ${userId}
             or (

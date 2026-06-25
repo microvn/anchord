@@ -1,0 +1,502 @@
+# Snapshot: workspaces
+**Date:** 2026-06-25
+**Ref:** doc-access-two-axis cascade
+**Reason:** M6 — constraints/data-model superseded by the two-axis access model (C-007 defaultAccess feeds publish)
+
+---
+
+# Spec: workspaces
+
+**Created:** 2026-06-09
+**Last updated:** 2026-06-23
+**Status:** Draft
+**Snapshot limit:** 8
+
+## Overview
+
+Multi-workspace tenancy for anchord. Every account owns at least one workspace (a private
+tenant: its own projects, docs, members); a user can create more, be invited into others,
+and switch between the workspaces they belong to. This **reverses the earlier "v0 single
+workspace = instance" decision** — multi-workspace with full UI is the model. This spec owns
+the tenancy layer (workspace lifecycle, membership, invite/accept, switch, per-tenant
+scoping); projects/docs/browse/search live in `workspace-project` (now workspace-scoped),
+per-doc sharing in `sharing-permissions`. The frontend is a sibling spec `workspaces-ui`.
+
+## Data Model
+
+- **workspaces**: `id`, `name`, `slug` (unique), `creator_id` → user (the account that created
+  this workspace; `on delete set null` so the workspace survives the creator's deletion),
+  `created_at`. Many rows (was 1). No instance-level admin — each workspace has its own admin via
+  membership. `creator_id` is BOTH the "is this workspace mine" signal (creator_id === me) and a
+  durable record of who created it (tracking) — it replaces inferring "my own default" from
+  name+role, which mislabelled a default I was merely made admin of as also "mine".
+- **workspaces.settings** (`jsonb`, declared exception): `{ providers, defaultAccess, branding }`.
+  **`defaultAccess`** ∈ `restricted | anyone_in_workspace | anyone_with_link` is the per-workspace
+  default doc access — the **source of truth a publish reads** to set a new doc's `general_access`
+  (see C-007; enforced by `render-publish` + `mcp-roundtrip`). It defaults to **`anyone_in_workspace`**
+  for EVERY workspace (auto-created personal and user-created alike — no `isPersonal` distinction
+  exists in the schema), and an absent/unset value reads as `anyone_in_workspace`. **Wiring note
+  (2026-06-23):** today `settings` is inserted as `{}` empty and `defaultAccess` lived only in a
+  comment, never set, never read — this spec makes it real. New-workspace creation sets
+  `settings.defaultAccess = anyone_in_workspace`; existing `{}` rows need no migration because the
+  read path treats absent as `anyone_in_workspace`.
+- **workspace_members**: `workspace_id` → workspaces, `user_id` → user, `role`
+  (**admin | member** — UNCHANGED from the existing enum; no migration), `created_at`. Unique
+  on (workspace_id, user_id). A user holds rows in many workspaces with per-workspace roles.
+- **workspace_invitations** (NEW): `id`, `workspace_id`, `email`, `role`, `token`, `status`
+  (pending | accepted | rejected | revoked), `invited_by` → user, `expires_at`, `created_at`.
+  No workspace-level pending-invite exists today (only doc-level) — this is new.
+- **session.activeWorkspaceId** (NEW, on the better-auth session): the login-default
+  workspace to land in; NOT the request scope (that is the URL path — C-005).
+- Projects/docs already reach a workspace via `projects.workspace_id` (+ `docs.project_id`);
+  unchanged here.
+- **Migration note:** the single-row setup guard +
+  `POST /api/setup` are removed (replaced by auto-create-on-signup, S-001). Existing built
+  single-workspace code is reworked (see What Already Exists).
+- **Migration note (creator_id, 2026-06-22):** add `workspaces.creator_id`; backfill each existing
+  row to its earliest-joined admin member (the de-facto creator); rename existing auto-created
+  workspaces still literally named "default" to "<creator display name>'s workspace" so the
+  duplicate-"default" collision is cleared. Rows with no resolvable creator keep `creator_id` null.
+
+## Stories
+
+### S-001: A new account gets its own workspace (P0)
+
+**Description:** As a new user, when I sign up I get my own workspace named after me ("<my display
+name>'s workspace") with me as its admin and recorded as its creator, plus a default project — I do
+not join anyone else's workspace.
+**Source:** product owner model item 1 (each account auto-creates its own default workspace; no auto-join); 2026-06-22 — name it after the creator + record creator_id (fixes indistinguishable duplicate "default" workspaces).
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false
+- `files:` unknown (better-auth `onUserCreated` hook → create personal workspace + default project; remove `POST /api/setup`)
+- `autonomous:` checkpoint
+- `verify:` sign up a fresh user "Dung" → a workspace named "Dung's workspace" exists with them as admin, with creator recorded as them, + a default project; a second sign-up gets a separate workspace named after that user, not the first user's.
+
+**Acceptance Scenarios:**
+
+AS-001: Signing up creates the user's own workspace, named after them, recording them as creator
+- **Given:** a new person "Dung" with no account
+- **When:** they sign up (and verify)
+- **Then:** a workspace named "Dung's workspace" is created with them as its admin AND recorded as its creator, with `settings.defaultAccess` defaulting to `anyone_in_workspace`, plus a default project in it
+- **Data:** new user "Dung" → workspace "Dung's workspace"
+
+AS-002: A new account does not auto-join an existing workspace as a member
+- **Given:** other workspaces already exist
+- **When:** a different person signs up
+- **Then:** they auto-join ONLY the new workspace they created (as its admin) and are NOT added as a member of any existing workspace
+- **Data:** second user, with other workspaces present
+
+### S-002: Create and rename a workspace (P0)
+
+**Description:** As a user, I create additional workspaces (becoming their admin) and rename a
+workspace I own; a non-admin cannot rename.
+**Source:** product owner model item 1 (create more workspaces) + item 3 (admin powers).
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (workspace create/rename service + routes)
+- `autonomous:` true
+- `verify:` create "Acme" → I'm its admin and it appears in my workspace list; rename it; a member (non-admin) renaming is refused.
+
+**Acceptance Scenarios:**
+
+AS-003: Creating a workspace makes me its admin and records me as creator
+- **Given:** I am signed in
+- **When:** I create a workspace named "Acme"
+- **Then:** the workspace exists with me as its admin, recorded as its creator, with `settings.defaultAccess` defaulting to `anyone_in_workspace`, and appears in my list of workspaces
+- **Data:** name "Acme"
+
+AS-004: A workspace admin renames the workspace
+- **Given:** I own workspace "Acme"
+- **When:** I rename it to "Acme Docs"
+- **Then:** the workspace name becomes "Acme Docs"
+- **Data:** new name "Acme Docs"
+
+AS-005: A non-admin cannot rename the workspace
+- **Given:** I am a member (not admin) of "Acme"
+- **When:** I try to rename it
+- **Then:** the request is refused (admin only)
+- **Data:** member, not admin
+
+### S-003: See my workspaces and switch between them (P0)
+
+**Description:** As a user, I see every workspace I belong to (with my role) and the active
+one, and I switch the active workspace; each workspace's data is isolated to its members.
+**Source:** product owner model item 3 (belongs to many → switch); researched path-scoping.
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` unknown (bootstrap/me endpoint listing workspaces + active; switch)
+- `autonomous:` true
+- `verify:` the bootstrap returns all my workspaces + my role + the active one; opening a workspace I belong to scopes its data; opening one I don't belong to is refused.
+
+**Acceptance Scenarios:**
+
+AS-006: My workspace list shows every workspace I belong to with my role and who created each
+- **Given:** I created "Dung's workspace" and am also an admin of Lan's "Lan's workspace"
+- **When:** the app loads my bootstrap
+- **Then:** both workspaces are listed, each with my role, its stored name, and its creator identity (so the consumer can tell the one I created — `creator === me` — from one I was merely added to, even when I am admin of both), and the active workspace is indicated
+- **Data:** creator of one, admin-but-not-creator of another
+
+AS-007: Workspace data is scoped to the active workspace
+- **Given:** I belong to "default" and "Acme", each with its own projects/docs
+- **When:** I view "Acme"
+- **Then:** I see only "Acme"'s projects/docs, never "default"'s
+- **Data:** distinct content per workspace
+
+AS-008: Accessing a workspace I do not belong to is refused
+- **Given:** workspace "Globex" exists and I am not a member
+- **When:** I request "Globex"'s data
+- **Then:** the request is refused as not-a-member (existence-hiding: indistinguishable from "no such workspace")
+- **Data:** non-member of "Globex"
+
+### S-004: Invite a member by email; accept or reject (P0)
+
+**Description:** As a workspace admin, I invite someone by email; they receive a link and open
+an accept/reject page. The link is validated without a session (returning the workspace, the
+invited email, and whether that email already has an account); on accept an already-signed-in
+matching user joins, an invited email with no account creates an account inline and joins (the
+invite proves the email — no separate verification), and a mismatched signed-in account is refused.
+An admin can also revoke a pending invite they sent (admin-authorized, not token-gated).
+**Source:** product owner model item 2 (invite via email → link → accept/reject + admin revoke); unified invite-flow design 2026-06-21 (validate + accept-as-new-user, best-practice across new / existing-not-signed-in / signed-in cases).
+**Applies Constraints:** C-003, C-004
+
+**Execution:**
+- `depends_on:` S-002
+- `parallel_safe:` false
+- `files:` unknown (workspace invitation create + email + public validate + accept/reject + accept-as-new-user endpoints)
+- `autonomous:` checkpoint
+- `verify:` admin invites bob@x.com → pending; validating the token (no session) returns the workspace + invited email + whether an account exists; bob (signed in, matching) accepts → member; an invited email with NO account submits name+password → account created (verified, no mail step) + signed in + member; an invited email that already has an account is refused the create path; reject → no membership; a mismatched signed-in email is refused; an expired/used token validates as a uniform not-found.
+
+**Acceptance Scenarios:**
+
+AS-009: An admin invites a member by email
+- **Given:** I own "Acme"
+- **When:** I invite `bob@acme.com` as a member
+- **Then:** a pending invitation is recorded and an invite email with an accept link is sent
+- **Data:** email `bob@acme.com`, role member
+
+AS-010: Accepting an invite joins the workspace
+- **Given:** a pending invitation for `bob@acme.com` to "Acme"
+- **When:** Bob (signed in as `bob@acme.com`) opens the link and accepts
+- **Then:** Bob becomes a member of "Acme" and the invitation is marked accepted
+- **Data:** matching signed-in email
+
+AS-011: Rejecting an invite leaves no membership
+- **Given:** a pending invitation for `bob@acme.com`
+- **When:** Bob opens the link and rejects
+- **Then:** Bob is not a member and the invitation is marked rejected
+- **Data:** reject action
+
+AS-012: An invite link used by a different email is refused
+- **Given:** an invitation issued to `bob@acme.com`
+- **When:** someone signed in as `eve@acme.com` opens the link
+- **Then:** it is refused (the accepting email must match the invited email); no membership granted
+- **Data:** mismatched email
+
+AS-013: Only an admin can invite
+- **Given:** I am a member (not admin) of "Acme"
+- **When:** I try to invite someone
+- **Then:** the request is refused (admin only)
+- **Data:** member, not admin
+
+AS-022: Validating an invite link returns the workspace, invited email, and whether an account exists
+- **Given:** a pending invitation for `bob@acme.com` to "Acme"
+- **When:** the invite token is validated with no active session
+- **Then:** the response carries the workspace name "Acme", the invited email `bob@acme.com`, and whether an account already exists for `bob@acme.com`
+- **Data:** valid pending token, no session
+- **Setup:** one pending invitation; the validate path requires no membership and no session
+
+AS-023: An expired, used, revoked, or tampered token validates as a uniform not-found
+- **Given:** an invite token that is expired, already accepted, revoked, or tampered
+- **When:** it is validated
+- **Then:** a uniform not-found is returned, indistinguishable from a token that never existed (no reason leaked, existence-hiding — a revoked invite is not distinguishable from a non-existent one, so the revoked invitee learns nothing)
+- **Data:** expired / already-accepted / revoked / tampered token
+- **Setup:** an invitation whose status is not pending, plus a random non-existent token — both yield the same response
+
+AS-024: Accepting an invite for an email with no account creates a verified account and joins
+- **Given:** a pending invitation for `new@acme.com` to "Acme" and no account exists for `new@acme.com`
+- **When:** the invite is accepted with a name and a password (≥8) and no prior session
+- **Then:** an account is created for `new@acme.com` with its email treated as verified (the invite delivery proves ownership — no separate verification step), a session is established, `new@acme.com` becomes a member of "Acme", and the invitation is marked accepted
+- **Data:** new email `new@acme.com`, name + 8-char password, no prior account
+- **Setup:** pending invitation for an email that has no existing account
+
+AS-025: The create-account path is refused when an account already exists for the invited email
+- **Given:** a pending invitation for `bob@acme.com` and an account already exists for `bob@acme.com`
+- **When:** the create-account-and-accept path is attempted for that email
+- **Then:** it is refused (an account exists — sign in to accept instead); no duplicate account is created and no membership is granted
+- **Data:** invited email that already has an account
+- **Setup:** existing verified account `bob@acme.com` + a pending invitation to it
+
+AS-026: An admin revokes a pending invite
+- **Given:** I own "Acme" with a pending invitation for `eve@acme.com`
+- **When:** I revoke that invitation (admin action, not the invitee's token)
+- **Then:** the invitation is marked revoked and drops from the pending list; its link no longer accepts; no membership is granted. A non-admin attempting to revoke is refused; an invitation belonging to another workspace, or one that is not pending, is refused as not-found
+- **Data:** pending invite `eve@acme.com`; plus a non-admin actor and a cross-workspace id as the refusal cases
+- **Setup:** "Acme" with one pending invitation; revoke is authorized by workspace-admin (distinct from accept/reject, which are token-gated)
+
+### S-005: Remove a member and change a member's role (P1)
+
+**Description:** As a workspace admin, I remove a member or change their role (including
+transferring ownership); a workspace always keeps at least one admin.
+**Source:** product owner model item 3 (admin can remove/change-role).
+
+**Execution:**
+- `depends_on:` S-004
+- `parallel_safe:` false
+- `files:` unknown (member remove + change-role service/routes)
+- `autonomous:` true
+
+**Acceptance Scenarios:**
+
+AS-014: An admin removes a member
+- **Given:** I own "Acme" and `bob@acme.com` is a member
+- **When:** I remove Bob
+- **Then:** Bob is no longer a member and loses access to "Acme"'s data
+- **Data:** member Bob
+
+AS-015: An admin promotes a member to admin (admin transfer)
+- **Given:** I own "Acme" and Bob is a member
+- **When:** I change Bob's role to admin
+- **Then:** Bob becomes an admin of "Acme" (more than one admin is allowed)
+- **Data:** promote Bob
+
+AS-016: The last admin cannot be removed or demoted
+- **Given:** I am the only admin of "Acme"
+- **When:** I try to remove myself or demote myself to member
+- **Then:** the request is refused (a workspace must keep at least one admin)
+- **Data:** sole admin
+
+AS-017: A non-admin cannot remove or change roles
+- **Given:** I am a member (not admin) of "Acme"
+- **When:** I try to remove a member or change a role
+- **Then:** the request is refused (admin only)
+- **Data:** member, not admin
+
+AS-021: An admin sees the workspace's member list
+- **Given:** I own "Acme" with members Bob (member) and a pending invite for `eve@acme.com`
+- **When:** I open the members surface
+- **Then:** I see the workspace's members with their roles plus pending invitations with their status
+- **Data:** 1 active member + 1 pending invite
+
+### S-006: Workspace data is isolated per tenant (P0)
+
+**Description:** As the system, I scope every data request to a workspace the caller belongs
+to, so one workspace's members never reach another workspace's data; `anyone_in_workspace`
+access resolves only within the doc's own workspace.
+**Source:** researched cross-tenant isolation; the 3 forward-compat seams now real.
+
+**Execution:**
+- `depends_on:` S-003
+- `parallel_safe:` false
+- `files:` unknown (move data APIs under /api/w/:workspaceId/; membership gate; scope isWorkspaceMember + search predicate by the doc's workspace)
+- `autonomous:` true
+- `verify:` a member of A requesting B's data is refused; an anyone_in_workspace doc in A is visible to A's members but not to B's members.
+
+**Acceptance Scenarios:**
+
+AS-018: A member of one workspace cannot read another workspace's data
+- **Given:** Alice is a member of "Acme" only, and "Globex" has docs
+- **When:** Alice requests a doc/project/search in "Globex"
+- **Then:** it is refused / absent — her membership in "Acme" grants nothing in "Globex"
+- **Data:** Alice ∈ Acme, target in Globex
+
+AS-019: anyone_in_workspace access resolves only within the doc's workspace
+- **Given:** a doc in "Acme" set to anyone_in_workspace, and Bob is a member of "Globex" but not "Acme"
+- **When:** Bob tries to view that doc via the anyone_in_workspace path
+- **Then:** access is denied — anyone_in_workspace means members of THAT doc's workspace ("Acme"), not any workspace
+- **Data:** Bob ∈ Globex, doc ∈ Acme (anyone_in_workspace)
+
+AS-020: A workspace member reaches that workspace's anyone_in_workspace docs
+- **Given:** a doc in "Acme" set to anyone_in_workspace, and Carol is a member of "Acme"
+- **When:** Carol views it
+- **Then:** access is granted (she is a member of the doc's workspace)
+- **Data:** Carol ∈ Acme
+
+## Constraints & Invariants
+
+- C-001: Each account auto-gets one workspace on sign-up, named "<the creator's display name>'s
+  workspace", recording that account as both its `creator` and its admin, with
+  `settings.defaultAccess = anyone_in_workspace`, plus a default project; sign-up never joins an
+  existing workspace. (AS-001, AS-002)
+- C-002: A caller accesses a workspace's data ONLY as a member of that workspace; every
+  **workspace-management** data API (members, projects, search, invites) is scoped to a
+  workspace the caller belongs to (cross-tenant isolation), and `isWorkspaceMember`/access
+  predicates are scoped by the relevant workspace, never "member of any". **Carve-out
+  (amended 2026-06-14, doc-access-routing):** doc-centric resources — doc read, annotation
+  read+write, version read — are NOT workspace-path-scoped; they are doc-addressed and gated by
+  per-doc access resolution (`resolveAccess`, owned by doc-access-routing) which resolves
+  cross-tenant isolation against the doc's OWN workspace. The isolation guarantee (AS-018/019)
+  still holds for both — by path for management APIs, by `resolveAccess` for doc-centric ones.
+  (AS-007, AS-008, AS-018, AS-019, AS-020; doc-centric gating: doc-access-routing:AS-005/007/008)
+- C-003: Only an admin invites, removes, revokes invites, or changes member roles; a workspace
+  must always keep at least one admin (the last admin cannot be removed or demoted). (AS-005, AS-013, AS-016, AS-017, AS-026)
+- C-004: A workspace invite is by email and pending until acted on; reject leaves no membership.
+  Acceptance is authorized by the invite token bound to the invited email: for an already-signed-in
+  user the active session's email must match the invited email; for an invited email with no account,
+  accepting creates the account for that email and treats its email as verified — the invite delivery
+  proves ownership. This verification carve-out applies ONLY to the invite-accept path, never to
+  ordinary sign-up (which still requires verification). (AS-010, AS-011, AS-012, AS-024, AS-025)
+- C-005: The active-workspace scope is carried in the request path (`/api/w/:workspaceId/…`),
+  not a single server-side "current workspace"; `session.activeWorkspaceId` is only the
+  login-default landing target. **Exception (amended 2026-06-14, doc-access-routing):**
+  doc-centric read+write are doc-addressed (`/api/docs/:slug…`, `/v/:id`), not under
+  `/api/w/:workspaceId/…` — a doc link must work for an anonymous opener who has no workspace
+  context. (AS-007)
+- C-006: Per-doc sharing is orthogonal to workspace membership — a non-member can access a doc
+  via a direct per-doc share, and a doc's effective permission is the most-permissive across
+  workspace-role and per-doc ACL (no double-gating). (GAP-004)
+- C-007: Every workspace carries `settings.defaultAccess` ∈ `restricted | anyone_in_workspace |
+  anyone_with_link`, defaulting to `anyone_in_workspace` UNIFORMLY (auto-created personal and
+  user-created workspaces alike — there is no `isPersonal` flag in the schema to vary it); an
+  absent/unset value reads as `anyone_in_workspace`. This makes the workspace a shared group space
+  (Shared-Drive model): members see new docs by default, and `restricted` stays available per-doc
+  to make an individual doc private. `defaultAccess` is the publish-time source of truth a new doc
+  inherits as its `general_access` — that inheritance is OWNED and covered by the publish specs
+  (`render-publish`, `mcp-roundtrip`), not here. (AS-001, AS-003)
+
+## Linked Fields
+
+This spec is the **producer** (backend tenancy); `workspaces-ui` is the consumer.
+
+- `workspaces[]` `{id, name, slug, role}` + `activeWorkspaceId` — consumed by `workspaces-ui` on
+  the switcher/bootstrap (read on app load). Produced by workspaces:S-003 (AS-006) on the
+  bootstrap surface (persisted + served every load). ✔.
+- `members[]` `{userId, email, role, status}` — consumed by `workspaces-ui` members screen.
+  Produced by workspaces:S-005 (AS-021) on the workspace members surface. ✔.
+- invitation accept/reject — consumed by `workspaces-ui` accept/reject landing; produced by
+  workspaces:S-004 (AS-010/011/012). ✔.
+- `settings.defaultAccess` — PRODUCED here (C-007, defined on the workspace; default
+  `anyone_in_workspace`). CONSUMED by the publish path at publish time: `render-publish` and
+  `mcp-roundtrip` read the target workspace's `defaultAccess` to set a new doc's `general_access`
+  (persisted on the doc, served on every later read). The enforcing AS live in those specs (added
+  in the same 2026-06-23 doc-access change). ✔ surface (publish) + lifecycle (persisted) pinned.
+
+## UI Notes
+
+The frontend is the sibling spec `workspaces-ui` (switcher, create-workspace, members screen,
+invite + accept/reject landing). This backend spec names no components; see `workspaces-ui`.
+
+## What Already Exists
+
+### System Impact & Technical Risks
+
+- **The built single-workspace code is reworked, not reused as-is** (migration assessment):
+  - `workspace/repo.ts` `currentWorkspaceId()` (LIMIT-1, lines 66/274) → resolve from the
+    request path; `createPublishProjectResolver` (LIMIT-1) → validate against the actor's workspace.
+  - `isWorkspaceMember(userId)` (one-arg, repo.ts:290) → `(workspaceId, userId)` — TODAY it
+    matches membership in ANY workspace, which becomes a **cross-tenant leak** with >1 workspace (C-002).
+  - `search/search-repo.ts` access predicate scopes membership by NO workspace → scope by the
+    doc's workspace (project_id→workspace_id). Same leak class.
+  - `workspace/setup.ts` + `routes/setup.ts` single-row guard + `POST /api/setup` → REMOVED;
+    replaced by auto-create-on-signup (S-001). The `onUserCreated` hook currently joins "the"
+    workspace; it must instead create the user's own workspace + default project.
+  - `workspace_members.role` enum is UNCHANGED (admin|member stays) — the creator is the workspace admin; no enum migration.
+- The schema is otherwise multi-ready: `workspace_members` is already a real (workspace × user
+  × role) join; every domain table reaches a workspace; no DB-level single-workspace guard.
+- **Big surface:** every data API moves under `/api/w/:workspaceId/…` (S-006) — a route
+  restructure across docs/projects/versions/annotations/sharing/search/members. Heavy but mechanical.
+  **Superseded for doc-centric resources (2026-06-14):** doc read, annotation read+write, and
+  version read are subsequently re-addressed doc-scoped by doc-access-routing (see C-002/C-005
+  carve-out); only management APIs (members/projects/search/invites) + authoring/publish stay
+  under `/api/w/:workspaceId/…`.
+- Risk (sensitive): S-001 changes the auth signup hook + removes setup, and the role-enum + route
+  moves are migrations — hence S-001 is `checkpoint`.
+
+## Not in Scope
+
+- Projects, docs, browse, search, notifications — `workspace-project` (gets a Mode C to become
+  workspace-scoped under `/api/w/:id/`).
+- Per-doc sharing (invite-to-a-doc, anyone-with-link, guest) — `sharing-permissions` (unchanged;
+  orthogonal to membership per C-006).
+- MCP under multi-workspace (identity-token + `/w/:id/mcp`, Atlassian model) — `mcp-roundtrip`, deferred.
+- Workspace deletion, leave-workspace (member self-removal), domain-allowlist auto-join — later (v0.5+).
+- **Admin UI to change `settings.defaultAccess` per workspace** — deferred (v0.5+). v0 ships the
+  field as a real, read source of truth with a fixed `anyone_in_workspace` default for every
+  workspace (C-007); changing that default per workspace is a later knob (Confluence-style default
+  space permissions). Private docs in v0 are handled per-doc via `restricted`, not by flipping the
+  workspace default. (Narrows the earlier "workspace-level default-share settings — v0.5+"
+  deferral: the field + default + publish inheritance are now IN scope; only the admin knob stays out.)
+- Signup gating (open vs invite-only): signup is OPEN — each new user gets their own isolated
+  workspace and reaches others only by invite, so no instance-level gate is needed (Clarification).
+
+## Gaps
+
+- GAP-001 (status: resolved → keep custom): tenancy uses anchord's **custom** `workspaces` /
+  `workspace_members` tables (already multi-ready) and builds invite/switch/role ourselves — NOT
+  better-auth's organization plugin (which would force migrating off the built, tested tables).
+  (Decided 2026-06-09.) Source: researched org-plugin-vs-custom decision.
+- GAP-002 (status: resolved → C-001 + AS-006; SUPERSEDED 2026-06-22): originally the auto-workspace
+  stored name stayed "default" and the switcher disambiguated by qualifying with the creating admin's
+  display name ("My default" / "Lan's default"). Superseded: the auto-workspace is now NAMED after the
+  creator ("<name>'s workspace", C-001) and carries `creator_id`; the bootstrap (AS-006) serves the
+  creator identity so the consumer marks "mine" by `creator === me`, not by name+role (which
+  mislabelled two "default"s as both "My Default"). Source: model item 1 + 2026-06-22 fix.
+- GAP-003 (status: resolved → AS-021): the per-workspace member-list read is now S-005 AS-021
+  (the admin's members surface: active members + pending invites). (Decided 2026-06-09.)
+- GAP-004 (status: resolved → sharing-permissions): the unified most-permissive
+  `resolveDocPermission` (workspace-role + per-doc ACL) is owned by **sharing-permissions**,
+  consuming `isWorkspaceMember(workspaceId, userId)` + the caller's workspace role from this
+  spec. Composition: the max permission across workspace membership and any per-doc ACL; never
+  double-gated (C-006). (Decided 2026-06-09.) Source: researched authz composition.
+- GAP-005 (status: open): the invited email already has an EXISTING but UNVERIFIED account
+  (signed up, never verified). The validate (AS-022) reports `accountExists`, so the FE routes to
+  "sign in to accept" (workspaces-ui:AS-023) — but sign-in is blocked until the account is verified
+  (auth requireEmailVerification). Should accepting a valid invite ALSO verify such an existing
+  unverified account (same proof-of-email logic as AS-024's carve-out)? Recommendation: yes — a
+  valid invite to that email proves ownership, so mark the existing account verified on accept.
+  Source: unified invite-flow edge — accountExists is true but unusable for sign-in.
+
+## Spec Sizing Notes
+
+Stories=6 (≤7 ✓). AS=26 (over the 20 soft target, within the ≤30 range). The overage is
+concentrated in S-004, which owns the full invite lifecycle as one state machine (T5 — do not
+split): 10 AS for 10 atoms — invite (AS-009), accept-when-signed-in (AS-010), reject (AS-011),
+mismatched-signed-in refused (AS-012), only-admin (AS-013), validate-valid (AS-022),
+validate-invalid uniform-not-found (AS-023), accept-as-new-user (AS-024),
+create-path-refused-when-account-exists (AS-025), admin-revoke (AS-026). The earlier single
+over-target AS, AS-021 (the admin's member-list read), also stands. No bloat — each AS traces to one stated atom.
+
+## Clarifications — 2026-06-09
+
+- **Auto-join is admin-of-own, not member-of-others** (S-001): sign-up auto-joins ONLY the new
+  workspace it creates, as admin; it never adds the user to an existing workspace as a member.
+- **Tenancy = custom tables, not the better-auth org plugin** (GAP-001): keep the built, multi-ready
+  `workspaces`/`workspace_members`; build invite/switch/role ourselves.
+- **Auto-workspace named after its creator + creator_id** (GAP-002, revised 2026-06-22): the
+  auto-created workspace is named "<creator's display name>'s workspace" and stores `creator_id`;
+  "mine" is `creator === me`. (Supersedes the earlier "stored name stays 'default', qualified by
+  admin display name" — that produced indistinguishable duplicate "My Default" labels.)
+- **`resolveDocPermission` owned by sharing-permissions** (GAP-004): most-permissive across
+  workspace-role + per-doc ACL; this spec supplies workspace membership/role.
+- **Signup is open**: each new user gets their own isolated workspace and reaches others only by
+- **Workspace role = `admin | member` (one tier), NOT `owner`** (decided 2026-06-09): the creator is the workspace admin (≥1 admin invariant); "owner" stays exclusively the per-doc role in sharing-permissions, so the `isWorkspaceAdmin` override + members enum are UNCHANGED (no migration). UI may label the creator "Owner" but the stored role is admin.
+  invite, so no instance-level signup gate is needed.
+
+## Clarifications — 2026-06-14
+
+- **Doc-centric resources carved out of path-tenancy** (C-002/C-005, doc-access-routing GAP-002):
+  doc read, annotation read+write, and version read move OFF `/api/w/:workspaceId/…` to
+  doc-addressed paths, gated by per-doc `resolveAccess` (which resolves against the doc's own
+  workspace). Reason: a shared doc link must open for an **anonymous** recipient who has no
+  workspace context, and per-doc sharing is already orthogonal to membership (C-006). This does
+  NOT change the tenancy model for management APIs (members/projects/search/invites) or for
+  authoring/publish, which stay workspace-path-scoped. The cross-tenant isolation outcome
+  (AS-018/019) is preserved by `resolveAccess` instead of by the path. PO-approved 2026-06-14.
+
+## Change Log
+
+| Date | Change | Ref |
+|------|--------|-----|
+| 2026-06-09 | Initial creation — multi-workspace tenancy (reverses single-workspace decision) | -- |
+| 2026-06-09 | Phase 3: AS-002 wording (admin-of-own vs member-of-others); +AS-021 member list; GAP-001..004 resolved (custom tables / admin-qualified name / member-list AS / sharing owns resolveDocPermission) | -- |
+| 2026-06-09 | Workspace role kept as `admin|member` (not owner) — no enum migration; "owner" reserved for the per-doc role; isWorkspaceAdmin override unchanged (scoped only) | -- |
+| 2026-06-14 | Major (M6): amend C-002/C-005 — carve doc-centric read+write out of path-tenancy (doc-addressed, gated by resolveAccess); System Impact note on S-006 superseded for those resources. Snapshot 2026-06-14.md | doc-access-routing GAP-002 |
+| 2026-06-21 | Major (M1+M6) — unified invite flow: S-004 + AS-022 (public validate → workspace + invited email + accountExists), AS-023 (expired/used/tampered → uniform not-found), AS-024 (accept-as-new-user → verified account + session + join, no mail step), AS-025 (create path refused when account exists); C-004 amended for the token-authorized + new-user auto-verify carve-out (invite-accept path only); S-004 → checkpoint; +Spec Sizing Notes (25 AS). Snapshot 2026-06-21-invite-validate-newuser.md; rotated out 2026-06-10.md. | unified invite design |
+| 2026-06-21 | Major (M1) — added AS-026 (admin revokes a pending invite → status revoked, admin-authorized, workspace-scoped, pending-only); `revoked` added to the AS-023 not-found set; C-003 coverage +AS-026. Producer for the existing FE workspaces-ui:AS-017 (revoke had no backend AS — built + specced from the 404 fix). Snapshot 2026-06-21-2.md. | /mf-fix revoke 404 |
+| 2026-06-22 | Major (M6+M4) — +`workspaces.creator_id` (data model + migration: add col, backfill earliest-admin, rename literal "default" autos to "<creator>'s workspace"); C-001 + S-001/AS-001 auto-create named "<creator>'s workspace" recording creator; AS-003 manual create records creator; AS-006 bootstrap serves creator identity (mark "mine" by creator===me, not name+role). Supersedes GAP-002's admin-qualified-"default" disambiguation. Snapshot 2026-06-22-creator-id.md. | two "My Default" bug |
+| 2026-06-23 | Major (M6+M5+M4) — doc-access shared-workspace model (workspace = shared group space): Data Model defines `settings.defaultAccess` (default `anyone_in_workspace`, absent reads same, publish-time source of truth); +C-007 (uniform default, no isPersonal); C-001 + AS-001/AS-003 now assert created workspace gets `defaultAccess=anyone_in_workspace`; Linked Fields forward-pin to render-publish + mcp-roundtrip; Not-in-Scope narrowed (field/default/inheritance IN, admin-change-knob deferred v0.5+). Snapshot 2026-06-23-default-access.md (rotation of 2026-06-14.md blocked by guard — 9 snapshots kept). | doc-access audit 2026-06-23 |

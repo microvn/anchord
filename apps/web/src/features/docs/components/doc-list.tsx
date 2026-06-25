@@ -66,7 +66,12 @@ export function DocList({
           <span className="flex items-center justify-end gap-1">
             <StatusTag status={d.status} />
             {workspaceId && projects && (
-              <DocMoreMenu doc={d} workspaceId={workspaceId} projects={projects} />
+              <DocMoreMenu
+                doc={d}
+                workspaceId={workspaceId}
+                projects={projects}
+                canDelete={d.canDelete ?? false}
+              />
             )}
           </span>
         </Link>

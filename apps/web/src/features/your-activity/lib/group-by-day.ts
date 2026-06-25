@@ -1,4 +1,4 @@
-import { isToday, isYesterday, format } from "date-fns";
+import { isSameDay, subDays, format } from "date-fns";
 import type { NotificationItem } from "@/features/notifications/types";
 
 // your-activity-inbox S-001 (AS-002 / C-006): client-side day grouping over the flat paged list,
@@ -27,8 +27,10 @@ export interface DayGroup<T> {
 export function dayLabel(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "Earlier";
-  if (isToday(d)) return "Today";
-  if (isYesterday(d)) return "Yesterday";
+  // "Today"/"Yesterday" are relative to the supplied reference `now`, not the wall clock, so callers
+  // (and tests) can pin the reference and stay deterministic across a day boundary.
+  if (isSameDay(d, now)) return "Today";
+  if (isSameDay(d, subDays(now, 1))) return "Yesterday";
   // For an "earlier" day, drop the year when it's the current year for a tighter label.
   const sameYear = d.getFullYear() === now.getFullYear();
   return format(d, sameYear ? "MMM d" : "MMM d, yyyy");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deriveWorkspace } from "./read-repo";
+import { deriveWorkspace, genericizeIfDeleted, type DeepLinkFields } from "./read-repo";
 
 // your-activity-inbox S-001 (BE-enrich): focused unit coverage of the per-row workspace derivation
 // the cross-workspace For-you inbox renders its chip from (AS-003). The full multi-join read is
@@ -81,5 +81,34 @@ describe("deriveWorkspace (your-activity-inbox S-001)", () => {
       docWorkspaceName: null,
     });
     expect(out).toEqual({ workspaceId: "ws-acme", workspaceName: null });
+  });
+});
+
+// doc-delete-trash S-006 / C-010 (AS-033): a notification's deep-link enrichment reads the doc title,
+// the anchored quote, and the comment body/author off a RAW refId→annotation→doc chain (not the gated
+// viewer). When that doc is soft-deleted, none of those may surface in the bell payload — the row
+// must fall back to its generic per-type summary and the deep-link must degrade (no slug to build a
+// `/d/:slug` route from). The actual click-through still routes through the S-004 gated viewer.
+describe("genericizeIfDeleted (doc-delete-trash S-006 / C-010)", () => {
+  const LIVE: DeepLinkFields = {
+    slug: "spec-v1-ab12",
+    docTitle: "Spec v1",
+    quote: "the anchored sentence",
+    snippet: "please revise this section",
+    actorName: "Mai",
+  };
+
+  test("AS-033: a LIVE doc passes its deep-link + content fields through unchanged", () => {
+    expect(genericizeIfDeleted(LIVE, false)).toEqual(LIVE);
+  });
+
+  test("AS-033: a DELETED doc nulls EVERY content field — no title/anchor/comment leak, no slug to deep-link", () => {
+    const out = genericizeIfDeleted(LIVE, true);
+    // No raw content reaches the bell payload: the row keeps only its generic per-type summary.
+    expect(out).toEqual({ slug: null, docTitle: null, quote: null, snippet: null, actorName: null });
+    // The deep-link target is gone: with slug null the FE cannot build `/d/:slug#annotation-:id`, so
+    // the only way to the doc is the gated viewer route (S-004) — never a raw id-keyed content read.
+    expect(out.slug).toBeNull();
+    expect(out.docTitle).toBeNull();
   });
 });

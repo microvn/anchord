@@ -25,6 +25,7 @@ import type { GeneralAccessLevel, Viewer } from "../sharing/access";
 import type { AxisRole } from "../sharing/share";
 import type { Role } from "../sharing/roles";
 import type { AccessResult } from "../sharing/resolve-access";
+import { DocDeletedError } from "../http/errors";
 import type { ViewerDoc } from "../app";
 
 export interface ViewerLoaderDeps {
@@ -154,6 +155,13 @@ export function createLoadViewerDoc(
     // doc-access-routing S-001: ONE resolveAccess call gives BOTH the view gate AND the
     // caller's effective role (for the viewer's Share gate, S-001/C-002) — no second read.
     const access = await deps.resolveAccess(doc.id, viewer);
+    // doc-delete-trash S-004 / C-009 (AS-014/AS-015): a soft-deleted doc the viewer WOULD
+    // HAVE had access to surfaces the gated "this doc was deleted" notice — a distinct 410
+    // DocDeletedError (the FE maps it to NoAccessView variant="deleted"). A viewer with NO
+    // prior access never carries this reason (resolveAccess returns plain DENIED for them),
+    // so they fall through to the existence-hiding 404 below — no enumeration oracle.
+    // Content is NEVER read on this branch (we throw before loading the version).
+    if (access.reason === "deleted") throw new DocDeletedError();
     if (!access.canView) return null;
 
     // CURRENT version = highest `version` row (mirrors doc-move-repo.currentVersion / search).

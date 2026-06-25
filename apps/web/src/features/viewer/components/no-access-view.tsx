@@ -11,11 +11,17 @@ import { Button } from "@/components/ui/button";
 //   - "no-access" (signed-IN visitor, AS-015): a session is already present and STILL no access —
 //                there is nothing to sign into; show a plain "you don't have access" message, NO
 //                sign-in prompt.
+//   - "deleted"  (doc-delete-trash S-004, AS-014): the doc EXISTED but was deleted into Trash, and
+//                this viewer HAD access to it before the delete (the backend gates the 410
+//                DOC_DELETED on prior access — a viewer with none gets the existence-hiding 404 →
+//                the "signin"/"no-access" variants instead, AS-015). Session-agnostic: a member or a
+//                prior guest sees the SAME "this doc was deleted" copy. No sign-in CTA (signing in
+//                won't bring a deleted doc back); restore is only from Trash, so no inline action.
 //
 // Chrome recedes (DESIGN.md): a centered, low-chrome panel; the only accent is the single teal CTA
 // on the sign-in variant. Responsive — a max-width centered column that holds at 360/768/1024/1440.
 
-export type NoAccessVariant = "signin" | "no-access";
+export type NoAccessVariant = "signin" | "no-access" | "deleted";
 
 export function NoAccessView({
   variant,
@@ -30,6 +36,7 @@ export function NoAccessView({
   onSignIn?: () => void;
 }) {
   const isSignin = variant === "signin";
+  const isDeleted = variant === "deleted";
   return (
     <div
       data-testid="no-access-view"
@@ -40,9 +47,22 @@ export function NoAccessView({
         aria-hidden="true"
         className="flex h-11 w-11 items-center justify-center rounded-full bg-elev text-muted"
       >
-        <Icon name="shield" size={20} />
+        <Icon name={isDeleted ? "trash" : "shield"} size={20} />
       </span>
-      {isSignin ? (
+      {isDeleted ? (
+        <>
+          {/* doc-delete-trash S-004 / AS-014: the gated deleted notice — shown only to a viewer
+              who had prior access (the backend's 410 DOC_DELETED is gated on that). Content is
+              never rendered. No CTA: restore lives in Trash, not on the dead link. */}
+          <p data-testid="no-access-title" className="font-serif text-base text-ink">
+            This doc was deleted
+          </p>
+          <p className="text-sm text-muted">
+            It was moved to Trash. An owner, editor, or workspace admin can restore it from the
+            workspace Trash.
+          </p>
+        </>
+      ) : isSignin ? (
         <>
           <p data-testid="no-access-title" className="font-serif text-base text-ink">
             Sign in to open this doc

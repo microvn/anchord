@@ -7,6 +7,7 @@ import {
   createResolveDocRole,
   createLoadShareConfig,
   createIsDocOwner,
+  createIsDocDeleted,
 } from "./sharing/resolve-doc-role-repo";
 import { createResolveAccess } from "./sharing/resolve-access";
 import { createWorkspaceAccess } from "./workspace/tenancy-repo";
@@ -37,6 +38,7 @@ import { createPullToolsForDb } from "./mcp/tools/pull-tools-wiring";
 import { createReadToolsForDb } from "./mcp/tools/read-tools-wiring";
 import { createWritebackToolsForDb } from "./mcp/tools/writeback-tools-wiring";
 import { createProjectToolsForDb } from "./mcp/tools/project-tools-wiring";
+import { createDeleteToolsForDb } from "./mcp/tools/delete-tools-wiring";
 import { createSearchRepo } from "./search/search-repo";
 
 const cfg = loadConfig(); // refuses to start on invalid/missing config (S-002, incl. SMTP C-008)
@@ -182,6 +184,10 @@ const concreteLoadShareConfig = createLoadShareConfig(db);
 const sharedResolveAccess = createResolveAccess(db, {
   resolveDocRole: sharedResolveDocRole,
   secret: cfg.APP_SECRET,
+  // doc-delete-trash S-004 / C-009: wire the soft-delete reader so the SINGLE gate refuses a
+  // tombstoned doc on every id-keyed read path (viewer, version content + diff, annotation GET,
+  // comment POST) — and surfaces the gated `deleted` reason for a prior-access viewer (AS-014/028).
+  isDocDeleted: createIsDocDeleted(db),
 });
 
 // workspace-project S-002 (AS-012/C-007): the MANAGE-SHARING resolver gates the owner
@@ -277,7 +283,18 @@ const app = createApp({
   // group gets resolveWorkspaceRole so the requireWorkspaceMember gate refuses a non-member
   // (404, existence-hiding) before any handler.
   // render-publish S-001: enveloped, session-gated POST /api/w/:workspaceId/docs.
-  docs: { db, resolveSession, resolveWorkspaceRole },
+  // render-publish S-001 publish + doc-delete-trash S-001 DELETE (soft-delete into Trash).
+  // The delete gate composes the per-doc role (sharedResolveDocRole) OR the workspace-admin
+  // arm (isWorkspaceAdmin, scoped to the path workspace — C-002/C-003). A successful tombstone
+  // logs a best-effort `doc_deleted` activity row (AS-005, emit-on-change — C-006).
+  docs: {
+    db,
+    resolveSession,
+    resolveWorkspaceRole,
+    resolveDocRole: sharedResolveDocRole,
+    isWorkspaceAdmin,
+    deleteActivity: { resolveActorName },
+  },
   // render-publish S-005: enveloped, session-gated GET /api/w/:workspaceId/docs/:slug for
   // the in-app React viewer. Reuses the SAME access model (viewerLoaderDeps) the /d viewer
   // uses; markdown → sanitized app-theme HTML, html/image → /v sandbox reference (C-008).
@@ -424,7 +441,11 @@ const app = createApp({
   // S-002 / C-003: the feed-list + single-event reads are role- + access-gated through the SAME
   // shared resolveAccess the doc viewer uses (admins all; members see workspace-level events plus
   // doc-scoped events on docs they can open, resolved at READ time, F-2).
-  activity: { db, resolveSession, resolveWorkspaceRole, resolveAccess: sharedResolveAccess, resolveDocLink },
+  // doc-delete-trash S-006 / C-010: `resolveLiveRole` is the deletion-IGNORING role resolver
+  // (sharedResolveDocRole, before the deleted_at chokepoint) so a `doc_deleted`/`doc_restored` row
+  // stays visible to a prior-role-holder (and the actor + admins), but never to a member who never
+  // held a role (AS-032). The deleted-aware sharedResolveAccess would hide it from everyone.
+  activity: { db, resolveSession, resolveWorkspaceRole, resolveAccess: sharedResolveAccess, resolveLiveRole: sharedResolveDocRole, resolveDocLink },
   // your-activity-actions S-001: the personal cross-workspace "Your actions" feed under
   // /api/me/activity. ACCOUNT-scoped (the caller's own actions only — C-001), current-member
   // workspaces only (C-006). C-002: a doc-scoped row whose target the caller can no longer access
@@ -434,7 +455,13 @@ const app = createApp({
   // workspace-activity S-006 / AS-024 (C-005): a project create logs ONE `project` event. The
   // workspace is the path workspace (passed by the route), so no workspaceOfDoc; the repo is built
   // from `db`. resolveActorName resolves the actor name per-emit. Best-effort post-commit.
-  projects: { db, resolveSession, resolveWorkspaceRole, activity: { resolveActorName } },
+  projects: {
+    db,
+    resolveSession,
+    resolveWorkspaceRole,
+    resolveDocRole: sharedResolveDocRole,
+    activity: { resolveActorName },
+  },
   // workspaces S-005: per-workspace member directory + role management under
   // /api/w/:workspaceId/members (admin-gated; ≥1-admin invariant).
   members: {
@@ -590,6 +617,20 @@ const app = createApp({
       // rejected-not-disclosed); create makes a non-default project owned by the token-owner in
       // the token's workspace, returning a projectId usable by create_document.
       ...createProjectToolsForDb(db),
+      // doc-delete-trash S-005: the delete/restore tools (anchord_delete_document /
+      // anchord_restore_document) over the EXISTING soft-delete/restore services
+      // (workspace/doc-delete.ts). Both declare docs:write (C-009). The MCP gate is
+      // owner-or-editor ONLY — NO workspace-admin arm is wired (the MCP layer resolves no
+      // workspace-admin role; the admin arm is web-only, C-003 / S-005 § MCP gate). Every
+      // resolve is scoped to the TOKEN's workspace (C-007 / AS-029): a doc in another workspace
+      // is unreachable (not-found). resolveAccess is the SAME shared per-doc gate; restore reuses
+      // the private-on-restore reset + restorer-default fallback. Activity emits doc_deleted /
+      // doc_restored on change (C-006), anchored to the doc's own workspace via the service.
+      ...createDeleteToolsForDb({
+        db,
+        resolveAccess: sharedResolveAccess,
+        resolveActorName,
+      }),
     },
     allowedOrigins: [`http://localhost:${cfg.PORT}`],
   },

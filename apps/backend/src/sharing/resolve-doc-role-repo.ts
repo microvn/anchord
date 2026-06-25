@@ -35,6 +35,25 @@ import { activeRolesFor } from "./doc-member-repo";
 export type IsOwner = (docId: string, userId: string) => Promise<boolean>;
 
 /**
+ * doc-delete-trash S-004 / C-009: the concrete soft-delete reader for the `isDocDeleted`
+ * port `createResolveAccess` depends on. `true` ⇔ the doc is tombstoned (`deleted_at` set).
+ * Wiring this into the SINGLE access gate is what makes a soft-deleted doc unreadable on
+ * every id-keyed read path (viewer, version content + diff, annotation GET, comment POST)
+ * without any per-route re-derivation (AS-028). A missing doc → false (the existing 404/
+ * existence-hiding handling owns that case, not the deletion gate).
+ */
+export function createIsDocDeleted(db: DB): (docId: string) => Promise<boolean> {
+  return async (docId: string): Promise<boolean> => {
+    const [doc] = await db
+      .select({ deletedAt: docs.deletedAt })
+      .from(docs)
+      .where(eq(docs.id, docId))
+      .limit(1);
+    return doc?.deletedAt != null;
+  };
+}
+
+/**
  * Concrete owner-source read (auth-routes S-002, C-003): the doc owner = the user whose
  * id matches `docs.owner_id` (recorded at publish by S-001). This CLOSES the seam
  * `index.ts` wired to `async () => false`: a real `isOwner` so the owner's effective role

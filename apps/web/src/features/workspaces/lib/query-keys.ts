@@ -27,6 +27,9 @@ export const queryKeys = {
   /** All docs in ONE workspace — the union across the workspace's projects (browse). */
   docs: (workspaceId: string) => ["w", workspaceId, "docs"] as const,
 
+  /** The workspace Trash — deleted docs scoped to ONE workspace (doc-delete-trash S-003). */
+  trash: (workspaceId: string) => ["w", workspaceId, "trash"] as const,
+
   /**
    * A search run in ONE workspace, keyed by the query text AND the project scope
    * (workspace-project S-005/S-004). `projectId` undefined = whole-workspace scope; a project id

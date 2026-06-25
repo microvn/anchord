@@ -1,0 +1,539 @@
+# Snapshot: doc-access-routing
+**Date:** 2026-06-25
+**Ref:** doc-access-two-axis cascade
+**Reason:** M6 — constraints/data-model superseded by the two-axis access model (C-003 anyone_with_link-not-a-browse-grant reversed)
+
+---
+
+# Spec: doc-access-routing
+
+**Created:** 2026-06-14
+**Last updated:** 2026-06-23
+**Status:** Draft
+
+## Overview
+
+Re-architect how a doc is reached and who may read/edit it so the model is coherent
+across backend and frontend, and close three real access bugs in the process. Today the
+share link points at a bare server-rendered page nobody really uses, the in-app viewer is
+locked behind a sign-in wall and a workspace id it doesn't need, and "can this person view
+this doc" is decided in three near-duplicate places — and the production access gate is a
+*permissive stub* whose only real wall is the workspace-membership middleware this refactor
+removes. This spec collapses access into a single decision applied to **every** doc-centric
+route, makes the doc reachable by its link alone (no workspace in the URL), opens the in-app
+viewer to signed-out visitors when the doc allows it, and retires the bare server page. It
+owns the new access+routing contract and amends `render-publish`, `sharing-permissions`,
+`annotation-core`, `versioning-diff`, and `workspaces` (see GAP-002).
+
+Ships as one release across backend + frontend (no separate security phase — decided
+2026-06-14). Build order still starts with the access gate (S-001) because everything depends
+on it.
+
+## Data Model
+
+No new entities. Relies on existing structures (defined elsewhere, reused as-is):
+
+- **docs** (`render-publish`): `slug` is globally unique (`schema.ts:29`, single-column
+  `.unique()`) → a doc is identifiable by slug alone. `project_id` is nullable
+  (`onDelete: "set null"`); a doc resolves its owning workspace through
+  `project_id → projects.workspace_id`, and a doc with no project has no workspace (see C-011).
+- **doc_members**, **share_links**, **docs.general_access** (`sharing-permissions`): inputs
+  to access resolution (invited role, link role, general-access level).
+- **doc_versions** (`render-publish`): content served to the viewer / iframe; a specific
+  version is addressed by its version id (the `/v` content surface).
+- **doc-read response** carries the doc's OWN `workspaceId` (resolved via
+  `project_id → projects.workspace_id`; `null` when the doc has no project). It lets the
+  member-only, workspace-addressed affordances (Share dialog, Version history) resolve their
+  workspace on the doc-scoped public route, where there is no `workspaceId` URL param. It is a
+  response field only — no schema change.
+
+No migration. No schema change.
+
+## Stories
+
+### S-001: Resolve access in one place — and gate every doc-centric route with it (P0)
+
+**Description:** As the system, I decide "can this viewer see this doc, and at what role" from
+a single function, and I apply that decision on EVERY doc-centric route (doc read, annotation
+read + write, version read, content), replacing the permissive `canViewDoc` stubs that today
+only stand because the workspace-membership middleware sits in front of them.
+**Source:** Design decision 2026-06-14; mf-challenge F1/F6 (2026-06-14); current code
+`apps/backend/src/sharing/resolve-doc-role-repo.ts`, `apps/backend/src/render/viewer-loaders.ts`
+(`canViewVisible`), `apps/backend/src/sharing/access.ts`, `apps/backend/src/index.ts`
+(permissive `sharedAccessDeps`), `apps/backend/src/routes/annotations.ts` (list/comment gate
+on stubbed `canViewDoc`); amends `sharing-permissions`.
+
+**Execution:**
+- `depends_on:` none
+- `parallel_safe:` false
+- `files:` `apps/backend/src/sharing/resolve-doc-role-repo.ts`, `apps/backend/src/sharing/access.ts`, `apps/backend/src/render/viewer-loaders.ts`, `apps/backend/src/index.ts`, `apps/backend/src/routes/annotations.ts`, `apps/backend/src/routes/versions.ts`
+- `autonomous:` checkpoint
+- `verify:` invite a non-member to an anyone-in-workspace doc → they read it; a member of another workspace is denied a restricted doc elsewhere; a logged-in non-member is denied the annotation LIST of a restricted doc (not just the doc read).
+
+**Acceptance Scenarios:**
+
+AS-001: Owner always resolves to owner
+- **Given:** a restricted doc owned by Alice
+- **When:** Alice's access is resolved
+- **Then:** she is granted the owner role and can view
+- **Data:** general-access = restricted; viewer = owner
+
+AS-002: Invited outsider gets their invited role even on an anyone-in-workspace doc
+- **Given:** an anyone-in-workspace doc and Bob, NOT a member of that workspace but invited to the doc as commenter
+- **When:** Bob's access is resolved
+- **Then:** Bob is granted commenter and can view (invite honored despite non-membership)
+- **Data:** general-access = anyone_in_workspace; invited role = commenter; Bob ∉ workspace
+- **Setup:** active doc_members row for Bob
+
+AS-003: Workspace member gets the general-access role on an anyone-in-workspace doc
+- **Given:** an anyone-in-workspace doc, general-access role = viewer, and Carol a member of that doc's workspace, not separately invited
+- **When:** Carol's access is resolved
+- **Then:** Carol is granted viewer and can view
+- **Data:** general-access = anyone_in_workspace, role = viewer; Carol ∈ workspace
+
+AS-004: Anyone-with-link visitor (including signed-out) gets the link role
+- **Given:** an anyone-with-link doc, link role = commenter
+- **When:** a signed-out visitor's access is resolved
+- **Then:** they are granted commenter and can view
+- **Data:** general-access = anyone_with_link, link role = commenter; viewer = anonymous
+
+AS-005: A member of another workspace cannot read a doc that lives elsewhere
+- **Given:** a restricted doc in workspace B, and Dan a member of workspace A only, not invited
+- **When:** Dan's access is resolved
+- **Then:** Dan is denied — no role, no view
+- **Data:** doc in B; Dan ∈ A, ∉ B; no invite
+- **Setup:** confirms resolution is against the doc's OWN workspace
+
+AS-006: No matching source → no access
+- **Given:** a restricted doc and Eve — not owner, not invited, link grants nothing for restricted
+- **When:** Eve's access is resolved
+- **Then:** denied
+- **Data:** general-access = restricted; Eve unrelated
+
+AS-007: The gate applies to annotation reads, not just the doc read
+- **Given:** a restricted doc and Frank, a logged-in user who is not the owner, not invited, and not a member of the doc's workspace
+- **When:** Frank requests the doc's annotation list
+- **Then:** he is denied the same way the doc read denies him (no thread leak) — the gate is NOT the old permissive "any logged-in user passes"
+- **Data:** general-access = restricted; Frank unrelated
+- **Setup:** proves the resolver replaced the permissive `canViewDoc` stub on the annotation list path
+
+AS-008: A project-less doc cannot grant access via anyone-in-workspace
+- **Given:** a doc with no project (project_id null) set to anyone_in_workspace
+- **When:** a workspace member's access is resolved
+- **Then:** the anyone-in-workspace path grants nothing (the doc has no workspace to belong to); only owner/invited/link can admit. The failure is closed and explicit, not a silent surprise
+- **Data:** project_id = null; general-access = anyone_in_workspace
+- **Setup:** confirms the doc→project→workspace resolution handles the null-project branch deterministically (C-011)
+
+### S-002: Read a doc by its link without a workspace in the URL (P0)
+
+**Description:** As a recipient, I open a doc by its link (carrying only the slug) and read it,
+signed in or not — the link alone identifies the doc and access is decided by the doc.
+**Source:** Design decision 2026-06-14; mf-challenge F2; current code
+`apps/backend/src/routes/viewer-doc.ts`, `apps/backend/src/app.ts` (`/v/:id`); amends `render-publish`.
+
+**Execution:**
+- `depends_on:` S-001
+- `parallel_safe:` false
+- `files:` `apps/backend/src/routes/viewer-doc.ts`, `apps/backend/src/render/viewer-loaders.ts`, `apps/backend/src/app.ts`
+- `autonomous:` checkpoint
+- `verify:` open an anyone-with-link doc's link signed out → content loads; open a restricted doc with no access → not-found page, no sign-in redirect, same response signed-out and signed-in.
+
+**Acceptance Scenarios:**
+
+AS-009: Signed-in viewer reads a doc by a slug-only link
+- **Given:** Alice signed in with view access to a markdown doc
+- **When:** she opens the doc's link (slug only, no workspace segment)
+- **Then:** the rendered doc is shown
+- **Data:** kind = markdown
+- **Setup:** doc with one published version
+
+AS-010: Signed-out visitor reads an anyone-with-link doc
+- **Given:** an anyone-with-link doc and a signed-out visitor
+- **When:** the visitor opens the link
+- **Then:** the rendered doc is shown without requiring sign-in
+- **Data:** general-access = anyone_with_link; viewer = anonymous
+
+AS-011: No access is a not-found response, never a 401 or sign-in redirect
+- **Given:** a restricted doc and a visitor (signed-out OR signed-in) with no access
+- **When:** the visitor's browser requests the doc read
+- **Then:** a not-found / no-access response is returned — byte-identical for anonymous and signed-in callers (existence-hiding), and it is NOT an "unauthenticated" response that the app's global handler would turn into a sign-in redirect
+- **Data:** general-access = restricted; viewer not invited
+- **Setup:** asserts the doc-read endpoint is anon-capable and drops the session-required gate
+
+AS-012: HTML content loads isolated
+- **Given:** an HTML doc the viewer may read
+- **When:** the doc link is opened
+- **Then:** the untrusted HTML is shown inside the isolated sandbox content surface (scripts run but cannot reach the app), not inlined into the app page
+- **Data:** kind = html
+
+### S-003: The app's viewer works for signed-out visitors (P0)
+
+**Description:** As a signed-out recipient of an anyone-with-link doc, I land in the app's
+viewer rather than being bounced to sign-in; and when I lack access, the app tells me whether
+signing in might help and returns me to the doc afterward. Reuses the existing viewer
+components unchanged; the change is routing + dropping the workspace id from the data layer.
+**Source:** Design decision 2026-06-14; mf-challenge F2/F7/F10 (audited FE: `ViewerScreen`
+threads `workspaceId` through `useParams`, `fetchViewerDoc(ws,slug)`, `listAnnotations(ws,slug)`,
+React Query keys `["viewer-doc", ws, slug]`, back-nav `/w/${ws}`, `AuthGuard`,
+`session-expiry-listener`).
+
+**Execution:**
+- `depends_on:` S-002
+- `parallel_safe:` false
+- `files:` `apps/web/src/app.tsx` (move viewer route out of AuthGuard), `apps/web/src/features/viewer/components/viewer-screen.tsx`, `apps/web/src/features/viewer/components/viewer-top-bar.tsx` (logged-out variant), `apps/web/src/features/viewer/services/client.ts`, `apps/web/src/app/session-expiry-listener.tsx` (exempt viewer queries), new `NoAccessView` component; AS-030 also touches the doc-read response on the backend (`apps/backend/src/routes/viewer-doc.ts`, `apps/backend/src/render/viewer-loaders.ts`) to carry the doc's `workspaceId`, and wires the member-only Share/Version panels to source it
+- `autonomous:` true
+- `verify:` open an anyone-with-link doc link logged-out → viewer renders, no bounce; restricted link logged-out → "sign in to view" in place; logged-in no-access → "you don't have access"; sign in from the prompt → returned to the doc.
+- `reuse note:` keep ViewerScreen / AnnotationsRail / Composer / SelectionPopover as-is; change service signatures from `(workspaceId, slug)` to `(slug)`, re-key React Query caches off slug only, and move every `setQueryData`/`prependAnnotation` site in lockstep; back-nav for an anon has no workspace to return to (link out to a neutral landing).
+
+**Acceptance Scenarios:**
+
+AS-013: Signed-out visitor sees the viewer for a public doc
+- **Given:** a signed-out browser and an anyone-with-link doc link
+- **When:** the visitor opens it
+- **Then:** the in-app viewer renders the doc; the visitor is not redirected to sign-in
+- **Data:** general-access = anyone_with_link
+
+AS-014: A no-access read on the public viewer never bounces to sign-in
+- **Given:** a signed-out visitor opening a doc link they cannot view, where the viewer also issues annotation/version reads
+- **When:** those doc-scoped reads return no-access
+- **Then:** the app shows a "sign in to view" prompt in place (signing in may grant access) — no doc-scoped read triggers the global sign-out/redirect
+- **Data:** general-access = restricted; viewer = anonymous
+- **Setup:** asserts the global 401 handler is scoped so viewer reads can't fire it
+
+AS-015: Signed-in visitor without access is told they lack access
+- **Given:** a signed-in user with no access
+- **When:** they open the doc link
+- **Then:** a "you don't have access" message is shown — no sign-in prompt
+- **Data:** signed-in non-invitee on a restricted doc
+
+AS-016: Signing in from the prompt returns the visitor to the doc
+- **Given:** a signed-out visitor shown the "sign in to view" prompt (AS-014)
+- **When:** they complete sign-in
+- **Then:** they are returned to the same doc and access is resolved again for their signed-in identity
+- **Data:** an invited user opening their invite link while signed out
+
+AS-029: The viewer chrome adapts to an anonymous visitor
+- **Given:** a signed-out visitor viewing an anyone-with-link doc
+- **When:** the viewer renders
+- **Then:** the top bar shows the doc title and a "Sign in" call-to-action, and hides the affordances that require a session (account menu, workspace switcher, Share) — reading, and commenting when guest commenting is on, still work
+- **Data:** anonymous viewer on an anyone-with-link doc
+- **Setup:** confirms `ViewerTopBar` has a logged-out variant; it must not render member-only chrome for an anon
+
+AS-030: A signed-in member uses the doc's workspace context for the member-only panels
+- **Given:** a signed-in member opens a doc via the public link, and the doc-read response carries the doc's own workspaceId
+- **When:** the member opens the Share dialog or the Version history (both workspace-addressed per C-007)
+- **Then:** those panels resolve the doc's workspace from the workspaceId in the read response and work; an anonymous viewer, or a doc whose workspaceId is null (no project), does not see them
+- **Data:** signed-in member with manage/view role; a second case: anonymous viewer → panels absent
+- **Setup:** the doc-scoped viewer has no workspaceId URL param, so the value must come from the read response; replaces the S-003 interim stub (workspaceId="")
+
+### S-004: Comment on a doc through its link (P0)
+
+**Description:** As a commenter (signed-in, or a guest on an anyone-with-link doc with guest
+commenting on), I leave a comment through the doc link; replies/resolves keep working; guest
+identity is honest and the anonymous write surface can't be used to flood the box.
+**Source:** Design decision 2026-06-14; mf-challenge F8/F10/F13; current code
+`apps/backend/src/routes/annotations.ts`, `apps/web/src/features/viewer/services/client.ts`,
+`apps/web/src/features/viewer/hooks/use-compose.ts`; amends `annotation-core`.
+
+**Execution:**
+- `depends_on:` S-001, S-002
+- `parallel_safe:` false
+- `files:` `apps/backend/src/routes/annotations.ts`, `apps/backend/src/annotation/guest.ts`, `apps/web/src/features/viewer/services/client.ts`, `apps/web/src/features/viewer/hooks/use-compose.ts`
+- `autonomous:` checkpoint
+- `verify:` commenter comments via a doc link; guest comments with a name on an anyone-with-link+guest-on doc; guest comment refused when guest commenting off; flood the anon comment path → refused after the limit; a guest naming themselves an existing member is rejected/marked.
+
+**Acceptance Scenarios:**
+
+AS-017: Commenter creates a comment via the doc link
+- **Given:** a signed-in commenter viewing a doc by its link
+- **When:** they select text and submit a comment
+- **Then:** an annotation with the comment is created, anchored to the selection, addressed by the doc
+- **Data:** resolved role = commenter
+- **Setup:** doc with a selectable block
+
+AS-018: Guest comments with a name
+- **Given:** an anyone-with-link doc with guest commenting on, opened signed-out
+- **When:** the guest enters a name and submits a comment
+- **Then:** the comment is created, attributed to the guest name and marked as a guest server-side
+- **Data:** guest commenting = on; guest name = "Sam"
+
+AS-019: Guest comment refused when guest commenting is off
+- **Given:** an anyone-with-link doc with guest commenting off, opened signed-out
+- **When:** the guest attempts to comment
+- **Then:** refused; no annotation created
+- **Data:** guest commenting = off; viewer = anonymous
+
+AS-020: No composer for a read-only or guest-disabled session
+- **Given:** either a viewer-role session, or an anonymous session on an anyone-with-link doc with guest commenting off
+- **When:** the doc renders
+- **Then:** no comment composer is offered (driven by an explicit can-comment capability, not by the presence/absence of a role)
+- **Data:** (a) resolved role = viewer; (b) anon + guest commenting off
+
+AS-021: Reply and resolve keep working
+- **Given:** an existing annotation and a commenter viewing by link
+- **When:** they reply and then resolve the thread
+- **Then:** the reply is added and the thread resolves, addressed by the annotation
+- **Data:** resolved role = commenter; one existing annotation
+
+AS-022: Anonymous comment writes are rate-limited and don't amplify mail
+- **Given:** an anyone-with-link doc with guest commenting on
+- **When:** anonymous comments are submitted past the per-IP / per-doc rate limit
+- **Then:** the excess writes are refused, and reply-notification emails are gated behind the same limiter (no per-comment mail flood)
+- **Data:** burst of anonymous comments from one source
+
+AS-023: A guest cannot impersonate a member
+- **Given:** an anyone-with-link doc whose owner's display name is "Alice Chen"
+- **When:** a guest submits a comment with guest name "Alice Chen"
+- **Then:** the comment is marked as a guest server-side (non-spoofable), and the colliding name is rejected or disambiguated so it cannot read as the member
+- **Data:** guest name = an active member's display name
+
+### S-005: See version history and diff through the doc link (P1)
+
+**Description:** As a viewer, I open a doc's version history and compare versions through the
+doc link, addressed by the doc.
+**Source:** Design decision 2026-06-14; mf-challenge F12; current code (version read routes),
+`apps/backend/src/render/viewer-loaders.ts` (`createLoadContent`, versionId-addressed); amends
+`versioning-diff`.
+
+**Execution:**
+- `depends_on:` S-001, S-002
+- `parallel_safe:` false
+- `files:` `apps/backend/src/routes/versions.ts`, `apps/backend/src/render/viewer-loaders.ts`, `apps/web/src/features/versioning`
+- `autonomous:` true
+- `verify:` open version history + a diff for a viewable doc via its link; open `/v` for an OLD version → that version's content, not the current one.
+
+**Acceptance Scenarios:**
+
+AS-024: Viewer reads history and a diff via the doc link
+- **Given:** a viewer with access to a doc with two versions
+- **When:** they open the history and compare v1 with v2
+- **Then:** the versions and the diff are shown, addressed by the doc
+- **Data:** doc with v1 and v2
+
+AS-025: No access to the doc means no access to its versions
+- **Given:** a visitor with no access
+- **When:** they request the version history
+- **Then:** denied (same no-access outcome as the doc read)
+- **Data:** restricted doc; viewer not invited
+
+AS-026: The content surface serves the requested historical version, not the current one
+- **Given:** a doc with versions v1 and v2 (v2 current)
+- **When:** the iframe content for v1 is requested
+- **Then:** v1's content is served (the versionId-addressed loader is preserved, not merged into the slug→current-version loader)
+- **Data:** request for v1's content while v2 is current
+
+### S-006: The share link opens the app; the bare server page is removed (P0)
+
+**Description:** As an author, the link I copy or get on publish opens the in-app viewer; the
+old bare server-rendered `/d` route is removed entirely and the app's SPA fallback serves
+`/d/:slug`.
+**Source:** Design decision 2026-06-14; mf-challenge F3 (delete entirely — no users yet, SPA
+fallback serves it); current code `apps/backend/src/sharing/share-state.ts` (`shareUrl`),
+`apps/backend/src/publish/service.ts`, `apps/backend/src/app.ts` (`/d/:slug` handler),
+`apps/web/vite.config.ts` (`/d` proxy); amends `render-publish`, `sharing-permissions`.
+
+**Execution:**
+- `depends_on:` S-003
+- `parallel_safe:` false
+- `files:` `apps/backend/src/sharing/share-state.ts`, `apps/backend/src/publish/service.ts`, `apps/backend/src/app.ts` (remove `/d` handler + `viewerPage`), `apps/backend/src/render/viewer-loaders.ts` (remove dead `createLoadViewer`), `apps/web/vite.config.ts` (remove `/d` proxy, keep `/v`)
+- `autonomous:` true
+- `verify:` copy a share link → opens the in-app viewer; publish → returned link opens the in-app viewer; the backend has no `/d` handler and `/d/:slug` is served by the SPA fallback.
+
+**Acceptance Scenarios:**
+
+AS-027: The copied share link opens the in-app viewer
+- **Given:** a manager viewing a doc's Share box
+- **When:** they copy the link and open it
+- **Then:** the in-app viewer renders the doc (no bare server page)
+- **Data:** anyone-with-link doc
+
+AS-028: Publishing returns an app-viewer link and the server page is gone
+- **Given:** an author publishing an artifact
+- **When:** publish completes and they open the returned link
+- **Then:** the in-app viewer renders the doc; the backend no longer serves its own HTML at `/d/:slug` (the SPA fallback does), and the dead viewer-shell loader is removed
+- **Data:** a freshly published doc
+
+## Constraints & Invariants
+
+- **C-001:** One access resolution (`canView` + role) gates EVERY doc-centric route — doc read,
+  annotation read + create + comment + resolve, version read, and content — replacing the
+  permissive sync `canViewDoc` stubs; the frontend role is a display hint only and the server
+  re-authorizes every read and every write. (AS-001, AS-002, AS-003, AS-004, AS-005, AS-006, AS-007)
+- **C-002:** A doc slug is globally unique, so a doc link carries only the slug — no workspace
+  qualifier in the URL or in the doc-read/annotation/version request paths. (AS-009, AS-010)
+- **C-003:** Access is the most-permissive of {owner, invited role, workspace role when
+  anyone-in-workspace, link role when anyone-with-link}, always resolved against the doc's OWN
+  workspace. (AS-002, AS-003, AS-004, AS-005)
+- **C-004:** Every doc-centric READ (doc, annotation list, version) is anon-capable; a no-access
+  outcome is a not-found response byte-identical for anonymous and signed-in callers
+  (existence-hiding), is never an unauthenticated response, and never triggers a sign-in
+  redirect. (AS-011, AS-014, AS-015)
+- **C-005:** An anonymous visitor may view only anyone-with-link docs; an anonymous write
+  (comment) additionally requires guest commenting to be enabled. (AS-010, AS-018, AS-019)
+- **C-006:** Untrusted HTML is served only via the isolated sandbox content surface (opaque
+  origin); markdown is sanitized before rendering in the app. (AS-012)
+- **C-007:** Doc-centric resources — doc read AND annotation create/list/comment/resolve AND
+  version read — are addressed by the doc, not by a workspace path. Workspace-addressed paths
+  remain only for workspace-management (members, projects, search, invites) and for
+  authoring/publish, which need workspace/project context. This AMENDS the locked workspaces
+  path-tenancy decision (C-002/C-005 there) for doc-centric resources — PO-approved 2026-06-14;
+  the workspaces spec must be updated (GAP-002). (AS-009, AS-017, AS-024)
+- **C-008:** Anonymous comment writes are rate-limited per IP and per doc; reply-notification
+  emails are gated behind the same limiter so an anonymous write cannot flood the host's mail.
+  (AS-022)
+- **C-009:** A guest comment carries a server-enforced, non-spoofable guest marker; a guest
+  name that collides with an active member's display name on the doc is rejected or
+  disambiguated — guest identity is never trusted from the client alone. (AS-023)
+- **C-010:** Slug is a global namespace across all workspaces; publish-time slug generation MUST
+  enforce global uniqueness (retry on collision), independent of workspace. (AS-009)
+- **C-011:** A doc with no project (project_id null) has no workspace; the anyone-in-workspace
+  path grants it nothing (fail-closed), and resolution admits only owner/invited/link for such
+  a doc. (AS-008)
+- **C-012:** Every doc-centric route that loses its workspace-membership middleware carries an
+  automated negative-access regression test in CI (anonymous and cross-workspace non-member →
+  denied), so a silently widened gate fails the build. (AS-005, AS-007, AS-011, AS-025)
+- **C-013:** The anonymous comment rate-limiter is keyed by (caller IP, doc) — limits are
+  per-IP-per-doc, not global; a signed-in caller's writes are not subject to it (the limiter
+  guards the un-authenticated guest surface only). (AS-022)
+- **C-014:** The guest impersonation guard matches a guest name against the doc's active members
+  AND the doc owner's display name; it applies to guest comments only (a signed-in member's own
+  name is never self-impersonation). (AS-023)
+- **C-015:** The post-sign-in return target (AS-016's `redirect`) is honored ONLY when it is an
+  internal path — a single leading slash, never `//` or `/\` (which browsers treat as
+  protocol-relative off-site). Any off-site / protocol-relative / non-path value is ignored and
+  sign-in falls back to the default landing — no open-redirect. (AS-016)
+
+## Linked Fields
+
+- `workspaceId` — produced on the doc-read response (the doc's own workspace, resolved via
+  project→workspace; null when project-less) by the S-002 read path; consumed by S-003:AS-030
+  on the in-app viewer to feed the member-only, workspace-addressed Share dialog + Version
+  history. Persisted source (the doc's workspace), served on every doc read. ✔ surface +
+  lifecycle match (read on the same response the viewer already fetches).
+
+## UI Notes
+
+New surface this spec adds; everything else is reused unchanged:
+
+- `NoAccessView` *(shown in place of the viewer when access resolution denies)*
+  - sign-in prompt variant *(signed-out visitor — signing in may grant access; returns to the doc after, AS-016)*
+  - no-access message variant *(already signed-in, AS-015)*
+- `ViewerScreen` *(existing; mounts on the public route, reads role/guest from the doc response, keyed on slug only)*
+- `ViewerTopBar` *(existing; gains a logged-out variant — doc title + Sign in CTA, hides account menu / workspace switcher / Share for an anon, AS-029)*
+
+All new/varied surfaces follow DESIGN.md (single deep-teal accent, chrome recedes behind the
+doc) and are responsive (NoAccessView + anon top bar tested at 360/768/1024/1440).
+
+> Precedence: AS / Constraints > this tree. UI Notes is structural reference only.
+
+## What Already Exists
+
+### UI Inventory
+
+| Component | Path | Reuse plan |
+|---|---|---|
+| `ViewerScreen` | `apps/web/src/features/viewer/components/viewer-screen.tsx` | reuse; drop `workspaceId` from `useParams`/cache keys/service calls/back-nav, source role/guest from the doc-read response |
+| `AnnotationsRail`, `Composer`, `SelectionPopover` | `apps/web/src/features/viewer/components/` | reuse as-is (presentational, doc-scoped) |
+| `ShareDialog` + sharing components | `apps/web/src/features/sharing/components/` | reuse; only the displayed link string changes |
+| `AuthGuard` | `apps/web/src/app/auth-guard.tsx` | keep for the rest of the app; the viewer route moves to a sibling OUTSIDE it |
+
+### System Impact & Technical Risks
+
+- **Headline risk (F1):** the production `sharedAccessDeps` are permissive stubs
+  (`isInvited: () => true, isWorkspaceMember: () => true`); their only real wall is
+  `requireWorkspaceMember`. Removing that middleware WITHOUT routing every read through the
+  async resolver is a cross-tenant authorization bypass. S-001 must replace the stubs, not just
+  move paths — this is a security-gate rewrite, not a prefix rename.
+- **Reuse, don't rebuild:** `createResolveDocRole` + `isWorkspaceMemberOfDoc` already resolve
+  owner+invited+link+workspace against the doc's real workspace. Unify the gate on top of these;
+  remove the separate structural pre-gate in `canViewVisible` that causes the invited-outsider
+  miss (AS-002). Keep `/v/:id` and its versionId-addressed loader; only delete the dead
+  `createLoadViewer` — do NOT merge `createLoadContent` (different addressing) (F12).
+- **FE migration (F7, audited):** `ViewerScreen` threads `workspaceId` through `useParams`,
+  `fetchViewerDoc`, `listAnnotations`, the React Query keys, and back-nav. Change service
+  signatures to slug-only, re-key caches by slug, move every `setQueryData`/`prependAnnotation`
+  site in lockstep, and scope the global 401 handler so viewer reads can't fire the sign-out.
+- **Workspaces amendment owed (GAP-002):** C-007 carves doc-centric read+write out of the locked
+  path-tenancy decision; a Mode C update to `workspaces.md` is required to keep specs consistent.
+- **Test surface:** rewrite tests asserting `/d/:slug`, `/api/w/:ws/docs/:slug`, and the
+  `shareUrl` format; remove the `/d` vite proxy (keep `/v`); move `mock.module(...)` targets with
+  the files (bun mock state is global — reset in `afterAll`). Add the C-012 negative tests.
+
+## Not in Scope
+
+- **Per-doc link preview / OG metadata (S-007 dropped, F9)** — deferred to v0.5. Ship only a
+  generic static OG tag on the SPA index; per-doc unfurl needs server-side meta injection, which
+  the refactor deliberately removes. Not in the v0 "In" list.
+- **Short link `/s/:code`** — deferred (owner decision).
+- **Authoring/publish endpoint path** — stays workspace-addressed (needs project context).
+  Intentional, per C-007 — not deferred work.
+- **Real-time multi-editor collaboration** — out per project scope.
+- **Changing the annotation anchor/data model** — unchanged.
+
+## Gaps
+
+GAP-001 (status: deferred): Per-doc link-unfurl metadata — deferred to v0.5 (F9). v0 ships a
+generic static OG tag. Owner: product owner, 2026-06-14.
+
+GAP-002 (status: resolved): C-007 amends the locked workspaces path-tenancy decision (workspaces
+C-002/C-005) by carving out doc-centric read+write. Resolved 2026-06-14 → Mode C on
+`docs/specs/workspaces/workspaces.md` (amended C-002/C-005 + Clarifications 2026-06-14, snapshot
+2026-06-14.md). Source: mf-challenge F5 adjudication (PO chose full doc-scoping).
+
+## Clarifications — 2026-06-15
+
+- **Workspace context for member-only panels (S1 from /mf-build S-003):** the doc-scoped viewer
+  dropped `workspaceId`, but Share + Version history stay workspace-addressed (C-007). Decision:
+  the doc-read response carries the doc's OWN `workspaceId` (null if project-less); a signed-in
+  member sources it from there to open those panels; anon / null-workspace → panels hidden.
+  Became AS-030 + the Data Model read-response field + Linked Fields.
+- **Default link role (S3 from /mf-build S-001):** an `anyone_with_link` doc with no explicit
+  `share_links` role row admits at the default `viewer` role (least privilege), not fail-closed —
+  the general-access level itself is the grant. Implemented + tested in S-001
+  (resolve-access; the anon/no-link-row case). Documented here; not promoted to a constraint.
+
+## Clarifications — 2026-06-23
+
+- **No logic change for doc-access shared-workspace model (workspace = shared group space):** the audit that
+  flipped the new-doc default from `restricted` to the workspace `settings.defaultAccess`
+  (default `anyone_in_workspace`; `workspaces`:C-007, render-publish:C-011, mcp-roundtrip:C-006)
+  does NOT touch resolution. `resolveAccess` / C-003 / AS-003 already grant a workspace member the
+  general-access role on an `anyone_in_workspace` doc — that was the rare path before and is now
+  the common one. Nothing here needs to change; this spec resolves whatever level a doc carries.
+- **C-011 / AS-008 fail-closed still holds and is still correct:** a project-less doc
+  (`project_id` null) grants NOTHING via the anyone-in-workspace path because it has no workspace —
+  even now that the level defaults to `anyone_in_workspace`. The owner still sees it (owner path,
+  AS-001), but members do not. This is intentional and unchanged. In practice both publish paths
+  assign a project (web uses project context; MCP falls back to the owner's default project,
+  mcp-roundtrip:C-006), so a published doc always has a workspace and the default takes effect
+  through AS-003 — the project-less branch is the deliberate fail-closed edge, not a regression.
+
+## Spec Sizing Notes
+
+Stories=6 (target 7 — under). AS=30 (target 20 — in G7 overage range ≤30, hard cap 30).
+
+The overage is driven by the mf-challenge security findings, each adding a distinct
+stated-outcome atom that cannot be merged without losing CC5 coverage:
+- S-001: AS-007 (gate applies to annotation read) and AS-008 (null-project doc) are the F1/F6
+  fixes — each a separate denial outcome.
+- S-002/S-003: AS-011 + AS-014 are the F2 existence-hiding / no-bounce atoms on different
+  surfaces (backend response vs FE no-bounce-via-sibling-reads).
+- S-004: AS-020 (no-composer capability), AS-022 (rate limit, F8), AS-023 (impersonation, F13)
+  are three independent control atoms.
+- S-005: AS-026 (F12) pins the versionId-addressed loader behavior.
+
+AS-030 (member workspace context) is the one /mf-build addition (S1 fix) — one atom, at the
+≤30 cap. No bloat — each AS traces to one stated atom.
+
+## Change Log
+
+| Date | Change | Ref |
+|------|--------|-----|
+| 2026-06-14 | Initial creation | -- |
+| 2026-06-14 | Phase 3 clarifications: link preview + post-sign-in return | Clarifications 2026-06-14 |
+| 2026-06-14 | Minor: + AS-029 anon viewer chrome (ViewerTopBar logged-out variant) + UI Notes (NoAccessView/anon top bar, DESIGN.md + responsive) | UI/UX gap |
+| 2026-06-14 | mf-challenge revision: F1 gate-every-route + replace permissive stubs; F2 anon-capable reads / no 401-bounce; F3 delete `/d` entirely (SPA fallback); F6 null-project; F7 FE migration detail; F8 anon rate-limit; F9 drop per-doc preview (S-007→Not in Scope); F10 capability flag not effectiveRole; F11 CI negative tests; F12 keep versionId loader; F13 guest marker; F14 slug global namespace. F4/F5 rejected (one effort; full doc-scoping read+write). | /mf-challenge doc-access-routing |
+| 2026-06-15 | Major (M6): + C-015 (post-sign-in redirect honored only for internal paths — open-redirect guard from mf-fix AS-016). Snapshot 2026-06-15-3.md | /mf-fix AS-016 S3 |
+| 2026-06-15 | Major (M6): + C-013 (anon rate-limiter keyed IP:doc, signed-in bypass) + C-014 (impersonation guard matches owner name, guest-only) — formalize S-004 S3. Snapshot 2026-06-15-2.md | /mf-build S-004 S3 |
+| 2026-06-15 | Major (M5): + AS-030 member workspace context (doc-read response carries doc workspaceId → member-only Share/Version on the doc-scoped viewer); + Data Model read-response field + Linked Fields; Clarifications 2026-06-15 (S1 resolution + S3 default-viewer). Snapshot 2026-06-15.md | /mf-build S1+S3 |
+| 2026-06-23 | Minor — doc-access shared-workspace model: +Clarifications-2026-06-23 confirming resolveAccess / C-003 / AS-003 already implement the shared-group-space default (no logic change; the anyone_in_workspace member path is now the common case) and that C-011/AS-008 project-less fail-closed is unchanged and still correct. No AS/constraint change → Minor, no snapshot. | doc-access audit 2026-06-23 |

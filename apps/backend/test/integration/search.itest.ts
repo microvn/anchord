@@ -159,7 +159,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       projectId: billingId,
     });
     // anyone_in_workspace = workspace axis on, link off (access lives on the share_links row).
-    await h.db.insert(schema.shareLinks).values({ docId: payId, workspaceRole: "commenter" });
+    await h.db.insert(schema.shareLinks).values({ docId: payId, workspaceRole: "commenter" }).onConflictDoUpdate({ target: schema.shareLinks.docId, set: { workspaceRole: "commenter", linkRole: null } });
 
     // Doc "Secret Memo": RESTRICTED, X NOT invited; "refund" ONLY in a COMMENT.
     const secretId = await publish(A.cookie, {
@@ -167,7 +167,13 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       title: "Secret Memo",
       projectId: billingId,
     });
-    // stays restricted (default); add a comment that DOES contain "refund".
+    // Make it RESTRICTED: clear both axes (the new-doc publish default is workspace_role=
+    // commenter, so a restricted doc must be set explicitly — doc-access-two-axis). Then add a
+    // comment that DOES contain "refund" (the only "refund" on this doc is in the comment).
+    await h.db
+      .update(schema.shareLinks)
+      .set({ workspaceRole: null, linkRole: null })
+      .where(eq(schema.shareLinks.docId, secretId));
     await addComment(h.db, secretId, "we should reconsider the refund clause");
 
     // Doc "Invoice Guide": title-source match for "invoice"; anyone_in_workspace.
@@ -176,7 +182,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       title: "Invoice Guide",
       projectId: billingId,
     });
-    await h.db.insert(schema.shareLinks).values({ docId: invId, workspaceRole: "commenter" });
+    await h.db.insert(schema.shareLinks).values({ docId: invId, workspaceRole: "commenter" }).onConflictDoUpdate({ target: schema.shareLinks.docId, set: { workspaceRole: "commenter", linkRole: null } });
 
     // Doc "Shared Notes" (anyone_in_workspace): "refund" ONLY in a COMMENT → comment match
     // on an ACCESSIBLE doc (C-006 comment source surfaces a doc the user CAN access).
@@ -185,7 +191,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       title: "Shared Notes",
       projectId: billingId,
     });
-    await h.db.insert(schema.shareLinks).values({ docId: notesId, workspaceRole: "commenter" });
+    await h.db.insert(schema.shareLinks).values({ docId: notesId, workspaceRole: "commenter" }).onConflictDoUpdate({ target: schema.shareLinks.docId, set: { workspaceRole: "commenter", linkRole: null } });
     await addComment(h.db, notesId, "the refund timeline was agreed");
   });
 
@@ -262,7 +268,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       content: "# Delete Search\n\nnothing matchable in content here",
       title: "Delete Search Doc",
     });
-    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" });
+    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" }).onConflictDoUpdate({ target: schema.shareLinks.docId, set: { workspaceRole: "commenter", linkRole: null } });
     const [an] = await h.db
       .insert(annotations)
       .values({ docId, type: "doc", anchor: {} })
@@ -289,7 +295,7 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
       content: "# Edit Saga\n\nThe word zephyralpha appears in version one only.",
       title: "Edit Saga",
     });
-    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" });
+    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" }).onConflictDoUpdate({ target: schema.shareLinks.docId, set: { workspaceRole: "commenter", linkRole: null } });
 
     // Sanity: v1 token is findable while v1 is current.
     let r = await searchAs(X.cookie, "zephyralpha");
@@ -311,12 +317,39 @@ describe.skipIf(!RUN)("workspace-project S-005: search (real Postgres)", () => {
     expect(r.data.results.map((x: any) => x.title)).not.toContain("Edit Saga");
   });
 
+  test("AS-009: search does not return a soft-deleted doc whose title + body match (C-002 exclusion sweep)", async () => {
+    // doc-delete-trash S-002 / C-002: a deleted doc must be absent from search results. Publish
+    // a doc whose TITLE and CONTENT both match a unique token, workspace-share it (so it would
+    // be visible to X), confirm it surfaces, then soft-delete it (deleted_at) and confirm it is
+    // gone — the accessible CTE now filters deleted_at IS NULL, so it never leaves the DB.
+    // publish creates the share_links row with the new-doc default (workspace_role=commenter),
+    // so the doc is already workspace-shared and visible to X — no extra insert needed.
+    const docId = await publish(A.cookie, {
+      content: "# Omegainvoice Spec\n\nThe omegainvoice clause covers all omegainvoice cases.",
+      title: "Omegainvoice Spec",
+    });
+
+    // Visible before delete (title + content match).
+    let r = await searchAs(X.cookie, "omegainvoice");
+    expect(r.data.results.map((x: any) => x.title)).toContain("Omegainvoice Spec");
+
+    // Soft-delete the doc → it must vanish from search.
+    await h.db.update(docs).set({ deletedAt: new Date() }).where(eq(docs.id, docId));
+    r = await searchAs(X.cookie, "omegainvoice");
+    const titles = r.data.results.map((x: any) => x.title);
+    expect(titles).not.toContain("Omegainvoice Spec");
+    // existence-hiding: neither id, title, nor slug leaks in the raw payload.
+    const raw = JSON.stringify(r);
+    expect(raw).not.toContain("Omegainvoice");
+    expect(raw).not.toContain(docId);
+  });
+
   test("C-006: restored version content is searchable (restore makes it current)", async () => {
     const docId = await publish(A.cookie, {
       content: "# Restore Saga\n\nThe token gammafox is in version one.",
       title: "Restore Saga",
     });
-    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" });
+    await h.db.insert(schema.shareLinks).values({ docId, workspaceRole: "commenter" }).onConflictDoUpdate({ target: schema.shareLinks.docId, set: { workspaceRole: "commenter", linkRole: null } });
 
     const repo = createVersionRepo(h.db);
     // v2 replaces the content (gammafox no longer current).

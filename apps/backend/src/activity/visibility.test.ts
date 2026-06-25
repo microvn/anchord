@@ -9,9 +9,10 @@
 // viewer's resolver, C-003); the live resolveAccess wiring is the route's concern + integration.
 
 import { describe, expect, test } from "bun:test";
-import { createActivityVisibility, type ResolveDocAccess } from "./visibility";
+import { createActivityVisibility, type ResolveDocAccess, type ResolveLiveRole } from "./visibility";
+import type { ActivityType } from "./types";
 
-type Row = { id: string; docId: string | null };
+type Row = { id: string; docId: string | null; type?: ActivityType; actorUserId?: string | null };
 
 const ADMIN = { userId: "u-mara", role: "admin" as const };
 const MEMBER = { userId: "u-tom", role: "member" as const };
@@ -120,5 +121,80 @@ describe("activity visibility gate (workspace-activity S-002)", () => {
     ];
     await v.filterVisible(rows, MEMBER);
     expect(resolveAccess.calls.sort()).toEqual(["d-a", "d-b"]); // d-a resolved once, cached
+  });
+
+  // ── doc-delete-trash S-006 / C-010: doc_deleted / doc_restored visibility ──────────────────────
+  // A `resolveLiveRole` fake: `holders` maps docId → the set of userIds who held a role at delete
+  // time (survives the tombstone). The deleted-aware resolveAccess returns canView:false for ALL
+  // (the doc is deleted), modelling S-004 — so the lifecycle rule MUST come off resolveLiveRole.
+  function fakeResolveLiveRole(holders: Record<string, Set<string>>): ResolveLiveRole & { calls: string[] } {
+    const calls: string[] = [];
+    const fn = (async (docId: string, userId: string) => {
+      calls.push(docId);
+      return holders[docId]?.has(userId) ? ("editor" as const) : null;
+    }) as unknown as ResolveLiveRole & { calls: string[] };
+    fn.calls = calls;
+    return fn;
+  }
+
+  const PRIOR_EDITOR = { userId: "u-lan", role: "member" as const };
+  const NEVER = { userId: "u-stranger", role: "member" as const };
+  const ACTOR = { userId: "u-mai", role: "member" as const };
+
+  test("AS-032: a member without prior access does NOT see a doc_deleted row (doc tombstoned → resolveAccess hides everyone)", async () => {
+    // The doc is deleted, so resolveAccess says canView:false for everyone; only resolveLiveRole
+    // knows who held a role. u-stranger never held one → the doc_deleted row is hidden from them.
+    const resolveAccess = fakeResolveAccess(new Set()); // deleted: nobody passes the deleted-aware gate
+    const resolveLiveRole = fakeResolveLiveRole({ "d-gone": new Set(["u-lan", "u-mai"]) });
+    const v = createActivityVisibility({ resolveAccess, resolveLiveRole });
+    const row: Row = { id: "e-del", docId: "d-gone", type: "doc_deleted", actorUserId: "u-mai" };
+    expect(await v.filterVisible([row], NEVER)).toEqual([]);
+    expect(await v.canSee(row, NEVER)).toBe(false);
+  });
+
+  test("AS-032: a workspace admin sees the doc_deleted row even with no per-doc role", async () => {
+    // Admin short-circuits BOTH resolvers (sees every workspace event), so a tombstoned doc's
+    // lifecycle row is still visible — and neither resolver is consulted.
+    const resolveAccess = fakeResolveAccess(new Set());
+    const resolveLiveRole = fakeResolveLiveRole({});
+    const v = createActivityVisibility({ resolveAccess, resolveLiveRole });
+    const row: Row = { id: "e-del", docId: "d-gone", type: "doc_deleted", actorUserId: "u-mai" };
+    expect((await v.filterVisible([row], ADMIN)).map((r) => r.id)).toEqual(["e-del"]);
+    expect(await v.canSee(row, ADMIN)).toBe(true);
+    expect(resolveLiveRole.calls).toEqual([]); // admin never resolves per-doc
+  });
+
+  test("AS-032: a member who HELD a role before delete still sees the doc_deleted row", async () => {
+    // u-lan held editor at delete time (resolveLiveRole returns a role) — so the lifecycle row stays
+    // visible to her even though resolveAccess (deleted-aware) refuses her now.
+    const resolveAccess = fakeResolveAccess(new Set()); // deleted: deleted-aware gate refuses everyone
+    const resolveLiveRole = fakeResolveLiveRole({ "d-gone": new Set(["u-lan", "u-mai"]) });
+    const v = createActivityVisibility({ resolveAccess, resolveLiveRole });
+    const row: Row = { id: "e-del", docId: "d-gone", type: "doc_deleted", actorUserId: "u-mai" };
+    expect((await v.filterVisible([row], PRIOR_EDITOR)).map((r) => r.id)).toEqual(["e-del"]);
+    expect(await v.canSee(row, PRIOR_EDITOR)).toBe(true);
+  });
+
+  test("C-010: the deleting ACTOR always sees their own doc_restored row (even with no surviving grant)", async () => {
+    // The actor of a delete/restore always sees their own lifecycle row — resolveLiveRole isn't even
+    // consulted for the actor arm. Covers doc_restored symmetrically with doc_deleted.
+    const resolveAccess = fakeResolveAccess(new Set());
+    const resolveLiveRole = fakeResolveLiveRole({}); // actor holds no surviving grant
+    const v = createActivityVisibility({ resolveAccess, resolveLiveRole });
+    const row: Row = { id: "e-res", docId: "d-gone", type: "doc_restored", actorUserId: "u-mai" };
+    expect((await v.filterVisible([row], ACTOR)).map((r) => r.id)).toEqual(["e-res"]);
+    expect(await v.canSee(row, ACTOR)).toBe(true);
+  });
+
+  test("C-010: a NON-lifecycle doc-scoped row on the same (deleted) doc stays on the deleted-aware resolveAccess path", async () => {
+    // A normal doc-scoped row (e.g. a `comment`) is NOT a lifecycle event, so it must still hide once
+    // the doc is deleted (resolveAccess canView:false) — only doc_deleted/doc_restored get the
+    // prior-role-holder exception. This proves the special-case is scoped to the two lifecycle types.
+    const resolveAccess = fakeResolveAccess(new Set()); // deleted doc → canView:false
+    const resolveLiveRole = fakeResolveLiveRole({ "d-gone": new Set(["u-lan"]) });
+    const v = createActivityVisibility({ resolveAccess, resolveLiveRole });
+    const commentRow: Row = { id: "e-cmt", docId: "d-gone", type: "comment", actorUserId: "u-mai" };
+    expect(await v.canSee(commentRow, PRIOR_EDITOR)).toBe(false); // not a lifecycle row → still hidden
+    expect(resolveLiveRole.calls).toEqual([]); // the live resolver is NOT used for non-lifecycle rows
   });
 });

@@ -109,6 +109,34 @@ export function deriveWorkspace(row: {
   return { workspaceId: null, workspaceName: null };
 }
 
+/** The doc-content fields a notification row carries via its `refId → annotation → doc` chain. */
+export interface DeepLinkFields {
+  slug: string | null;
+  docTitle: string | null;
+  quote: string | null;
+  snippet: string | null;
+  actorName: string | null;
+}
+
+/**
+ * doc-delete-trash S-006 / C-010 (AS-033): a notification's deep-link enrichment (`slug`, `docTitle`,
+ * the anchored `quote`, the comment `snippet`/`actorName`) is read off a raw `refId → annotation →
+ * doc` chain — NOT through the gated viewer. If that doc is soft-deleted, those fields would surface
+ * the deleted doc's title + annotation/comment CONTENT in the bell payload to whoever holds the
+ * notification, with no access re-check. So when the chain's doc is deleted (`docDeleted`), null EVERY
+ * content field: the row keeps its generic per-type summary, the deep-link degrades (no slug → no
+ * `/d/:slug` link to build), and the actual click-through still routes through the S-004 gated viewer
+ * (`resolveAccess`) — which shows the deleted notice (prior access) or the standard not-found. Pure +
+ * NULL-safe so it's unit-testable without a DB. A LIVE doc passes through unchanged.
+ */
+export function genericizeIfDeleted(
+  fields: DeepLinkFields,
+  docDeleted: boolean,
+): DeepLinkFields {
+  if (!docDeleted) return fields;
+  return { slug: null, docTitle: null, quote: null, snippet: null, actorName: null };
+}
+
 export interface NotificationReadRepo {
   /** Total notifications for the user (drives pagination's `total`). */
   countForUser(userId: string): Promise<number>;
@@ -148,6 +176,11 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
           createdAt: notifications.createdAt,
           slug: docs.slug,
           docTitle: docs.title,
+          // doc-delete-trash S-006 / C-010 (AS-033): the chain doc's tombstone. When set, the row's
+          // doc-content fields are genericized below so a deleted doc's title/anchor/comment body
+          // never leak through the bell payload; the click-through still routes through the gated
+          // viewer (S-004). Read-only flag — not surfaced on the row.
+          docDeletedAt: docs.deletedAt,
           // workspace-notifications S-001 (F1): the emit-time label snapshot, rendered as-is for
           // workspace rows. NO live workspaces join (would leak a removed member the current name).
           refLabel: notifications.refLabel,
@@ -191,20 +224,33 @@ export function createNotificationReadRepo(db: DB): NotificationReadRepo {
           docWorkspaceId: r.docWorkspaceId ?? null,
           docWorkspaceName: r.docWorkspaceName ?? null,
         });
+        // doc-delete-trash S-006 / C-010 (AS-033): if the chain doc is soft-deleted, strip the
+        // deep-link + content fields so the deleted doc's title/anchor/comment body never leak; the
+        // workspace chip (a label, not doc content) survives. The click-through still gates via S-004.
+        const link = genericizeIfDeleted(
+          {
+            slug: r.slug ?? null,
+            docTitle: r.docTitle ?? null,
+            quote: r.quote ?? null,
+            snippet: r.snippet ?? null,
+            // Member name wins; else the guest's typed name; else null (no resolvable comment, AS-029).
+            actorName: r.memberName ?? r.guestName ?? null,
+          },
+          r.docDeletedAt != null,
+        );
         return {
           id: r.id,
           type: r.type,
           refId: r.refId,
           read: r.read,
           createdAt: r.createdAt,
-          slug: r.slug ?? null,
-          docTitle: r.docTitle ?? null,
+          slug: link.slug,
+          docTitle: link.docTitle,
           refLabel: r.refLabel ?? null,
           invitationId: r.invitationId ?? null,
-          // Member name wins; else the guest's typed name; else null (no resolvable comment, AS-029).
-          actorName: r.memberName ?? r.guestName ?? null,
-          snippet: r.snippet ?? null,
-          quote: r.quote ?? null,
+          actorName: link.actorName,
+          snippet: link.snippet,
+          quote: link.quote,
           workspaceId,
           workspaceName,
         };

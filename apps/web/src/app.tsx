@@ -18,6 +18,7 @@ import { MembersScreen } from "./features/workspaces/components/members-screen";
 import { DocsScreen } from "./features/docs/components/docs-screen";
 import { ProjectsScreen } from "./features/docs/components/projects-screen";
 import { ProjectDocsScreen } from "./features/docs/components/project-docs-screen";
+import { TrashScreen } from "./features/docs/components/trash-screen";
 import { ActivityScreen } from "./features/activity/components/activity-screen";
 import { ActivityDetailScreen } from "./features/activity/components/activity-detail-screen";
 import { SearchScreen } from "./features/docs/components/search-screen";
@@ -103,6 +104,8 @@ export function AppRoutes() {
                 the legacy /docs/new route lands on the All-docs grid where the dialog lives. */}
             <Route path="docs/new" element={<DocsScreen />} />
             <Route path="projects" element={<ProjectsScreen />} />
+            {/* doc-delete-trash S-003: the workspace Trash (deleted docs + restore). */}
+            <Route path="trash" element={<TrashScreen />} />
             {/* workspace-project-browse S-001: a project card opens its OWN doc browse (only that
                 project's docs), not the workspace-wide union. */}
             <Route path="projects/:projectId" element={<ProjectDocsScreen />} />

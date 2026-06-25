@@ -3,6 +3,14 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
+import { setHours, subDays } from "date-fns";
+
+// Day-label assertions group against the REAL clock (the component uses `new Date()`), so seed
+// timestamps RELATIVE to actual now — never a hardcoded calendar date, which rots across a day
+// boundary. `daysAgoAt(n, h)` = h:00 local, n days before today.
+function daysAgoAt(daysAgo: number, hour: number): string {
+  return setHours(subDays(new Date(), daysAgo), hour).toISOString();
+}
 
 // your-activity-inbox S-001 — the For-you inbox render/flow test. We mock the notifications SERVICE
 // CLIENT (the Eden thunk `listNotifications`), the seam the For-you hook calls, so the REAL hook +
@@ -138,12 +146,12 @@ describe("For-you inbox (your-activity-inbox S-001)", () => {
   it("AS-002: items group by day under Today / Yesterday / dated labels, most-recent first", async () => {
     pages = {
       1: [
-        row("t1", { createdAt: "2026-06-24T12:00:00" }),
-        row("t2", { createdAt: "2026-06-24T08:00:00" }),
-        row("y1", { createdAt: "2026-06-23T20:00:00" }),
-        row("y2", { createdAt: "2026-06-23T09:00:00" }),
-        row("o1", { createdAt: "2026-06-20T15:00:00" }),
-        row("o2", { createdAt: "2026-06-20T09:00:00" }),
+        row("t1", { createdAt: daysAgoAt(0, 12) }), // today
+        row("t2", { createdAt: daysAgoAt(0, 8) }), // today
+        row("y1", { createdAt: daysAgoAt(1, 20) }), // yesterday
+        row("y2", { createdAt: daysAgoAt(1, 9) }), // yesterday
+        row("o1", { createdAt: daysAgoAt(4, 15) }), // earlier
+        row("o2", { createdAt: daysAgoAt(4, 9) }), // earlier
       ],
     };
     total = 6;

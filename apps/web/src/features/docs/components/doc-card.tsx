@@ -20,12 +20,16 @@ export function DocCard({
   doc,
   workspaceId,
   projects,
+  canDelete = false,
 }: {
   doc: DocRow;
   // Required: a card always opens the in-app React viewer `/w/:workspaceId/d/:slug`, never the bare
   // `/d/:slug` server page. Required so a caller can't silently fall back to the broken server page.
   workspaceId: string;
   projects?: ProjectRow[];
+  /** doc-delete-trash S-001 / AS-004: forwarded to the ⋯ menu — the Delete item shows only when
+   *  the caller may delete (owner/editor or workspace-admin). Defaults false (hidden). */
+  canDelete?: boolean;
 }) {
   const meta = FORMAT_META[doc.kind] ?? FORMAT_META.markdown;
   // annotation-core-ui S-001: open in the in-app React viewer (workspace-scoped route).
@@ -43,7 +47,7 @@ export function DocCard({
           {meta.label}
         </span>
         {workspaceId && projects && (
-          <DocMoreMenu doc={doc} workspaceId={workspaceId} projects={projects} />
+          <DocMoreMenu doc={doc} workspaceId={workspaceId} projects={projects} canDelete={canDelete} />
         )}
       </div>
       <div className="flex-1 px-[14px] pb-[11px] pt-[11px]">

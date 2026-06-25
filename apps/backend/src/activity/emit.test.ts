@@ -102,7 +102,7 @@ describe("emitActivity (workspace-activity S-001)", () => {
     expect(repo.inserted[1].actorName).toBe(SYSTEM_ACTOR_NAME);
   });
 
-  test("C-005: exactly twelve activity event types are defined in the enum", () => {
+  test("C-005: exactly fourteen activity event types are defined in the enum", () => {
     const expected: ActivityType[] = [
       "comment",
       "reply",
@@ -116,10 +116,14 @@ describe("emitActivity (workspace-activity S-001)", () => {
       "workspace_renamed",
       "project",
       "detached",
+      // doc-delete-trash S-001 amends workspace-activity C-005's locked-12 to add the doc
+      // soft-delete lifecycle pair (pgEnum + ActivityType union hand-synced, forward-only).
+      "doc_deleted",
+      "doc_restored",
     ];
-    // The pgEnum exposes its values — assert the set is exactly the twelve, no more, no fewer.
+    // The pgEnum exposes its values — assert the set is exactly the fourteen, no more, no fewer.
     expect([...activityType.enumValues].sort()).toEqual([...expected].sort());
-    expect(activityType.enumValues).toHaveLength(12);
+    expect(activityType.enumValues).toHaveLength(14);
   });
 });
 

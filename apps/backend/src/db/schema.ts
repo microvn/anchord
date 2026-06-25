@@ -43,13 +43,35 @@ export const docs = pgTable(
     // project delete the FK is set null (we block delete of a non-empty project, but
     // set-null keeps the doc reachable if a project ever vanishes another way).
     projectId: text("project_id").references((): any => projects.id, { onDelete: "set null" }),
+    // deleted_at (doc-delete-trash S-001 / C-001): the SOFT-DELETE tombstone. NULL = active;
+    // a timestamp = in Trash. A soft-deleted doc is preserved in full (versions, annotations,
+    // comments are never removed — C-001) and excluded from every listing/read surface (S-002+).
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // deleted_workspace_id (doc-delete-trash S-001 / C-005): the doc's owning workspace,
+    // CAPTURED AT DELETE TIME (resolved via project_id → projects.workspace_id in the delete
+    // service). A doc's workspace is otherwise derivable ONLY through its project, and
+    // project_id is nullable + on-delete-set-null; without this column, deleting a doc and then
+    // its (now-empty) project would orphan the tombstone. This is the stable Trash-membership +
+    // restore-scoping key. FK to workspaces.id (cascade — a gone workspace makes the Trash row
+    // meaningless). NULL while the doc is active. No deleted_by column — the deleting actor is
+    // recorded on the doc_deleted activity row (S-001 / AS-005).
+    deletedWorkspaceId: text("deleted_workspace_id").references(() => workspaces.id, {
+      onDelete: "cascade",
+    }),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()
       .$onUpdate(() => sql`now()`),
   },
-  (t) => [index("doc_slug_idx").on(t.slug), index("doc_project_idx").on(t.projectId)],
+  (t) => [
+    index("doc_slug_idx").on(t.slug),
+    index("doc_project_idx").on(t.projectId),
+    // doc-delete-trash S-001: the exclusion-filter index. Every doc-list query gains a
+    // `deleted_at IS NULL` predicate; this PARTIAL index (WHERE deleted_at IS NULL) keeps
+    // active-doc listing scans off the tombstones. Portable — SQLite supports partial indexes.
+    index("docs_active_idx").on(t.projectId).where(sql`${t.deletedAt} IS NULL`),
+  ],
 );
 
 // ── projects (workspace-project S-003) ─────────────────────────────────────
@@ -567,6 +589,10 @@ export const notifications = pgTable(
 //
 // Portable on purpose (no Postgres-only features): the type enum is a plain pgEnum + the two
 // composite indexes are plain B-trees, so a future SQLite build stays open.
+// doc-delete-trash S-001: `doc_deleted` / `doc_restored` extend the set workspace-activity C-005
+// locked at 12. FORWARD-ONLY — Postgres cannot drop an enum value, so the migration only ADDs
+// (no down-migration removes them); the boot migrator applies them before any emit path runs
+// (migrate-then-serve). Hand-synced in lockstep with the ActivityType union in src/activity/types.ts.
 export const activityType = pgEnum("activity_type", [
   "comment",
   "reply",
@@ -580,6 +606,8 @@ export const activityType = pgEnum("activity_type", [
   "workspace_renamed",
   "project",
   "detached",
+  "doc_deleted",
+  "doc_restored",
 ]);
 
 export const activity = pgTable(

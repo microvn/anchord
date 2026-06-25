@@ -107,7 +107,7 @@ describe("web-core S-004 — sidebar frame + order (AS-012)", () => {
     const sidebar = screen.getByTestId("app-sidebar");
 
     // The five regions exist.
-    expect(within(sidebar).getByTestId("sidebar-brand")).toHaveTextContent("anchord");
+    expect(within(sidebar).getByTestId("sidebar-brand")).toHaveTextContent("Anchord");
     expect(within(sidebar).getByTestId("sidebar-new-doc")).toHaveTextContent("New doc");
     expect(within(sidebar).getByTestId("the-switcher")).toBeInTheDocument();
     const nav = within(sidebar).getByTestId("sidebar-nav");

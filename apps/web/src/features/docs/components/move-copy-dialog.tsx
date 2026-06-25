@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ShareDialog } from "@/features/sharing/components/share-dialog";
+import { DeleteDocDialog } from "./delete-doc-dialog";
 import type { EffectiveRole } from "@/features/viewer/services/client";
 import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
@@ -218,6 +219,7 @@ export function DocMoreMenu({
   workspaceId,
   projects,
   effectiveRole,
+  canDelete = false,
 }: {
   doc: DocRow;
   workspaceId: string;
@@ -226,6 +228,11 @@ export function DocMoreMenu({
    *  Absent on a browse row with no role signal → the dialog opens but shows the read-only
    *  surface (conservative). */
   effectiveRole?: EffectiveRole;
+  /** doc-delete-trash S-001 / AS-004: whether the caller may delete this doc — (owner/editor) OR
+   *  workspace-admin, decided by the caller. The Delete item is OFFERED only when true; a
+   *  commenter/viewer never sees it. Defaults false (hidden) so a caller without a role signal
+   *  cannot accidentally surface it. The backend is the hard gate regardless (403 on a refusal). */
+  canDelete?: boolean;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveMode, setMoveMode] = useState<Mode>("move");
@@ -286,6 +293,29 @@ export function DocMoreMenu({
             <Icon name="copy" size={15} />
             Copy…
           </DropdownMenuItem>
+          {/* doc-delete-trash S-001 / AS-004: the Delete item is offered ONLY to a caller who may
+              delete (owner/editor or workspace-admin). A commenter/viewer never sees it. It opens
+              the DeleteDocDialog confirm (the menu item is the trigger, passed through asChild). */}
+          {canDelete && (
+            <>
+              <DropdownMenuSeparator />
+              <DeleteDocDialog
+                doc={doc}
+                workspaceId={workspaceId}
+                trigger={
+                  <DropdownMenuItem
+                    variant="destructive"
+                    data-testid={`doc-more-delete-${doc.slug}`}
+                    // Keep the menu item from closing the menu before the dialog opens.
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    <Icon name="trash" size={15} />
+                    Delete…
+                  </DropdownMenuItem>
+                }
+              />
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

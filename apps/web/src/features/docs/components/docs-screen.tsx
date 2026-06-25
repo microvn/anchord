@@ -87,7 +87,13 @@ export function DocsScreen() {
                   className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-3"
                 >
                   {pageDocs.map((d) => (
-                    <DocCard key={d.id} doc={d} workspaceId={workspace.id} projects={projects} />
+                    <DocCard
+                      key={d.id}
+                      doc={d}
+                      workspaceId={workspace.id}
+                      projects={projects}
+                      canDelete={d.canDelete ?? false}
+                    />
                   ))}
                 </div>
               ) : (

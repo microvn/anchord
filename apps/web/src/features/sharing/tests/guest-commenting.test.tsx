@@ -35,30 +35,41 @@ function canComment(role: string | undefined) {
   return role !== "viewer";
 }
 
-mock.module("@/features/viewer/services/client", () => ({
-  createRedline: mock(async () => ({ data: { success: true, data: { suggestionId: "rl-x" } }, error: null })),
-  decideSuggestion: mock(async () => ({ data: { success: true, data: { status: "accepted" } }, error: null })),
-  fetchViewerDoc,
-  listAnnotations,
-  createAnnotation,
-  addComment,
-  setResolution: mock(async () => ({ data: { success: true, data: { status: "resolved" } }, error: null })),
-  // bun mock.module binds ALL exports at load — viewer-screen now imports these, so the partial
-  // client mock must carry them or the module link fails (the file errored in isolation otherwise).
-  deleteAnnotation: mock(async () => ({ data: { success: true, data: { deleted: true } }, error: null })),
-  restoreAnnotation: mock(async () => ({ data: { success: true, data: { restored: true } }, error: null })),
-  dismissAnnotation: mock(async () => ({ data: { success: true, data: { dismissed: true } }, error: null })),
-  reattachAnnotation: mock(async () => ({ data: { success: true, data: { isOrphaned: false } }, error: null })),
-  canComment,
-}));
+// bun's mock.module is process-wide + persistent, and ~27 sibling files mock this SAME viewer client
+// module. Whichever module-factory runs LAST at load time wins the live binding the viewer-screen
+// closed over — in the full suite that's a `viewer/` file (loads after `sharing/`), so this suite's
+// `fetchViewerDoc` gets shadowed and the doc never resolves to markdown. Wrap the registration so we
+// can RE-install it in beforeEach, re-pointing the binding back to OUR stubs right before each test.
+function installViewerMock() {
+  mock.module("@/features/viewer/services/client", () => ({
+    createRedline: mock(async () => ({ data: { success: true, data: { suggestionId: "rl-x" } }, error: null })),
+    decideSuggestion: mock(async () => ({ data: { success: true, data: { status: "accepted" } }, error: null })),
+    fetchViewerDoc,
+    listAnnotations,
+    createAnnotation,
+    addComment,
+    setResolution: mock(async () => ({ data: { success: true, data: { status: "resolved" } }, error: null })),
+    // bun mock.module binds ALL exports at load — viewer-screen now imports these, so the partial
+    // client mock must carry them or the module link fails (the file errored in isolation otherwise).
+    deleteAnnotation: mock(async () => ({ data: { success: true, data: { deleted: true } }, error: null })),
+    restoreAnnotation: mock(async () => ({ data: { success: true, data: { restored: true } }, error: null })),
+    dismissAnnotation: mock(async () => ({ data: { success: true, data: { dismissed: true } }, error: null })),
+    reattachAnnotation: mock(async () => ({ data: { success: true, data: { isOrphaned: false } }, error: null })),
+    canComment,
+  }));
+}
+installViewerMock();
 
 // Reversal 2026-06-20: "guest" is now derived from `!signedIn && canComment(role)`, NOT a doc flag.
 // So a guest case needs an ANON session and the member case (C-007) needs a SIGNED-IN one. A mutable
 // `session` lets each test set its identity; default is anon (the guest cases).
 let session: { user: { id: string; name: string } } | null = null;
-mock.module("@/lib/api/auth-client", () => ({
-  useSession: () => ({ data: session, isPending: false }),
-}));
+function installAuthMock() {
+  mock.module("@/lib/api/auth-client", () => ({
+    useSession: () => ({ data: session, isPending: false }),
+  }));
+}
+installAuthMock();
 
 const toastError = mock(() => {});
 mock.module("sonner", () => ({
@@ -89,6 +100,10 @@ function App() {
 }
 
 beforeEach(() => {
+  // Re-point the global mock.module bindings back to THIS suite's stubs (sibling viewer/* files
+  // mock the same modules and the last-loaded one wins the live binding — see installViewerMock).
+  installViewerMock();
+  installAuthMock();
   fetchViewerDoc.mockClear();
   listAnnotations.mockImplementation(async () => annoResponse);
   createAnnotation.mockClear();

@@ -1,7 +1,7 @@
 # Spec: doc-access-routing
 
 **Created:** 2026-06-14
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-25
 **Status:** Draft
 
 ## Overview
@@ -30,8 +30,11 @@ No new entities. Relies on existing structures (defined elsewhere, reused as-is)
   `.unique()`) → a doc is identifiable by slug alone. `project_id` is nullable
   (`onDelete: "set null"`); a doc resolves its owning workspace through
   `project_id → projects.workspace_id`, and a doc with no project has no workspace (see C-011).
-- **doc_members**, **share_links**, **docs.general_access** (`sharing-permissions`): inputs
-  to access resolution (invited role, link role, general-access level).
+- **doc_members**, **share_links** (`sharing-permissions` / `doc-access-two-axis`): inputs to
+  access resolution. `share_links` now carries the two access axes — `workspace_role` and
+  `link_role` — each `viewer | commenter | editor | null` (see `doc-access-two-axis`). The legacy
+  single `docs.general_access` level is DROPPED; the three-value level is derived on read via
+  `deriveLevel(workspace_role, link_role)`, never stored.
 - **doc_versions** (`render-publish`): content served to the viewer / iframe; a specific
   version is addressed by its version id (the `/v` content surface).
 - **doc-read response** carries the doc's OWN `workspaceId` (resolved via
@@ -69,26 +72,26 @@ AS-001: Owner always resolves to owner
 - **Given:** a restricted doc owned by Alice
 - **When:** Alice's access is resolved
 - **Then:** she is granted the owner role and can view
-- **Data:** general-access = restricted; viewer = owner
+- **Data:** workspace_role = null, link_role = null (restricted); viewer = owner
 
 AS-002: Invited outsider gets their invited role even on an anyone-in-workspace doc
 - **Given:** an anyone-in-workspace doc and Bob, NOT a member of that workspace but invited to the doc as commenter
 - **When:** Bob's access is resolved
 - **Then:** Bob is granted commenter and can view (invite honored despite non-membership)
-- **Data:** general-access = anyone_in_workspace; invited role = commenter; Bob ∉ workspace
+- **Data:** workspace_role = commenter; invited role = commenter; Bob ∉ workspace
 - **Setup:** active doc_members row for Bob
 
-AS-003: Workspace member gets the general-access role on an anyone-in-workspace doc
-- **Given:** an anyone-in-workspace doc, general-access role = viewer, and Carol a member of that doc's workspace, not separately invited
+AS-003: Workspace member gets the workspace_role on a workspace-shared doc
+- **Given:** a doc with workspace_role = viewer, and Carol a member of that doc's workspace, not separately invited
 - **When:** Carol's access is resolved
 - **Then:** Carol is granted viewer and can view
-- **Data:** general-access = anyone_in_workspace, role = viewer; Carol ∈ workspace
+- **Data:** workspace_role = viewer; Carol ∈ workspace
 
-AS-004: Anyone-with-link visitor (including signed-out) gets the link role
-- **Given:** an anyone-with-link doc, link role = commenter
-- **When:** a signed-out visitor's access is resolved
-- **Then:** they are granted commenter and can view
-- **Data:** general-access = anyone_with_link, link role = commenter; viewer = anonymous
+AS-004: Link-holder (including signed-out) gets the link_role
+- **Given:** a doc with link_role = commenter
+- **When:** a signed-out visitor holding the link has access resolved
+- **Then:** they are granted commenter and can view (but per the guest cap an anon never exceeds commenter — see `doc-access-two-axis` C-004)
+- **Data:** link_role = commenter; viewer = anonymous
 
 AS-005: A member of another workspace cannot read a doc that lives elsewhere
 - **Given:** a restricted doc in workspace B, and Dan a member of workspace A only, not invited
@@ -101,20 +104,20 @@ AS-006: No matching source → no access
 - **Given:** a restricted doc and Eve — not owner, not invited, link grants nothing for restricted
 - **When:** Eve's access is resolved
 - **Then:** denied
-- **Data:** general-access = restricted; Eve unrelated
+- **Data:** workspace_role = null, link_role = null (restricted); Eve unrelated
 
 AS-007: The gate applies to annotation reads, not just the doc read
 - **Given:** a restricted doc and Frank, a logged-in user who is not the owner, not invited, and not a member of the doc's workspace
 - **When:** Frank requests the doc's annotation list
 - **Then:** he is denied the same way the doc read denies him (no thread leak) — the gate is NOT the old permissive "any logged-in user passes"
-- **Data:** general-access = restricted; Frank unrelated
+- **Data:** workspace_role = null, link_role = null (restricted); Frank unrelated
 - **Setup:** proves the resolver replaced the permissive `canViewDoc` stub on the annotation list path
 
-AS-008: A project-less doc cannot grant access via anyone-in-workspace
-- **Given:** a doc with no project (project_id null) set to anyone_in_workspace
+AS-008: A project-less doc cannot grant access via workspace_role
+- **Given:** a doc with no project (project_id null) and workspace_role set
 - **When:** a workspace member's access is resolved
-- **Then:** the anyone-in-workspace path grants nothing (the doc has no workspace to belong to); only owner/invited/link can admit. The failure is closed and explicit, not a silent surprise
-- **Data:** project_id = null; general-access = anyone_in_workspace
+- **Then:** the workspace_role path grants nothing (the doc has no workspace to belong to); only owner/invited/link can admit. The failure is closed and explicit, not a silent surprise
+- **Data:** project_id = null; workspace_role = commenter
 - **Setup:** confirms the doc→project→workspace resolution handles the null-project branch deterministically (C-011)
 
 ### S-002: Read a doc by its link without a workspace in the URL (P0)
@@ -348,15 +351,20 @@ AS-028: Publishing returns an app-viewer link and the server page is gone
 
 ## Constraints & Invariants
 
-- **C-001:** One access resolution (`canView` + role) gates EVERY doc-centric route — doc read,
-  annotation read + create + comment + resolve, version read, and content — replacing the
-  permissive sync `canViewDoc` stubs; the frontend role is a display hint only and the server
-  re-authorizes every read and every write. (AS-001, AS-002, AS-003, AS-004, AS-005, AS-006, AS-007)
+- **C-001:** One access resolution (`resolveAccess` → granted? + role) gates EVERY doc-centric
+  route — doc read, annotation read + create + comment + resolve, version read, and content —
+  replacing the permissive sync `canViewDoc` stubs; the frontend role is a display hint only and
+  the server re-authorizes every read and every write. The single authoritative `resolveAccess`
+  plus the consolidated workspace-visibility predicate (`canBrowseDoc`) are the law; the retired
+  `canViewDoc` is reconciled into them (see `doc-access-two-axis` C-010). (AS-001, AS-002, AS-003, AS-004, AS-005, AS-006, AS-007)
 - **C-002:** A doc slug is globally unique, so a doc link carries only the slug — no workspace
   qualifier in the URL or in the doc-read/annotation/version request paths. (AS-009, AS-010)
-- **C-003:** Access is the most-permissive of {owner, invited role, workspace role when
-  anyone-in-workspace, link role when anyone-with-link}, always resolved against the doc's OWN
-  workspace. (AS-002, AS-003, AS-004, AS-005)
+- **C-003:** Access is the most-permissive of {owner, invited role, `workspace_role` when the
+  caller is a member of the doc's OWN workspace, `link_role` when the caller holds the link},
+  always resolved against the doc's OWN workspace. The two axes are independent: `link_role` grants
+  the link role to link-holders but is NOT a workspace-browse grant, and `workspace_role` grants
+  the workspace role to members regardless of any link. (See `doc-access-two-axis` C-005 for the
+  authoritative resolver and C-006 for the workspace-visibility predicate.) (AS-002, AS-003, AS-004, AS-005)
 - **C-004:** Every doc-centric READ (doc, annotation list, version) is anon-capable; a no-access
   outcome is a not-found response byte-identical for anonymous and signed-in callers
   (existence-hiding), is never an unauthenticated response, and never triggers a sign-in
@@ -379,9 +387,8 @@ AS-028: Publishing returns an app-viewer link and the server page is gone
   disambiguated — guest identity is never trusted from the client alone. (AS-023)
 - **C-010:** Slug is a global namespace across all workspaces; publish-time slug generation MUST
   enforce global uniqueness (retry on collision), independent of workspace. (AS-009)
-- **C-011:** A doc with no project (project_id null) has no workspace; the anyone-in-workspace
-  path grants it nothing (fail-closed), and resolution admits only owner/invited/link for such
-  a doc. (AS-008)
+- **C-011:** A doc with no project (project_id null) has no workspace; the `workspace_role` axis
+  grants it nothing (fail-closed), and resolution admits only owner/invited/link for such a doc. (AS-008)
 - **C-012:** Every doc-centric route that loses its workspace-membership middleware carries an
   automated negative-access regression test in CI (anonymous and cross-workspace non-member →
   denied), so a silently widened gate fails the build. (AS-005, AS-007, AS-011, AS-025)
@@ -437,11 +444,13 @@ doc) and are responsive (NoAccessView + anon top bar tested at 360/768/1024/1440
   `requireWorkspaceMember`. Removing that middleware WITHOUT routing every read through the
   async resolver is a cross-tenant authorization bypass. S-001 must replace the stubs, not just
   move paths — this is a security-gate rewrite, not a prefix rename.
-- **Reuse, don't rebuild:** `createResolveDocRole` + `isWorkspaceMemberOfDoc` already resolve
-  owner+invited+link+workspace against the doc's real workspace. Unify the gate on top of these;
-  remove the separate structural pre-gate in `canViewVisible` that causes the invited-outsider
-  miss (AS-002). Keep `/v/:id` and its versionId-addressed loader; only delete the dead
-  `createLoadViewer` — do NOT merge `createLoadContent` (different addressing) (F12).
+- **Reuse, don't rebuild:** `createResolveDocRole` + `isWorkspaceMemberOfDoc` resolve
+  owner+invited+link+workspace against the doc's real workspace, now sourced from the two axis
+  columns (`workspace_role`, `link_role`) per `doc-access-two-axis` — `canViewDoc` is retired and
+  reconciled into `resolveAccess` (its C-010). Unify the gate on top of these; remove the separate
+  structural pre-gate in `canViewVisible` that causes the invited-outsider miss (AS-002). Keep
+  `/v/:id` and its versionId-addressed loader; only delete the dead `createLoadViewer` — do NOT
+  merge `createLoadContent` (different addressing) (F12).
 - **FE migration (F7, audited):** `ViewerScreen` threads `workspaceId` through `useParams`,
   `fetchViewerDoc`, `listAnnotations`, the React Query keys, and back-nav. Change service
   signatures to slug-only, re-key caches by slug, move every `setQueryData`/`prependAnnotation`
@@ -480,23 +489,27 @@ C-002/C-005) by carving out doc-centric read+write. Resolved 2026-06-14 → Mode
   the doc-read response carries the doc's OWN `workspaceId` (null if project-less); a signed-in
   member sources it from there to open those panels; anon / null-workspace → panels hidden.
   Became AS-030 + the Data Model read-response field + Linked Fields.
-- **Default link role (S3 from /mf-build S-001):** an `anyone_with_link` doc with no explicit
-  `share_links` role row admits at the default `viewer` role (least privilege), not fail-closed —
-  the general-access level itself is the grant. Implemented + tested in S-001
-  (resolve-access; the anon/no-link-row case). Documented here; not promoted to a constraint.
+- **Default link role (S3 from /mf-build S-001):** SUPERSEDED 2026-06-25 by `doc-access-two-axis`.
+  Under the two-axis model the link grant IS `link_role`; there is no separate "anyone_with_link
+  level with a missing role row" case to default — `link_role` null means no link at all, and a set
+  `link_role` is itself the role. The old least-privilege fallback no longer applies.
 
 ## Clarifications — 2026-06-23
 
-- **No logic change for doc-access shared-workspace model (workspace = shared group space):** the audit that
-  flipped the new-doc default from `restricted` to the workspace `settings.defaultAccess`
-  (default `anyone_in_workspace`; `workspaces`:C-007, render-publish:C-011, mcp-roundtrip:C-006)
-  does NOT touch resolution. `resolveAccess` / C-003 / AS-003 already grant a workspace member the
-  general-access role on an `anyone_in_workspace` doc — that was the rare path before and is now
-  the common one. Nothing here needs to change; this spec resolves whatever level a doc carries.
+> **SUPERSEDED 2026-06-25 by `doc-access-two-axis`.** The single-level framing below
+> (`settings.defaultAccess` → `anyone_in_workspace`, "resolve whatever level a doc carries") is
+> retired: the level is no longer stored, and the new-doc default is now `workspace_role = commenter`,
+> `link_role = null` applied at publish (`doc-access-two-axis` C-007). The substance still holds in
+> two-axis terms — workspace members get the workspace role on a workspace-shared doc, and the
+> project-less branch is still the deliberate fail-closed edge — restated below.
+
+- **Workspace-shared default (workspace = shared group space):** a new doc is shared with its
+  workspace at `workspace_role = commenter` by default, so members can read and comment immediately.
+  Resolution grants a member the doc's `workspace_role` when the caller is a member of the doc's own
+  workspace (C-003) — the common path. There is no stored level to resolve.
 - **C-011 / AS-008 fail-closed still holds and is still correct:** a project-less doc
-  (`project_id` null) grants NOTHING via the anyone-in-workspace path because it has no workspace —
-  even now that the level defaults to `anyone_in_workspace`. The owner still sees it (owner path,
-  AS-001), but members do not. This is intentional and unchanged. In practice both publish paths
+  (`project_id` null) grants NOTHING via the `workspace_role` axis because it has no workspace. The
+  owner still sees it (owner path, AS-001), but members do not. In practice both publish paths
   assign a project (web uses project context; MCP falls back to the owner's default project,
   mcp-roundtrip:C-006), so a published doc always has a workspace and the default takes effect
   through AS-003 — the project-less branch is the deliberate fail-closed edge, not a regression.
@@ -530,3 +543,4 @@ AS-030 (member workspace context) is the one /mf-build addition (S1 fix) — one
 | 2026-06-15 | Major (M6): + C-013 (anon rate-limiter keyed IP:doc, signed-in bypass) + C-014 (impersonation guard matches owner name, guest-only) — formalize S-004 S3. Snapshot 2026-06-15-2.md | /mf-build S-004 S3 |
 | 2026-06-15 | Major (M5): + AS-030 member workspace context (doc-read response carries doc workspaceId → member-only Share/Version on the doc-scoped viewer); + Data Model read-response field + Linked Fields; Clarifications 2026-06-15 (S1 resolution + S3 default-viewer). Snapshot 2026-06-15.md | /mf-build S1+S3 |
 | 2026-06-23 | Minor — doc-access shared-workspace model: +Clarifications-2026-06-23 confirming resolveAccess / C-003 / AS-003 already implement the shared-group-space default (no logic change; the anyone_in_workspace member path is now the common case) and that C-011/AS-008 project-less fail-closed is unchanged and still correct. No AS/constraint change → Minor, no snapshot. | doc-access audit 2026-06-23 |
+| 2026-06-25 | Major (M6) — two-axis cascade: access model rebuilt to two independent axes (`share_links.workspace_role` + `link_role`); `docs.general_access` DROPPED, level derived on read. Reversed C-003 to the `workspace_role`/`link_role` resolution; restated AS-001..AS-008 data lines off the axis columns (restricted = `{null,null}`); C-001 + System-Impact note `canViewDoc` retired → reconciled into `resolveAccess` + consolidated `canBrowseDoc`; superseded both Clarifications-2026-06-23 bullets and the 2026-06-15 default-link-role bullet. Source of truth: `doc-access-two-axis`. | doc-access-two-axis committed cascade |

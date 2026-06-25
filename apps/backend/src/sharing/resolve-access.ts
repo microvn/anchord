@@ -35,6 +35,18 @@ export interface AccessResult {
   role: Role | null;
   /** Whether the viewer may view the doc at all (⇔ `role !== null`). */
   canView: boolean;
+  /**
+   * doc-delete-trash S-004 / C-009: WHY the view was denied, when the answer matters.
+   * `"deleted"` is set ONLY for a soft-deleted doc AND ONLY for a viewer who WOULD HAVE
+   * been admitted before the delete (a member with a role, or an anon with a valid
+   * admission cookie). It always pairs with `canView: false`, so EVERY id-keyed read path
+   * that gates on `canView` still refuses (AS-028). Only the doc-viewer loader reads this
+   * field — to surface the gated "this doc was deleted" notice (AS-014). A viewer with NO
+   * prior access never sees this reason: they get the plain existence-hiding `DENIED`
+   * (no `reason`), byte-identical to a missing doc (AS-015, no enumeration oracle). Absent
+   * on every non-deleted result, so a normal allow/deny keeps its `{ role, canView }` shape.
+   */
+  reason?: "deleted";
 }
 
 /** No-access result — least privilege, the existence-hiding default. */
@@ -56,6 +68,18 @@ export interface ResolveAccessDeps {
    * pre-existing slug admit (that tightening is S-003).
    */
   secret?: string;
+  /**
+   * doc-delete-trash S-004 / C-009 — the SOFT-DELETE read PORT. `true` ⇔ the doc is tombstoned
+   * (`deleted_at IS NOT NULL`). It is the SINGLE place the deletion check enters the gate, so a
+   * deleted doc is unreadable on every id-keyed read path that funnels through resolveAccess
+   * (viewer, version content, version diff, annotation GET, comment POST) with no per-route
+   * re-derivation (AS-028). A PORT (not a raw `db.select`) so EVERY wiring inherits the check
+   * without the gate assuming a particular `db` surface — the annotation route, for one, wires a
+   * narrower `db` whose user path never touches `.select`. OPTIONAL: when omitted the gate treats
+   * every doc as live (no tombstone) — keeps wirings/tests that don't exercise deletion unchanged;
+   * prod (index.ts) always wires the real reader so the deletion guarantee holds end-to-end.
+   */
+  isDocDeleted?: (docId: string) => Promise<boolean>;
 }
 
 /**
@@ -71,7 +95,12 @@ export function createResolveAccess(
   db: DB,
   deps: ResolveAccessDeps,
 ): (docId: string, viewer: Viewer) => Promise<AccessResult> {
-  return async (docId, viewer): Promise<AccessResult> => {
+  /**
+   * The pre-deletion access decision: owner/invite/workspace/link for a user, capped
+   * admission cookie for an anon. This is the "would the viewer have been admitted" answer
+   * the deletion gate below keys on — it does NOT consider `deleted_at`.
+   */
+  const resolveLive = async (docId: string, viewer: Viewer): Promise<AccessResult> => {
     if (viewer.kind === "anon") {
       // capability-share-link S-003 / C-002: the readable /d/:slug address NO LONGER admits an
       // anon just because the doc is anyone_with_link. An anonymous visitor reaches an
@@ -130,5 +159,29 @@ export function createResolveAccess(
     // scoped to the doc's OWN workspace (AS-005). No role → denied (AS-006).
     const role = await deps.resolveDocRole(docId, viewer.userId);
     return role !== null ? { role, canView: true } : DENIED;
+  };
+
+  return async (docId, viewer): Promise<AccessResult> => {
+    // doc-delete-trash S-004 / C-009 — THE SINGLE DELETION CHOKEPOINT. The `deleted_at`
+    // check lives HERE, in the one gate every id-keyed read path funnels through (viewer,
+    // version content, version diff, annotation GET, comment POST). A soft-deleted doc is
+    // unreadable on ALL of them with NO per-route re-derivation (AS-028).
+    //
+    // Existence-hiding is preserved by gating the distinct `deleted` reason on PRIOR access:
+    //   · a viewer who WOULD HAVE been admitted (resolveLive.canView) → canView:false +
+    //     reason:"deleted" — the loader turns this into the gated "this doc was deleted"
+    //     notice (AS-014). They already knew the doc existed, so it leaks nothing new.
+    //   · everyone else → the plain DENIED (no reason), byte-identical to a missing/no-access
+    //     doc — so the notice can never be a slug-enumeration oracle (AS-015).
+    // canView is FALSE in both branches, so no read path serves a deleted doc's content.
+    //
+    // The tombstone is read through the `isDocDeleted` PORT (not a raw db.select) so this one
+    // gate stays agnostic of each wiring's `db` surface (C-009). When the port is unwired the
+    // doc is treated as live (no tombstone) and `resolveLive` is returned verbatim.
+    const live = await resolveLive(docId, viewer);
+    if (deps.isDocDeleted && (await deps.isDocDeleted(docId))) {
+      return live.canView ? { role: null, canView: false, reason: "deleted" } : DENIED;
+    }
+    return live;
   };
 }

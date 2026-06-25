@@ -56,12 +56,14 @@ describe.skipIf(!RUN)("workspace-project S-008: workspace-wide docs union (real 
         : opts.access === "anyone_with_link"
           ? { workspaceRole: null, linkRole: "commenter" as const }
           : { workspaceRole: null, linkRole: null };
-    if (axes.workspaceRole != null || axes.linkRole != null) {
-      await h.db
-        .insert(shareLinks)
-        .values({ docId: id, ...axes })
-        .onConflictDoUpdate({ target: shareLinks.docId, set: axes });
-    }
+    // createDocWithV1 already inserts a share_links row with the new-doc default
+    // (workspace_role=commenter). UPSERT to the requested axes — including the restricted
+    // {null,null} case, which must actively CLEAR the default (doc-access-two-axis), else the
+    // "restricted" doc would stay workspace-shared and leak into the access-filtered union.
+    await h.db
+      .insert(shareLinks)
+      .values({ docId: id, ...axes })
+      .onConflictDoUpdate({ target: shareLinks.docId, set: axes });
     return id;
   }
 
@@ -159,5 +161,105 @@ describe.skipIf(!RUN)("workspace-project S-008: workspace-wide docs union (real 
     expect([pActive1, pActive2].every((id) => span.has(id))).toBe(true);
     // The union rows carry NO per-project doc count field (it was unused, dropped 2026-06-21).
     for (const v of visible) expect((v as any).docCount).toBeUndefined();
+  });
+});
+
+// doc-delete-trash S-002 (C-002): the exclusion sweep — a soft-deleted doc (deleted_at IS NOT
+// NULL) must vanish from every web listing/count surface (browse union, project grid, project
+// count). Trash (S-003) is the sole place it remains. We set deleted_at directly in the fixture
+// (the S-001 delete service is route-level; here we exercise the repo reads in isolation).
+describe.skipIf(!RUN)("doc-delete-trash S-002: deleted docs excluded from listings (real Postgres)", () => {
+  let h: MigratedDb;
+  let WS = "";
+  let pBilling = "";
+  let pOther = "";
+  const A = `u-s002a-${process.pid}`;
+
+  async function mkDoc(opts: { n: number; projectId: string }): Promise<string> {
+    const { id } = await createDocRepo(h.db).createDocWithV1({
+      slug: `del-s002-${opts.n}-${process.pid}`,
+      title: `Del Doc ${opts.n}`,
+      kind: "markdown",
+      content: `# body ${opts.n}`,
+      contentHash: `hash-del-s002-${opts.n}-${process.pid}`,
+      ownerId: A,
+      projectId: opts.projectId,
+    });
+    // Workspace-shared so the access filter keeps it (owner A always passes anyway).
+    await h.db
+      .insert(shareLinks)
+      .values({ docId: id, workspaceRole: "commenter", linkRole: null })
+      .onConflictDoUpdate({ target: shareLinks.docId, set: { workspaceRole: "commenter" } });
+    return id;
+  }
+
+  beforeAll(async () => {
+    h = await withMigratedDb();
+    await h.db.insert(userTable).values([
+      { id: A, name: "Alice", email: `s002a-${process.pid}@itest.local`, emailVerified: true },
+    ]);
+    const seeded = await seedWorkspace(h.db, { userId: A, withProject: false });
+    WS = seeded.workspaceId;
+    const [billing] = await h.db
+      .insert(projects)
+      .values({ workspaceId: WS, name: "Billing", ownerId: A, isDefault: false })
+      .returning({ id: projects.id });
+    const [other] = await h.db
+      .insert(projects)
+      .values({ workspaceId: WS, name: "Other", ownerId: A, isDefault: false })
+      .returning({ id: projects.id });
+    pBilling = billing!.id;
+    pOther = other!.id;
+  });
+
+  afterAll(async () => {
+    if (h) {
+      await h.close();
+      await h.stop();
+    }
+  });
+
+  test("AS-006: a deleted doc is absent from the workspace browse union", async () => {
+    // 5 active docs across the workspace; then 1 is soft-deleted.
+    const ids: string[] = [];
+    for (let n = 1; n <= 5; n++) ids.push(await mkDoc({ n, projectId: pOther }));
+    const deletedId = ids[0]!;
+    await h.db.update(docs).set({ deletedAt: new Date() }).where(eq(docs.id, deletedId));
+
+    const ctx = createProjectsRouteRepo(h.db);
+    const union = await ctx.workspaceDocs(WS);
+    const inOther = union.filter((d) => d.projectId === pOther);
+    expect(inOther).toHaveLength(4); // 5 - 1 deleted
+    expect(inOther.some((d) => d.id === deletedId)).toBe(false);
+  });
+
+  test("AS-007: a deleted doc is absent from its project's doc grid", async () => {
+    // Billing holds 3 docs; delete 1.
+    const ids: string[] = [];
+    for (let n = 10; n <= 12; n++) ids.push(await mkDoc({ n, projectId: pBilling }));
+    const deletedId = ids[0]!;
+    await h.db.update(docs).set({ deletedAt: new Date() }).where(eq(docs.id, deletedId));
+
+    const ctx = createProjectsRouteRepo(h.db);
+    const grid = await ctx.docsInProject(pBilling);
+    expect(grid).toHaveLength(2); // 3 - 1 deleted
+    expect(grid.some((d) => d.id === deletedId)).toBe(false);
+  });
+
+  test("AS-008: the project doc count excludes a deleted doc", async () => {
+    // Use a fresh project so the count is deterministic: 3 docs, delete 1 → count 2.
+    const [pCount] = await h.db
+      .insert(projects)
+      .values({ workspaceId: WS, name: "Counted", ownerId: A, isDefault: false })
+      .returning({ id: projects.id });
+    const pid = pCount!.id;
+    const ids: string[] = [];
+    for (let n = 20; n <= 22; n++) ids.push(await mkDoc({ n, projectId: pid }));
+    await h.db.update(docs).set({ deletedAt: new Date() }).where(eq(docs.id, ids[0]!));
+
+    const ctx = createProjectsRouteRepo(h.db);
+    // The access-filtered per-project count (the projects-list `docCount` surface).
+    const counts = await ctx.countDocsByProject(WS, A);
+    expect(counts.get(pid)).toBe(2); // 3 - 1 deleted
   });
 });

@@ -68,6 +68,7 @@ mock.module("@/features/docs/services/client", () => ({
   publishDoc: mock(async () => env({ docId: "d1", slug: "s1", url: "/d/s1" })),
   moveDoc: mock(async () => env({})),
   copyDoc: mock(async () => env({})),
+  deleteDoc: mock(async () => env({ docId: "d1", slug: "spec", deleted: true })),
   renameProject,
   archiveProject,
   unarchiveProject,

@@ -28,7 +28,7 @@ import { NotFoundError } from "../http/errors";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
 import { docs, projects } from "../db/schema";
 import { createActivityRepo, type ActivityRepo, type ActivityRow } from "../activity/repo";
-import { createActivityVisibility, type ResolveDocAccess } from "../activity/visibility";
+import { createActivityVisibility, type ResolveDocAccess, type ResolveLiveRole } from "../activity/visibility";
 import { countByCategory, filterByCategory, isActivityCategory } from "../activity/category";
 import { computeStats } from "../activity/stats";
 import type { DB } from "../db/client";
@@ -51,6 +51,15 @@ export interface ActivityRoutesDeps {
    * foundation / pre-S-002 tests) means the whole workspace log is visible; prod ALWAYS wires it.
    */
   resolveAccess?: ResolveDocAccess;
+  /**
+   * doc-delete-trash S-006 / C-010: the deletion-IGNORING role resolver (the authoritative
+   * `resolveDocRole`, before the `deleted_at` chokepoint). The visibility gate uses it for
+   * `doc_deleted` / `doc_restored` rows so a member who HELD a role at delete time still sees the
+   * lifecycle event, while a member with no prior role does not (AS-032) — the deleted-aware
+   * `resolveAccess` would hide it from both. Optional: omitted leaves delete-lifecycle rows on the
+   * admin/actor-only fallback.
+   */
+  resolveLiveRole?: ResolveLiveRole;
   /**
    * workspace-activity S-004: resolves a doc-scoped event's CURRENT doc link target — the slug the
    * viewer is addressed by (`/d/:slug`) plus the project name — so the detail page's "Open doc"
@@ -77,7 +86,7 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
 
   // The ONE shared visibility gate (C-003). The feed-list + the single-event read both route
   // through it; S-003 (counts) and S-007 (stats) reuse the SAME instance — never a parallel filter.
-  const visibility = createActivityVisibility({ resolveAccess: deps.resolveAccess });
+  const visibility = createActivityVisibility({ resolveAccess: deps.resolveAccess, resolveLiveRole: deps.resolveLiveRole });
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))

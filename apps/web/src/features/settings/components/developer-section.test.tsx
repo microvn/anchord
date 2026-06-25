@@ -68,11 +68,13 @@ mock.module("@/features/settings/hooks/use-tokens", () => ({
 }));
 
 // The workspace list drives the create-token workspace picker. We DON'T `mock.module` the
-// `use-bootstrap` hook: bun's mock.module is global+persistent, so a hook stub here leaks this
-// file's ws-acme bootstrap into the real-useBootstrap workspaces-ui tests AND (by replacing the
-// module) drops its other exports, breaking any importer of `unwrapEnvelope`. Instead we seed the
-// react-query cache with the bootstrap payload (renderSection, below) so the REAL `useBootstrap`
-// returns it synchronously — no global stub, nothing to leak.
+// `use-bootstrap` hook (or the workspaces client): bun's mock.module is global + persistent, so a
+// stub here leaks into the real-useBootstrap workspaces-ui suites. Instead we seed the react-query
+// cache with the bootstrap payload (renderSection, below) so the REAL `useBootstrap` returns it.
+// Guard against the INBOUND leak (a sibling suite's `fetchBootstrap` stub returning a ws-1 workspace,
+// which would otherwise resolve the read to the wrong workspace): the seeded query is pinned fresh
+// with `staleTime: Infinity` AND `enabled` stays on, and renderSection asserts the picker shows our
+// seeded "Acme" so a leaked refetch can't silently swap the default — see installBootstrapMock note.
 const BOOTSTRAP = {
   userId: "u-1",
   activeWorkspaceId: "ws-acme",
@@ -102,9 +104,15 @@ beforeEach(() => {
 });
 
 function renderSection() {
-  // staleTime Infinity + a pre-seeded cache → useBootstrap reads the bootstrap synchronously and
-  // never hits the (unmocked) network, so the picker has its workspaces on first render.
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  // Pre-seed the bootstrap cache so useBootstrap reads our ws-acme payload synchronously. We use
+  // `refetchOnMount: false` (NOT just staleTime): `useApiQuery` passes `staleTime: undefined`, which
+  // overrides this client's default, so a mount-refetch would otherwise fire and — in the full suite
+  // — resolve against a sibling suite's leaked `fetchBootstrap` stub (returning a ws-1 workspace),
+  // clobbering the seed and defaulting the picker to the wrong workspace. `refetchOnMount: false`
+  // pins the seeded data regardless of staleTime, with no global mock (nothing leaks out).
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnMount: false } },
+  });
   qc.setQueryData(queryKeys.bootstrap(), BOOTSTRAP);
   return render(
     <QueryClientProvider client={qc}>

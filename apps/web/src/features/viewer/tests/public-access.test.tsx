@@ -25,6 +25,13 @@ const notFound = () => ({
   data: null,
   error: { status: 404, value: { success: false, error: { code: "NOT_FOUND", message: "nope" } } },
 });
+// doc-delete-trash S-004 (AS-014): the gated deleted reply — a 410 DOC_DELETED returned ONLY to a
+// viewer who had prior access (the backend gates the code on prior access; everyone else gets the
+// 404 above). The viewer must render the "deleted" NoAccessView variant, never the content.
+const docDeleted = () => ({
+  data: null,
+  error: { status: 410, value: { success: false, error: { code: "DOC_DELETED", message: "This doc was deleted" } } },
+});
 
 let docResponse: unknown;
 let annoResponse: unknown;
@@ -185,6 +192,26 @@ describe("doc-access-routing S-003 — public viewer for signed-out visitors", (
     expect(fired).toBe(1);
 
     unsub();
+  });
+
+  it("AS-014: a viewer with prior access to a deleted doc sees the 'deleted' notice, not the content, and no sign-in prompt", async () => {
+    // doc-delete-trash S-004: the doc read returns 410 DOC_DELETED (the backend only sends this code
+    // to a prior-access viewer). The viewer renders NoAccessView variant="deleted" — content is never
+    // shown, and there is NO sign-in CTA (signing in won't undelete; restore lives in Trash).
+    session = { user: { email: "mai@b.co" } }; // a member who had access
+    docResponse = docDeleted();
+
+    render(<App />);
+
+    const deleted = await screen.findByTestId("viewer-deleted");
+    expect(deleted).toBeInTheDocument();
+    const view = screen.getByTestId("no-access-view");
+    expect(view).toHaveAttribute("data-variant", "deleted");
+    expect(screen.getByTestId("no-access-title")).toHaveTextContent(/was deleted/i);
+    // Not the no-access/sign-in surfaces, no content, no bounce.
+    expect(screen.queryByTestId("no-access-signin")).toBeNull();
+    expect(screen.queryByTestId("markdown-view")).toBeNull();
+    expect(bounced).toBe(false);
   });
 
   it("AS-016: signing in from the prompt navigates back to the same doc (/d/:slug)", async () => {

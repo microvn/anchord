@@ -7,6 +7,7 @@ import {
   UnauthenticatedError,
   ForbiddenError,
   NotFoundError,
+  DocDeletedError,
   ConflictError,
   PayloadTooLargeError,
   RateLimitedError,
@@ -99,12 +100,15 @@ test("AS-006: an unexpected (non-DomainError) error surfaces as 500 with a gener
 });
 
 // ── C-003 (the full code→status table is the single source of truth) ───────────
-test("C-003: the ERROR_STATUS table maps every code to its fixed status (400/401/403/404/409/413/429/500)", () => {
+test("C-003: the ERROR_STATUS table maps every code to its fixed status (400/401/403/404/410/409/413/429/500)", () => {
   expect(ERROR_STATUS).toEqual({
     VALIDATION_ERROR: 400,
     UNAUTHENTICATED: 401,
     FORBIDDEN: 403,
     NOT_FOUND: 404,
+    // doc-delete-trash S-004 / C-009: a once-present, now-soft-deleted doc, surfaced only to a
+    // prior-access viewer (everyone else gets NOT_FOUND — existence-hiding).
+    DOC_DELETED: 410,
     CONFLICT: 409,
     PAYLOAD_TOO_LARGE: 413,
     RATE_LIMITED: 429,
@@ -118,6 +122,7 @@ test("C-003: each named domain error class derives its code+status from the tabl
     [new UnauthenticatedError(), "UNAUTHENTICATED", 401],
     [new ForbiddenError(), "FORBIDDEN", 403],
     [new NotFoundError(), "NOT_FOUND", 404],
+    [new DocDeletedError(), "DOC_DELETED", 410],
     [new ConflictError(), "CONFLICT", 409],
     [new PayloadTooLargeError(), "PAYLOAD_TOO_LARGE", 413],
     [new RateLimitedError(), "RATE_LIMITED", 429],

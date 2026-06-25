@@ -50,15 +50,21 @@ const fetchActivity = mock(async (_w: string, page = 1, _limit = 20) =>
 
 // bun mock.module is global + persistent: mock the WHOLE client surface (incl. the S-004 detail
 // reads + the S-007 stats read) so this partial stub never shadows them with `undefined` for a
-// later suite.
-mock.module("@/features/activity/services/client", () => ({
-  fetchActivity,
-  fetchActivityEvent: mock(async () => env({ event: null })),
-  fetchActivityRelated: mock(async () => env({ items: [] })),
-  fetchActivityStats: mock(async () =>
-    env({ counts: { all: 0, comments: 0, versions: 0, sharing: 0, people: 0 }, contributors: [], busiestDoc: null }),
-  ),
-}));
+// later suite. Sibling files (activity-detail-screen.test.tsx) also mock this module with an EMPTY
+// `fetchActivity`; whichever module-factory runs LAST at load time wins the live binding. In the
+// full suite that can be the empty one, so re-register this suite's mock in beforeEach — it re-points
+// the binding to OUR page-aware stub right before each test, making the result order-independent.
+function installMock() {
+  mock.module("@/features/activity/services/client", () => ({
+    fetchActivity,
+    fetchActivityEvent: mock(async () => env({ event: null })),
+    fetchActivityRelated: mock(async () => env({ items: [] })),
+    fetchActivityStats: mock(async () =>
+      env({ counts: { all: 0, comments: 0, versions: 0, sharing: 0, people: 0 }, contributors: [], busiestDoc: null }),
+    ),
+  }));
+}
+installMock();
 
 const { ActivityScreen } = await import("@/features/activity/components/activity-screen");
 
@@ -79,7 +85,10 @@ function App() {
 }
 
 describe("ActivityScreen (workspace-activity S-001)", () => {
-  beforeEach(() => fetchActivity.mockClear());
+  beforeEach(() => {
+    installMock(); // re-point the global mock.module binding back to this suite's stub (leak guard)
+    fetchActivity.mockClear();
+  });
 
   it("AS-001: renders the workspace feed — the newest comment row leads under Today", async () => {
     render(<App />);

@@ -16,6 +16,12 @@
 //         here. Under the shared-workspace model the workspace default is `anyone_in_workspace`, so
 //         a member can access (and sees events on) MOST docs; the filter excludes only docs
 //         explicitly set `restricted` that the member wasn't invited to.
+//       • EXCEPTION — `doc_deleted` / `doc_restored` (doc-delete-trash S-006 / C-010): the doc is
+//         tombstoned, so `resolveAccess` returns canView:false for EVERYONE (S-004) — keying on it
+//         would hide the lifecycle event even from someone who held a role at delete time. So these
+//         two route through `resolveLiveRole` (the deletion-IGNORING resolver) instead: a MEMBER
+//         sees the row iff they are the actor OR hold a surviving role (owner / invite). A member
+//         who never held a role does NOT (AS-032); admins still see it via the admin short-circuit.
 //
 // C-008 (read side): the doc-scoped gate is `resolveAccess`, which resolves membership against the
 // doc's OWN workspace. A row whose stored workspaceId disagrees with the doc's real workspace can
@@ -26,11 +32,35 @@
 
 import type { WorkspaceRole } from "../http/auth-gate";
 import type { AccessResult } from "../sharing/resolve-access";
+import type { Role } from "../sharing/roles";
 import type { Viewer } from "../sharing/access";
+import type { ActivityType } from "./types";
+
+// doc-delete-trash S-006 / C-010: the two soft-delete lifecycle events whose visibility CANNOT key
+// on the deleted-aware `resolveAccess` (which now returns canView:false for EVERYONE once the doc is
+// tombstoned — S-004). For these two, the rule is "actors who held a role at delete time PLUS
+// workspace admins" — so they route through the LIVE (deletion-ignoring) role resolver instead.
+const DELETE_LIFECYCLE_TYPES: ReadonlySet<ActivityType> = new Set<ActivityType>([
+  "doc_deleted",
+  "doc_restored",
+]);
 
 /** A row the gate decides on — only the fields the visibility decision needs. */
 export interface VisibilityRow {
   docId: string | null;
+  /**
+   * doc-delete-trash S-006 / C-010: the event type, so the gate can special-case `doc_deleted` /
+   * `doc_restored` (whose doc is tombstoned → `resolveAccess` refuses everyone). Optional so the
+   * pre-S-006 callers / tests that pass `{ docId }` keep working — an absent type falls through to
+   * the normal `resolveAccess` path unchanged.
+   */
+  type?: ActivityType;
+  /**
+   * doc-delete-trash S-006 / C-010: the row's actor. For a delete-lifecycle row, the actor who did
+   * the delete/restore always sees their own row even though the doc is now tombstoned. Optional —
+   * absent leaves the actor-arm off.
+   */
+  actorUserId?: string | null;
 }
 
 /** The viewer the gate decides for: their workspace role + their user id. */
@@ -46,6 +76,18 @@ export interface ActivityViewer {
  * the whole workspace log unchanged; prod ALWAYS wires it (index.ts) so the gate is real.
  */
 export type ResolveDocAccess = (docId: string, viewer: Viewer) => Promise<AccessResult>;
+
+/**
+ * doc-delete-trash S-006 / C-010 — the DELETION-IGNORING role resolver (the same authoritative
+ * `resolveDocRole` the access gate wraps, BEFORE the `deleted_at` chokepoint). It answers "would
+ * this user hold a role on the doc if it weren't deleted" — i.e. did they hold one at delete time
+ * (a surviving owner / invite grant). Used ONLY for `doc_deleted` / `doc_restored` rows, so a
+ * prior-role-holder still sees the lifecycle event the deleted-aware `resolveAccess` would hide
+ * from everyone (AS-032). A non-null role ⇒ visible. Optional: omitted (pre-S-006 wirings / tests)
+ * means delete-lifecycle rows fall back to the normal `resolveAccess` path (admin/actor-only in
+ * practice, since the doc is tombstoned).
+ */
+export type ResolveLiveRole = (docId: string, userId: string) => Promise<Role | null>;
 
 export interface ActivityVisibility {
   /**
@@ -66,12 +108,42 @@ export interface ActivityVisibility {
  * Build the single visibility gate. `resolveAccess` is the doc viewer's authoritative gate; when
  * omitted (S-001 foundation / tests that don't exercise visibility) every row is visible.
  */
-export function createActivityVisibility(deps: { resolveAccess?: ResolveDocAccess }): ActivityVisibility {
-  const { resolveAccess } = deps;
+export function createActivityVisibility(deps: {
+  resolveAccess?: ResolveDocAccess;
+  resolveLiveRole?: ResolveLiveRole;
+}): ActivityVisibility {
+  const { resolveAccess, resolveLiveRole } = deps;
+
+  // doc-delete-trash S-006 / C-010: decide a `doc_deleted` / `doc_restored` row for a MEMBER. The
+  // doc is tombstoned, so `resolveAccess` says canView:false for everyone — keying on it would hide
+  // the lifecycle event even from someone who held a role at delete time. Instead: the row's ACTOR
+  // always sees their own delete/restore, and anyone with a SURVIVING role (resolveLiveRole != null,
+  // the deletion-ignoring resolver) is treated as having "had a role at delete time". A member with
+  // no prior role resolves null → hidden (AS-032). Cached per distinct docId like the normal path.
+  async function decideDeleteLifecycle(
+    row: VisibilityRow,
+    viewer: ActivityViewer,
+    cache: Map<string, boolean>,
+  ): Promise<boolean> {
+    if (row.actorUserId != null && row.actorUserId === viewer.userId) return true;
+    if (row.docId == null) return true; // a lifecycle row should always carry a docId; null = no doc to gate
+    if (!resolveLiveRole) {
+      // No live resolver wired: fall back to the deleted-aware gate (admin/actor only in practice).
+      return resolveAccess ? (await resolveAccess(row.docId, { kind: "user", userId: viewer.userId })).canView : true;
+    }
+    const cacheKey = `live:${row.docId}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const role = await resolveLiveRole(row.docId, viewer.userId);
+    const seen = role !== null;
+    cache.set(cacheKey, seen);
+    return seen;
+  }
 
   // Decide one row. Admin → always. Workspace-level (docId null) → always (the member is a current
-  // member, proven by requireWorkspaceMember upstream, F-14). Doc-scoped → resolveAccess at READ
-  // time against the doc's CURRENT access (F-2); no resolver wired → visible (foundation mode).
+  // member, proven by requireWorkspaceMember upstream, F-14). A delete-lifecycle row → the prior-
+  // role-holder rule (C-010, above). Otherwise doc-scoped → resolveAccess at READ time against the
+  // doc's CURRENT access (F-2); no resolver wired → visible (foundation mode).
   async function decide(
     row: VisibilityRow,
     viewer: ActivityViewer,
@@ -79,6 +151,9 @@ export function createActivityVisibility(deps: { resolveAccess?: ResolveDocAcces
   ): Promise<boolean> {
     if (viewer.role === "admin") return true;
     if (row.docId == null) return true;
+    if (row.type && DELETE_LIFECYCLE_TYPES.has(row.type)) {
+      return decideDeleteLifecycle(row, viewer, cache);
+    }
     if (!resolveAccess) return true;
     const cached = cache.get(row.docId);
     if (cached !== undefined) return cached;

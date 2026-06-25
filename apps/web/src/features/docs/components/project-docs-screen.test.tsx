@@ -45,6 +45,7 @@ mock.module("@/features/docs/services/client", () => ({
   publishDoc: mock(async () => env({ docId: "d1", slug: "s1", url: "/d/s1" })),
   moveDoc: mock(async () => env({ docId: "d1", slug: "spec", projectId: "p1" })),
   copyDoc: mock(async () => env({ docId: "d2", slug: "spec-copy", projectId: "p1" })),
+  deleteDoc: mock(async () => env({ docId: "d1", slug: "spec", deleted: true })),
 }));
 
 const { ProjectDocsScreen } = await import("@/features/docs/components/project-docs-screen");

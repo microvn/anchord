@@ -19,6 +19,10 @@ export const ERROR_STATUS = {
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  // doc-delete-trash S-004 / C-009: a doc that EXISTED but was soft-deleted, surfaced ONLY
+  // to a viewer who had prior access (existence-hiding holds for everyone else — they get
+  // NOT_FOUND). 410 GONE is the honest HTTP semantic for a once-present, now-removed resource.
+  DOC_DELETED: 410,
   CONFLICT: 409,
   PAYLOAD_TOO_LARGE: 413,
   RATE_LIMITED: 429,
@@ -50,6 +54,12 @@ export class UnauthenticatedError extends defineError("UNAUTHENTICATED", "Authen
 export class ForbiddenError extends defineError("FORBIDDEN", "Forbidden") {}
 /** 404 — resource does not exist (or is hidden as if it does not). */
 export class NotFoundError extends defineError("NOT_FOUND", "Not found") {}
+/**
+ * 410 — a doc that EXISTED but was soft-deleted into Trash (doc-delete-trash S-004 / C-009).
+ * Thrown ONLY for a viewer who would have had access before the delete; everyone else gets
+ * the standard {@link NotFoundError} (existence-hiding — no enumeration oracle, AS-015).
+ */
+export class DocDeletedError extends defineError("DOC_DELETED", "This doc was deleted") {}
 /** 409 — violates a uniqueness/state rule, e.g. a duplicate slug (AS-005). */
 export class ConflictError extends defineError("CONFLICT", "Conflict") {}
 /** 413 — the request body exceeds the allowed size. */

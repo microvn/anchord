@@ -18,6 +18,7 @@ const copyDoc = mock(async () => env({ docId: "d2", slug: "auth-spec-copy", proj
 mock.module("@/features/docs/services/client", () => ({
   moveDoc,
   copyDoc,
+  deleteDoc: mock(async () => env({ docId: "d1", slug: "auth-spec", deleted: true })),
   fetchProjects: mock(async () => env({ projects: [] })),
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
