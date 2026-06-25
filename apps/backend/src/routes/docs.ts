@@ -224,7 +224,7 @@ export function docsRoutes(deps: DocsRoutesDeps) {
     app.delete("/api/w/:workspaceId/docs/:slug", async ({ params, actor, ws }) => {
       try {
         const res = await deleteDoc(
-          { slug: params.slug, actorId: actor.userId },
+          { workspaceId: ws.workspaceId, slug: params.slug, actorId: actor.userId },
           {
             repo: deleteRepo,
             resolveDocRole,

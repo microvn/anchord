@@ -174,7 +174,7 @@ export interface DeleteResult {
  * The tombstone is idempotent (C-006): a second delete is a no-op and emits nothing.
  */
 export async function deleteDoc(
-  input: { slug: string; actorId: string },
+  input: { workspaceId: string; slug: string; actorId: string },
   deps: DocDeleteDeps,
 ): Promise<DeleteResult> {
   const doc = await deps.repo.findDocBySlug(input.slug);
@@ -182,7 +182,18 @@ export async function deleteDoc(
     throw new DocDeleteRejected("doc not found", "not_found");
   }
 
-  // The two orthogonal gate arms (C-003). Resolve both, OR them.
+  // C-007 (cross-tenant bind): the slug lookup is GLOBAL, so resolve the doc's OWN workspace and
+  // require it to equal the PATH workspace BEFORE the gate. Without this, the workspace-admin arm
+  // (scoped to the path workspace) would admit an admin of workspace X deleting a doc in workspace
+  // Y by its slug. A foreign-workspace (or project-less) doc is indistinguishable from a
+  // non-existent one → 404 (existence-hiding), so the admin arm can never reach across tenants.
+  // This also captures `workspaceId` for the tombstone (C-005).
+  const workspaceId = await deps.repo.workspaceOfDoc(doc.id);
+  if (workspaceId == null || workspaceId !== input.workspaceId) {
+    throw new DocDeleteRejected("doc not found", "not_found");
+  }
+
+  // The two orthogonal gate arms (C-003), now both scoped to the doc's own workspace. OR them.
   const role = await deps.resolveDocRole(doc.id, input.actorId);
   const isAdmin = deps.isWorkspaceAdmin ? !!(await deps.isWorkspaceAdmin(input.actorId)) : false;
 
@@ -197,14 +208,6 @@ export async function deleteDoc(
   const perDocAdmits = role !== null && can(role, "edit");
   if (!perDocAdmits && !isAdmin) {
     throw new DocDeleteRejected("insufficient permission to delete this doc", "forbidden");
-  }
-
-  // C-005: capture the doc's OWN workspace at delete time. A doc with no resolvable workspace
-  // (project-less / vanished) cannot be placed in any Trash → treat as not-found (nothing to
-  // anchor the tombstone to). The route should never hit this for a published doc.
-  const workspaceId = await deps.repo.workspaceOfDoc(doc.id);
-  if (workspaceId == null) {
-    throw new DocDeleteRejected("doc not found", "not_found");
   }
 
   // C-006: the CONDITIONAL tombstone (UPDATE … WHERE deleted_at IS NULL). Returns rows changed.

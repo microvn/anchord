@@ -380,6 +380,27 @@ describe("DELETE /api/w/:workspaceId/docs/:slug — soft-delete into Trash", () 
     expect(repo.tombstonedAt).toBeInstanceOf(Date);
   });
 
+  test("C-007: an admin of the PATH workspace cannot delete a doc that lives in ANOTHER workspace (cross-tenant bind)", async () => {
+    // The slug lookup is global; the doc resolves to workspace ws_OTHER while the request targets
+    // /api/w/ws_1/... and the caller is an admin of ws_1 with NO per-doc role. Without the workspace
+    // bind, the admin arm would admit and tombstone a foreign-workspace doc. The bind makes the doc
+    // indistinguishable from a non-existent one → 404, no tombstone.
+    const repo = fakeDeleteRepo({ workspaceId: "ws_OTHER" });
+    const app = buildDeleteApp({
+      resolveSession: async () => ({ userId: "u_huy" }),
+      deleteRepo: repo,
+      resolveDocRole: async () => null, // not a member of the doc's own workspace
+      isWorkspaceAdmin: async () => true, // admin of the PATH workspace (ws_1)
+    });
+    const res = await app.handle(del("spec-v1-abc"));
+    expect(res.status).toBe(404);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("NOT_FOUND");
+    // No tombstone — the foreign doc is untouched.
+    expect(repo.tombstonedAt).toBeUndefined();
+    expect(repo.softDeleteCalls).toBe(0);
+  });
+
   test("AS-004: a commenter is refused → 403 insufficient permission; doc stays active", async () => {
     const repo = fakeDeleteRepo();
     const app = buildDeleteApp({

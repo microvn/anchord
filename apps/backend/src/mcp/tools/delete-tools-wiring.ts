@@ -21,8 +21,6 @@ import { docs, projects } from "../../db/schema";
 import type { DB } from "../../db/client";
 import { deleteDoc, restoreDoc, type DocDeleteRepo } from "../../workspace/doc-delete";
 import { createDocDeleteRepo } from "../../workspace/doc-delete-repo";
-import type { Viewer } from "../../sharing/access";
-import type { AccessResult } from "../../sharing/resolve-access";
 import type { Role } from "../../sharing/roles";
 import type { ActivityEmitDeps } from "../../activity/emit";
 import { createActivityRepo } from "../../activity/repo";
@@ -31,8 +29,14 @@ import type { ToolDef } from "../server";
 
 export interface DeleteToolsWiringDeps {
   db: DB;
-  /** The shared authoritative per-doc gate (doc-access-routing S-001) — the per-doc arm of the gate. */
-  resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
+  /**
+   * The authoritative DELETION-IGNORING per-doc role resolver (`sharedResolveDocRole`) — the per-doc
+   * arm of the MCP gate. It MUST ignore the tombstone: `restore_document` runs on an already-deleted
+   * doc, and the deletion-AWARE `resolveAccess` returns role:null for a deleted doc, which would
+   * forbid restore for everyone (incl. the owner). Cross-tenant safety is the resolveInWorkspace bind
+   * (C-007), not this resolver.
+   */
+  resolveDocRole: (docId: string, userId: string) => Promise<Role | null>;
   /**
    * The restoring/deleting actor's display name — names the restorer's default project on the
    * C-004 fallback AND enriches the doc_deleted / doc_restored activity rows. When provided, a
@@ -47,13 +51,8 @@ export interface DeleteToolsWiringDeps {
  * the C-007 binding: a doc is resolved (by id or slug) ONLY when it lives in the token's workspace.
  */
 export function createMcpDeleteToolsPorts(deps: DeleteToolsWiringDeps): DeleteToolsPorts {
-  const { db, resolveAccess } = deps;
+  const { db, resolveDocRole } = deps;
   const repo: DocDeleteRepo = createDocDeleteRepo(db);
-  const resolveDocRole = async (docId: string, userId: string): Promise<Role | null> => {
-    const viewer: Viewer = { kind: "user", userId };
-    const { role } = await resolveAccess(docId, viewer);
-    return role;
-  };
   // Best-effort post-commit activity emit (doc_deleted / doc_restored, C-006). Wired only when a
   // name resolver is provided; the repo is built from `db` (mirrors routes/docs.ts). The service
   // emits ONLY when its conditional update changed a row, so there's no double-emit on retry.

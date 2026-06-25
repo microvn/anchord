@@ -628,7 +628,10 @@ const app = createApp({
       // doc_restored on change (C-006), anchored to the doc's own workspace via the service.
       ...createDeleteToolsForDb({
         db,
-        resolveAccess: sharedResolveAccess,
+        // DELETION-IGNORING resolver: restore_document gates on an already-deleted doc, so the
+        // deletion-aware sharedResolveAccess would forbid restore for everyone (D-2). Cross-tenant
+        // safety is the resolveInWorkspace bind (C-007), not the role resolver.
+        resolveDocRole: sharedResolveDocRole,
         resolveActorName,
       }),
     },

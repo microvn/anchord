@@ -68,7 +68,11 @@ export interface DeleteToolsPorts {
    * gate (NO admin arm over MCP, C-003), conditional idempotent tombstone, emit-on-change. Throws
    * the service's DocDeleteRejected (mapped to a tool error by the handler) on a too-low role.
    */
-  softDelete(input: { slug: string; actorId: string }): Promise<{ docId: string; slug: string }>;
+  softDelete(input: {
+    workspaceId: string;
+    slug: string;
+    actorId: string;
+  }): Promise<{ docId: string; slug: string }>;
   /**
    * Call the EXISTING restore service (workspace/doc-delete.ts `restoreDoc`) — owner-or-editor
    * gate (NO admin arm), workspace-scoped resolve, restorer-default-project fallback,
@@ -127,7 +131,11 @@ export function deleteDocumentHandler(
     try {
       // AS-016/AS-030: the existing soft-delete service. owner-or-editor only over MCP (no admin
       // arm — isWorkspaceAdmin is never wired here, C-003). Idempotent (C-006).
-      const res = await ports.softDelete({ slug: doc.slug, actorId: ctx.userId });
+      const res = await ports.softDelete({
+        workspaceId: ctx.workspaceId,
+        slug: doc.slug,
+        actorId: ctx.userId,
+      });
       return { docId: res.docId, slug: res.slug, deleted: true };
     } catch (e) {
       // AS-030: a commenter/viewer (forbidden) or an existence-hiding refusal (not_found) both
