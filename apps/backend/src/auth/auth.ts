@@ -50,9 +50,17 @@ export async function onEmailVerified(
 
 // GAP-002 (deferred): sign-in rate-limit threshold/window were left to build time.
 // Sane default: 5 attempts per 15 minutes. Named so it is one place to tune and so
-// the C-007 test can assert against it rather than a magic number.
+// the C-007 test can assert against it rather than a magic number. This strict limit is
+// scoped to the PASSWORD sign-in path only (customRules below) — it must NOT apply to the
+// whole /api/auth/* surface, or high-frequency calls like get-session (fired on every route
+// change) hit 429 after a couple of navigations.
 export const SIGNIN_RATE_LIMIT_MAX = 5;
 export const SIGNIN_RATE_LIMIT_WINDOW_SECONDS = 15 * 60; // 900s
+
+// Global default for everything else under /api/auth/* (better-auth's own defaults). Generous
+// enough for get-session polling; brute-forceable credential paths get the strict rule above.
+export const AUTH_RATE_LIMIT_WINDOW_SECONDS = 60;
+export const AUTH_RATE_LIMIT_MAX = 100;
 
 // workspaces S-001 (AS-001/AS-002/C-001): when a user is created via better-auth, create
 // their OWN workspace named "default" (creator = admin) + a default project. It NEVER
@@ -220,12 +228,20 @@ export function createAuth(db: DB, opts: CreateAuthOptions) {
       // C-006: minimum 8 chars; better-auth hashes the password.
       minPasswordLength: MIN_PASSWORD_LENGTH,
     },
-    // C-007: rate-limit sign-in against brute force. Default window/threshold per GAP-002.
-    // `enabled` defaults true (prod); only the integration test seam turns it off.
+    // C-007: rate-limit sign-in against brute force — but ONLY the password sign-in path, via
+    // customRules. The top-level window/max is the GENERAL limit for all other /api/auth/*
+    // routes (get-session, etc.); applying the strict 5/15min globally made get-session 429
+    // after 1-2 page loads. `enabled` defaults true (prod); the integration test seam turns it off.
     rateLimit: {
       enabled: opts.rateLimitEnabled ?? true,
-      window: SIGNIN_RATE_LIMIT_WINDOW_SECONDS,
-      max: SIGNIN_RATE_LIMIT_MAX,
+      window: AUTH_RATE_LIMIT_WINDOW_SECONDS,
+      max: AUTH_RATE_LIMIT_MAX,
+      customRules: {
+        "/sign-in/email": {
+          window: SIGNIN_RATE_LIMIT_WINDOW_SECONDS,
+          max: SIGNIN_RATE_LIMIT_MAX,
+        },
+      },
     },
     // S-002: OAuth providers, each present ONLY when its creds were supplied (gated on
     // env). A missing provider is absent from socialProviders, so better-auth never

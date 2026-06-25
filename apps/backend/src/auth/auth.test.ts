@@ -51,14 +51,19 @@ test("AS-002.T1: wrong password is rejected — sign-in path requires email veri
   expect(typeof auth.api.signInEmail).toBe("function");
 });
 
-test("AS-002.T2: rate limiting is enabled with the chosen threshold/window (brute-force limit)", () => {
-  // Past the failure threshold → retries temporarily limited (AS-002.T2 / C-007).
-  // GAP-002 default: 5 attempts / 15 min.
+test("AS-002.T2: brute-force limit (5/15min) is scoped to the password sign-in path, not global", () => {
+  // C-007 / GAP-002: the strict 5-attempts-per-15-min threshold guards /sign-in/email via
+  // customRules. The top-level limit is the GENERAL /api/auth/* allowance — it must stay
+  // generous so high-frequency calls (get-session, fired on every route change) don't 429.
   expect(auth.options.rateLimit?.enabled).toBe(true);
-  expect(auth.options.rateLimit?.max).toBe(SIGNIN_RATE_LIMIT_MAX);
-  expect(auth.options.rateLimit?.window).toBe(SIGNIN_RATE_LIMIT_WINDOW_SECONDS);
+  // Strict rule lives on the sign-in path, NOT the global max/window.
+  const signInRule = auth.options.rateLimit?.customRules?.["/sign-in/email"];
+  expect(signInRule?.max).toBe(SIGNIN_RATE_LIMIT_MAX);
+  expect(signInRule?.window).toBe(SIGNIN_RATE_LIMIT_WINDOW_SECONDS);
   expect(SIGNIN_RATE_LIMIT_MAX).toBe(5);
   expect(SIGNIN_RATE_LIMIT_WINDOW_SECONDS).toBe(900);
+  // Global allowance is looser than the per-sign-in brute-force threshold.
+  expect(auth.options.rateLimit?.max).toBeGreaterThan(SIGNIN_RATE_LIMIT_MAX);
 });
 
 test("C-001: sessions are DB-backed (not JWT) and revocable", () => {
