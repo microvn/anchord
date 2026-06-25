@@ -13,16 +13,17 @@ The source of truth for product scope and decisions is the design doc:
 
 ## What anchord is
 
-Self-hosted, own-your-data platform to share and **annotate AI-generated docs**
-(HTML/Markdown specs, plans, reports from Claude/Cursor/Codex). Author publishes
-an artifact as a link; reviewers open it, read the rendered doc, and leave
-comments/highlights/suggestions in a right-hand margin. An agent pulls feedback
-back via MCP to revise. Everything runs on your own infra — data never leaves
-the box.
+Self-hosted, own-your-data platform to share and **annotate docs** — HTML,
+Markdown, or images — **built for the specs, plans, and reports your AI writes**
+(Claude/Cursor/Codex) but equally for docs written by hand. AI docs are the
+primary use case, not the only one. Author publishes an artifact as a link;
+reviewers open it, read the rendered doc, and leave comments/highlights/
+suggestions in a right-hand margin. An agent pulls feedback back via MCP to
+revise. Everything runs on your own infra — data never leaves the box.
 
-Positioning: "Vaultwarden for AI-generated docs." The differentiator is
-**own-your-data + free collaboration**, not "prettier than uselink." Do not
-trade that away. License is **AGPL-3.0**.
+Positioning: "Vaultwarden for AI docs." The differentiator is
+**own-your-data + free collaboration**, not "prettier than the hosted SaaS." Do
+not trade that away. License is **AGPL-3.0**.
 
 ## Architecture decisions (locked)
 
@@ -121,7 +122,8 @@ editor integrations. See design doc §4 for the full versioned feature table.
 - drizzle-kit owns schema/migrations; apply at boot with the runtime migrator
   (`drizzle-orm/postgres-js/migrator`), which is a runtime dep, so production
   images don't need drizzle-kit (a dev dep).
-- Any AI-generated HTML must pass through dompurify before render or storage.
+- Any doc HTML (AI-generated or hand-written — both are untrusted) must pass
+  through dompurify before render or storage.
 - Keep the Drizzle schema portable: avoid Postgres-only features that would
   close the door on a future SQLite build.
 
