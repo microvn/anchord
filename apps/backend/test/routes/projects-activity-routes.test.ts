@@ -55,6 +55,7 @@ function fakeProjectRepo() {
         name: input.name,
         ownerId: input.ownerId,
         isDefault: input.isDefault,
+        visibility: input.visibility,
         archivedAt: null,
       };
       projects.push(row);
@@ -74,6 +75,7 @@ function fakeProjectRepo() {
     },
     async setName() {},
     async setArchivedAt() {},
+    async setVisibility() {},
     async countDocs() {
       return 0;
     },

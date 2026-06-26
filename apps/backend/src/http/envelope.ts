@@ -29,6 +29,14 @@ export type ErrorEnvelope = {
     message: string;
     details?: unknown;
     field?: string;
+    /**
+     * project-visibility S-005 / C-009: an OPTIONAL, STABLE machine-readable discriminator
+     * that distinguishes one occurrence of a generic `code` (e.g. CONFLICT) from another, so
+     * the client branches on `reason`, never on the HTTP status or the human message text.
+     * Only present when the thrown error sets it (e.g. `reason: "visibility_boundary"` on the
+     * boundary-crossing move refusal); absent for every other conflict — backward-compatible.
+     */
+    reason?: string;
   };
   timestamp: string;
   path: string;
@@ -47,14 +55,27 @@ export class DomainError extends Error {
   readonly status: number;
   readonly details?: unknown;
   readonly field?: string;
+  /**
+   * project-visibility S-005 / C-009: optional stable discriminator surfaced in the error
+   * envelope so a client can tell one occurrence of a shared `code` apart from another.
+   */
+  readonly reason?: string;
 
-  constructor(args: { code: string; status: number; message: string; details?: unknown; field?: string }) {
+  constructor(args: {
+    code: string;
+    status: number;
+    message: string;
+    details?: unknown;
+    field?: string;
+    reason?: string;
+  }) {
     super(args.message);
     this.name = "DomainError";
     this.code = args.code;
     this.status = args.status;
     this.details = args.details;
     this.field = args.field;
+    this.reason = args.reason;
   }
 }
 
@@ -135,6 +156,7 @@ export function apiEnvelope<T extends Elysia<any, any, any, any, any, any>>(app:
       let message = "Internal server error";
       let details: unknown;
       let field: string | undefined;
+      let reason: string | undefined;
 
       if (error instanceof DomainError) {
         statusCode = error.status;
@@ -142,6 +164,7 @@ export function apiEnvelope<T extends Elysia<any, any, any, any, any, any>>(app:
         message = error.message;
         details = error.details;
         field = error.field;
+        reason = error.reason;
       } else if (elysiaCode === "NOT_FOUND") {
         // Elysia's BUILT-IN NotFoundError (an unmatched route) is NOT our DomainError, so it
         // would otherwise fall through to INTERNAL 500 — masking a route mismatch as a server
@@ -167,7 +190,13 @@ export function apiEnvelope<T extends Elysia<any, any, any, any, any, any>>(app:
 
       const envelope: ErrorEnvelope = {
         success: false,
-        error: { code, message, ...(details !== undefined ? { details } : {}), ...(field !== undefined ? { field } : {}) },
+        error: {
+          code,
+          message,
+          ...(details !== undefined ? { details } : {}),
+          ...(field !== undefined ? { field } : {}),
+          ...(reason !== undefined ? { reason } : {}),
+        },
         timestamp: new Date().toISOString(),
         path,
         statusCode,

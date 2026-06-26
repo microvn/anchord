@@ -29,12 +29,20 @@ const noSession: SessionResolver = async () => null;
 // it (C-007). A uuid-typed column would reject this at the DB layer.
 const ownerA: SessionResolver = async () => ({ userId: "u_abc123" });
 
-/** A DocRepo that records the last create and returns a fixed id (no DB). */
+/** A DocRepo that records the last create and returns a fixed id (no DB).
+ *  project-visibility S-004 (C-013): also returns the target project + derived access axes so
+ *  the route can surface them (PublishResult.project/.access). */
 function fakeRepo(): DocRepo & { last?: unknown } {
   const r: DocRepo & { last?: unknown } = {
     async createDocWithV1(input) {
       r.last = input;
-      return { id: "doc_fake_1" };
+      return {
+        id: "doc_fake_1",
+        projectId: input.projectId ?? null,
+        projectName: input.projectId != null ? "Fake Project" : null,
+        workspaceRole: "commenter",
+        linkRole: null,
+      };
     },
   };
   return r;

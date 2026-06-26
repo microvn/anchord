@@ -16,7 +16,7 @@
 
 import type { DB } from "../../db/client";
 import { createProjectRepo } from "../../workspace/repo";
-import { createProject } from "../../workspace/projects";
+import { createProject, canViewProject } from "../../workspace/projects";
 import { projectTools, type ProjectPorts, type ProjectSummary } from "./project-tools";
 import type { ToolDef } from "../server";
 
@@ -27,26 +27,43 @@ import type { ToolDef } from "../server";
  */
 export function createMcpProjectPorts(db: DB): ProjectPorts {
   const repo = createProjectRepo(db);
-  const toSummary = (p: { id: string; name: string }): ProjectSummary => ({
+  const toSummary = (p: {
+    id: string;
+    name: string;
+    visibility: "private" | "public";
+  }): ProjectSummary => ({
     projectId: p.id,
     name: p.name,
+    // project-visibility S-001: surface the project's visibility (AS-003/AS-004).
+    visibility: p.visibility,
   });
   return {
     async listActiveProjects(input): Promise<ProjectSummary[]> {
       // C-010/C-013: the workspace's ACTIVE (non-archived) projects, workspace-scoped.
+      // project-visibility S-002 / C-002 / C-003: filtered to the projects the TOKEN USER may
+      // VIEW (own + public, no admin exception) — another member's private project is absent.
       const rows = await repo.listActive(input.workspaceId);
-      return rows.map(toSummary);
+      return rows.filter((p) => canViewProject(input.userId, p)).map(toSummary);
     },
     async findProjectById(input): Promise<ProjectSummary | null> {
       // findById is scoped to (workspaceId, projectId): a foreign id → null → rejected (C-013).
+      // project-visibility S-002 / C-002: a project the token user can't view (another member's
+      // private) ALSO resolves to null → rejected identically (existence-hiding, AS-010).
       const row = await repo.findById(input.workspaceId, input.projectId);
-      return row ? toSummary(row) : null;
+      if (!row || !canViewProject(input.userId, row)) return null;
+      return toSummary(row);
     },
     async createProject(input): Promise<ProjectSummary> {
       // Reuse the workspace-project createProject service (C-002 any member) — a non-default
       // project owned by the token-owner in the token's workspace (C-010).
       const row = await createProject(
-        { workspaceId: input.workspaceId, ownerId: input.ownerId, name: input.name },
+        {
+          workspaceId: input.workspaceId,
+          ownerId: input.ownerId,
+          name: input.name,
+          // project-visibility S-001: thread the optional override; the service defaults to public.
+          visibility: input.visibility,
+        },
         { repo },
       );
       return toSummary(row);

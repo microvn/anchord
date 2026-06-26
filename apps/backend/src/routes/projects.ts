@@ -36,12 +36,18 @@ import {
   archiveProject,
   unarchiveProject,
   deleteProject,
+  setProjectVisibility,
   listProjects,
   filterBrowsableDocs,
+  projectNameForViewer,
+  canViewProject,
+  deriveNewDocAccess,
   ProjectRejected,
   MAX_PROJECT_NAME_LENGTH,
   type ProjectRepo,
+  type ProjectVisibility,
 } from "../workspace/projects";
+import { deriveLevel, type GeneralAccessLevel } from "../sharing/derive-level";
 import {
   createProjectRepo,
   createProjectsRouteRepo,
@@ -60,8 +66,20 @@ const browsePage = paginationQuery({ defaultLimit: 20, maxLimit: 100 });
 
 export const createProjectBodySchema = z.object({
   name: z.string().min(1, "project name is required").max(MAX_PROJECT_NAME_LENGTH),
+  // project-visibility-fe S-005 / C-001 / AS-018/AS-019: the web create may carry an explicit
+  // visibility choice (the New Project dialog's Public/Private control, default Public) — the web
+  // counterpart of MCP create_project's param. Optional + absence-tolerant: a body without it keeps
+  // the prior public default (createProject's `?? "public"`), so existing create flows are unchanged.
+  visibility: z.enum(["private", "public"]).optional(),
 });
-export const renameProjectBodySchema = createProjectBodySchema;
+// Rename takes ONLY a name (no visibility on rename — the toggle path owns visibility changes).
+export const renameProjectBodySchema = z.object({
+  name: z.string().min(1, "project name is required").max(MAX_PROJECT_NAME_LENGTH),
+});
+// project-visibility S-003 / C-008: the toggle body — visibility ∈ private | public.
+export const visibilityBodySchema = z.object({
+  visibility: z.enum(["private", "public"]),
+});
 
 export interface ProjectsRoutesDeps {
   db?: DB;
@@ -93,6 +111,22 @@ export interface ProjectsRoutesDeps {
     repo?: ActivityRepo;
     resolveActorName: (userId: string) => Promise<string | null>;
   };
+}
+
+/**
+ * project-visibility S-004 / AS-030 / C-011: the derived general-access LEVEL a NEW doc created in
+ * this project WOULD get — so the new-doc / move-copy picker DISPLAYS the server-derived outcome
+ * (carve-out included) instead of re-mirroring the rule client-side. Reuses the SAME two helpers the
+ * publish derivation uses: `deriveNewDocAccess` (the two share_links axes) → `deriveLevel` (the level).
+ * default (private shell) → anyone_in_workspace (carve-out); non-default public → anyone_in_workspace;
+ * non-default private → restricted.
+ */
+function newDocAccessLevel(p: {
+  isDefault: boolean;
+  visibility: ProjectVisibility;
+}): GeneralAccessLevel {
+  const { workspaceRole, linkRole } = deriveNewDocAccess(p);
+  return deriveLevel(workspaceRole, linkRole);
 }
 
 /** Map a ProjectRejected onto the right HTTP DomainError. */
@@ -152,10 +186,14 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
     .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
     // POST — any member creates a project (C-002).
     .post("/api/w/:workspaceId/projects", async ({ body, actor, ws, set }) => {
-      const { name } = validateBody(createProjectBodySchema, body);
+      const { name, visibility } = validateBody(createProjectBodySchema, body);
       try {
         const p = await createProject(
-          { workspaceId: ws.workspaceId, name, ownerId: actor.userId },
+          // project-visibility-fe S-005 / C-001: pass the chosen visibility straight through (the
+          // service defaults to "public" when undefined) — so an intended-private project is private
+          // the moment it exists, with no create-public-then-toggle window. ownerId stays the SERVER
+          // session actor (anti-forgery), never a body field.
+          { workspaceId: ws.workspaceId, name, ownerId: actor.userId, visibility },
           { repo },
         );
         // workspace-activity S-006 / AS-024 (C-005): a project create logs ONE `project` event
@@ -201,11 +239,40 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         throw err;
       }
     })
+    // PATCH visibility — toggle private↔public (project-visibility S-003 / C-008). Auth is the
+    // C-008 rule (owner always; admin only on a project they can SEE — own + public), enforced in
+    // setProjectVisibility, NOT the plain owner-or-admin manage gate. Touches only the project's
+    // visibility — never share_links — so existing docs' access is unchanged (AS-014).
+    .patch("/api/w/:workspaceId/projects/:id/visibility", async ({ params, body, actor, ws }) => {
+      const { visibility } = validateBody(visibilityBodySchema, body);
+      try {
+        const p = await setProjectVisibility(
+          {
+            workspaceId: ws.workspaceId,
+            projectId: params.id,
+            actorId: actor.userId,
+            isAdmin: ws.role === "admin",
+            visibility,
+          },
+          { repo },
+        );
+        return { id: p.id, visibility: p.visibility };
+      } catch (err) {
+        if (err instanceof ProjectRejected) throw mapProjectRejected(err);
+        throw err;
+      }
+    })
     // GET — browse list (active by default; includeArchived=true shows all).
     .get("/api/w/:workspaceId/projects", async ({ query, actor, ws }) => {
       const includeArchived = (query as Record<string, string>).includeArchived === "true";
       const page = browsePage.parse(query) as PaginationParams;
-      const list = await listProjects({ workspaceId: ws.workspaceId, includeArchived }, { repo });
+      // project-visibility S-002 / C-002 / C-003: the list is filtered to the projects the
+      // CALLER may view (own + public) — a private project of another member is absent, with no
+      // admin exception. listProjects applies the shared canViewProject predicate.
+      const list = await listProjects(
+        { workspaceId: ws.workspaceId, userId: actor.userId, includeArchived },
+        { repo },
+      );
       // S-007/C-010: paginate AFTER the (archive) filter — total is the filtered count, and
       // the `projects` key is RETAINED; `pagination` is additive.
       const total = list.length;
@@ -216,11 +283,27 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
       // reflects ONLY docs the caller can access, so it never leaks an out-of-access doc. A
       // project absent from the map has zero accessible docs → docCount 0.
       const docCounts = await ctx.countDocsByProject(ws.workspaceId, actor.userId);
+      const isWorkspaceAdmin = ws.role === "admin";
       return {
         projects: slice.map((p) => ({
           id: p.id,
           name: p.name,
           isDefault: p.isDefault,
+          // project-visibility S-003 / C-011 / AS-015: the list row carries `visibility` alongside
+          // `isDefault` so the web shows the Default badge + a private/public indicator.
+          visibility: p.visibility,
+          // project-visibility S-003 (AS-015 extension) / C-008 / C-011: a server-computed flag —
+          // true iff the viewer may toggle THIS project's visibility — so the FE renders the toggle
+          // affordance without re-deriving the gate. MIRRORS the setProjectVisibility gate EXACTLY:
+          // owner always; a workspace admin only on a project they can SEE (own + public, via the
+          // shared canViewProject) — so an admin never gets the affordance on another member's
+          // private project (it isn't in this list anyway, S-002/C-003). Uses ownerId from the repo
+          // row WITHOUT exposing raw ownerId in the payload.
+          canToggleVisibility:
+            p.ownerId === actor.userId || (isWorkspaceAdmin && canViewProject(actor.userId, p)),
+          // project-visibility S-004 / AS-030 / C-011: the derived level a NEW doc here would get,
+          // so the pre-publish access hint shows the server-derived outcome (carve-out included).
+          newDocAccess: newDocAccessLevel(p),
           archived: p.archivedAt != null,
           docCount: docCounts.get(p.id) ?? 0,
         })),
@@ -346,12 +429,12 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
         isWorkspaceMember: () => Promise.resolve(true),
       })) as WorkspaceDocRow[];
 
-      // Active-project list — WHOLE-workspace, every ACTIVE project (AS-024). This feeds the
-      // move/copy target picker + the project-count stat; it does NOT carry a per-project doc
-      // count (no consumer of this read renders one — the Projects browser shows per-project
-      // counts via its own useProjectsBrowse read).
+      // Active-project list — every ACTIVE project the CALLER may VIEW (AS-024 + project-
+      // visibility S-002 / C-002 / AS-008): this feeds the move/copy target picker, so it MUST
+      // apply the same canViewProject predicate — a private project of another member never
+      // leaks into the picker (no name leak). listProjects filters by userId.
       const activeProjects = await listProjects(
-        { workspaceId: ws.workspaceId, includeArchived: false },
+        { workspaceId: ws.workspaceId, userId: actor.userId, includeArchived: false },
         { repo },
       );
 
@@ -398,7 +481,16 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
           // S-008/AS-023: each doc carries the project it belongs to (name joined in the union
           // query) so the consumer needs no second projects fetch to label a card.
           projectId: d.projectId,
-          projectName: d.projectName,
+          // project-visibility S-006 / C-004 / AS-026: SUPPRESS the project NAME on the card for a
+          // non-owner of a PRIVATE project — the doc still lists (per-doc access, C-005), but the
+          // private project's name must not leak. `projectNameForViewer` reuses the ONE shared
+          // `canViewProject` predicate (own + public); the owner (and any member of a public project)
+          // keeps the real name, a non-owner of a private project gets null.
+          projectName: projectNameForViewer(actor.userId, {
+            name: d.projectName,
+            ownerId: d.projectOwnerId,
+            visibility: d.projectVisibility,
+          }),
           // doc-delete-trash S-001 / C-003: drives the ⋯-menu Delete item (owner/editor/admin).
           canDelete: canDeleteById.get(d.id) ?? false,
         })),
@@ -409,6 +501,12 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
           id: p.id,
           name: p.name,
           isDefault: p.isDefault,
+          // project-visibility S-003 / C-011: the move/copy target picker option carries
+          // `visibility` too (the same badge the projects-list shows) — additive, zero-risk.
+          visibility: p.visibility,
+          // project-visibility S-004 / AS-030 / C-011: the picker (which reads /docs) shows the
+          // access a new doc in this target WOULD get without re-deriving the carve-out client-side.
+          newDocAccess: newDocAccessLevel(p),
           archived: p.archivedAt != null,
         })),
         pagination: buildPagination({ page: page.page, limit: page.limit, total }),

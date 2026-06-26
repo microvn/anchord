@@ -39,8 +39,11 @@ export type ErrorCode = keyof typeof ERROR_STATUS;
 function defineError(code: Exclude<ErrorCode, "INTERNAL">, defaultMessage: string) {
   const status = ERROR_STATUS[code];
   return class extends DomainError {
-    constructor(message: string = defaultMessage, opts?: { details?: unknown; field?: string }) {
-      super({ code, status, message, details: opts?.details, field: opts?.field });
+    constructor(
+      message: string = defaultMessage,
+      opts?: { details?: unknown; field?: string; reason?: string },
+    ) {
+      super({ code, status, message, details: opts?.details, field: opts?.field, reason: opts?.reason });
       this.name = code;
     }
   };

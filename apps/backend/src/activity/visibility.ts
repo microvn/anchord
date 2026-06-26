@@ -49,6 +49,15 @@ const DELETE_LIFECYCLE_TYPES: ReadonlySet<ActivityType> = new Set<ActivityType>(
 export interface VisibilityRow {
   docId: string | null;
   /**
+   * project-visibility S-006 / C-010: the row's project, so the gate can recognise a PROJECT-LEVEL
+   * event (`docId == null && projectId != null` — e.g. project created/renamed/archived) and gate it
+   * by the project's visibility. A private project's project-level events are visible ONLY to its
+   * owner — INCLUDING hidden from admins (no admin short-circuit, mirrors C-003). Optional so the
+   * pre-S-006 callers / tests that pass `{ docId }` keep working — an absent projectId means the row
+   * is not project-level and falls through to the existing doc/workspace path unchanged.
+   */
+  projectId?: string | null;
+  /**
    * doc-delete-trash S-006 / C-010: the event type, so the gate can special-case `doc_deleted` /
    * `doc_restored` (whose doc is tombstoned → `resolveAccess` refuses everyone). Optional so the
    * pre-S-006 callers / tests that pass `{ docId }` keep working — an absent type falls through to
@@ -89,6 +98,18 @@ export type ResolveDocAccess = (docId: string, viewer: Viewer) => Promise<Access
  */
 export type ResolveLiveRole = (docId: string, userId: string) => Promise<Role | null>;
 
+/**
+ * project-visibility S-006 / C-010 / C-004 — resolve a PROJECT's visibility + owner so the gate can
+ * decide a project-level row. Returns `{ isPrivate, ownerId }` for the project, or `null` when the
+ * project doesn't exist (a project-level row pointing at a missing project is then hidden from
+ * non-actors, the safe default). Used ONLY for project-level rows (`docId == null && projectId !=
+ * null`); doc-level + workspace-level rows never call it. Optional: omitted (pre-S-006 wirings /
+ * tests) means project-level rows fall through to the existing "doc-less ⇒ visible" rule unchanged.
+ */
+export type ResolveProjectVisibility = (
+  projectId: string,
+) => Promise<{ isPrivate: boolean; ownerId: string | null } | null>;
+
 export interface ActivityVisibility {
   /**
    * Keep only the rows `viewer` may see, in input order (recent-first preserved). Admins pass
@@ -111,8 +132,41 @@ export interface ActivityVisibility {
 export function createActivityVisibility(deps: {
   resolveAccess?: ResolveDocAccess;
   resolveLiveRole?: ResolveLiveRole;
+  resolveProjectVisibility?: ResolveProjectVisibility;
 }): ActivityVisibility {
-  const { resolveAccess, resolveLiveRole } = deps;
+  const { resolveAccess, resolveLiveRole, resolveProjectVisibility } = deps;
+
+  // project-visibility S-006 / C-010: is this a PROJECT-LEVEL row (a doc-less event whose subject is
+  // a project — created/renamed/archived/visibility-changed)? Such a row carries projectId but no
+  // docId. (A doc-level event always carries docId, so it is NOT project-level even if it also has a
+  // projectId for chip context.)
+  const isProjectLevel = (row: VisibilityRow): boolean =>
+    row.docId == null && row.projectId != null;
+
+  // project-visibility S-006 / C-010 — decide a PROJECT-LEVEL row. A private project's project-level
+  // events are visible ONLY to its owner: hidden from other members AND from admins (the admin
+  // short-circuit does NOT apply here — mirrors C-003's no-admin-exception for private projects). A
+  // PUBLIC project's project-level events stay visible to everyone (the workspace-level default). No
+  // resolver wired (pre-S-006) → fall back to "visible" (the old doc-less rule). Cached per project.
+  async function decideProjectLevel(
+    row: VisibilityRow,
+    viewer: ActivityViewer,
+    cache: Map<string, boolean>,
+  ): Promise<boolean> {
+    if (!resolveProjectVisibility) return true; // foundation mode: doc-less ⇒ visible (unchanged)
+    const projectId = row.projectId as string;
+    const cacheKey = `proj:${projectId}:${viewer.userId}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const project = await resolveProjectVisibility(projectId);
+    // Missing project, or public → visible to all (public project-level events are workspace-visible).
+    // Private → owner-only, even for an admin (C-010 mirrors C-003: no admin exception).
+    const seen = project == null
+      ? false // a project-level row whose project vanished: hide it from non-actors (safe default)
+      : !project.isPrivate || project.ownerId === viewer.userId;
+    cache.set(cacheKey, seen);
+    return seen;
+  }
 
   // doc-delete-trash S-006 / C-010: decide a `doc_deleted` / `doc_restored` row for a MEMBER. The
   // doc is tombstoned, so `resolveAccess` says canView:false for everyone — keying on it would hide
@@ -149,6 +203,13 @@ export function createActivityVisibility(deps: {
     viewer: ActivityViewer,
     cache: Map<string, boolean>,
   ): Promise<boolean> {
+    // project-visibility S-006 / C-010: the PROJECT-LEVEL private gate runs FIRST — before the admin
+    // short-circuit — so a private project's project-level events are owner-only even for an admin
+    // (the admin allowance below must NOT override it). A doc-less event with a projectId is the only
+    // row this branch claims; everything else (doc-level, workspace-level) falls through unchanged.
+    if (isProjectLevel(row)) {
+      return decideProjectLevel(row, viewer, cache);
+    }
     if (viewer.role === "admin") return true;
     if (row.docId == null) return true;
     if (row.type && DELETE_LIFECYCLE_TYPES.has(row.type)) {
@@ -164,7 +225,16 @@ export function createActivityVisibility(deps: {
 
   return {
     async filterVisible(rows, viewer) {
-      if (viewer.role === "admin") return rows; // sees all — skip every per-doc resolve
+      // An admin sees every doc-level + workspace-level event (the per-doc resolve is skipped). But
+      // project-visibility S-006 / C-010 carves out PRIVATE project-level rows even from admins, so
+      // the blanket admin fast-path only holds when there are no such rows to gate: if any row is
+      // project-level AND a project-visibility resolver is wired, admins fall through to `decide`
+      // (which still short-circuits their doc-level resolves) so those private rows get filtered.
+      const adminMustGate =
+        viewer.role === "admin" &&
+        resolveProjectVisibility != null &&
+        rows.some(isProjectLevel);
+      if (viewer.role === "admin" && !adminMustGate) return rows; // sees all — skip every resolve
       const cache = new Map<string, boolean>(); // one resolve per distinct docId per call
       const out: typeof rows = [];
       for (const row of rows) {

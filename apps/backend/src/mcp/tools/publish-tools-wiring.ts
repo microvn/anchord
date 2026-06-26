@@ -60,14 +60,23 @@ export function createMcpCreateDocumentPort(db: DB, appUrl: string): CreateDocum
       },
       { repo, resolveProjectId },
     );
-    // doc-access-two-axis S-002 (C-007): the doc's share_links row is created by the
-    // publish repo with the FIXED new-doc default (workspace_role = commenter, link_role =
-    // null) — the SAME default as the web publish surface, not the old `restricted`.
-    // Visibility is never *chosen* via MCP in v0.
+    // project-visibility S-004 (C-007): the doc's share_links row is created by the publish
+    // repo with axes DERIVED from the target project. With no projectId the doc lands in the
+    // owner's DEFAULT project (the resolver's fallback) → the carve-out → {commenter,null} →
+    // the reviewer can view+comment (the agent round-trip stays reviewable — AS-019). With an
+    // explicit projectId the access derives from THAT project's visibility.
     // Return the agent-facing shape (AS-003.T4). The publish service returns a RELATIVE
     // `/d/:slug`; the agent has no origin context, so make it ABSOLUTE against APP_URL — else
     // the returned link is unusable outside the browser (e.g. `/d/foo` with no domain).
-    return { docId: res.docId, slug: res.slug, url: absoluteLink(appUrl, res.url) };
+    // C-013 / AS-029: also report the target project + resulting access so the agent learns
+    // where the doc went + who can see it (never silent about a default-project fallback).
+    return {
+      docId: res.docId,
+      slug: res.slug,
+      url: absoluteLink(appUrl, res.url),
+      project: res.project,
+      access: res.access,
+    };
   };
 }
 

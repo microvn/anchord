@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import type { EdenResult } from "@/lib/api/use-api-query";
+import type { ProjectVisibility } from "@/features/docs/types";
 
 // Typed request thunks for the workspace-project backend routes
 // (`/api/w/:id/projects`, `…/projects/:id/docs`, `…/docs`, `…/search`).
@@ -75,9 +76,20 @@ export function fetchWorkspaceDocs(
   return treaty.api.w({ workspaceId }).docs.get(query) as Promise<EdenResult<unknown>>;
 }
 
-/** POST /api/w/:workspaceId/projects — create a project (any member, C-002). */
-export function createProject(workspaceId: string, name: string): Promise<EdenResult<unknown>> {
-  return treaty.api.w({ workspaceId }).projects.post({ name }) as Promise<EdenResult<unknown>>;
+/**
+ * POST /api/w/:workspaceId/projects — create a project (any member, C-002).
+ * project-visibility-fe S-005 / C-001: an optional explicit `visibility` (the New Project dialog's
+ * Public/Private control) rides the body — it COLLECTS the user's choice, the FE never derives it.
+ * Omitted → the server keeps its public default, so existing callers are unchanged.
+ */
+export function createProject(
+  workspaceId: string,
+  name: string,
+  visibility?: ProjectVisibility,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).projects.post({ name, visibility }) as Promise<
+    EdenResult<unknown>
+  >;
 }
 
 /**
@@ -90,6 +102,22 @@ export function renameProject(
   name: string,
 ): Promise<EdenResult<unknown>> {
   return treaty.api.w({ workspaceId }).projects({ id: projectId }).patch({ name }) as Promise<
+    EdenResult<unknown>
+  >;
+}
+
+/**
+ * PATCH /api/w/:workspaceId/projects/:id/visibility { visibility } — toggle a project private↔public
+ * (project-visibility S-003 / C-008). The server enforces the owner/admin gate (the FE only renders
+ * the affordance where the list row's `canToggleVisibility` is true, C-003) and touches ONLY the
+ * project's visibility — existing docs' sharing is unchanged (AS-014). Returns { id, visibility }.
+ */
+export function setProjectVisibility(
+  workspaceId: string,
+  projectId: string,
+  visibility: ProjectVisibility,
+): Promise<EdenResult<unknown>> {
+  return treaty.api.w({ workspaceId }).projects({ id: projectId }).visibility.patch({ visibility }) as Promise<
     EdenResult<unknown>
   >;
 }
@@ -165,15 +193,29 @@ export function publishDoc(
 }
 
 /**
- * POST /api/w/:workspaceId/docs/:slug/move { projectId } — relocate the doc as-is into another
- * project of THIS workspace (workspace-project S-004 / AS-008). Returns { docId, slug, projectId }.
+ * project-visibility S-005 / C-009: the caller's explicit access intent on a move that crosses a
+ * visibility boundary (a workspace-shared doc into a non-default private project). The SERVER
+ * decides when it is required — a non-crossing move omits it; a boundary-crossing move without it
+ * is refused with a `reason: "visibility_boundary"` discriminator. The FE never guesses the
+ * boundary itself (C-001); it sends this only after the user picks in the boundary alert (C-002).
+ */
+export type MoveAccessChoice = "make_private" | "keep_sharing";
+
+/**
+ * POST /api/w/:workspaceId/docs/:slug/move { projectId, accessChoice? } — relocate the doc as-is
+ * into another project of THIS workspace (workspace-project S-004 / AS-008). Returns
+ * { docId, slug, projectId }. project-visibility S-005 / C-009: pass `accessChoice` on the RETRY of
+ * a boundary-crossing move (the first attempt omits it; the server then refuses with
+ * `reason: "visibility_boundary"`, the FE shows the alert, and the chosen option rides the retry).
  */
 export function moveDoc(
   workspaceId: string,
   slug: string,
   projectId: string,
+  accessChoice?: MoveAccessChoice,
 ): Promise<EdenResult<unknown>> {
-  return treaty.api.w({ workspaceId }).docs({ slug }).move.post({ projectId }) as Promise<
+  const body = accessChoice ? { projectId, accessChoice } : { projectId };
+  return treaty.api.w({ workspaceId }).docs({ slug }).move.post(body) as Promise<
     EdenResult<unknown>
   >;
 }

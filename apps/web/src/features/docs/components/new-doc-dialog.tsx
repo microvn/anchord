@@ -17,7 +17,8 @@ import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
 import { publishDoc } from "@/features/docs/services/client";
 import { useProjects } from "@/features/docs/hooks/use-docs";
-import { NewDocProjectPicker } from "./new-doc-project-picker";
+import { NewDocProjectPicker, NewDocAccessHint } from "./new-doc-project-picker";
+import { PublishAccessNotice } from "./publish-access-notice";
 import { NewDocMcpPane } from "./new-doc-mcp-pane";
 import type { PublishResult } from "@/features/docs/types";
 
@@ -163,7 +164,11 @@ export function NewDocDialog({
       }
       await queryClient.invalidateQueries({ queryKey: queryKeys.docs(workspace.id) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.projects(workspace.id) });
-      toast.success(`Published “${body.title ?? res.data?.slug ?? "doc"}”`);
+      // S-004 / AS-016: the success surface reports WHERE the doc landed + its resulting access, read
+      // from the publish response (null-safe — AS-017; C-001 the FE never recomputes either value).
+      toast.success(`Published “${body.title ?? res.data?.slug ?? "doc"}”`, {
+        description: <PublishAccessNotice project={res.data?.project} access={res.data?.access} />,
+      });
       onOpenChange(false);
       resetAll();
       if (res.data?.slug) navigate(`/w/${workspace.id}/d/${res.data.slug}`);
@@ -327,6 +332,9 @@ export function NewDocDialog({
         {tab !== "mcp" && (
           <>
             <NewDocProjectPicker projects={projects ?? []} value={projectId} onChange={setProjectId} />
+            {/* project-visibility-fe S-002 / AS-008: DISPLAY the selected project's server-derived
+                newDocAccess — never recompute the carve-out (C-001). */}
+            <NewDocAccessHint access={(projects ?? []).find((p) => p.id === projectId)?.newDocAccess} />
             <div>
               <label htmlFor="new-doc-title" className="mb-1.5 block text-[12px] font-medium text-muted">Title</label>
               <input

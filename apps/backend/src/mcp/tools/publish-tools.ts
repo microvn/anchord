@@ -42,6 +42,14 @@ export interface CreateDocumentResult {
   docId: string;
   slug: string;
   url: string;
+  /**
+   * project-visibility S-004 (C-013 / AS-029): the target project the doc landed in + the
+   * doc's resulting access LEVEL ("restricted" / "anyone_in_workspace" / "anyone_with_link"),
+   * so an agent that passed no projectId LEARNS the doc went to its default project and is
+   * workspace-visible (reviewable) — never a silent surprise. Null project only on a seed path.
+   */
+  project: { id: string; name: string | null } | null;
+  access: "restricted" | "anyone_in_workspace" | "anyone_with_link";
 }
 
 /**

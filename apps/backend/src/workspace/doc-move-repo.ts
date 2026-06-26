@@ -4,9 +4,11 @@
 // reads/writes rows.
 //
 //  - findDocBySlug      → the source doc (id/slug/title/kind/project_id).
-//  - projectInWorkspace → the same-workspace guard: the project must exist in THE single
-//                          v0 workspace. (v0 single-workspace, but we still validate
-//                          existence so a bogus target → 404, not a silent write.)
+//  - targetProjectViewableBy → the write-target guard (project-visibility S-002 / C-006): the
+//                          project must EXIST in a workspace AND be one the ACTOR may VIEW
+//                          (canViewProject — own OR public). A bogus id, a cross-workspace id,
+//                          and another member's PRIVATE project all → false → 404 (existence-
+//                          hiding), never a silent write into an unseeable project.
 //  - currentVersion     → the source's CURRENT (max-version) content + hash. Mirrors the
 //                          search repo's "order by version desc limit 1" current read.
 //  - setProjectId       → MOVE: update ONLY docs.project_id. Nothing else is touched, so
@@ -19,16 +21,21 @@
 //
 // Integration-verified against real Postgres in test/integration/doc-move.itest.ts.
 
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { docs, docVersions, projects, shareLinks, workspaces } from "../db/schema";
 import type { DB } from "../db/client";
 import { generateSlug } from "../publish/slug";
-import type { DocMoveRepo, SourceDoc, CurrentVersion } from "./doc-move";
+import { canViewProject, deriveNewDocAccess } from "./projects";
+import type { DocMoveRepo, SourceDoc, CurrentVersion, TargetProjectAccess } from "./doc-move";
 
 /** Construct a DocMoveRepo backed by a Drizzle DB handle. */
 export function createDocMoveRepo(db: DB): DocMoveRepo {
   return {
     async findDocBySlug(slug: string): Promise<SourceDoc | null> {
+      // project-visibility S-005 / C-009: also read the doc's CURRENT workspace axis
+      // (share_links.workspace_role) on this same fetch — the move boundary-detection compares
+      // it against the target project's visibility. LEFT join so a doc with no share_links row
+      // (shouldn't happen post-publish) still resolves with workspaceRole = null (restricted).
       const [row] = await db
         .select({
           id: docs.id,
@@ -36,23 +43,29 @@ export function createDocMoveRepo(db: DB): DocMoveRepo {
           title: docs.title,
           kind: docs.kind,
           projectId: docs.projectId,
+          workspaceRole: shareLinks.workspaceRole,
         })
         .from(docs)
+        .leftJoin(shareLinks, eq(shareLinks.docId, docs.id))
         .where(eq(docs.slug, slug));
-      return row ?? null;
+      if (!row) return null;
+      return { ...row, workspaceRole: row.workspaceRole ?? null };
     },
 
-    async projectInWorkspace(projectId: string): Promise<boolean> {
-      // The same-workspace guard: the project must exist in THE single v0 workspace.
-      // Join through workspaces so a project from another workspace (should one ever
-      // exist) is rejected — future-proofing the "same workspace" contract.
+    async targetProjectViewableBy(projectId: string, actorId: string): Promise<boolean> {
+      // project-visibility S-002 / C-006: the target must EXIST in a workspace AND be a project
+      // the ACTOR may VIEW (canViewProject — owner OR public, no admin exception, C-003). The
+      // same-workspace existence guard is the inner join through workspaces (a bogus id → no
+      // row → false). A foreign-member PRIVATE project IS a row but fails canViewProject →
+      // false → the route refuses identically to not-found (existence-hiding — AS-009).
       const [row] = await db
-        .select({ id: projects.id })
+        .select({ ownerId: projects.ownerId, visibility: projects.visibility })
         .from(projects)
         .innerJoin(workspaces, eq(workspaces.id, projects.workspaceId))
         .where(eq(projects.id, projectId))
         .limit(1);
-      return !!row;
+      if (!row) return false;
+      return canViewProject(actorId, { ownerId: row.ownerId, visibility: row.visibility });
     },
 
     async currentVersion(docId: string): Promise<CurrentVersion | null> {
@@ -71,6 +84,36 @@ export function createDocMoveRepo(db: DB): DocMoveRepo {
       // MOVE: relocate the doc — ONLY project_id changes. updated_at bumps via $onUpdate;
       // versions/annotations/sharing/owner/general_access rows are untouched.
       await db.update(docs).set({ projectId }).where(eq(docs.id, docId));
+    },
+
+    async targetProjectAccess(projectId: string): Promise<TargetProjectAccess | null> {
+      // project-visibility S-005 / C-009: the access-relevant facts of the move target so the
+      // service can detect a visibility boundary (isDefault + visibility — same inputs as
+      // deriveNewDocAccess, so the default-project carve-out matches the publish/copy paths).
+      const [row] = await db
+        .select({ isDefault: projects.isDefault, visibility: projects.visibility })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1);
+      return row ?? null;
+    },
+
+    async moveWithAccess(docId: string, projectId: string, restrict: boolean): Promise<void> {
+      // project-visibility S-005 / C-009: a BOUNDARY-CROSSING move — relocate the doc AND, when
+      // make-private was chosen, restrict its share_links ({null,null}) in ONE transaction, so
+      // the move + access change are atomic (if the access write fails, the project_id move
+      // rolls back — never a half-state: a relocated-but-still-shared doc, or vice versa).
+      // keep-sharing (restrict=false) writes ONLY project_id — the doc stays workspace-shared
+      // inside the private project (soft-private, AS-023).
+      await db.transaction(async (tx) => {
+        await tx.update(docs).set({ projectId }).where(eq(docs.id, docId));
+        if (restrict) {
+          await tx
+            .update(shareLinks)
+            .set({ workspaceRole: null, linkRole: null })
+            .where(eq(shareLinks.docId, docId));
+        }
+      });
     },
 
     async createCopy(input): Promise<{ id: string; slug: string }> {
@@ -92,6 +135,20 @@ export function createDocMoveRepo(db: DB): DocMoveRepo {
           })
           .returning({ id: docs.id, slug: docs.slug });
 
+        // project-visibility S-004 (C-007): the COPY's access derives from the COPY TARGET
+        // project (read in this same tx), exactly like a fresh publish — public/default →
+        // {commenter,null}, non-default private → {null,null} (AS-020). The copy never inherits
+        // the SOURCE's sharing (clean copy). The target is guaranteed to exist (the service's
+        // requireTargetProject ran first); if it somehow vanished, fall back to the shared default.
+        const [proj] = await tx
+          .select({ isDefault: projects.isDefault, visibility: projects.visibility })
+          .from(projects)
+          .where(eq(projects.id, input.projectId))
+          .limit(1);
+        const access = proj
+          ? deriveNewDocAccess(proj)
+          : deriveNewDocAccess({ isDefault: true, visibility: "public" });
+
         await tx.insert(docVersions).values({
           docId: doc!.id,
           version: 1, // the copy's content starts at version 1 (history NOT carried)
@@ -101,11 +158,11 @@ export function createDocMoveRepo(db: DB): DocMoveRepo {
           publishedBy: input.ownerId, // v1 publisher = the copier
         });
 
-        // C-007: the copy's access config — the FIXED new-doc default, same as publish.
+        // C-007: the copy's access config — DERIVED from the copy target project, same as publish.
         await tx.insert(shareLinks).values({
           docId: doc!.id,
-          workspaceRole: "commenter",
-          linkRole: null,
+          workspaceRole: access.workspaceRole,
+          linkRole: access.linkRole,
         });
 
         return { id: doc!.id, slug: doc!.slug };

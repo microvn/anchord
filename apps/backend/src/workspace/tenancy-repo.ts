@@ -7,6 +7,7 @@ import {
   workspaces,
   workspaceMembers,
   workspaceInvitations,
+  projects,
 } from "../db/schema";
 import type { DB } from "../db/client";
 import type {
@@ -114,14 +115,49 @@ export function createTenancyRepo(db: DB): TenancyRepo {
         );
     },
 
-    async removeMember(workspaceId, userId) {
-      const deleted = await db
-        .delete(workspaceMembers)
-        .where(
-          and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)),
-        )
-        .returning({ id: workspaceMembers.id });
-      return deleted.length > 0;
+    async removeMember(workspaceId, userId, reassignTo) {
+      // project-visibility S-007 / C-012: reassign the removed member's owned projects → a surviving
+      // admin, then delete the membership — ATOMICALLY. Order inside the tx is reassign-then-delete so
+      // a live project's owner_id is never (even momentarily) null; a failure on either rolls both
+      // back. The reassigned projects' DOCS are untouched (share_links/owner_id on docs unchanged) —
+      // they survive and stay reachable under the new owner (AS-028).
+      return db.transaction(async (tx) => {
+        // The removed member's DEFAULT project is reassigned but DEMOTED to a regular project
+        // (is_default = false): reassignTo already owns its OWN default project in this workspace,
+        // and the partial-unique index `projects_default_uq` (workspace_id, owner_id WHERE
+        // is_default=true) would collide if we handed it a second default. Demoting keeps the docs +
+        // shell reachable by the new owner without violating "exactly one default per (ws, owner)".
+        // [S3 guard — the spec's S-007 names only deliberately-created private projects; the removed
+        //  member's default project is the same orphan risk and is rescued the same way, demoted.]
+        await tx
+          .update(projects)
+          .set({ ownerId: reassignTo, isDefault: false })
+          .where(
+            and(
+              eq(projects.workspaceId, workspaceId),
+              eq(projects.ownerId, userId),
+              eq(projects.isDefault, true),
+            ),
+          );
+        // Non-default owned projects: a straight owner reassignment (their flag is already false).
+        await tx
+          .update(projects)
+          .set({ ownerId: reassignTo })
+          .where(
+            and(
+              eq(projects.workspaceId, workspaceId),
+              eq(projects.ownerId, userId),
+              eq(projects.isDefault, false),
+            ),
+          );
+        const deleted = await tx
+          .delete(workspaceMembers)
+          .where(
+            and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)),
+          )
+          .returning({ id: workspaceMembers.id });
+        return deleted.length > 0;
+      });
     },
 
     async countAdmins(workspaceId) {

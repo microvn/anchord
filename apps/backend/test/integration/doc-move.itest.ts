@@ -171,8 +171,14 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
       expect(v.status).toBe(201);
     }
 
-    // Attach a sharing config + an annotation with a comment to the source.
-    await h.db.insert(shareLinks).values({ docId, linkRole: "commenter", guestCommenting: true });
+    // Attach a sharing config + an annotation with a comment to the source. The publish path
+    // (project-visibility S-004) ALREADY created the source's share_links row when it derived the
+    // new-doc access from its project, so this UPDATEs that row (a second INSERT would violate the
+    // share_links.doc_id unique constraint) — it overlays a link_role + guest commenting on top.
+    await h.db
+      .update(shareLinks)
+      .set({ linkRole: "commenter", guestCommenting: true })
+      .where(eq(shareLinks.docId, docId));
     const [an] = await h.db
       .insert(annotations)
       .values({ docId, type: "range", anchor: { block_id: "b1", text_snippet: "x" } })
@@ -232,10 +238,10 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     const [copyDocRow] = await h.db.select().from(docs).where(eq(docs.id, copyId));
     expect(copyDocRow!.projectId).toBe(paymentsId);
     expect(copyDocRow!.ownerId).toBe(A.userId); // owner = the copier
-    // shared-workspace model (C-008): a copy inherits the target workspace's defaultAccess
-    // (anyone_in_workspace), like a fresh publish — NOT the old hard `restricted`. Access now
-    // lives on the share_links row as the two axes; anyone_in_workspace = workspace axis on,
-    // link axis off (deriveLevel).
+    // project-visibility S-004 (C-007): a copy's access DERIVES from the COPY TARGET project,
+    // like a fresh publish — Payments is a non-default PUBLIC project (created via the route →
+    // public by default) → {commenter,null} → anyone_in_workspace. (The non-default-PRIVATE copy
+    // path → restricted is AS-020 below.) Access lives on the share_links row as the two axes.
     const [copyShare] = await h.db
       .select({ workspaceRole: shareLinks.workspaceRole, linkRole: shareLinks.linkRole })
       .from(shareLinks)
@@ -260,6 +266,110 @@ describe.skipIf(!RUN)("workspace-project S-004: move/copy a doc (real Postgres)"
     expect(srcVersions).toHaveLength(3);
     const srcAnn = await h.db.select().from(annotations).where(eq(annotations.docId, docId));
     expect(srcAnn).toHaveLength(1);
+  });
+
+  test("AS-020: COPY into a non-default PRIVATE project → the COPY's share_links is {null, null} (restricted, derived from the target)", async () => {
+    // A owns a non-default PRIVATE project (A can SEE it as its owner → a valid copy target).
+    const [priv] = await h.db
+      .insert(schema.projects)
+      .values({ workspaceId: WA, name: "Vault", ownerId: A.userId, isDefault: false, visibility: "private" })
+      .returning({ id: schema.projects.id });
+
+    const copy = await app.handle(
+      withCookie(`/api/w/${WA}/docs/${docSlug}/copy`, A.cookie, "POST", { projectId: priv!.id }),
+    );
+    expect(copy.status).toBe(201);
+    const copyId = ((await copy.json()) as any).data.docId;
+
+    // The copy DERIVES restricted from the private target (no silent over-share, AS-020).
+    const [copyShare] = await h.db
+      .select({ workspaceRole: shareLinks.workspaceRole, linkRole: shareLinks.linkRole })
+      .from(shareLinks)
+      .where(eq(shareLinks.docId, copyId));
+    expect(copyShare!.workspaceRole).toBeNull();
+    expect(copyShare!.linkRole).toBeNull();
+    expect(deriveLevel(copyShare!.workspaceRole, copyShare!.linkRole)).toBe("restricted");
+  });
+
+  // ── project-visibility S-005 / C-009: boundary-crossing move (real Postgres) ──────────────
+  // Helper: publish a fresh workspace-shared doc into Billing (a public project) so each
+  // crossing test starts from a known {commenter,null} access, then move it into a NON-DEFAULT
+  // PRIVATE project A owns (A can see it → a valid move target; the boundary is the visibility
+  // mismatch, not viewability).
+  async function freshSharedDocAndPrivateTarget(label: string) {
+    const pub = await app.handle(
+      withCookie(`/api/w/${WA}/docs`, A.cookie, "POST", {
+        content: `# ${label}`,
+        title: label,
+        projectId: billingId,
+      }),
+    );
+    expect(pub.status).toBe(201);
+    const slug = ((await pub.json()) as any).data.slug;
+    const [doc] = await h.db.select().from(docs).where(eq(docs.slug, slug));
+    const [priv] = await h.db
+      .insert(schema.projects)
+      .values({ workspaceId: WA, name: label + " Vault", ownerId: A.userId, isDefault: false, visibility: "private" })
+      .returning({ id: schema.projects.id });
+    return { slug, docId: doc!.id, privateId: priv!.id };
+  }
+
+  test("AS-021: a boundary-crossing MOVE with no accessChoice → 409, doc NOT moved, share_links unchanged", async () => {
+    const { slug, docId, privateId } = await freshSharedDocAndPrivateTarget("Crossing No-Choice");
+    const move = await app.handle(
+      withCookie(`/api/w/${WA}/docs/${slug}/move`, A.cookie, "POST", { projectId: privateId }),
+    );
+    expect(move.status).toBe(409);
+    // Nothing moved: still in Billing; share_links still {commenter,null} (workspace-shared).
+    const [after] = await h.db.select().from(docs).where(eq(docs.id, docId));
+    expect(after!.projectId).toBe(billingId);
+    const [link] = await h.db
+      .select({ workspaceRole: shareLinks.workspaceRole, linkRole: shareLinks.linkRole })
+      .from(shareLinks)
+      .where(eq(shareLinks.docId, docId));
+    expect(link!.workspaceRole).toBe("commenter");
+    expect(link!.linkRole).toBeNull();
+  });
+
+  test("AS-022: MOVE + accessChoice=make_private → doc moved AND share_links {null,null}, in one tx (atomic)", async () => {
+    const { slug, docId, privateId } = await freshSharedDocAndPrivateTarget("Crossing Make-Private");
+    const move = await app.handle(
+      withCookie(`/api/w/${WA}/docs/${slug}/move`, A.cookie, "POST", {
+        projectId: privateId,
+        accessChoice: "make_private",
+      }),
+    );
+    expect(move.status).toBe(200);
+    // BOTH effects committed together: relocated AND restricted (no half-state).
+    const [after] = await h.db.select().from(docs).where(eq(docs.id, docId));
+    expect(after!.projectId).toBe(privateId);
+    const [link] = await h.db
+      .select({ workspaceRole: shareLinks.workspaceRole, linkRole: shareLinks.linkRole })
+      .from(shareLinks)
+      .where(eq(shareLinks.docId, docId));
+    expect(link!.workspaceRole).toBeNull();
+    expect(link!.linkRole).toBeNull();
+    expect(deriveLevel(link!.workspaceRole, link!.linkRole)).toBe("restricted");
+  });
+
+  test("AS-023: MOVE + accessChoice=keep_sharing → doc moved, share_links still {commenter,null} (soft-private)", async () => {
+    const { slug, docId, privateId } = await freshSharedDocAndPrivateTarget("Crossing Keep");
+    const move = await app.handle(
+      withCookie(`/api/w/${WA}/docs/${slug}/move`, A.cookie, "POST", {
+        projectId: privateId,
+        accessChoice: "keep_sharing",
+      }),
+    );
+    expect(move.status).toBe(200);
+    // Moved into the private project but the access is UNCHANGED — soft-private.
+    const [after] = await h.db.select().from(docs).where(eq(docs.id, docId));
+    expect(after!.projectId).toBe(privateId);
+    const [link] = await h.db
+      .select({ workspaceRole: shareLinks.workspaceRole, linkRole: shareLinks.linkRole })
+      .from(shareLinks)
+      .where(eq(shareLinks.docId, docId));
+    expect(link!.workspaceRole).toBe("commenter");
+    expect(link!.linkRole).toBeNull();
   });
 
   test("MOVE to a bogus (non-existent) project → 404, nothing mutated", async () => {

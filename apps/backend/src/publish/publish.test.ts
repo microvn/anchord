@@ -7,14 +7,29 @@ const enc = (s: string) => new TextEncoder().encode(s);
 
 // In-memory fake repo: records every create, hands back a stable id, and lets a test
 // re-read what was stored (to assert the slug is set once and not regenerated).
-function fakeRepo() {
+// project-visibility S-004 (C-013): the repo now also returns the target project + the
+// derived access axes; the fake echoes a configurable result so the transparency fields
+// (PublishResult.project / .access) can be asserted at the unit layer.
+function fakeRepo(opts?: {
+  projectName?: string | null;
+  workspaceRole?: "viewer" | "commenter" | "editor" | null;
+  linkRole?: "viewer" | "commenter" | "editor" | null;
+}) {
   const rows: (CreateDocInput & { id: string; version: 1 })[] = [];
   let n = 0;
   const repo: DocRepo = {
     async createDocWithV1(input) {
       const id = `doc-${++n}`;
       rows.push({ ...input, id, version: 1 });
-      return { id };
+      return {
+        id,
+        projectId: input.projectId ?? null,
+        projectName: opts && "projectName" in opts ? (opts.projectName ?? null) : null,
+        // Default mirrors the publish repo's seed/default: workspace-shared {commenter,null}.
+        // `in` checks so an explicit `null` axis is honored (not coalesced back to commenter).
+        workspaceRole: opts && "workspaceRole" in opts ? (opts.workspaceRole ?? null) : "commenter",
+        linkRole: opts && "linkRole" in opts ? (opts.linkRole ?? null) : null,
+      };
     },
   };
   return { repo, rows };
@@ -188,4 +203,29 @@ test("C-007: the seed path (no workspace) also plumbs no access value", async ()
   const { repo, rows } = fakeRepo();
   await publishDoc({ bytes: enc("# Seed"), declaredKind: "markdown" }, { repo, slugGen: fixedSlug });
   expect(rows[0]).not.toHaveProperty("generalAccess");
+});
+
+// ── project-visibility S-004 (C-013 / AS-029): the publish RESPONSE reports the target
+//    project + the doc's resulting access LEVEL (deriveLevel of the axes the repo set), so a
+//    quick-publish into the default project is never a silent surprise. ────────────────────
+test("AS-029: the publish response reports the target project (id + name) AND the resulting access level", async () => {
+  // The repo derived {commenter,null} for the (default/public) project → deriveLevel = anyone_in_workspace.
+  const { repo } = fakeRepo({ projectName: "Alice's docs", workspaceRole: "commenter", linkRole: null });
+  const res = await publishDoc(
+    { bytes: enc("# Spec"), declaredKind: "markdown", ownerId: "u_a", workspaceId: "W" },
+    { repo, slugGen: fixedSlug, resolveProjectId: async () => "proj_1" },
+  );
+  expect(res.project).toEqual({ id: "proj_1", name: "Alice's docs" });
+  expect(res.access).toBe("anyone_in_workspace");
+});
+
+test("AS-029: a doc derived restricted (non-default private project) reports access=restricted", async () => {
+  // The repo derived {null,null} for a non-default private project → deriveLevel = restricted.
+  const { repo } = fakeRepo({ projectName: "Drafts", workspaceRole: null, linkRole: null });
+  const res = await publishDoc(
+    { bytes: enc("# Spec"), declaredKind: "markdown", ownerId: "u_a", workspaceId: "W" },
+    { repo, slugGen: fixedSlug, resolveProjectId: async () => "proj_priv" },
+  );
+  expect(res.project).toEqual({ id: "proj_priv", name: "Drafts" });
+  expect(res.access).toBe("restricted");
 });

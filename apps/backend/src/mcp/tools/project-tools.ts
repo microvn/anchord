@@ -49,27 +49,39 @@ function clampLimit(v: unknown): number {
 
 // ── project summary (the list/read/create row shape) ─────────────────────────
 
-/** A project as the tools return it — id + name (projects have no slug — AS-017). */
+/** project-visibility S-001 / C-001: a project's visibility ∈ private | public. */
+export type ProjectVisibility = "private" | "public";
+
+/** A project as the tools return it — id + name (projects have no slug — AS-017) + visibility. */
 export interface ProjectSummary {
   projectId: string;
   name: string;
+  /** project-visibility S-001: so create_project can report the resulting visibility (AS-003/AS-004). */
+  visibility: ProjectVisibility;
 }
 
 // ── ports (injectable seams over the workspace-project reads + create) ───────
 
 export interface ProjectPorts {
   /**
-   * The token's workspace's ACTIVE projects (C-010 — archived excluded), to ANY member of
-   * that workspace (workspace-member visibility, no per-owner ACL). Scoped to THIS workspace
-   * only (C-013). The handler paginates the returned list.
+   * The token's workspace's ACTIVE projects (C-010 — archived excluded) that the TOKEN USER
+   * may VIEW. project-visibility S-002 / C-002 / C-003 REVERSES the old "no per-owner ACL in
+   * v0": the wiring now applies the shared canViewProject predicate (own + public only, NO
+   * admin exception), so another member's PRIVATE project never appears (AS-010). Scoped to
+   * THIS workspace (C-013); `userId` is the token user. The handler paginates the result.
    */
-  listActiveProjects(input: { workspaceId: string }): Promise<ProjectSummary[]>;
+  listActiveProjects(input: { workspaceId: string; userId: string }): Promise<ProjectSummary[]>;
   /**
-   * Resolve a project BY ID within `workspaceId` (C-013), or null when it does not exist in
-   * THAT workspace (a foreign/archived id resolves to null → the handler rejects identically,
-   * so existence in another workspace is never disclosed — AS-017).
+   * Resolve a project BY ID within `workspaceId` that the TOKEN USER may VIEW (C-013 +
+   * project-visibility S-002 / C-002): a foreign/archived id, OR a project the user can't view
+   * (another member's private project), resolves to null — the handler rejects all identically,
+   * so neither cross-workspace existence NOR a private project is ever disclosed (AS-010/AS-017).
    */
-  findProjectById(input: { workspaceId: string; projectId: string }): Promise<ProjectSummary | null>;
+  findProjectById(input: {
+    workspaceId: string;
+    userId: string;
+    projectId: string;
+  }): Promise<ProjectSummary | null>;
   /**
    * Create a project in `workspaceId` owned by `ownerId` (both from the token — C-010). The
    * name is already trimmed/validated by the handler. Returns the new project's id + name.
@@ -78,6 +90,8 @@ export interface ProjectPorts {
     workspaceId: string;
     ownerId: string;
     name: string;
+    /** project-visibility S-001 / AS-003/AS-004: optional; the service defaults to public. */
+    visibility?: ProjectVisibility;
   }): Promise<ProjectSummary>;
 }
 
@@ -101,7 +115,9 @@ export function listProjectsHandler(
     const limit = clampLimit(params.limit);
 
     // C-013: the workspace is the TOKEN's (ctx), never params — a W1 token only lists W1 projects.
-    const all = await ports.listActiveProjects({ workspaceId: ctx.workspaceId });
+    // project-visibility S-002 / C-002: the token USER (ctx.userId) drives the canViewProject
+    // filter in the wiring, so another member's private project is absent (AS-010).
+    const all = await ports.listActiveProjects({ workspaceId: ctx.workspaceId, userId: ctx.userId });
     const total = all.length;
     const start = (page - 1) * limit;
     const items = all.slice(start, start + limit);
@@ -133,10 +149,17 @@ export function readProjectHandler(
 ): (params: Record<string, unknown>, ctx: ToolContext) => Promise<ProjectSummary> {
   return async function handler(params, ctx): Promise<ProjectSummary> {
     const projectId = requireProjectId(params);
-    // C-013: scoped by the TOKEN's workspace — a foreign/archived id resolves to null below.
-    const project = await ports.findProjectById({ workspaceId: ctx.workspaceId, projectId });
+    // C-013 + project-visibility S-002 / C-002: scoped by the TOKEN's workspace AND the token
+    // USER's view rights — a foreign/archived id OR another member's private project resolves
+    // to null below.
+    const project = await ports.findProjectById({
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
+      projectId,
+    });
     if (!project) {
-      // Existence-hiding: not found and cross-workspace reject identically (AS-017/C-010).
+      // Existence-hiding: not-found, cross-workspace, AND not-viewable all reject identically
+      // (AS-010/AS-017 / C-002 / C-010) — a private project is indistinguishable from missing.
       throw new McpToolError(`project '${projectId}' not found or not accessible`);
     }
     return project;
@@ -147,7 +170,18 @@ export function readProjectTool(ports: ProjectPorts): ToolDef {
   return { requiredScope: "projects:read", handler: readProjectHandler(ports) };
 }
 
-// ── anchord_create_project(name) (AS-015 / C-010, scope-gated AS-016) ───────
+// ── anchord_create_project(name, visibility?) (AS-015 / C-010, scope-gated AS-016) ───────
+
+/**
+ * project-visibility S-001 / AS-003/AS-004: parse the OPTIONAL `visibility` param. Omitted /
+ * null → `undefined` (the service applies its public default). A present value must be exactly
+ * "private" | "public"; anything else is an invalid-input error (never silently coerced).
+ */
+function parseVisibility(v: unknown): ProjectVisibility | undefined {
+  if (v == null) return undefined;
+  if (v === "private" || v === "public") return v;
+  throw new McpToolError("'visibility' must be 'private' or 'public'");
+}
 
 /**
  * Build `anchord_create_project` — create a project in the TOKEN's workspace owned by the
@@ -163,8 +197,12 @@ export function createProjectHandler(
     if (name.length === 0) {
       throw new McpToolError("'name' is required and must be a non-empty string");
     }
+    // project-visibility S-001 / AS-003/AS-004: visibility is OPTIONAL — omitted → public by
+    // default (the service default). When supplied it must be exactly private|public; any other
+    // value is rejected (invalid input), never silently coerced.
+    const visibility = parseVisibility(params.visibility);
     // Identity + workspace come from the TOKEN (ctx), not the params (C-001/C-010).
-    return ports.createProject({ workspaceId: ctx.workspaceId, ownerId: ctx.userId, name });
+    return ports.createProject({ workspaceId: ctx.workspaceId, ownerId: ctx.userId, name, visibility });
   };
 }
 

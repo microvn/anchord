@@ -21,22 +21,35 @@ export class ApiError extends Error {
   readonly code: string | null;
   readonly status: number | null;
   readonly isUnauthenticated: boolean;
+  /**
+   * The envelope's `error.reason` discriminator, when present. The backend stamps it on an
+   * occurrence of a generic `code` (e.g. CONFLICT) so the client can branch on `reason`, NEVER on
+   * the HTTP status or the human message text. project-visibility-fe S-003/C-002 keys the doc-move
+   * visibility-boundary alert on `reason === "visibility_boundary"`. `null` when the body carries none.
+   */
+  readonly reason: string | null;
 
   constructor(opts: {
     message: string;
     code: string | null;
     status: number | null;
     isUnauthenticated: boolean;
+    reason?: string | null;
   }) {
     super(opts.message);
     this.name = "ApiError";
     this.code = opts.code;
     this.status = opts.status;
     this.isUnauthenticated = opts.isUnauthenticated;
+    this.reason = opts.reason ?? null;
   }
 }
 
-function envelopeError(value: unknown): { code: string | null; message: string | null } {
+function envelopeError(value: unknown): {
+  code: string | null;
+  message: string | null;
+  reason: string | null;
+} {
   // Defensive: the body may be the api-core envelope, a bare object, or junk.
   if (value && typeof value === "object" && "error" in value) {
     const inner = (value as { error?: unknown }).error;
@@ -44,13 +57,15 @@ function envelopeError(value: unknown): { code: string | null; message: string |
       const code = "code" in inner ? (inner as { code?: unknown }).code : undefined;
       const message =
         "message" in inner ? (inner as { message?: unknown }).message : undefined;
+      const reason = "reason" in inner ? (inner as { reason?: unknown }).reason : undefined;
       return {
         code: typeof code === "string" ? code : null,
         message: typeof message === "string" ? message : null,
+        reason: typeof reason === "string" ? reason : null,
       };
     }
   }
-  return { code: null, message: null };
+  return { code: null, message: null, reason: null };
 }
 
 /**
@@ -73,7 +88,7 @@ export function toApiError(error: EdenError | unknown): ApiError {
 
   const e = (error ?? {}) as EdenError;
   const status = typeof e?.status === "number" ? e.status : null;
-  const { code, message } = envelopeError(e?.value);
+  const { code, message, reason } = envelopeError(e?.value);
   const isUnauthenticated = status === 401 || code === "UNAUTHENTICATED";
 
   return new ApiError({
@@ -81,6 +96,7 @@ export function toApiError(error: EdenError | unknown): ApiError {
     code,
     status,
     isUnauthenticated,
+    reason,
   });
 }
 

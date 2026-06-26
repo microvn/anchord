@@ -43,6 +43,7 @@ mock.module("@/features/docs/services/client", () => ({
   fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   createProject: mock(async () => env({})),
   renameProject: mock(async () => env({})),
+  setProjectVisibility: mock(async () => env({})),
   archiveProject: mock(async () => env({})),
   unarchiveProject: mock(async () => env({})),
   deleteProject: mock(async () => env({})),

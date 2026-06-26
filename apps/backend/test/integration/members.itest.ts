@@ -18,9 +18,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { user as userTable, workspaceMembers } from "../../src/db/schema";
+import { user as userTable, workspaceMembers, projects, docs } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
@@ -82,6 +82,7 @@ describe.skipIf(!RUN)("workspaces S-004/S-005/S-006: membership (real Postgres)"
   let A: { userId: string; cookie: string };
   let B: { userId: string; cookie: string };
   let Eve: { userId: string; cookie: string };
+  let Carl: { userId: string; cookie: string };
   let WA = ""; // A's auto-created workspace
   const enqueued: Array<{ email: string; token: string; invitationId: string }> = [];
 
@@ -124,6 +125,7 @@ describe.skipIf(!RUN)("workspaces S-004/S-005/S-006: membership (real Postgres)"
     WA = await workspaceOf(A.userId);
     B = await signUpAndIn(email("b"), "Bob");
     Eve = await signUpAndIn(email("eve"), "Eve");
+    Carl = await signUpAndIn(email("carl"), "Carl");
   });
 
   afterAll(async () => {
@@ -240,5 +242,80 @@ describe.skipIf(!RUN)("workspaces S-004/S-005/S-006: membership (real Postgres)"
     const wEve = await workspaceOf(Eve.userId);
     const res = await app.handle(withCookie(`/api/w/${wEve}/members`, A.cookie));
     expect(res.status).toBe(404); // existence-hiding: A is not a member of Eve's workspace
+  });
+
+  // ── project-visibility S-007 / C-012 — removing a member never orphans a private project ──────
+  test("AS-027/AS-028 / C-012: removing Carl reassigns his private project to the admin (no orphan); its docs survive + stay reachable", async () => {
+    // Carl joins WA: A invites by email, Carl accepts (email match) → member.
+    enqueued.length = 0;
+    const inv = await app.handle(
+      withCookie(`/api/workspaces/${WA}/invitations`, A.cookie, "POST", { email: email("carl") }),
+    );
+    expect(inv.status).toBe(201);
+    const e = enqueued[0]!;
+    const accept = await app.handle(
+      withCookie(`/api/invitations/${e.invitationId}/accept`, Carl.cookie, "POST", { token: e.token }),
+    );
+    expect(accept.status).toBe(200);
+
+    // Carl owns a deliberately-created PRIVATE project in WA, holding two docs:
+    //   docShared    — workspace-shared (workspace_role=commenter) → browsable by other members
+    //   docRestricted— restricted (both axes null) → owner/invited only
+    // Seeded directly via the DB (this itest's createApp wires only members/workspaces routes — not
+    // the docs/publish route group; the rows are what the reassignment must preserve, AS-028).
+    const [proj] = await h.db
+      .insert(projects)
+      .values({ workspaceId: WA, name: "Carl's Secret", ownerId: Carl.userId, isDefault: false, visibility: "private" })
+      .returning({ id: projects.id });
+    const projectId = proj!.id;
+
+    const [docShared] = await h.db
+      .insert(docs)
+      .values({ slug: `carl-shared-${process.pid}`, title: "Shared Carl", kind: "markdown", ownerId: Carl.userId, projectId })
+      .returning({ id: docs.id });
+    const docSharedId = docShared!.id;
+    await h.db
+      .insert(schema.shareLinks)
+      .values({ docId: docSharedId, workspaceRole: "commenter", linkRole: null });
+
+    const [docRestricted] = await h.db
+      .insert(docs)
+      .values({ slug: `carl-restricted-${process.pid}`, title: "Restricted Carl", kind: "markdown", ownerId: Carl.userId, projectId })
+      .returning({ id: docs.id });
+    const docRestrictedId = docRestricted!.id;
+    await h.db
+      .insert(schema.shareLinks)
+      .values({ docId: docRestrictedId, workspaceRole: null, linkRole: null });
+
+    // The admin A removes Carl.
+    const rm = await app.handle(withCookie(`/api/w/${WA}/members/${Carl.userId}`, A.cookie, "DELETE"));
+    expect(rm.status).toBe(200);
+
+    // AS-027 / C-012: Carl lost membership; his private project's owner is now the removing admin A —
+    // NOT Carl, NOT null. (Reassigned in the SAME tx as the membership delete — the project was never
+    // momentarily owner-less.)
+    const carlStill = await h.db
+      .select()
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, WA), eq(workspaceMembers.userId, Carl.userId)));
+    expect(carlStill).toHaveLength(0);
+
+    const [reassigned] = await h.db.select().from(projects).where(eq(projects.id, projectId));
+    expect(reassigned!.ownerId).toBe(A.userId); // reassigned to the admin → admin can now see it (canViewProject owner)
+    expect(reassigned!.ownerId).not.toBeNull(); // C-012: owner_id of a live project is never null
+    expect(reassigned!.visibility).toBe("private"); // visibility unchanged by the rescue (only ownership moves)
+
+    // AS-028: both docs still exist; share_links untouched (owner reassignment does not touch docs).
+    const sharedRows = await h.db.select().from(docs).where(eq(docs.id, docSharedId));
+    const restrictedRows = await h.db.select().from(docs).where(eq(docs.id, docRestrictedId));
+    expect(sharedRows).toHaveLength(1);
+    expect(restrictedRows).toHaveLength(1);
+    expect(sharedRows[0]!.projectId).toBe(projectId); // docs stayed in the (now-reassigned) project
+    // The workspace-shared doc is still browsable by another member (B) — its access is intact.
+    const [sl] = await h.db
+      .select()
+      .from(schema.shareLinks)
+      .where(eq(schema.shareLinks.docId, docSharedId));
+    expect(sl!.workspaceRole).toBe("commenter"); // unchanged — the doc stays workspace-shared (AS-028)
   });
 });

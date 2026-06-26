@@ -51,6 +51,7 @@ mock.module("@/features/docs/services/client", () => ({
   publishDoc,
   moveDoc: mock(async () => env({ docId: "d1", slug: "s1", projectId: "p1" })),
   copyDoc: mock(async () => env({ docId: "d2", slug: "s2", projectId: "p1" })),
+  setProjectVisibility: mock(async () => env({})),
 }));
 
 /** Build the workspace-docs envelope: docs page + the active-project list (id + name; no

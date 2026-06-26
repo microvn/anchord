@@ -54,6 +54,15 @@ const rpc = (method: string, params?: Record<string, unknown>): JsonRpcRequest =
 interface StoreProject extends ProjectSummary {
   workspaceId: string;
   archived: boolean;
+  /** project-visibility S-002: the owner — defaults to the token-owner (u_owner) when omitted,
+   *  so the legacy public STORE entries stay viewable; a private project sets a different owner. */
+  ownerId?: string;
+}
+
+/** project-visibility S-002 / C-002: the fake mirrors the wiring's canViewProject filter —
+ *  a project is visible to `userId` iff they own it OR it is public. */
+function fakeCanView(p: StoreProject, userId: string): boolean {
+  return p.visibility === "public" || (p.ownerId ?? "u_owner") === userId;
 }
 
 function fakeProjects(seed: StoreProject[]): {
@@ -63,22 +72,36 @@ function fakeProjects(seed: StoreProject[]): {
 } {
   const store = [...seed];
   const calls = { listWs: [] as string[], findWs: [] as string[], createWs: [] as string[] };
-  const summary = (p: StoreProject): ProjectSummary => ({ projectId: p.projectId, name: p.name });
+  const summary = (p: StoreProject): ProjectSummary => ({
+    projectId: p.projectId,
+    name: p.name,
+    visibility: p.visibility,
+  });
   const ports: ProjectPorts = {
     async listActiveProjects(input) {
       calls.listWs.push(input.workspaceId);
-      // The real read is workspace-scoped (C-013) AND active-only (C-010 / listActive); the
-      // fake mirrors that contract — no per-owner filter (workspace-member visibility).
+      // The real read is workspace-scoped (C-013) AND active-only (C-010 / listActive). project-
+      // visibility S-002 / C-002 / C-003 REVERSES the old "no per-owner ACL": the wiring filters
+      // to the projects the token USER may VIEW (own + public, no admin exception) — the fake
+      // mirrors that via fakeCanView.
       return store
-        .filter((p) => p.workspaceId === input.workspaceId && !p.archived)
+        .filter(
+          (p) =>
+            p.workspaceId === input.workspaceId && !p.archived && fakeCanView(p, input.userId),
+        )
         .map(summary);
     },
     async findProjectById(input) {
       calls.findWs.push(input.workspaceId);
-      // Scoped by the token's workspace (C-013): a project in another workspace is invisible
-      // here (returns null), so the handler rejects it identically to "does not exist".
+      // Scoped by the token's workspace (C-013) AND the token user's view rights (project-
+      // visibility S-002 / C-002): a project in another workspace OR a private project of
+      // another member resolves to null → the handler rejects all identically (existence-hiding).
       const p = store.find(
-        (x) => x.projectId === input.projectId && x.workspaceId === input.workspaceId && !x.archived,
+        (x) =>
+          x.projectId === input.projectId &&
+          x.workspaceId === input.workspaceId &&
+          !x.archived &&
+          fakeCanView(x, input.userId),
       );
       return p ? summary(p) : null;
     },
@@ -89,6 +112,8 @@ function fakeProjects(seed: StoreProject[]): {
         name: input.name,
         workspaceId: input.workspaceId,
         archived: false,
+        // project-visibility S-001: the port default is public; MCP may override to private.
+        visibility: input.visibility ?? "public",
       };
       store.push(created);
       return summary(created);
@@ -110,13 +135,13 @@ function fakeTokens(
 }
 
 const STORE: StoreProject[] = [
-  { projectId: "p_w1_a", name: "Payments", workspaceId: "W1", archived: false },
+  { projectId: "p_w1_a", name: "Payments", workspaceId: "W1", archived: false, visibility: "public" },
   // Owned by a DIFFERENT member — must still be visible (workspace-member visibility, C-010).
-  { projectId: "p_w1_b", name: "Onboarding", workspaceId: "W1", archived: false },
+  { projectId: "p_w1_b", name: "Onboarding", workspaceId: "W1", archived: false, visibility: "public" },
   // Archived W1 project — never in the active list.
-  { projectId: "p_w1_arch", name: "Legacy", workspaceId: "W1", archived: true },
+  { projectId: "p_w1_arch", name: "Legacy", workspaceId: "W1", archived: true, visibility: "public" },
   // A project in ANOTHER workspace — must never appear / be disclosed (C-010/C-013).
-  { projectId: "p_w2", name: "W2 Secret Project", workspaceId: "W2", archived: false },
+  { projectId: "p_w2", name: "W2 Secret Project", workspaceId: "W2", archived: false, visibility: "public" },
 ];
 
 describe("anchord_list_projects", () => {
@@ -139,6 +164,7 @@ describe("anchord_list_projects", () => {
       name: `Project ${n}`,
       workspaceId: "W1",
       archived: false,
+      visibility: "public" as const,
     }));
     const { ports } = fakeProjects(many);
     const page1 = await listProjectsHandler(ports)({ page: 1, limit: 2 }, ctx());
@@ -164,6 +190,22 @@ describe("anchord_list_projects", () => {
     // With a W2 token, ONLY the W2 project is visible — proving the gate is the token's ws.
     expect(res.items.map((i) => i.projectId)).toEqual(["p_w2"]);
     expect(calls.listWs).toEqual(["W2"]);
+  });
+
+  test("AS-010: list_projects for B omits A's private project (own + public only, C-002/C-003)", async () => {
+    const store: StoreProject[] = [
+      { projectId: "p_a_priv", name: "Alice Secret", workspaceId: "W1", archived: false, visibility: "private", ownerId: "u_a" },
+      { projectId: "p_a_pub", name: "Alice Public", workspaceId: "W1", archived: false, visibility: "public", ownerId: "u_a" },
+      { projectId: "p_b_priv", name: "Bob Secret", workspaceId: "W1", archived: false, visibility: "private", ownerId: "u_b" },
+    ];
+    const { ports } = fakeProjects(store);
+    const res = await listProjectsHandler(ports)({}, ctx({ userId: "u_b" }));
+    const ids = res.items.map((i) => i.projectId);
+    expect(ids).toContain("p_b_priv"); // B's own private project — visible
+    expect(ids).toContain("p_a_pub"); // A's public project — visible
+    expect(ids).not.toContain("p_a_priv"); // A's private project — ABSENT (no admin exception)
+    // No name leak of A's private project.
+    expect(JSON.stringify(res)).not.toContain("Alice Secret");
   });
 });
 
@@ -191,6 +233,20 @@ describe("anchord_read_project", () => {
     await expect(readProjectHandler(ports)({ projectId: "p_nope" }, ctx())).rejects.toThrow(
       McpToolError,
     );
+  });
+
+  test("AS-010: read_project on A's private project by B → not-found, identical to missing (C-002/C-003)", async () => {
+    const store: StoreProject[] = [
+      { projectId: "p_a_priv", name: "Alice Secret", workspaceId: "W1", archived: false, visibility: "private", ownerId: "u_a" },
+    ];
+    const { ports } = fakeProjects(store);
+    // B can't view A's private project → rejected identically to a nonexistent id (existence-hiding).
+    await expect(
+      readProjectHandler(ports)({ projectId: "p_a_priv" }, ctx({ userId: "u_b" })),
+    ).rejects.toThrow(McpToolError);
+    // And A (the owner) CAN read it — proving the gate is the canViewProject predicate, not a blanket deny.
+    const forA = await readProjectHandler(ports)({ projectId: "p_a_priv" }, ctx({ userId: "u_a" }));
+    expect(forA.projectId).toBe("p_a_priv");
   });
 
   test("AS-017: missing/empty projectId is rejected (null/empty input)", async () => {
@@ -226,6 +282,31 @@ describe("anchord_create_project", () => {
     const { ports } = fakeProjects(STORE);
     const res = await createProjectHandler(ports)({ name: "Q3 — Café & <Payments> 💳" }, ctx());
     expect(res.name).toBe("Q3 — Café & <Payments> 💳");
+  });
+
+  test("AS-003: create_project with only a name defaults to public (project-visibility S-001)", async () => {
+    const { ports } = fakeProjects(STORE);
+    const res = await createProjectHandler(ports)({ name: "Specs" }, ctx());
+    expect(res.visibility).toBe("public");
+  });
+
+  test("AS-004: create_project with visibility=private honors it (boundary, project-visibility S-001)", async () => {
+    const { ports } = fakeProjects(STORE);
+    const res = await createProjectHandler(ports)({ name: "Drafts", visibility: "private" }, ctx());
+    expect(res.visibility).toBe("private");
+  });
+
+  test("AS-003: create_project with an invalid visibility is rejected (invalid input)", async () => {
+    const { ports } = fakeProjects(STORE);
+    await expect(
+      createProjectHandler(ports)({ name: "Bad", visibility: "secret" }, ctx()),
+    ).rejects.toThrow(McpToolError);
+  });
+
+  test("AS-003: create_project with visibility=public is explicitly public", async () => {
+    const { ports } = fakeProjects(STORE);
+    const res = await createProjectHandler(ports)({ name: "Open", visibility: "public" }, ctx());
+    expect(res.visibility).toBe("public");
   });
 });
 

@@ -18,7 +18,12 @@ if (!demo) throw new Error("demo user missing — run bun db:seed first");
 async function ensureProject(name: string): Promise<string> {
   const [ex] = await db.select().from(projects).where(and(eq(projects.workspaceId, WS), eq(projects.name, name)));
   if (ex) return ex.id;
-  const [p] = await db.insert(projects).values({ workspaceId: WS, name, isDefault: false }).returning();
+  // project-visibility S-001: a seeded non-default project is PUBLIC (workspace-shared), matching
+  // the web create default; the auto default project (created by the signup hook) is private.
+  const [p] = await db
+    .insert(projects)
+    .values({ workspaceId: WS, name, isDefault: false, visibility: "public" })
+    .returning();
   return p!.id;
 }
 const projRenderPublish = await ensureProject("render-publish");

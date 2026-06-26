@@ -445,7 +445,24 @@ const app = createApp({
   // (sharedResolveDocRole, before the deleted_at chokepoint) so a `doc_deleted`/`doc_restored` row
   // stays visible to a prior-role-holder (and the actor + admins), but never to a member who never
   // held a role (AS-032). The deleted-aware sharedResolveAccess would hide it from everyone.
-  activity: { db, resolveSession, resolveWorkspaceRole, resolveAccess: sharedResolveAccess, resolveLiveRole: sharedResolveDocRole, resolveDocLink },
+  // project-visibility S-006 / C-010: resolve a project's visibility + owner so the gate hides a
+  // PRIVATE project's project-level events from non-owners (admins included). One indexed by-id read.
+  activity: {
+    db,
+    resolveSession,
+    resolveWorkspaceRole,
+    resolveAccess: sharedResolveAccess,
+    resolveLiveRole: sharedResolveDocRole,
+    resolveProjectVisibility: async (projectId: string) => {
+      const [p] = await db
+        .select({ visibility: projectsTable.visibility, ownerId: projectsTable.ownerId })
+        .from(projectsTable)
+        .where(eq(projectsTable.id, projectId))
+        .limit(1);
+      return p ? { isPrivate: p.visibility === "private", ownerId: p.ownerId } : null;
+    },
+    resolveDocLink,
+  },
   // your-activity-actions S-001: the personal cross-workspace "Your actions" feed under
   // /api/me/activity. ACCOUNT-scoped (the caller's own actions only — C-001), current-member
   // workspaces only (C-006). C-002: a doc-scoped row whose target the caller can no longer access

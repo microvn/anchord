@@ -27,7 +27,7 @@ import {
   type WorkspaceRoleResolver,
 } from "../http/auth-gate";
 import { validateBody } from "../http/validate";
-import { NotFoundError, ForbiddenError } from "../http/errors";
+import { NotFoundError, ForbiddenError, ConflictError } from "../http/errors";
 import {
   moveDoc,
   copyDoc,
@@ -43,6 +43,16 @@ import type { DB } from "../db/client";
 export const docMoveBodySchema = z.object({
   // Snowflake string id (src/db/id.ts), not a uuid — validate as a non-empty string.
   projectId: z.string().min(1),
+});
+
+/**
+ * project-visibility S-005 / C-009: the MOVE body additionally carries an OPTIONAL `accessChoice`.
+ * It is REQUIRED by the SERVICE (not Zod) only when the move crosses a visibility boundary — a
+ * non-crossing move omits it. Validated as the enum so a bad value is a 400 at the boundary; the
+ * server, never the browser, decides when it is mandatory (anti-FE-trust — AS-021).
+ */
+export const docMoveBodyWithChoiceSchema = docMoveBodySchema.extend({
+  accessChoice: z.enum(["make_private", "keep_sharing"]).optional(),
 });
 
 export interface DocMoveRoutesDeps {
@@ -62,7 +72,15 @@ export interface DocMoveRoutesDeps {
 }
 
 /** Map a DocMoveRejected onto the right HTTP DomainError. */
-function mapRejected(err: DocMoveRejected): NotFoundError | ForbiddenError {
+function mapRejected(err: DocMoveRejected): NotFoundError | ForbiddenError | ConflictError {
+  // project-visibility S-005 / C-009: a boundary-crossing move with no choice → 409 CONFLICT
+  // (the move conflicts with the doc's current access and needs an explicit make-private/keep
+  // decision before it can proceed — server-enforced, AS-021). The refusal carries a STABLE
+  // `reason: "visibility_boundary"` discriminator in the envelope so the FE keys on `reason`,
+  // not the 409 status or the human message (which other conflicts also produce). Other
+  // conflicts leave `reason` unset, so the boundary case is never confused with them.
+  if (err.code === "needs_choice")
+    return new ConflictError(err.message, { reason: "visibility_boundary" });
   return err.code === "forbidden"
     ? new ForbiddenError(err.message)
     : new NotFoundError(err.message);
@@ -89,7 +107,9 @@ export function docMoveRoutes(deps: DocMoveRoutesDeps) {
     .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
     // POST /api/docs/:slug/move — relocate the doc as-is (editor/owner/admin).
     .post("/api/w/:workspaceId/docs/:slug/move", async ({ params, body, actor, ws }) => {
-      const { projectId } = validateBody(docMoveBodySchema, body);
+      // S-005 / C-009: the move body may carry an explicit accessChoice; the SERVER decides when
+      // it is required (a boundary-crossing move with none → 409, never an FE-trusted skip).
+      const { projectId, accessChoice } = validateBody(docMoveBodyWithChoiceSchema, body);
       const serviceDeps = {
         ...baseDeps,
         isWorkspaceAdmin: deps.isWorkspaceAdmin
@@ -98,7 +118,7 @@ export function docMoveRoutes(deps: DocMoveRoutesDeps) {
       };
       try {
         const res = await moveDoc(
-          { slug: params.slug, targetProjectId: projectId, actorId: actor.userId },
+          { slug: params.slug, targetProjectId: projectId, actorId: actor.userId, accessChoice },
           serviceDeps,
         );
         return { docId: res.docId, slug: res.slug, projectId: res.projectId };

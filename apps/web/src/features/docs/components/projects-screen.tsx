@@ -8,7 +8,9 @@ import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
 import { useProjectsBrowse, BROWSE_PAGE_SIZE } from "@/features/docs/hooks/use-docs";
 import { createProject } from "@/features/docs/services/client";
+import type { ProjectVisibility } from "@/features/docs/types";
 import { ProjectCardMoreMenu } from "./project-more-menu";
+import { ProjectVisibilityBadge } from "./project-visibility-badge";
 import { Pagination } from "@/components/pagination";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -149,6 +151,10 @@ export function ProjectsScreen() {
                     Archived
                   </span>
                 )}
+                {/* project-visibility-fe AS-001: Private/Public pill beside the Default badge. */}
+                {p.visibility && (
+                  <ProjectVisibilityBadge visibility={p.visibility} projectId={p.id} />
+                )}
                 {p.isDefault && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
                     <Icon name="pin" size={11} />
@@ -199,6 +205,10 @@ function NewProjectDialog({
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
+  // project-visibility-fe S-005 / C-001 / AS-018: the create-time Public/Private choice. Default
+  // Public (backward-compatible — the prior create-always-public behaviour is preserved); the control
+  // only COLLECTS the user's pick and sends it verbatim, never derives access.
+  const [visibility, setVisibility] = useState<ProjectVisibility>("public");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -212,7 +222,7 @@ function NewProjectDialog({
     setError(null);
     try {
       const res = unwrapEnvelope<{ id: string; name: string }>(
-        await createProject(workspaceId, trimmed),
+        await createProject(workspaceId, trimmed, visibility),
       );
       if (res.error) {
         setError(toApiError(res.error).message);
@@ -223,6 +233,7 @@ function NewProjectDialog({
       await queryClient.invalidateQueries({ queryKey: queryKeys.projects(workspaceId) });
       toast.success(`Created project “${trimmed}”`);
       setName("");
+      setVisibility("public");
       setSubmitting(false);
       onOpenChange(false);
     } catch (thrown) {
@@ -238,6 +249,7 @@ function NewProjectDialog({
         onOpenChange(o);
         if (!o) {
           setName("");
+          setVisibility("public");
           setError(null);
         }
       }}
@@ -268,6 +280,45 @@ function NewProjectDialog({
               {error}
             </p>
           )}
+        </div>
+        {/* project-visibility-fe S-005 / AS-018/AS-019 / C-001: a two-button segmented control —
+            collects the create-time visibility choice (default Public). Private = owner-only shell
+            (new docs in it are private); Public = visible to the workspace. The hint mirrors the
+            project-visibility carve-out copy without re-deriving it. */}
+        <div>
+          <span className="mb-1.5 block text-[12px] font-medium text-muted">Visibility</span>
+          <div
+            role="radiogroup"
+            aria-label="Project visibility"
+            className="inline-flex rounded-md border border-line p-0.5"
+          >
+            {(["public", "private"] as const).map((v) => {
+              const selected = visibility === v;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  data-testid={`new-project-visibility-${v}`}
+                  onClick={() => setVisibility(v)}
+                  className={`inline-flex items-center gap-1.5 rounded-[5px] px-3 py-1 text-[12.5px] font-medium transition-colors ${
+                    selected
+                      ? "bg-accent-soft text-accent-ink"
+                      : "text-muted hover:text-ink"
+                  }`}
+                >
+                  <Icon name={v === "public" ? "members" : "shield"} size={13} />
+                  {v === "public" ? "Public" : "Private"}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-[12px] text-subtle">
+            {visibility === "public"
+              ? "Visible to everyone in this workspace."
+              : "Only you — new docs in it stay private until shared."}
+          </p>
         </div>
         <div className="flex justify-end gap-2 border-t border-line pt-4">
           <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>

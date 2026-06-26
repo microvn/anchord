@@ -200,7 +200,16 @@ export function docsRoutes(deps: DocsRoutesDeps) {
           { repo, resolveProjectId },
         );
         set.status = 201; // created → 201; the envelope echoes statusCode 201
-        return { docId: result.docId, slug: result.slug, url: result.url };
+        // project-visibility S-004 (C-013 / AS-029): report the target project + resulting access
+        // so the web success UI (PublishAccessNotice) shows where the doc went + who can see it —
+        // a quick-publish into the default project is never silent.
+        return {
+          docId: result.docId,
+          slug: result.slug,
+          url: result.url,
+          project: result.project,
+          access: result.access,
+        };
       } catch (err) {
         if (err instanceof PublishRejected) {
           throw mapPublishRejected(err);

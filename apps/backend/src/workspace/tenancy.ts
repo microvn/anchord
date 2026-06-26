@@ -88,8 +88,16 @@ export interface TenancyRepo {
   findMemberRole(workspaceId: string, userId: string): Promise<WorkspaceRole | null>;
   /** Set an existing member's role. */
   setMemberRole(workspaceId: string, userId: string, role: WorkspaceRole): Promise<void>;
-  /** Delete a membership row; returns whether one was removed. */
-  removeMember(workspaceId: string, userId: string): Promise<boolean>;
+  /**
+   * project-visibility S-007 / C-012: remove a membership AND, in the SAME transaction,
+   * reassign every project in this workspace the removed user OWNS to `reassignTo` (a
+   * surviving workspace admin). This closes the orphan window: a removed member's PRIVATE
+   * project would otherwise be left owner-less (ON DELETE SET NULL) and invisible to
+   * everyone under `canViewProject` (owner-or-public). Atomic — if the reassignment fails,
+   * the membership delete rolls back, so a live project's `owner_id` is never left null.
+   * Returns whether a membership row was removed.
+   */
+  removeMember(workspaceId: string, userId: string, reassignTo: string): Promise<boolean>;
   /** How many admins the workspace has (the ≥1-admin invariant reads this). */
   countAdmins(workspaceId: string): Promise<number>;
   /** The member directory (joined to user for name/email). */
@@ -361,7 +369,13 @@ export async function removeWorkspaceMember(
   if (role === "admin" && (await deps.repo.countAdmins(input.workspaceId)) <= 1) {
     throw new TenancyRejected("cannot remove the last admin", "sole_admin");
   }
-  await deps.repo.removeMember(input.workspaceId, input.targetUserId);
+  // project-visibility S-007 / C-012: reassign the removed member's owned projects to a surviving
+  // admin in the SAME tx as the membership delete, so a private project is never orphaned (owner-less
+  // ⇒ invisible to everyone). The actor performing the removal is a surviving workspace admin
+  // (requireAdmin passed above, and the actor is never the just-removed target — a not_member / the
+  // sole-admin guard would have already rejected self-removal of the last admin), so it is the
+  // deterministic, always-valid reassignment target.
+  await deps.repo.removeMember(input.workspaceId, input.targetUserId, input.actorId);
 }
 
 /**

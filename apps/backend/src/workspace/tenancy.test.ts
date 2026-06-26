@@ -88,7 +88,16 @@ function fakeRepo(opts: { names?: Record<string, string> } = {}) {
       const m = state.members.find((x) => x.workspaceId === workspaceId && x.userId === userId);
       if (m) m.role = role;
     },
-    async removeMember(workspaceId, userId) {
+    async removeMember(workspaceId, userId, reassignTo) {
+      // project-visibility S-007 / C-012: mirror the real repo — reassign the removed member's owned
+      // projects to the surviving admin (default project demoted) BEFORE the membership delete, so the
+      // fake exercises the same atomic contract the service relies on.
+      for (const p of state.projects) {
+        if (p.workspaceId === workspaceId && p.ownerId === userId) {
+          p.ownerId = reassignTo;
+          if (p.isDefault) p.isDefault = false;
+        }
+      }
       const before = state.members.length;
       state.members = state.members.filter(
         (m) => !(m.workspaceId === workspaceId && m.userId === userId),
@@ -419,6 +428,27 @@ test("AS-014: an admin removes a member; the member loses access", async () => {
   await f.repo.addMember(ws.id, "u_bob", "member");
   await removeWorkspaceMember({ workspaceId: ws.id, actorId: "u_a", targetUserId: "u_bob" }, f.deps);
   expect(f.state.members.some((m) => m.userId === "u_bob")).toBe(false);
+});
+
+test("AS-027 / C-012: removing a member reassigns their owned private project to the removing admin (never orphaned/null)", async () => {
+  const f = fakeRepo();
+  const ws = await createWorkspace({ name: "Acme", actorId: "u_a" }, f.deps); // u_a = admin
+  await f.repo.addMember(ws.id, "u_bob", "member");
+  // Bob owns a deliberately-created PRIVATE project in the workspace.
+  f.state.projects.push({ workspaceId: ws.id, ownerId: "u_bob", isDefault: false } as any);
+
+  await removeWorkspaceMember({ workspaceId: ws.id, actorId: "u_a", targetUserId: "u_bob" }, f.deps);
+
+  // Bob is gone; his project did NOT keep his (now-removed) ownership and was NOT left null —
+  // it was reassigned to the removing admin (a surviving member) so it stays visible/manageable.
+  expect(f.state.members.some((m) => m.userId === "u_bob")).toBe(false);
+  const bobsProjects = f.state.projects.filter((p) => p.ownerId === "u_bob");
+  expect(bobsProjects).toHaveLength(0); // none still point at the removed user (C-012: never a removed user)
+  const reassigned = f.state.projects.filter(
+    (p) => p.workspaceId === ws.id && p.ownerId === "u_a" && !p.isDefault,
+  );
+  expect(reassigned).toHaveLength(1); // now the admin owns it → admin can see it (canViewProject owner-or-public)
+  expect(f.state.projects.every((p) => p.ownerId != null)).toBe(true); // C-012: owner_id never null
 });
 
 test("AS-015: an admin promotes a member to admin (more than one admin allowed)", async () => {

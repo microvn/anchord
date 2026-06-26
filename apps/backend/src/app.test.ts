@@ -161,7 +161,15 @@ test("AS-028: publish returns a /d/:slug app-viewer link and no /d server handle
   const res = await publishDoc(
     { bytes, filename: "spec.html", editedTitle: "Release Spec" },
     {
-      repo: { createDocWithV1: async () => ({ id: "doc-1" }) },
+      repo: {
+        createDocWithV1: async () => ({
+          id: "doc-1",
+          projectId: null,
+          projectName: null,
+          workspaceRole: "commenter",
+          linkRole: null,
+        }),
+      },
       slugGen: () => "release-spec",
     },
   );

@@ -7,7 +7,13 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { annotations, docs, docVersions, projects, user, shareLinks } from "../db/schema";
 import type { DB } from "../db/client";
-import { ensureDefaultProject, ProjectRejected, type ProjectRepo, type ProjectRow } from "./projects";
+import {
+  ensureDefaultProject,
+  ProjectRejected,
+  type ProjectRepo,
+  type ProjectRow,
+  type ProjectVisibility,
+} from "./projects";
 import { activeRolesFor } from "../sharing/doc-member-repo";
 
 /** Map a raw Drizzle projects row to the service's ProjectRow shape. */
@@ -18,6 +24,7 @@ function rowToProject(row: typeof projects.$inferSelect): ProjectRow {
     name: row.name,
     ownerId: row.ownerId,
     isDefault: row.isDefault,
+    visibility: row.visibility,
     archivedAt: row.archivedAt,
   };
 }
@@ -40,6 +47,7 @@ export function createProjectRepo(db: DB): ProjectRepo {
           name: input.name,
           ownerId: input.ownerId,
           isDefault: input.isDefault,
+          visibility: input.visibility,
         })
         .onConflictDoNothing()
         .returning();
@@ -108,6 +116,12 @@ export function createProjectRepo(db: DB): ProjectRepo {
       await db.update(projects).set({ archivedAt }).where(eq(projects.id, projectId));
     },
 
+    async setVisibility(projectId, visibility): Promise<void> {
+      // project-visibility S-003 / C-008: flips ONLY projects.visibility — no share_links touched,
+      // so existing docs' access is unchanged (the new value feeds only future-doc derivation).
+      await db.update(projects).set({ visibility }).where(eq(projects.id, projectId));
+    },
+
     async countDocs(projectId): Promise<number> {
       // doc-delete-trash S-002 / C-002: a soft-deleted doc lives in Trash, not the project, so
       // it is NOT counted here — a project holding only deleted docs counts as empty (deletable).
@@ -164,6 +178,14 @@ export interface ProjectDocRow {
 export interface WorkspaceDocRow extends ProjectDocRow {
   projectId: string;
   projectName: string;
+  /**
+   * project-visibility S-006 / C-004: the project's visibility + owner, so the route can SUPPRESS
+   * `projectName` for a non-owner of a PRIVATE project (the doc stays visible via per-doc access, but
+   * the private project's NAME must not leak on the card). The suppression is applied at the route
+   * (where the caller's id is known), not here — the row carries the raw facts.
+   */
+  projectVisibility: ProjectVisibility;
+  projectOwnerId: string | null;
 }
 
 /**
@@ -288,6 +310,10 @@ export function createProjectsRouteRepo(db: DB): ProjectsRouteRepo {
           updatedAt: docs.updatedAt,
           projectId: projects.id,
           projectName: projects.name,
+          // project-visibility S-006 / C-004: carry the project's visibility + owner so the route can
+          // suppress the name for a non-owner of a private project (the doc still lists — C-005).
+          projectVisibility: projects.visibility,
+          projectOwnerId: projects.ownerId,
         })
         .from(docs)
         .innerJoin(

@@ -94,7 +94,15 @@ function fakeCreate(opts: {
       generalAccess: defaultAccess, // inherits the workspace default (shared-workspace model / C-006)
       version: 1,
     });
-    return { docId, slug, url: `/d/${slug}` };
+    // project-visibility S-004 (C-013 / AS-029): the create response reports the target project
+    // + the doc's resulting access. This fake models the default/shared path → anyone_in_workspace.
+    return {
+      docId,
+      slug,
+      url: `/d/${slug}`,
+      project: { id: projectId, name: "Default project" },
+      access: "anyone_in_workspace" as const,
+    };
   };
   return { port, docs, get defaultCreates() { return nDefaultCreates; } };
 }
@@ -233,7 +241,17 @@ describe("AS-003: anchord_create_document creates a doc in the token's workspace
     const fk = fakeCreate();
     const tool = createDocumentHandler(fk.port);
     const res = await tool({ content: "x", format: "html" }, ctx());
-    expect(res).toEqual({ docId: "doc_1", slug: "slug-doc_1", url: "/d/slug-doc_1" });
+    expect(res).toMatchObject({ docId: "doc_1", slug: "slug-doc_1", url: "/d/slug-doc_1" });
+  });
+
+  test("AS-029: the MCP create response reports the target project + the doc's resulting access", async () => {
+    // project-visibility S-004 (C-013): an agent that passed no projectId still learns its doc
+    // landed in the default project and is workspace-visible (reviewable) — never a silent surprise.
+    const fk = fakeCreate();
+    const tool = createDocumentHandler(fk.port);
+    const res = await tool({ content: "x", format: "html" }, ctx({ userId: "u_owner", workspaceId: "W" }));
+    expect(res.project).toEqual({ id: "proj_default_1", name: "Default project" });
+    expect(res.access).toBe("anyone_in_workspace");
   });
 
   test("AS-003: identity + workspace come from the TOKEN (ctx), not params (C-001/C-006)", async () => {

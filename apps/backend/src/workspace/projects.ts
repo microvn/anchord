@@ -17,6 +17,9 @@
 // integration-verified against real Postgres; this file is the logic the unit
 // suite drives with a fake repo.
 
+/** project-visibility S-001 / C-001: a project's visibility ∈ private | public. */
+export type ProjectVisibility = "private" | "public";
+
 /** A project row as the service sees it. */
 export interface ProjectRow {
   id: string;
@@ -24,6 +27,8 @@ export interface ProjectRow {
   name: string;
   ownerId: string | null;
   isDefault: boolean;
+  /** project-visibility S-001 / C-001: private | public (NOT NULL). */
+  visibility: ProjectVisibility;
   archivedAt: Date | null;
 }
 
@@ -57,6 +62,8 @@ export interface ProjectRepo {
     name: string;
     ownerId: string | null;
     isDefault: boolean;
+    /** project-visibility S-001: the caller (createProject / ensureDefaultProject) decides. */
+    visibility: ProjectVisibility;
   }): Promise<ProjectRow>;
   /** A project by id within the workspace, or null. */
   findById(workspaceId: string, projectId: string): Promise<ProjectRow | null>;
@@ -68,6 +75,9 @@ export interface ProjectRepo {
   listAll(workspaceId: string): Promise<ProjectRow[]>;
   setName(projectId: string, name: string): Promise<void>;
   setArchivedAt(projectId: string, archivedAt: Date | null): Promise<void>;
+  /** project-visibility S-003 / C-008: flip a project's visibility. Touches NOTHING else
+   *  (no share_links) — the toggle affects only the default of docs created AFTERWARD. */
+  setVisibility(projectId: string, visibility: ProjectVisibility): Promise<void>;
   /** How many docs reference this project (for the block-delete-when-non-empty rule). */
   countDocs(projectId: string): Promise<number>;
   delete(projectId: string): Promise<void>;
@@ -96,7 +106,7 @@ function cleanName(name: string): string {
  * only by ensureDefaultProject).
  */
 export async function createProject(
-  input: { workspaceId: string; name: string; ownerId: string },
+  input: { workspaceId: string; name: string; ownerId: string; visibility?: ProjectVisibility },
   deps: ProjectDeps,
 ): Promise<ProjectRow> {
   const name = cleanName(input.name);
@@ -105,6 +115,9 @@ export async function createProject(
     name,
     ownerId: input.ownerId,
     isDefault: false,
+    // project-visibility S-001 / C-001 / AS-001: a deliberately-created project is PUBLIC by
+    // default. MCP create_project may override (AS-003/AS-004) by passing `visibility`.
+    visibility: input.visibility ?? "public",
   });
 }
 
@@ -125,17 +138,99 @@ export async function ensureDefaultProject(
     name: `${display}'s docs`,
     ownerId: input.ownerId,
     isDefault: true,
+    // project-visibility S-001 / C-001 / AS-002: the auto per-member default project is PRIVATE
+    // (its shell is owner-only). Its NEW docs still default workspace-shared — that decouple
+    // carve-out lives in the publish derivation (S-004), not here.
+    visibility: "private",
   });
 }
 
-/** Browse list (C-005): non-archived projects by default; all when includeArchived. */
+// ── project-visibility S-002 — the ONE shared project-visibility predicate (C-002) ──────
+// project-visibility S-002 / C-002: a PROJECT is visible to user U IFF
+//   - U is its OWNER (project.ownerId === U), OR
+//   - the project is PUBLIC (visibility === "public").
+// There is NO admin exception (C-003) — an admin runs the exact same predicate (own + public
+// only), so a workspace admin never sees another member's private project. This is the SINGLE
+// predicate every project-FETCH + name + write-target surface must apply identically: the
+// projects list, the new-doc picker, the move/copy target picker, MCP list_projects /
+// read_project, and the move-target authorization. A project the user can't view is ABSENT
+// from a list and indistinguishable from not-found on a by-id fetch (existence-hiding).
+
+/** Whether `userId` may SEE `project` (the ONE shared C-002 / C-003 rule above). */
+export function canViewProject(
+  userId: string,
+  project: Pick<ProjectRow, "ownerId" | "visibility">,
+): boolean {
+  return project.ownerId === userId || project.visibility === "public";
+}
+
+/**
+ * project-visibility S-006 / C-004 / AS-026 — gate a project's NAME wherever it could surface beside
+ * a doc the viewer can otherwise see (the doc-list card, the viewer breadcrumb). A PRIVATE project's
+ * name is suppressed (→ null) for a NON-owner; the owner (and anyone on a public project) keeps the
+ * real name. This reuses the SAME `canViewProject` predicate as the project LIST/shell, so the name
+ * gate can never drift from the shell gate. The doc itself stays fully accessible (per-doc access,
+ * C-005) — only the private project's NAME is hidden.
+ */
+export function projectNameForViewer(
+  userId: string,
+  project: { name: string; ownerId: string | null; visibility: ProjectVisibility },
+): string | null {
+  return canViewProject(userId, project) ? project.name : null;
+}
+
+// ── project-visibility S-004 — the ONE new-doc access derivation (C-007) ───────────────
+/** A doc's two-axis access config (doc-access-two-axis): the workspace + link roles. */
+export interface NewDocAccess {
+  workspaceRole: "viewer" | "commenter" | "editor" | null;
+  linkRole: "viewer" | "commenter" | "editor" | null;
+}
+
+/**
+ * project-visibility S-004 / C-007 — derive a NEW doc's initial share_links axes from its
+ * TARGET project. This is the keystone that replaces the doc-access-two-axis FIXED default
+ * (`{commenter, null}`) with a project-derived one, applied identically at EVERY doc-creation
+ * surface (web publish, MCP create_document, copy):
+ *
+ *   - default project (`isDefault === true`)  → `{ commenter, null }` ALWAYS, regardless of its
+ *     (private) visibility — THE CARVE-OUT. The per-member default project's shell is private
+ *     but its new docs stay workspace-shared, so the quick-publish / MCP-no-projectId agent
+ *     round-trip is never reviewer-invisible (AS-018/AS-019). This preserves doc-access-two-axis
+ *     C-007's shared default for the default project (NOT reversed).
+ *   - non-default PUBLIC project                → `{ commenter, null }` (the shared default — AS-016).
+ *   - non-default PRIVATE project               → `{ null, null }` (derived restricted — AS-017/AS-020):
+ *     the doc is private, only the owner + individually-invited reach it.
+ *
+ * PURE — no DB. The caller reads `{ isDefault, visibility }` from the target project (in the same
+ * transaction as the doc/version/share_links insert) and feeds it here.
+ */
+export function deriveNewDocAccess(project: {
+  isDefault: boolean;
+  visibility: ProjectVisibility;
+}): NewDocAccess {
+  // Carve-out: the default project always shares its new docs (agent-loop-safe), even though
+  // its shell is private. A non-default project follows its visibility.
+  if (project.isDefault || project.visibility === "public") {
+    return { workspaceRole: "commenter", linkRole: null };
+  }
+  return { workspaceRole: null, linkRole: null };
+}
+
+/**
+ * Browse list (C-005 doc-list boundary preserved): non-archived projects by default; all when
+ * includeArchived. project-visibility S-002 / C-002: the list is then filtered to the projects
+ * `userId` may VIEW (own + public) — a private project of another member is ABSENT (no admin
+ * exception, C-003). One predicate (canViewProject), applied here so EVERY consumer of
+ * listProjects (the projects-list route AND the move/copy target picker payload) inherits it.
+ */
 export async function listProjects(
-  input: { workspaceId: string; includeArchived?: boolean },
+  input: { workspaceId: string; userId: string; includeArchived?: boolean },
   deps: ProjectDeps,
 ): Promise<ProjectRow[]> {
-  return input.includeArchived
-    ? deps.repo.listAll(input.workspaceId)
-    : deps.repo.listActive(input.workspaceId);
+  const all = input.includeArchived
+    ? await deps.repo.listAll(input.workspaceId)
+    : await deps.repo.listActive(input.workspaceId);
+  return all.filter((p) => canViewProject(input.userId, p));
 }
 
 /**
@@ -199,6 +294,46 @@ export async function unarchiveProject(
   const project = await loadManageable(input, deps);
   await deps.repo.setArchivedAt(project.id, null);
   return { ...project, archivedAt: null };
+}
+
+/**
+ * project-visibility S-003 / C-008: change a project's visibility (private ↔ public).
+ *
+ * Authorization is NOT the plain owner-or-admin manage gate — it is the C-008 rule:
+ *   - the OWNER may always toggle (including their own private project), AND
+ *   - a workspace ADMIN may toggle ONLY a project they can SEE (canViewProject) — and since an
+ *     admin cannot see another member's PRIVATE project (C-003, no admin exception), an admin
+ *     effectively toggles only PUBLIC projects (or their own).
+ *   - anyone else (a non-owner non-admin) is refused.
+ * We reuse `canViewProject` for the admin arm rather than inventing a new admin exception. A
+ * missing project surfaces as not_found (the route maps it; existence-hiding is the browse
+ * filter's job, but a by-id toggle on a project an admin can't see is refused as forbidden —
+ * indistinguishable in effect from "you can't touch it").
+ *
+ * This path touches ONLY `projects.visibility` — it NEVER reads or writes `share_links`, so an
+ * existing doc's access (workspace_role + link_role) is unchanged; the new visibility only feeds
+ * the default of docs created AFTERWARD (the derivation lives in S-004).
+ */
+export async function setProjectVisibility(
+  input: {
+    workspaceId: string;
+    projectId: string;
+    actorId: string;
+    isAdmin: boolean;
+    visibility: ProjectVisibility;
+  },
+  deps: ProjectDeps,
+): Promise<ProjectRow> {
+  const project = await deps.repo.findById(input.workspaceId, input.projectId);
+  if (!project) throw new ProjectRejected("project not found", "not_found");
+  const isOwner = project.ownerId === input.actorId;
+  // Owner always; admin only on a project they can SEE (own + public — canViewProject); else no.
+  const allowed = isOwner || (input.isAdmin && canViewProject(input.actorId, project));
+  if (!allowed) {
+    throw new ProjectRejected("not allowed to change this project's visibility", "forbidden");
+  }
+  await deps.repo.setVisibility(project.id, input.visibility);
+  return { ...project, visibility: input.visibility };
 }
 
 /**

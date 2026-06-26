@@ -14,6 +14,10 @@ export type DocStatus = "live" | "draft";
 /** A doc's general-access level (who can reach it without an explicit per-doc role). */
 export type GeneralAccess = "restricted" | "anyone_in_workspace" | "anyone_with_link";
 
+/** A project's visibility (project-visibility S-003). private = owner-only group; public = visible to
+ *  the workspace. The FE NEVER computes this — it renders the server's `visibility` value (C-001). */
+export type ProjectVisibility = "private" | "public";
+
 /** A doc as the project-docs browse endpoint returns it (GET …/projects/:id/docs → data.docs[]). */
 export interface DocRow {
   id: string;
@@ -55,6 +59,19 @@ export interface ProjectRow {
   archived: boolean;
   /** Doc count — derived client-side by counting the project's browse-visible docs. */
   docCount?: number;
+  /** project-visibility S-003 / AS-001 / C-001: the project's visibility, served on each list row.
+   *  Drives the Private/Public badge. Optional so a legacy/mocked row without it degrades (no badge). */
+  visibility?: ProjectVisibility;
+  /** project-visibility S-003 / AS-003 / C-003: server-computed — may the current caller toggle THIS
+   *  project's visibility (owner always; admin only on a project they can see)? Drives the ⋯-menu
+   *  toggle affordance. The FE renders the toggle iff true and NEVER re-derives the gate (C-003).
+   *  Absent on legacy/mocked rows → treated as false (toggle hidden). */
+  canToggleVisibility?: boolean;
+  /** project-visibility-fe S-002 / AS-008 / C-001: the server-derived access level a NEW doc created
+   *  in this project would get — `anyone_in_workspace` for a public OR the default private-shell
+   *  project (the carve-out), `restricted` for a non-default private one. The new-doc hint DISPLAYS
+   *  this value; the FE NEVER recomputes the carve-out. Absent on legacy/mocked rows → no hint. */
+  newDocAccess?: GeneralAccess;
 }
 
 /** A search hit (GET …/search?q= → data.results[]). matchSource drives the "in title/content/comment" tag. */
@@ -71,6 +88,15 @@ export interface PublishResult {
   docId: string;
   slug: string;
   url: string;
+  /** project-visibility-fe S-004 / AS-016 / C-001: the project the doc landed in, as the publish
+   *  response reports it (web publish AND MCP create — project-visibility:AS-029). NULLABLE, and
+   *  `name` may itself be null; the PublishAccessNotice renders it null-safe (AS-017). The FE reads
+   *  this — it never computes where the doc landed. */
+  project?: { id: string; name: string | null } | null;
+  /** project-visibility-fe S-004 / AS-016 / C-001: the doc's resulting general-access level
+   *  (the server's `deriveLevel` string), shown in the publish notice. Absent or unrecognized →
+   *  the access clause is omitted (AS-017). The FE displays this; it never derives access. */
+  access?: GeneralAccess;
 }
 
 /** The format chip label + Anchord-Design icon + label tone for a doc kind. `tone` tints the

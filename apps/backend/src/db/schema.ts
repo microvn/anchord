@@ -17,6 +17,13 @@ export const docKind = pgEnum("doc_kind", ["html", "markdown", "image"]);
 // owner is conferred by ownership, never by a link. Roles ordered low→high.
 export const shareRole = pgEnum("share_role", ["viewer", "commenter", "editor"]);
 
+// project-visibility S-001 / C-001: a project's visibility ∈ private | public (NOT NULL). Private
+// hides the project SHELL + name from non-owners and makes its new docs restricted-by-default (for
+// NON-default projects); public is workspace-shared. The auto per-member DEFAULT project is private
+// (shell hidden) but its new docs stay shared (the decouple carve-out — agent-loop safe). A
+// user-created project (web) is public; MCP create_project is public-by-default, overridable.
+export const projectVisibility = pgEnum("project_visibility", ["private", "public"]);
+
 export const docs = pgTable(
   "docs",
   {
@@ -97,6 +104,11 @@ export const projects = pgTable(
     name: text("name").notNull(),
     ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
     isDefault: boolean("is_default").notNull().default(false),
+    // project-visibility S-001 / C-001: private | public (NOT NULL). The app is the source of truth
+    // per insert path — ensureDefaultProject writes private, createProject writes public (MCP may
+    // override). The migration adds the column with a transient DEFAULT 'public' + backfill so it
+    // does not fail on existing self-host rows (which were effectively workspace-shared).
+    visibility: projectVisibility("visibility").notNull().default("public"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: createdAt(),
   },

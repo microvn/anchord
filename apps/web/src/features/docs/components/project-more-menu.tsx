@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { archiveProject, unarchiveProject, deleteProject } from "@/features/docs/services/client";
 import { RenameProjectDialog } from "./rename-project-dialog";
+import { ProjectVisibilityToggle } from "./project-visibility-toggle";
 import { queryKeys } from "@/features/workspaces/lib/query-keys";
 import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
 import { toApiError } from "@/lib/api/api-error";
@@ -133,6 +134,11 @@ export function ProjectCardMoreMenu({
               <Icon name="inbox" size={15} />
               Archive
             </DropdownMenuItem>
+          )}
+          {/* project-visibility-fe S-001 / AS-003 / C-003: the visibility toggle is rendered IFF the
+              server's per-row `canToggleVisibility` is true — the FE never re-derives the gate. */}
+          {project.canToggleVisibility && (
+            <ProjectVisibilityToggle project={project} workspaceId={workspaceId} />
           )}
           {/* C-002: the default project has NO Delete control. */}
           {!project.isDefault && (

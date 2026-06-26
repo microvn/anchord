@@ -28,7 +28,12 @@ import { NotFoundError } from "../http/errors";
 import { paginationQuery, paginate, type PaginationParams } from "../http/pagination";
 import { docs, projects } from "../db/schema";
 import { createActivityRepo, type ActivityRepo, type ActivityRow } from "../activity/repo";
-import { createActivityVisibility, type ResolveDocAccess, type ResolveLiveRole } from "../activity/visibility";
+import {
+  createActivityVisibility,
+  type ResolveDocAccess,
+  type ResolveLiveRole,
+  type ResolveProjectVisibility,
+} from "../activity/visibility";
 import { countByCategory, filterByCategory, isActivityCategory } from "../activity/category";
 import { computeStats } from "../activity/stats";
 import type { DB } from "../db/client";
@@ -61,6 +66,13 @@ export interface ActivityRoutesDeps {
    */
   resolveLiveRole?: ResolveLiveRole;
   /**
+   * project-visibility S-006 / C-010: resolves a PROJECT's visibility + owner so the gate can hide a
+   * PRIVATE project's project-level events from non-owners (admins included). Used only for
+   * project-level rows (`docId == null && projectId != null`). Optional: omitted leaves project-level
+   * rows on the legacy "doc-less ⇒ visible" rule; prod ALWAYS wires it (index.ts).
+   */
+  resolveProjectVisibility?: ResolveProjectVisibility;
+  /**
    * workspace-activity S-004: resolves a doc-scoped event's CURRENT doc link target — the slug the
    * viewer is addressed by (`/d/:slug`) plus the project name — so the detail page's "Open doc"
    * deep-link can be built. Resolved at READ time; a DELETED doc returns null, and "Open doc"
@@ -86,7 +98,11 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
 
   // The ONE shared visibility gate (C-003). The feed-list + the single-event read both route
   // through it; S-003 (counts) and S-007 (stats) reuse the SAME instance — never a parallel filter.
-  const visibility = createActivityVisibility({ resolveAccess: deps.resolveAccess, resolveLiveRole: deps.resolveLiveRole });
+  const visibility = createActivityVisibility({
+    resolveAccess: deps.resolveAccess,
+    resolveLiveRole: deps.resolveLiveRole,
+    resolveProjectVisibility: deps.resolveProjectVisibility,
+  });
 
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))

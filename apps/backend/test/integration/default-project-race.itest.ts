@@ -114,8 +114,8 @@ describe.skipIf(!RUN)("mcp-roundtrip C-011: default-project uniqueness (real Pos
     const repo = createProjectRepo(h.db);
 
     // Non-default projects are unconstrained by projects_default_uq (the WHERE is_default guard).
-    const p1 = await repo.insert({ workspaceId, name: "Billing", ownerId, isDefault: false });
-    const p2 = await repo.insert({ workspaceId, name: "Payments", ownerId, isDefault: false });
+    const p1 = await repo.insert({ workspaceId, name: "Billing", ownerId, isDefault: false, visibility: "public" });
+    const p2 = await repo.insert({ workspaceId, name: "Payments", ownerId, isDefault: false, visibility: "public" });
 
     expect(p1.id).not.toBe(p2.id);
     expect(await countDefaults(h.db, workspaceId, ownerId)).toHaveLength(0);

@@ -13,6 +13,7 @@ import { deriveTitle } from "./title";
 import { generateSlug } from "./slug";
 import { sniffKind, validateSize, PublishRejected, type DocKind } from "./sniff";
 import { extractText } from "../render/extract-text";
+import { deriveLevel, type GeneralAccessLevel } from "../sharing/derive-level";
 
 export interface CreateDocInput {
   slug: string;
@@ -46,9 +47,25 @@ export interface CreateDocInput {
   projectId?: string | null;
 }
 
+/**
+ * The doc-creation result the repo returns (project-visibility S-004 / C-013): the doc id
+ * PLUS the target project (id + name) and the doc's resulting two-axis access, so the publish
+ * RESPONSE can report where the doc landed + who can see it (transparency — AS-029).
+ */
+export interface CreateDocResult {
+  id: string;
+  /** The target project the doc landed in (the resolved id), or null on the seed path. */
+  projectId: string | null;
+  /** The target project's name, or null when there is no project (seed) / it vanished. */
+  projectName: string | null;
+  /** doc-access-two-axis axes the share_links row was created with (derived from the project). */
+  workspaceRole: "viewer" | "commenter" | "editor" | null;
+  linkRole: "viewer" | "commenter" | "editor" | null;
+}
+
 /** Persistence port. The real implementation (repo.ts) is thin Drizzle glue. */
 export interface DocRepo {
-  createDocWithV1(input: CreateDocInput): Promise<{ id: string }>;
+  createDocWithV1(input: CreateDocInput): Promise<CreateDocResult>;
 }
 
 /**
@@ -118,6 +135,14 @@ export interface PublishResult {
   title: string;
   kind: DocKind;
   version: 1;
+  /**
+   * project-visibility S-004 (C-013 / AS-029): the target project the doc landed in + the
+   * doc's resulting general-access LEVEL (deriveLevel of the two axes), so a quick-publish /
+   * agent-publish that falls back to the default project is never a silent surprise about
+   * where the doc went or who can see it. `project` is null only on the session-less seed path.
+   */
+  project: { id: string; name: string | null } | null;
+  access: GeneralAccessLevel;
 }
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -184,7 +209,7 @@ export async function publishDoc(
   // FIXED at publish (not inherited from a workspace setting), applied identically at
   // every publish surface (web + MCP). The legacy general_access column is dropped, so
   // there is no per-doc access value to plumb through here any more.
-  const { id } = await deps.repo.createDocWithV1({
+  const created = await deps.repo.createDocWithV1({
     slug,
     title: finalTitle,
     kind,
@@ -198,13 +223,17 @@ export async function publishDoc(
     extractedText,
   });
 
+  // project-visibility S-004 (C-013 / AS-029): surface the target project + the doc's resulting
+  // access LEVEL (deriveLevel of the axes the repo set) so the caller learns where the doc went.
   return {
-    docId: id,
+    docId: created.id,
     slug,
     url: `/d/${slug}`,
     title: finalTitle,
     kind,
     version: 1,
+    project: created.projectId != null ? { id: created.projectId, name: created.projectName } : null,
+    access: deriveLevel(created.workspaceRole, created.linkRole),
   };
 }
 

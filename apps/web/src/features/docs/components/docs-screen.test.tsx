@@ -45,6 +45,7 @@ mock.module("@/features/docs/services/client", () => ({
   // UNDER-shadow the real client for sibling test files that use them (bun mock.module is
   // process-wide — an incomplete mock here erases `renameProject`/etc. from project-manage.test).
   renameProject: mock(async () => env({})),
+  setProjectVisibility: mock(async () => env({})),
   archiveProject: mock(async () => env({})),
   unarchiveProject: mock(async () => env({})),
   deleteProject: mock(async () => env({})),

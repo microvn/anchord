@@ -356,6 +356,7 @@ describe("sharing-permissions-ui S-001 — docs-list ⋯ entry (AS-019)", () => 
   mock.module("@/features/docs/services/client", () => ({
     moveDoc: mock(async () => env({})),
     copyDoc: mock(async () => env({})),
+    setProjectVisibility: mock(async () => env({})),
     fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   }));
 

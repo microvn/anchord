@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -19,11 +17,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ShareDialog } from "@/features/sharing/components/share-dialog";
 import { DeleteDocDialog } from "./delete-doc-dialog";
+import { VisibilityBoundaryAlert } from "./visibility-boundary-alert";
+import { ProjectVisibilityBadge } from "./project-visibility-badge";
 import type { EffectiveRole } from "@/features/viewer/services/client";
-import { queryKeys } from "@/features/workspaces/lib/query-keys";
-import { unwrapEnvelope } from "@/features/workspaces/hooks/use-bootstrap";
-import { toApiError } from "@/lib/api/api-error";
-import { moveDoc, copyDoc } from "@/features/docs/services/client";
+import { useDocMove } from "@/features/docs/hooks/use-doc-move";
 import type { DocRow, ProjectRow } from "@/features/docs/types";
 
 // MoveCopyDialog (workspace-project-ui S-001) — 1:1 with Anchord-Design dialogs2.jsx P10.
@@ -31,16 +28,10 @@ import type { DocRow, ProjectRow } from "@/features/docs/types";
 // Default badge · check on the selected), and a helper line. The destination list is the
 // active workspace's projects ONLY (C-003) — the caller passes the workspace-scoped list.
 // Move → POST …/docs/:slug/move; Copy → POST …/docs/:slug/copy (a clean duplicate, original
-// stays). On success: invalidate the workspace docs + projects caches so the UI reflects the
-// move (the doc's project label updates) / copy (a new doc appears in the target).
+// stays). The mutation logic (incl. the project-visibility-fe S-003 boundary alert flow) lives in
+// useDocMove; this component is the presentation + destination-picker shell.
 
 type Mode = "move" | "copy";
-
-interface MoveCopyResult {
-  docId: string;
-  slug: string;
-  projectId: string;
-}
 
 export function MoveCopyDialog({
   open,
@@ -57,42 +48,23 @@ export function MoveCopyDialog({
   projects: ProjectRow[];
   initialMode?: Mode;
 }) {
-  const queryClient = useQueryClient();
   const [mode, setMode] = useState<Mode>(initialMode);
   // Pre-select a project that isn't the doc's current one (matches the prototype).
   const firstOther = projects.find((p) => p.id !== doc.projectId);
   const [target, setTarget] = useState<string>(firstOther?.id ?? projects[0]?.id ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // The mutation + visibility-boundary flow (project-visibility-fe S-003) lives in the hook; this
+  // shell only owns the picker selection + mode. `onDone` closes the dialog on a completed op.
+  const { busy, error, boundaryTarget, boundaryTargetName, confirm, chooseBoundary, cancelBoundary } =
+    useDocMove(workspaceId, doc, projects, () => onOpenChange(false));
 
-  async function onConfirm() {
+  function onConfirm() {
     if (!target) return;
-    setBusy(true);
-    setError(null);
-    const run = mode === "move" ? moveDoc : copyDoc;
-    const targetName = projects.find((p) => p.id === target)?.name ?? "project";
-    try {
-      const res = unwrapEnvelope<MoveCopyResult>(await run(workspaceId, doc.slug, target));
-      if (res.error) {
-        setError(toApiError(res.error).message);
-        setBusy(false);
-        return;
-      }
-      await queryClient.invalidateQueries({ queryKey: queryKeys.docs(workspaceId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projects(workspaceId) });
-      toast.success(
-        `${mode === "move" ? "Moved" : "Copied"} “${doc.title}” to ${targetName}`,
-      );
-      onOpenChange(false);
-      setBusy(false);
-    } catch (thrown) {
-      setError(toApiError(thrown).message);
-      setBusy(false);
-    }
+    void confirm(mode, target);
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="move-copy-dialog"
         overlayClassName="bg-[var(--scrim)]"
@@ -153,6 +125,9 @@ export function MoveCopyDialog({
                   <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">
                     {p.name}
                   </span>
+                  {/* project-visibility-fe S-002 / AS-007: per-option Private/Public badge, read from
+                      the row's server `visibility` (C-001). Absent on a legacy row → no badge. */}
+                  {p.visibility && <ProjectVisibilityBadge visibility={p.visibility} />}
                   {p.isDefault && (
                     <span className="rounded-full border border-line px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] text-subtle">
                       Default
@@ -193,14 +168,28 @@ export function MoveCopyDialog({
             type="button"
             data-testid="move-copy-confirm"
             disabled={!target || busy}
-            onClick={() => void onConfirm()}
+            onClick={onConfirm}
           >
             <Icon name={mode === "move" ? "arrowRight" : "copy"} size={15} />
             {busy ? "Working…" : mode === "move" ? "Move" : "Copy"}
           </Button>
         </div>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+
+      {/* project-visibility-fe S-003 / C-002: opened ONLY on the server's `visibility_boundary`
+          refusal. Rendered as a sibling of the move Dialog (both portal to <body>) so the choice
+          survives independently and the alert never auto-closes the move flow. */}
+      <VisibilityBoundaryAlert
+        open={boundaryTarget !== null}
+        docTitle={doc.title}
+        targetName={boundaryTargetName}
+        busy={busy}
+        onMakePrivate={() => void chooseBoundary("make_private")}
+        onKeepSharing={() => void chooseBoundary("keep_sharing")}
+        onCancel={cancelBoundary}
+      />
+    </>
   );
 }
 

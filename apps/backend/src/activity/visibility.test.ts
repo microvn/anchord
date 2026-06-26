@@ -9,10 +9,21 @@
 // viewer's resolver, C-003); the live resolveAccess wiring is the route's concern + integration.
 
 import { describe, expect, test } from "bun:test";
-import { createActivityVisibility, type ResolveDocAccess, type ResolveLiveRole } from "./visibility";
+import {
+  createActivityVisibility,
+  type ResolveDocAccess,
+  type ResolveLiveRole,
+  type ResolveProjectVisibility,
+} from "./visibility";
 import type { ActivityType } from "./types";
 
-type Row = { id: string; docId: string | null; type?: ActivityType; actorUserId?: string | null };
+type Row = {
+  id: string;
+  docId: string | null;
+  projectId?: string | null;
+  type?: ActivityType;
+  actorUserId?: string | null;
+};
 
 const ADMIN = { userId: "u-mara", role: "admin" as const };
 const MEMBER = { userId: "u-tom", role: "member" as const };
@@ -196,5 +207,94 @@ describe("activity visibility gate (workspace-activity S-002)", () => {
     const commentRow: Row = { id: "e-cmt", docId: "d-gone", type: "comment", actorUserId: "u-mai" };
     expect(await v.canSee(commentRow, PRIOR_EDITOR)).toBe(false); // not a lifecycle row → still hidden
     expect(resolveLiveRole.calls).toEqual([]); // the live resolver is NOT used for non-lifecycle rows
+  });
+
+  // ── project-visibility S-006 / C-010: PROJECT-LEVEL event gating by project visibility ──────────
+  // A `resolveProjectVisibility` fake: `projects` maps projectId → {isPrivate, ownerId}; an absent
+  // id resolves to null (project gone). A project-level row is doc-less with a projectId.
+  function fakeResolveProjectVisibility(
+    projects: Record<string, { isPrivate: boolean; ownerId: string | null }>,
+  ): ResolveProjectVisibility & { calls: string[] } {
+    const calls: string[] = [];
+    const fn = (async (projectId: string) => {
+      calls.push(projectId);
+      return projects[projectId] ?? null;
+    }) as unknown as ResolveProjectVisibility & { calls: string[] };
+    fn.calls = calls;
+    return fn;
+  }
+
+  // A owns a PRIVATE project p-secret; a PUBLIC project p-open. B is a member, C an admin.
+  const OWNER_A = { userId: "u-ann", role: "member" as const };
+  const MEMBER_B = { userId: "u-bob", role: "member" as const };
+  const ADMIN_C = { userId: "u-cara", role: "admin" as const };
+  const PROJECTS = {
+    "p-secret": { isPrivate: true, ownerId: "u-ann" },
+    "p-open": { isPrivate: false, ownerId: "u-ann" },
+  };
+
+  test("AS-024: a project-level event of a PRIVATE project is hidden from a non-owner member AND an admin; the owner sees it", async () => {
+    const resolveProjectVisibility = fakeResolveProjectVisibility(PROJECTS);
+    const v = createActivityVisibility({ resolveProjectVisibility });
+    // A doc-less "project created" row whose subject is A's private project p-secret.
+    const row: Row = { id: "e-proj", docId: null, projectId: "p-secret", type: "project", actorUserId: "u-ann" };
+
+    // Owner A sees their own private project's project-level event.
+    expect((await v.filterVisible([row], OWNER_A)).map((r) => r.id)).toEqual(["e-proj"]);
+    expect(await v.canSee(row, OWNER_A)).toBe(true);
+
+    // A non-owner member B does NOT.
+    expect(await v.filterVisible([row], MEMBER_B)).toEqual([]);
+    expect(await v.canSee(row, MEMBER_B)).toBe(false);
+
+    // An admin C does NOT either — the admin short-circuit does NOT override C-010 (mirrors C-003).
+    expect(await v.filterVisible([row], ADMIN_C)).toEqual([]);
+    expect(await v.canSee(row, ADMIN_C)).toBe(false);
+  });
+
+  test("AS-024: a project-level event of a PUBLIC project stays visible to a non-owner member and an admin", async () => {
+    // The carve-out is for PRIVATE projects only — a public project's project-level event behaves
+    // like any workspace-level event (visible to all members + admins).
+    const v = createActivityVisibility({ resolveProjectVisibility: fakeResolveProjectVisibility(PROJECTS) });
+    const row: Row = { id: "e-open", docId: null, projectId: "p-open", type: "project", actorUserId: "u-ann" };
+    expect((await v.filterVisible([row], MEMBER_B)).map((r) => r.id)).toEqual(["e-open"]);
+    expect((await v.filterVisible([row], ADMIN_C)).map((r) => r.id)).toEqual(["e-open"]);
+    expect(await v.canSee(row, MEMBER_B)).toBe(true);
+  });
+
+  test("AS-025: a DOC-level event for an accessible doc still surfaces, even though the doc lives in a private project", async () => {
+    // The doc-level event carries BOTH a docId AND a projectId (the private project it lives in). It
+    // is NOT project-level (docId is set), so it must stay on the per-doc access path — a member who
+    // can open the doc still sees its event, project visibility notwithstanding (soft-private).
+    const resolveAccess = fakeResolveAccess(new Set(["d-shared"])); // B can open the shared doc
+    const resolveProjectVisibility = fakeResolveProjectVisibility(PROJECTS);
+    const v = createActivityVisibility({ resolveAccess, resolveProjectVisibility });
+    const docRow: Row = { id: "e-pub", docId: "d-shared", projectId: "p-secret", type: "publish", actorUserId: "u-ann" };
+
+    expect((await v.filterVisible([docRow], MEMBER_B)).map((r) => r.id)).toEqual(["e-pub"]);
+    expect(await v.canSee(docRow, MEMBER_B)).toBe(true);
+    // The project-visibility resolver is NEVER consulted for a doc-level row — only resolveAccess
+    // (called once per filterVisible/canSee pass; each uses its own cache, hence two entries).
+    expect(resolveProjectVisibility.calls).toEqual([]);
+    expect(resolveAccess.calls.every((d) => d === "d-shared")).toBe(true);
+    expect(resolveAccess.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("C-010: a project-level row whose project vanished is hidden from non-owners (safe default)", async () => {
+    // resolveProjectVisibility returns null for an unknown project — the gate hides the row rather
+    // than leaking it. (Defensive: project hard-delete is out of scope, but a dangling row never leaks.)
+    const v = createActivityVisibility({ resolveProjectVisibility: fakeResolveProjectVisibility(PROJECTS) });
+    const row: Row = { id: "e-ghost", docId: null, projectId: "p-missing", type: "project" };
+    expect(await v.filterVisible([row], MEMBER_B)).toEqual([]);
+    expect(await v.filterVisible([row], ADMIN_C)).toEqual([]);
+  });
+
+  test("C-010: with NO project-visibility resolver wired, project-level rows fall back to doc-less-visible (backward compatible)", async () => {
+    // Pre-S-006 wirings / tests that don't pass resolveProjectVisibility must keep the old behaviour:
+    // a doc-less row (even with a projectId) is visible to everyone — no regression.
+    const v = createActivityVisibility({});
+    const row: Row = { id: "e-legacy", docId: null, projectId: "p-secret", type: "project" };
+    expect((await v.filterVisible([row], MEMBER_B)).map((r) => r.id)).toEqual(["e-legacy"]);
+    expect((await v.filterVisible([row], ADMIN_C)).map((r) => r.id)).toEqual(["e-legacy"]);
   });
 });

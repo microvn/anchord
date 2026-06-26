@@ -70,6 +70,7 @@ mock.module("@/features/docs/services/client", () => ({
   copyDoc: mock(async () => env({})),
   deleteDoc: mock(async () => env({ docId: "d1", slug: "spec", deleted: true })),
   renameProject,
+  setProjectVisibility: mock(async () => env({})),
   archiveProject,
   unarchiveProject,
   deleteProject,

@@ -22,6 +22,7 @@ mock.module("@/features/docs/services/client", () => ({
   fetchProjectDocs: mock(async () => env({ docs: [] })),
   fetchWorkspaceDocs: mock(async () => env({ docs: [], projects: [] })),
   createProject: mock(async () => env({})),
+  setProjectVisibility: mock(async () => env({})),
   searchDocs: mock(async () => env({ results: [] })),
   publishDoc: mock(async () => env({ docId: "d1", slug: "s1", url: "/d/s1" })),
 }));
