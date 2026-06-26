@@ -76,6 +76,7 @@ function fakeProjectRepo() {
     async setName() {},
     async setArchivedAt() {},
     async setVisibility() {},
+    async setVisibilityPrivateCascade() {},
     async countDocs() {
       return 0;
     },

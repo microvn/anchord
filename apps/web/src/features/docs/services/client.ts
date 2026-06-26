@@ -116,10 +116,15 @@ export function setProjectVisibility(
   workspaceId: string,
   projectId: string,
   visibility: ProjectVisibility,
+  // project-visibility-cascade S-001 / C-001: when true AND this is public→private, the server also
+  // bulk-resets every doc in the project to restricted (the make-private cascade). Absent on every
+  // other transition (the parent behaviour — project shell only).
+  cascade?: boolean,
 ): Promise<EdenResult<unknown>> {
-  return treaty.api.w({ workspaceId }).projects({ id: projectId }).visibility.patch({ visibility }) as Promise<
-    EdenResult<unknown>
-  >;
+  return treaty.api
+    .w({ workspaceId })
+    .projects({ id: projectId })
+    .visibility.patch({ visibility, ...(cascade ? { cascade } : {}) }) as Promise<EdenResult<unknown>>;
 }
 
 /**

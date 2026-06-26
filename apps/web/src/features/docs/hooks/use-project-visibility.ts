@@ -21,6 +21,12 @@ export interface ToggleVisibilityVars {
   projectId: string;
   /** The visibility to switch TO (the opposite of the project's current value). */
   next: ProjectVisibility;
+  /**
+   * project-visibility-cascade S-001 / C-001: when true AND this is public→private, the server
+   * ALSO bulk-resets every doc in the project to restricted (the make-private cascade). Ignored on
+   * any other transition. Absent/false → the parent behaviour (project shell only).
+   */
+  cascade?: boolean;
 }
 
 interface ToggleContext {
@@ -33,8 +39,8 @@ export function useToggleProjectVisibility(workspaceId: string) {
   const projectsKey = queryKeys.projects(workspaceId);
 
   return useMutation<unknown, Error, ToggleVisibilityVars, ToggleContext>({
-    mutationFn: async ({ projectId, next }) => {
-      const res = unwrapEnvelope(await setProjectVisibility(workspaceId, projectId, next));
+    mutationFn: async ({ projectId, next, cascade }) => {
+      const res = unwrapEnvelope(await setProjectVisibility(workspaceId, projectId, next, cascade));
       if (res.error) throw toApiError(res.error);
       return res.data;
     },

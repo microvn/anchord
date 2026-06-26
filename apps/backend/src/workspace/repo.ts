@@ -122,6 +122,25 @@ export function createProjectRepo(db: DB): ProjectRepo {
       await db.update(projects).set({ visibility }).where(eq(projects.id, projectId));
     },
 
+    async setVisibilityPrivateCascade(projectId): Promise<void> {
+      // project-visibility-cascade S-001 / C-001: the make-private cascade — atomic in ONE
+      // transaction: (1) flip the project to private, (2) bulk-null BOTH share_links axes for
+      // every doc in THIS project. It is a single set-based UPDATE scoped via `doc_id IN (select
+      // id from docs where project_id = ?)` — strictly the one project's docs, never another
+      // project's. It NEVER writes `doc_members`, so per-user specific invites survive (AS-002),
+      // and stores no prior-role history → IRREVERSIBLE. A doc with no share_links row is simply
+      // not matched (nothing to null); a doc already restricted is a no-op.
+      await db.transaction(async (tx) => {
+        await tx.update(projects).set({ visibility: "private" }).where(eq(projects.id, projectId));
+        await tx
+          .update(shareLinks)
+          .set({ workspaceRole: null, linkRole: null })
+          .where(
+            sql`${shareLinks.docId} in (select ${docs.id} from ${docs} where ${docs.projectId} = ${projectId})`,
+          );
+      });
+    },
+
     async countDocs(projectId): Promise<number> {
       // doc-delete-trash S-002 / C-002: a soft-deleted doc lives in Trash, not the project, so
       // it is NOT counted here — a project holding only deleted docs counts as empty (deletable).

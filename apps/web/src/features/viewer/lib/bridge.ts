@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 // Parent-side sandbox bridge (S-002, AS-004/AS-005, C-001/C-002/C-009).
 //
 // WHAT THIS IS. An HTML doc renders inside a sandboxed, opaque-origin iframe (html-sandbox-frame:
@@ -74,6 +76,94 @@ export interface BridgeSelectionRect {
   rect: { x: number; y: number; width: number; height: number } | null;
 }
 
+/** A relayed rect in IFRAME-LOCAL coordinates. annotation-hover-card S-003 / C-006. */
+export interface BridgeRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// ── annotation-hover-card S-003 / C-006 — UNTRUSTED relayed-message validation ──────────────
+//
+// Every message that arrives over the port from the sandboxed iframe is UNTRUSTED input (a hostile
+// body script shares the iframe's contentWindow and can post over the channel). C-006 mandates:
+//   1. Zod-parse every relayed message at the parent boundary (a shape that doesn't match → ignored).
+//   2. Its annotationId is looked up in the loaded, role-filtered set; a miss is a NO-OP (no card).
+//   3. Its rect is REJECTED when non-finite/negative/over-viewport, and the card position is CLAMPED
+//      to the viewport.
+// The card itself is PRESENTATION over server-trusted content (C-003): it renders only from the
+// already-loaded ViewerAnnotation, never from anything in the message — so even a forged-but-known id
+// can only surface data the user is already allowed to see; the message carries no text.
+
+/** A finite, non-negative rect — the parse-level guard before clamping (C-006). Non-finite (NaN,
+ *  ±Infinity) and negative width/height are rejected here; x/y may be negative (off-screen left/top
+ *  is legitimate before clamping). */
+const finite = z.number().refine(Number.isFinite, "non-finite");
+const rectSchema = z.object({
+  x: finite,
+  y: finite,
+  width: finite.refine((n) => n >= 0, "negative"),
+  height: finite.refine((n) => n >= 0, "negative"),
+});
+
+/** The relayed-message schemas (C-006). A `.nullable()` rect tolerates the bridge posting `rect:null`
+ *  when it can't read one; an invalid rect SHAPE makes the whole message fail parse (→ ignored). */
+const markEventSchema = z.object({
+  type: z.enum(["mark-click", "mark-enter", "mark-rect"]),
+  annotationId: z.string().min(1),
+  rect: rectSchema.nullable().optional(),
+});
+const markLeaveSchema = z.object({
+  type: z.literal("mark-leave"),
+  annotationId: z.string().min(1),
+});
+
+/** The discriminated union of EVERY message the in-iframe bridge may relay over the port (C-006). A
+ *  message that matches none (a forged `{annotation:…}`, a garbage shape) → `success:false` → ignored. */
+export const relayedMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("selection"), anchor: z.unknown().nullable().optional(), rect: rectSchema.nullable().optional() }),
+  z.object({ type: z.literal("selection-rect"), rect: rectSchema.nullable() }),
+  z.object({ type: z.literal("place-failed"), annotationId: z.string().min(1) }),
+  markEventSchema,
+  markLeaveSchema,
+]);
+export type RelayedMessage = z.infer<typeof relayedMessageSchema>;
+
+/**
+ * clampRectToViewport — C-006 (AS-027): reject a non-finite/negative/over-viewport rect and clamp the
+ * accepted one into the viewport so a forged or absurd rect can never push the card off-screen.
+ *
+ * Returns `null` when the rect is unusable (non-finite, negative size, or so oversized/off-screen it
+ * has no on-screen intersection) — the caller then opens NO card. Otherwise returns a rect clamped to
+ * [0, viewport]: x/y clamped to the viewport box, width/height clamped so the rect never extends past
+ * the viewport edge. Pure (no DOM), so it is unit-tested with synthetic rects + viewports.
+ */
+export function clampRectToViewport(rect: BridgeRect, viewport: { width: number; height: number }): BridgeRect | null {
+  const parsed = rectSchema.safeParse(rect);
+  if (!parsed.success) return null;
+  const { x, y, width, height } = parsed.data;
+  // An over-viewport rect (≥ a full viewport in either axis) is absurd for a single mark → reject so
+  // a `{width:1e9,height:1e9}` forgery opens nothing rather than a giant clamped box (AS-027).
+  if (width > viewport.width || height > viewport.height) return null;
+  // No on-screen intersection (entirely past the right/bottom edge, or entirely above/left) → reject.
+  if (x >= viewport.width || y >= viewport.height || x + width <= 0 || y + height <= 0) return null;
+  // Clamp to the VISIBLE intersection with the viewport: a left/top overflow shifts the origin to 0
+  // and shrinks the size by the clipped amount; a right/bottom overflow shrinks the far edge to the
+  // viewport edge. So a partly off-screen mark anchors the card to the part actually on-screen.
+  const cx = Math.max(x, 0);
+  const cy = Math.max(y, 0);
+  const cw = Math.min(x + width, viewport.width) - cx;
+  const ch = Math.min(y + height, viewport.height) - cy;
+  return { x: cx, y: cy, width: cw, height: ch };
+}
+
+/** isKnownAnnotationId — C-006 (AS-027): a relayed annotationId is acted on ONLY when it is in the
+ *  loaded, role-filtered set; a miss is a no-op (no card opens). Pure membership check, unit-tested. */
+export function isKnownAnnotationId(annotationId: string, loadedIds: ReadonlySet<string>): boolean {
+  return loadedIds.has(annotationId);
+}
+
 export interface BridgeHandlers {
   /** A real (non-null-anchor) selection arrived over the port → open the composer prefilled. */
   onSelection: (anchor: BridgeAnchor, rect: { x: number; y: number; width: number; height: number } | null) => void;
@@ -81,10 +171,22 @@ export interface BridgeHandlers {
   onClearSelection?: () => void;
   /** The in-iframe bridge could not place a highlight for this annotation (optional). */
   onPlaceFailed?: (annotationId: string) => void;
-  /** S-004/AS-011 (C-005): a click on a [data-anno] highlight inside the iframe was relayed up the
-   *  port → focus that rail thread (the parent can't read the opaque iframe DOM, so this relay is the
-   *  only path). Mirrors the markdown click→focus. */
-  onMarkClick?: (annotationId: string) => void;
+  /** S-004/AS-011 (C-005) + annotation-hover-card S-003/AS-016: a click on a [data-anno] highlight
+   *  inside the iframe was relayed up the port → focus the rail thread AND pin the card at the mark.
+   *  The CLICKED mark's iframe-local rect rides along (C-008) so the parent can anchor the pinned
+   *  popover outside the sandbox; `rect` is null when the bridge couldn't read it. The rect is
+   *  Zod-validated before this fires (C-006); the parent still translates + clamps it. */
+  onMarkClick?: (annotationId: string, rect: BridgeRect | null) => void;
+  /** S-003/AS-015 (peek): the cursor entered a [data-anno] mark in the iframe → start the dwell and
+   *  (after it) show the peek at the mark's translated rect. Zod-validated (C-006). */
+  onMarkEnter?: (annotationId: string, rect: BridgeRect | null) => void;
+  /** S-003/AS-015 (peek): the cursor left the mark (and did not move to a same-id sibling) → cancel
+   *  the dwell / hide the peek. */
+  onMarkLeave?: (annotationId: string) => void;
+  /** S-003/AS-021: the iframe re-posted the hovered/pinned mark's rect on its own in-iframe scroll →
+   *  reposition or auto-close the pinned card (the parent can't see the iframe scroll). A null rect
+   *  (mark gone) → treat as scrolled-out. Zod-validated (C-006). */
+  onMarkRect?: (annotationId: string, rect: BridgeRect | null) => void;
   /** HTML-PLACE: the handshake was accepted and the port captured. Fires ONCE (the first trusted
    *  ready binds the transport). The parent uses this to flush the existing annotation set down the
    *  port — `postHighlight` no-ops before this, so a naive post-on-mount would race the handshake. */
@@ -176,15 +278,17 @@ export function connectBridge(
     port = event.ports[0]!;
     port.onmessage = (ev: MessageEvent) => {
       if (disposed) return;
-      const msg = (ev.data ?? {}) as {
-        type?: string;
-        anchor?: BridgeAnchor | null;
-        rect?: { x: number; y: number; width: number; height: number } | null;
-        annotationId?: string;
-      };
+      // C-006 (AS-027): Zod-parse EVERY relayed message at the boundary. A shape that matches none of
+      // the protocol schemas (a forged `{annotation:…}`, a garbage payload, a bad rect) fails parse
+      // and is dropped — never duck-typed. The rect inside an accepted message is finite + non-negative
+      // (the schema rejects NaN / Infinity / negative size); the caller still translates + clamps it
+      // against the live viewport, and looks the annotationId up in the loaded set (a miss = no card).
+      const parsed = relayedMessageSchema.safeParse(ev.data);
+      if (!parsed.success) return;
+      const msg = parsed.data;
       if (msg.type === "selection") {
         if (msg.anchor) {
-          handlers.onSelection(msg.anchor, msg.rect ?? null);
+          handlers.onSelection(msg.anchor as BridgeAnchor, msg.rect ?? null);
         } else {
           // anchor === null → the iframe cleared its selection; drop any pending compose.
           handlers.onClearSelection?.();
@@ -194,13 +298,22 @@ export function connectBridge(
         // view → treat as a clear (dismiss); a rect = reposition the open popover.
         if (msg.rect) handlers.onSelectionRect?.(msg.rect);
         else handlers.onClearSelection?.();
-      } else if (msg.type === "place-failed" && typeof msg.annotationId === "string") {
+      } else if (msg.type === "place-failed") {
         handlers.onPlaceFailed?.(msg.annotationId);
-      } else if (msg.type === "mark-click" && typeof msg.annotationId === "string") {
-        // S-004/AS-011 (C-005): a highlight click inside the iframe → focus its rail thread.
-        handlers.onMarkClick?.(msg.annotationId);
+      } else if (msg.type === "mark-click") {
+        // S-004/AS-011 (C-005) + S-003/AS-016: a highlight click → focus its rail thread + pin the
+        // card at the mark. The rect (iframe-local) rides along; the caller translates + clamps it.
+        handlers.onMarkClick?.(msg.annotationId, msg.rect ?? null);
+      } else if (msg.type === "mark-enter") {
+        // S-003/AS-015: hover entered a mark → the caller runs the dwell then shows the peek.
+        handlers.onMarkEnter?.(msg.annotationId, msg.rect ?? null);
+      } else if (msg.type === "mark-leave") {
+        // S-003/AS-015: hover left the mark (not to a same-id sibling) → cancel dwell / hide peek.
+        handlers.onMarkLeave?.(msg.annotationId);
+      } else if (msg.type === "mark-rect") {
+        // S-003/AS-021: the mark's rect re-posted on in-iframe scroll → reposition / auto-close.
+        handlers.onMarkRect?.(msg.annotationId, msg.rect ?? null);
       }
-      // Any other port message shape is ignored (defensive; the protocol is fixed).
     };
     port.start?.();
     // HTML-PLACE: the transport is live now → let the parent flush the existing annotation set

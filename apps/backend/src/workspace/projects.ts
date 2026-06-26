@@ -78,6 +78,14 @@ export interface ProjectRepo {
   /** project-visibility S-003 / C-008: flip a project's visibility. Touches NOTHING else
    *  (no share_links) — the toggle affects only the default of docs created AFTERWARD. */
   setVisibility(projectId: string, visibility: ProjectVisibility): Promise<void>;
+  /**
+   * project-visibility-cascade S-001 / C-001: flip the project to PRIVATE *and*, in the SAME
+   * operation, bulk-reset every doc in it to `{workspace_role: null, link_role: null}` (the doc
+   * becomes restricted). It NEVER touches `doc_members`, so per-user specific invites survive,
+   * and it stores no prior-role history → IRREVERSIBLE. Scoped strictly to THIS project's docs.
+   * The visibility flip + the bulk share_links null happen atomically (one transaction).
+   */
+  setVisibilityPrivateCascade(projectId: string): Promise<void>;
   /** How many docs reference this project (for the block-delete-when-non-empty rule). */
   countDocs(projectId: string): Promise<number>;
   delete(projectId: string): Promise<void>;
@@ -310,9 +318,19 @@ export async function unarchiveProject(
  * filter's job, but a by-id toggle on a project an admin can't see is refused as forbidden —
  * indistinguishable in effect from "you can't touch it").
  *
- * This path touches ONLY `projects.visibility` — it NEVER reads or writes `share_links`, so an
- * existing doc's access (workspace_role + link_role) is unchanged; the new visibility only feeds
- * the default of docs created AFTERWARD (the derivation lives in S-004).
+ * By default this path touches ONLY `projects.visibility` — it NEVER reads or writes `share_links`,
+ * so an existing doc's access (workspace_role + link_role) is unchanged; the new visibility only
+ * feeds the default of docs created AFTERWARD (the derivation lives in S-004). That is the parent
+ * C-008 behaviour, preserved as the default branch.
+ *
+ * project-visibility-cascade S-001 / C-001: an OPTIONAL `cascade` flag adds a one-way make-private
+ * cascade. The cascade fires ONLY when `cascade === true` AND this is a public→private transition
+ * (`project.visibility === "public"` and `input.visibility === "private"`); then, in the SAME
+ * operation, every doc in the project is reset to `{workspace_role: null, link_role: null}` — but
+ * `doc_members` (per-user specific invites) is NEVER touched, so a specifically-invited reviewer
+ * keeps access. No prior-role history is stored → it is IRREVERSIBLE. Any other case (cascade flag
+ * off, or any transition that is not public→private, e.g. private→public) takes the plain
+ * `setVisibility` branch and touches NO `share_links` row. The owner/admin gate is unchanged.
  */
 export async function setProjectVisibility(
   input: {
@@ -321,6 +339,11 @@ export async function setProjectVisibility(
     actorId: string;
     isAdmin: boolean;
     visibility: ProjectVisibility;
+    /**
+     * project-visibility-cascade S-001 / C-001: when true AND the transition is public→private,
+     * ALSO bulk-null the project's docs' share_links (both axes). Ignored on any other transition.
+     */
+    cascade?: boolean;
   },
   deps: ProjectDeps,
 ): Promise<ProjectRow> {
@@ -332,7 +355,16 @@ export async function setProjectVisibility(
   if (!allowed) {
     throw new ProjectRejected("not allowed to change this project's visibility", "forbidden");
   }
-  await deps.repo.setVisibility(project.id, input.visibility);
+  // C-001: the cascade is public→private ONLY. The flag alone is not enough — a private→public (or
+  // public→public / private→private) request never cascades, even if `cascade: true` is passed.
+  const cascading =
+    input.cascade === true && project.visibility === "public" && input.visibility === "private";
+  if (cascading) {
+    // Atomic flip + bulk-null (the repo wraps both in one transaction). NEVER touches doc_members.
+    await deps.repo.setVisibilityPrivateCascade(project.id);
+  } else {
+    await deps.repo.setVisibility(project.id, input.visibility);
+  }
   return { ...project, visibility: input.visibility };
 }
 

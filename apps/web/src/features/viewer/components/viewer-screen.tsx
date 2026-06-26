@@ -11,7 +11,7 @@ import { ErrorState } from "@/components/error-state";
 import { Skeleton } from "@/components/skeleton";
 import { DocPane } from "./doc-pane";
 import type { HtmlSandboxFrameHandle } from "./html-sandbox-frame";
-import type { BridgeAnchor } from "@/features/viewer/lib/bridge";
+import { clampRectToViewport, isKnownAnnotationId, type BridgeAnchor, type BridgeRect } from "@/features/viewer/lib/bridge";
 import { DocModeToolbar, type MarkupTool } from "./doc-mode-toolbar";
 import { TocSidebar } from "./toc-sidebar";
 import { AnnotationsRail } from "./annotations-rail";
@@ -31,7 +31,12 @@ import { ViewerTopBar } from "./viewer-top-bar";
 import { MetaStrip } from "./meta-strip";
 import type { SpecMeta } from "@/features/viewer/types";
 import { toast } from "sonner";
-import { useAnnotationMarks, scrollToAnno, type PlaceableAnnotation } from "./annotation-marks";
+import { useAnnotationMarks, scrollToAnno, type PlaceableAnnotation, type HoverPeekOptions, type PinOptions } from "./annotation-marks";
+import { useHoverPin } from "@/features/viewer/hooks/use-hover-pin";
+import { AnnotationPeekCard } from "./annotation-peek-card";
+import { PinnedCardPopover } from "./pinned-card-popover";
+import { AnnotationBottomSheet } from "./annotation-bottom-sheet";
+import { isRectOutOfViewport } from "@/features/viewer/lib/place-popover";
 import { SelectionPopover } from "./selection-popover";
 import { LabelPicker } from "./label-picker";
 import { Composer } from "./composer";
@@ -90,6 +95,23 @@ function frameRectToViewport(rect: { x: number; y: number; width: number; height
   right: number;
 } {
   return { top: rect.y, bottom: rect.y + rect.height, left: rect.x, right: rect.x + rect.width };
+}
+
+// annotation-hover-card S-003 (C-008): build the HoverPeek shape the peek/pin state hooks consume
+// (annoId + a DOMRect-LIKE rect) from a page-coord rect. useHoverPin only reads top/bottom/left/right
+// (it feeds the rect to placePopover), so a RectLike satisfies it — cast to DOMRect for the type.
+function frameRectToHoverPeek(annoId: string, rect: { x: number; y: number; width: number; height: number }): {
+  annoId: string;
+  rect: DOMRect;
+} {
+  return { annoId, rect: frameRectToViewport(rect) as unknown as DOMRect };
+}
+
+// annotation-hover-card S-003 / C-006 (AS-027): the live viewport for clamping a relayed rect.
+function liveViewport(): { width: number; height: number } {
+  return typeof window !== "undefined"
+    ? { width: window.innerWidth, height: window.innerHeight }
+    : { width: 1000, height: 800 };
 }
 
 export function ViewerScreen({
@@ -364,11 +386,149 @@ function ViewerShell({
   // replaces the S-003 interim stub (workspaceId="").
   const memberWorkspaceId = !anonymous && workspaceId ? workspaceId : null;
 
+  // S-001: the hover-peek state (peeked id + placement). useAnnotationMarks owns the DOM dwell
+  // detection on the doc pane; this hook holds the React state the shell renders the peek card from.
+  const hoverPin = useHoverPin();
+  // The hover options handed to useAnnotationMarks: C-001 suppression is SELECTION-based, NOT
+  // tool-based — `isSelectionActive` (omitted here) defaults to the live `window.getSelection()`
+  // collapsed/empty read inside the delegated listener, so the peek shows for ANY active tool (the
+  // viewer always has one; Markup is the resting default) and is suppressed only while the user is
+  // mid-selection. The onHoverPeek sink feeds the peek state. Markdown-only here (the HTML iframe
+  // peek is S-003); a drawer-mode/touch device is the bottom-sheet path (S-004), so hover idles there.
+  const hoverPeek: HoverPeekOptions = useMemo(
+    () => ({ onHoverPeek: hoverPin.onHoverPeek }),
+    [hoverPin.onHoverPeek],
+  );
+  // S-002: the click-to-PIN option handed to useAnnotationMarks. C-001 suppression is SELECTION-based
+  // (same as the peek — `isSelectionActive` omitted → the live window-selection read), so a marker
+  // click pins for ANY active tool and is suppressed only mid-selection (AS-013). onPinMark sets the
+  // pin state (toggling the same id closed, replacing a different one — C-002/AS-011/AS-012). The
+  // focus side (C-004) is set by useAnnotations' click→onFocusAnno path; this only owns the pin.
+  // Markdown-only here (the HTML iframe pin is S-003); a drawer-mode/touch device opens the bottom
+  // sheet instead (S-004), so the pin idles there (the wrapper below is gated on !drawerMode).
+  const pinMark = hoverPin.pinMark;
+  const pinOptions = useMemo(
+    () => ({ onPinMark: (peek: { annoId: string; rect: DOMRect }) => void pinMark(peek) }),
+    [pinMark],
+  );
+
   // S-003/S-006: the annotations are read here (lifted above the rail) so the CommentFab can show
   // the count and the highlight-tap can open the rail drawer, while the rail still renders them.
+  //
+  // annotation-hover-card S-004 (AS-018): in drawer mode the marker tap is RE-ROUTED — it now drives
+  // the pin state (pinMark, shared with the desktop pin) so the bottom sheet opens for THAT thread,
+  // instead of opening the rail drawer. So we (a) pass `pinOptions` in BOTH modes (the marker tap pins
+  // → sets pinnedId → the sheet renders in drawer mode / the popover on desktop), and (b) stop the
+  // marker-tap `onHighlightTap` from opening the rail drawer (the sheet is the destination now). The
+  // rail drawer + CommentFab stay reachable by their own controls (the FAB, the top bar's comments
+  // toggle, and the compose-success path's setRailOpen) — Not in Scope to retire them.
   const anno = useAnnotations(slug, docPaneEl, hasDoc, canCompose, memberWorkspaceId, effectiveRole, doc?.kind === "markdown", () => {
-    if (drawerMode) setRailOpen(true); // AS-014: tapping a highlight opens the rail drawer
-  }, guest ? guestIdentity.name : null, guest ? null : currentUserName);
+    // S-004: the marker tap no longer opens the rail drawer in drawer mode — it opens the per-thread
+    // bottom sheet (driven by pinMark below). The rail drawer is still opened by its own controls.
+  }, guest ? guestIdentity.name : null, guest ? null : currentUserName, hoverPeek, pinOptions);
+
+  // S-001: the peeked annotation resolved from the loaded set (a peek can only render data we have).
+  const peekAnnotation =
+    hoverPin.peekId != null
+      ? anno.railProps.annotations.find((a) => a.id === hoverPin.peekId) ?? null
+      : null;
+
+  // S-002: the pinned annotation resolved from the loaded set. C-004 contract (d): the pin
+  // auto-closes when `pinnedId` no longer resolves to an annotation in the loaded list (deleted,
+  // dismissed, orphaned-out, refetch-dropped, redline-rejected → its mark removed). An orphaned
+  // (detached) annotation has no in-doc mark, so it can't host an anchored pin either → treat as gone.
+  const pinnedAnnotation =
+    hoverPin.pinnedId != null
+      ? anno.railProps.annotations.find((a) => a.id === hoverPin.pinnedId && !a.isOrphaned) ?? null
+      : null;
+  const closePin = hoverPin.closePin;
+  useEffect(() => {
+    // AS-026 (delete) / AS-023-adjacent / refetch reconcile: the pin is open but its annotation is no
+    // longer in the loaded, anchored set → close it so the card never lingers over a removed mark.
+    if (hoverPin.pinnedId != null && pinnedAnnotation == null) closePin();
+  }, [hoverPin.pinnedId, pinnedAnnotation, closePin]);
+
+  // ── annotation-hover-card S-003: HTML-doc peek + pin (C-006 untrusted-relay enforcement) ──────────
+  //
+  // The peek/pin cards render in the PARENT (the same AnnotationPeekCard / PinnedCardPopover the
+  // markdown path uses) from the already-loaded ViewerAnnotation — NEVER from the relayed message
+  // (C-003/AS-017). The in-iframe bridge relays only an id + a rect; the parent:
+  //   1. looks the id up in the loaded, role-filtered set — a miss is a NO-OP (no card; AS-027/C-006),
+  //   2. clamps the (already page-translated) rect to the viewport, rejecting a bad/oversized one
+  //      (AS-027/C-006) — a rejected rect opens nothing,
+  //   3. drives the SAME peek/pin state (onHoverPeek / pinMark) S-001/S-002 built (AS-015/AS-016).
+  // The dwell timer lives here (the parent owns it; the bridge only sends discrete enter/leave). Live
+  // cross-iframe positioning is [→MANUAL]/Playwright; the validate/route/clamp path is unit-tested.
+  const loadedIds = useMemo(
+    () => new Set(anno.railProps.annotations.map((a) => a.id)),
+    [anno.railProps.annotations],
+  );
+  const onHoverPeek = hoverPin.onHoverPeek;
+  const pinMarkFn = hoverPin.pinMark;
+  const setFocusedThread = anno.railProps.onFocusThread;
+  const htmlDwellRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearHtmlDwell = useCallback(() => {
+    if (htmlDwellRef.current != null) {
+      clearTimeout(htmlDwellRef.current);
+      htmlDwellRef.current = null;
+    }
+  }, []);
+  useEffect(() => clearHtmlDwell, [clearHtmlDwell]);
+
+  // AS-015: hover ENTER on an in-iframe mark → after the dwell, show the peek (validated id + clamped
+  // rect). A forged/unknown id or a bad rect resolves to no peek (C-006).
+  const onHtmlMarkEnter = useCallback(
+    (id: string, rect: BridgeRect | null) => {
+      clearHtmlDwell();
+      if (!isKnownAnnotationId(id, loadedIds)) return; // C-006/AS-027: unknown id → no-op.
+      const clamped = rect ? clampRectToViewport(rect, liveViewport()) : null;
+      if (!clamped) return; // C-006/AS-027: missing/rejected rect → no card.
+      htmlDwellRef.current = setTimeout(() => {
+        htmlDwellRef.current = null;
+        onHoverPeek(frameRectToHoverPeek(id, clamped));
+      }, 200);
+    },
+    [clearHtmlDwell, loadedIds, onHoverPeek],
+  );
+  // AS-015: hover LEAVE (not to a same-id sibling — the bridge already coalesced) → cancel dwell + hide.
+  const onHtmlMarkLeave = useCallback(() => {
+    clearHtmlDwell();
+    onHoverPeek(null);
+  }, [clearHtmlDwell, onHoverPeek]);
+
+  // AS-016: CLICK an in-iframe mark → pin the full thread card at the (translated, clamped) rect AND
+  // focus the rail thread (C-004: pin + focus). Unknown id / bad rect → no-op (C-006/AS-027). A click
+  // also cancels any pending peek dwell so the peek never races the pin.
+  const onHtmlMarkClick = useCallback(
+    (id: string, rect: BridgeRect | null) => {
+      clearHtmlDwell();
+      onHoverPeek(null);
+      if (!isKnownAnnotationId(id, loadedIds)) return; // C-006/AS-027: unknown id → no-op.
+      const clamped = rect ? clampRectToViewport(rect, liveViewport()) : null;
+      if (!clamped) return; // C-006/AS-027: missing/rejected rect → no pin.
+      const pinned = pinMarkFn(frameRectToHoverPeek(id, clamped));
+      // pinMark returns the id that ended up pinned (null when the same-marker click toggled it
+      // closed). Sync the rail focus to match (C-004): focus on pin, leave on toggle-close.
+      if (pinned != null) setFocusedThread(pinned);
+    },
+    [clearHtmlDwell, onHoverPeek, loadedIds, pinMarkFn, setFocusedThread],
+  );
+
+  // AS-021: the in-iframe scroll re-posted the pinned mark's rect → reposition the pin, or auto-close
+  // when the mark scrolled out of view / vanished (the parent can't see the iframe's own scroll).
+  const repositionPinFn = hoverPin.repositionPin;
+  const onHtmlMarkRect = useCallback(
+    (id: string, rect: BridgeRect | null) => {
+      if (hoverPin.pinnedId == null || id !== hoverPin.pinnedId) return; // only the pinned mark matters.
+      const clamped = rect ? clampRectToViewport(rect, liveViewport()) : null;
+      if (!clamped) {
+        closePin(); // mark gone / scrolled fully out → don't linger.
+        return;
+      }
+      repositionPinFn(frameRectToViewport(clamped));
+    },
+    [hoverPin.pinnedId, repositionPinFn, closePin],
+  );
 
   // S-002: a handle to the HTML sandbox frame so a created annotation's highlight can be relayed
   // DOWN to the in-iframe bridge (the parent can't draw a <mark> into the opaque iframe).
@@ -560,12 +720,65 @@ function ViewerShell({
       />
     ) : null;
 
+  // S-002 (AS-023 / C-002): focusing a DIFFERENT thread via the rail closes an open pin — the pin must
+  // not linger on A while the rail shows B (at most one active surface). Focusing the pinned thread's
+  // OWN rail card leaves the pin open. Wrap the rail's focus so the rail behaviour (focusedId + scroll)
+  // is unchanged; we only add the pin close on a cross-thread focus.
+  const railFocusThread = anno.railProps.onFocusThread;
+  const pinnedId = hoverPin.pinnedId;
+  const onRailFocusThread = useCallback(
+    (id: string) => {
+      if (pinnedId != null && id !== pinnedId) closePin();
+      railFocusThread(id);
+    },
+    [pinnedId, closePin, railFocusThread],
+  );
+
+  // S-002 (AS-021 / GAP-001): a throttled doc-pane scroll/resize listener re-reads the pinned mark's
+  // rect; when it scrolls out of the viewport the pin auto-closes (isRectOutOfViewport), else it
+  // repositions to follow the mark. Markdown-only (the in-iframe scroll relay is S-003); throttled
+  // via rAF so cost doesn't scale with scroll frequency (SC-002 spirit). happy-dom has no layout, so
+  // this is exercised by driving the handler with a synthetic rect in the unit test.
+  const repositionPin = hoverPin.repositionPin;
+  useEffect(() => {
+    // Markdown-only: an HTML doc's marks live inside the opaque iframe (not the light docPaneEl), so a
+    // light-DOM querySelector would always miss → spuriously closePin on the first scroll. The HTML
+    // pin auto-close/reposition is driven by the in-iframe `mark-rect` relay instead (onHtmlMarkRect).
+    if (!isMarkdown || pinnedId == null || !docPaneEl) return;
+    let raf = 0;
+    const check = () => {
+      raf = 0;
+      const mark = docPaneEl.querySelector<HTMLElement>(`[data-anno="${pinnedId}"]`);
+      if (!mark) {
+        closePin(); // the mark vanished (e.g. content re-rendered) — don't linger.
+        return;
+      }
+      const rect = mark.getBoundingClientRect();
+      const vp = { width: window.innerWidth, height: window.innerHeight };
+      if (isRectOutOfViewport(rect, vp)) closePin();
+      else repositionPin(rect);
+    };
+    const onScrollOrResize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(check);
+    };
+    docPaneEl.addEventListener("scroll", onScrollOrResize, { passive: true });
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      docPaneEl.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [isMarkdown, pinnedId, docPaneEl, closePin, repositionPin]);
+
   // Optimistic threads (created locally, not yet reconciled by a refetch) lead the rail so the
   // newest comment tops the list (AS-001) and the count includes them (AS-001.T4 / C-011).
   const railAnnotations = [...compose.optimistic, ...anno.railProps.annotations];
   const railContent = hasDoc ? (
     <AnnotationsRail
       {...anno.railProps}
+      // S-002 (AS-023): the pin-aware focus wrapper — focusing another thread closes the pin.
+      onFocusThread={onRailFocusThread}
       annotations={railAnnotations}
       // S-001 (C-001): each card marks own-vs-others from authorId vs the session user id.
       currentUserId={currentUserId}
@@ -690,19 +903,29 @@ function ViewerShell({
               // too (commenting stays gated by onSelection above). A placement miss → reportUnplaceableHtml.
               htmlAnnotations={isHtml ? anno.htmlPlaceable : undefined}
               onHtmlPlaceFailed={isHtml ? anno.reportUnplaceableHtml : undefined}
-              // S-004/AS-011 (C-005): a highlight click inside the iframe → focus that rail thread
-              // (and open the rail drawer on narrow), mirroring the markdown click→focus path above.
+              // annotation-hover-card S-003/AS-016 (C-005/C-006): a highlight click inside the iframe.
+              // On a POINTER device (desktop) it PINS the full thread card at the clicked mark + focuses
+              // the rail thread (onHtmlMarkClick: id-validate + clamp + pin, then focus). In drawer mode
+              // (touch) there is no pin yet (S-004's bottom sheet), so keep the existing focus + open
+              // the rail drawer. The focus-sync effect posts focus back DOWN the port to emphasise the
+              // clicked mark in either case.
               onHtmlMarkClick={
                 isHtml
-                  ? (id) => {
-                      // Mirror the markdown click→focus (setFocusedId + open the rail drawer on
-                      // narrow). onFocusThread sets focusedId; the focus-sync effect below then posts
-                      // focus back DOWN the port so the clicked mark is emphasised too.
-                      anno.railProps.onFocusThread(id);
-                      if (drawerMode) setRailOpen(true);
-                    }
+                  ? drawerMode
+                    ? (id) => {
+                        anno.railProps.onFocusThread(id);
+                        setRailOpen(true);
+                      }
+                    : onHtmlMarkClick
                   : undefined
               }
+              // S-003/AS-015 (peek): hover enter/leave on an in-iframe mark → the parent dwell + peek
+              // (pointer device only; touch has no hover). C-006-validated inside the handlers.
+              onHtmlMarkEnter={isHtml && !drawerMode ? onHtmlMarkEnter : undefined}
+              onHtmlMarkLeave={isHtml && !drawerMode ? onHtmlMarkLeave : undefined}
+              // S-003/AS-021: the in-iframe scroll re-posted the pinned mark's rect → reposition /
+              // auto-close (the parent can't see the iframe scroll; markdown uses a doc-pane listener).
+              onHtmlMarkRect={isHtml && !drawerMode ? onHtmlMarkRect : undefined}
             />
           ) : (
             children
@@ -824,6 +1047,110 @@ function ViewerShell({
           the user picks Comment. Mounted here (overlays the viewer body), not in the rail. */}
       {composerNode}
 
+      {/* S-001: the read-only hover PEEK card — floats over the dwelled marker (prefer above, flips
+          + clamps via placePopover). Renders only from the already-loaded annotation data (SC-001),
+          carries NO action bar (acting is S-002's pinned card). Suppressed while a creation tool is
+          active (C-001, enforced in useAnnotationMarks) and idle in drawer mode (touch → S-004). It
+          is pointer-transparent so it never eats the cursor that would otherwise hide it. */}
+      {peekAnnotation && hoverPin.peekPlacement && !drawerMode && hoverPin.pinnedId == null && (
+        <div
+          data-testid="annotation-peek-layer"
+          className="pointer-events-none absolute z-40"
+          style={{
+            top: hoverPin.peekPlacement.top,
+            left: hoverPin.peekPlacement.left,
+            transform: hoverPin.peekPlacement.centered ? "translateX(-50%)" : undefined,
+          }}
+        >
+          <AnnotationPeekCard annotation={peekAnnotation} />
+        </div>
+      )}
+
+      {/* S-002: the click-to-PIN card — a floating popover hosting the FULL interactive ThreadCard at
+          the clicked marker (prefer below, flip/clamp via placePopover). At most one pinned (C-002).
+          Mounted only for a markdown doc on a pointer device (!drawerMode; touch → S-004 sheet) once a
+          marker is pinned + its annotation still resolves (auto-close-on-orphan effect above). The
+          action bar reuses the rail's per-thread bindings VERBATIM (C-005), so the pinned card and the
+          rail card offer the identical role-gated actions; a viewer-only role passes none → read-only
+          (AS-014). PinnedCardHost owns the marker-excluded outside-dismiss + the layered Escape. */}
+      {pinnedAnnotation && hoverPin.pinPlacement && !drawerMode && (
+        <PinnedCardHost
+          annotation={pinnedAnnotation}
+          placement={hoverPin.pinPlacement}
+          docPaneEl={docPaneEl}
+          onClose={closePin}
+          focused={anno.railProps.focusedId === pinnedAnnotation.id}
+          unplaceable={anno.railProps.unplaceableIds.has(pinnedAnnotation.id)}
+          onFocus={onRailFocusThread}
+          currentUserId={currentUserId}
+          currentAuthorName={guest ? guestIdentity.name : currentUserName}
+          currentAuthorIsGuest={guest}
+          isOwner={anno.railProps.isOwner}
+          onReply={
+            anno.railProps.onReply
+              ? (body: string) => anno.railProps.onReply!(pinnedAnnotation, body)
+              : undefined
+          }
+          onResolve={
+            anno.railProps.onResolve
+              ? (resolved: boolean) => anno.railProps.onResolve!(pinnedAnnotation, resolved)
+              : undefined
+          }
+          onDecide={
+            anno.railProps.onDecide
+              ? (decision: "accept" | "reject") => anno.railProps.onDecide!(pinnedAnnotation, decision)
+              : undefined
+          }
+          onDelete={
+            anno.railProps.onDelete
+              ? () => anno.railProps.onDelete!(pinnedAnnotation)
+              : undefined
+          }
+        />
+      )}
+
+      {/* annotation-hover-card S-004 (AS-018/AS-019/AS-020): the mobile/touch BOTTOM SHEET — the
+          drawer-mode counterpart of the desktop pinned card. It shares the SAME pin state (pinnedId),
+          so at most one is open (C-002) and the auto-close-on-orphan + cross-thread-focus rules apply
+          identically. Mounted only in drawer mode (touch); the desktop popover above is gated
+          !drawerMode, so the two never coexist — and the hover-peek (gated !drawerMode too) never
+          appears on touch (AS-019). The sheet hosts the full ThreadCard with the SAME role-gated
+          bindings the rail + the pinned popover use (C-005): a viewer-only role passes none →
+          read-only (AS-020). */}
+      {pinnedAnnotation && drawerMode && (
+        <AnnotationBottomSheet
+          annotation={pinnedAnnotation}
+          onClose={closePin}
+          focused={anno.railProps.focusedId === pinnedAnnotation.id}
+          unplaceable={anno.railProps.unplaceableIds.has(pinnedAnnotation.id)}
+          onFocus={onRailFocusThread}
+          currentUserId={currentUserId}
+          currentAuthorName={guest ? guestIdentity.name : currentUserName}
+          currentAuthorIsGuest={guest}
+          isOwner={anno.railProps.isOwner}
+          onReply={
+            anno.railProps.onReply
+              ? (body: string) => anno.railProps.onReply!(pinnedAnnotation, body)
+              : undefined
+          }
+          onResolve={
+            anno.railProps.onResolve
+              ? (resolved: boolean) => anno.railProps.onResolve!(pinnedAnnotation, resolved)
+              : undefined
+          }
+          onDecide={
+            anno.railProps.onDecide
+              ? (decision: "accept" | "reject") => anno.railProps.onDecide!(pinnedAnnotation, decision)
+              : undefined
+          }
+          onDelete={
+            anno.railProps.onDelete
+              ? () => anno.railProps.onDelete!(pinnedAnnotation)
+              : undefined
+          }
+        />
+      )}
+
       {/* S-001 / S-003 AS-030: the ShareDialog — opened by the top bar's Share button. Share is
           member-only + workspace-addressed (C-007 keeps Share workspace-scoped). It mounts ONLY for
           a signed-in member (memberWorkspaceId is null for an anon — complements AS-029) whose doc
@@ -934,6 +1261,73 @@ function InlineComposerPopover({
   );
 }
 
+// PinnedCardHost (S-002): the dismiss-aware wrapper around PinnedCardPopover. It owns the C-004
+// contract's two dismiss subtleties that a plain useDismissOnOutsideAndEscape can't express:
+//
+//  (b) OUTSIDE-CLICK excludes BOTH the popover AND the pinned MARKER. The marker that opened the card
+//      must not auto-dismiss it via the capture-phase mousedown — otherwise a re-click on the pinned
+//      marker would BOTH toggle-close (the doc-pane click) AND outside-dismiss (this mousedown),
+//      double-firing. Excluding the marker makes a re-click resolve to exactly ONE toggle-close
+//      (AS-011); a click on any OTHER doc text closes (AS-008).
+//  (c) LAYERED Escape: when the reply composer is open, its textarea's onKeyDown handles Escape and
+//      stopPropagation (cancel the reply, card stays — AS-024); only an Escape with NO inner composer
+//      reaches this window listener and closes the card (AS-009). We bind Escape on `window` (like
+//      useDismissOnOutsideAndEscape) so the composer's React stopPropagation layers under it.
+//
+// The doc-pane element is passed so the mousedown test can find the pinned mark(s) (one annotation =
+// N marks for a multi_range) and treat a click on ANY of them as "inside".
+function PinnedCardHost({
+  annotation,
+  placement,
+  docPaneEl,
+  onClose,
+  ...threadProps
+}: Omit<React.ComponentProps<typeof PinnedCardPopover>, "wrapperRef"> & {
+  docPaneEl: HTMLElement | null;
+}) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const annoId = annotation.id;
+  useEffect(() => {
+    const handleMouseDown = (event: MouseEvent) => {
+      // Multi-click guard (mirrors useDismissOnOutsideAndEscape): a double/triple-click is a selection
+      // gesture, not an outside dismiss.
+      if (event.detail >= 2) return;
+      const target = event.target as Node | null;
+      if (!target) return;
+      // Inside the popover → keep open.
+      if (wrapperRef.current?.contains(target)) return;
+      // (b) Inside the pinned MARKER (any of its N marks) → keep open; the doc-pane click handler
+      // owns the toggle-close (AS-011). Exclude by data-anno match so a re-click is ONE toggle.
+      const el = target instanceof Element ? target : (target as Node).parentElement;
+      const mark = el?.closest?.(`[data-anno="${annoId}"]`);
+      if (mark && docPaneEl?.contains(mark)) return;
+      onClose(); // AS-008: a click on any other doc text closes the pin.
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // (c) AS-009/AS-024: Escape closes the pin — UNLESS an inner reply composer swallowed it first
+      // (its textarea stopPropagation prevents this window listener from seeing that key). So reaching
+      // here means no composer was open → close.
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handleMouseDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [annoId, docPaneEl, onClose]);
+
+  return (
+    <PinnedCardPopover
+      annotation={annotation}
+      placement={placement}
+      onClose={onClose}
+      wrapperRef={wrapperRef}
+      {...threadProps}
+    />
+  );
+}
+
 // useAnnotations (S-003/S-006): reads the doc's annotations, places highlight marks against the doc
 // content element, owns focus pairing (C-003), and exposes the rail props + the FAB count. Lifted
 // out of the rail so the CommentFab (count) and the drawer-open-on-highlight-tap (AS-014) can share
@@ -959,6 +1353,12 @@ function useAnnotations(
   /** C-001: the member's REAL display name, so a reconciled reply shows the real name (never "You").
    *  Null for a guest (the guest path uses guestName instead). */
   currentUserName: string | null,
+  /** S-001: hover-peek detection options forwarded to useAnnotationMarks (active-tool suppression +
+   *  dwell + the onHoverPeek callback). Undefined → no hover (e.g. on a non-markdown shell). */
+  hoverPeek: HoverPeekOptions | undefined,
+  /** S-002: click-to-pin options forwarded to useAnnotationMarks (selection-gated onPinMark). Undefined
+   *  → click only focuses (drawer-mode/touch → S-004 sheet, or a non-markdown shell). */
+  pin: PinOptions | undefined,
 ): {
   count: number;
   refetch: () => Promise<unknown>;
@@ -1221,6 +1621,13 @@ function useAnnotations(
       onHighlightTap();
     },
     reportUnplaceable,
+    // S-001: hover-peek detection on the SAME delegated doc-pane listener (markdown light DOM; the
+    // HTML iframe case is S-003). Suppressed while a creation tool is active (C-001) — the flag is
+    // read live inside the listener so it never goes stale.
+    hoverPeek,
+    // S-002: click-to-pin on the SAME delegated click listener — a non-suppressed marker click pins
+    // the full card at the clicked mark's own rect (C-008). Selection-gated (C-001/AS-013), read live.
+    pin,
   );
 
   const focusThread = (id: string) => {

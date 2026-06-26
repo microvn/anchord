@@ -134,12 +134,14 @@ describe("project-visibility-fe S-001", () => {
 
     await user.click(screen.getByTestId("proj-more-p2"));
     await user.click(screen.getByTestId("proj-more-visibility-p2"));
-    await user.click(screen.getByTestId("proj-visibility-confirm-p2"));
+    // project-visibility-cascade S-001: public→private now opens a TWO-OPTION dialog — pick
+    // "keep docs shared" (the parent behaviour) to drive the same optimistic toggle as before.
+    await user.click(screen.getByTestId("proj-visibility-keep-p2"));
 
     // Optimistic: the badge flips to Private before the server responds…
     await waitFor(() => expect(screen.getByTestId("proj-visibility-p2")).toHaveTextContent("Private"));
-    // …the request carried the new value…
-    expect(setProjectVisibility).toHaveBeenCalledWith("ws-acme", "p2", "private");
+    // …the request carried the new value (keep-shared sends cascade=false → no cascade)…
+    expect(setProjectVisibility).toHaveBeenCalledWith("ws-acme", "p2", "private", false);
     // …and the toggle item is disabled while in flight (no concurrent toggles, AS-002).
     expect(screen.getByTestId("proj-more-visibility-p2")).toHaveAttribute("aria-disabled", "true");
 
@@ -168,7 +170,7 @@ describe("project-visibility-fe S-001", () => {
     expect(screen.queryByTestId("proj-more-visibility-p2")).not.toBeInTheDocument();
   });
 
-  it("AS-004: the confirmation discloses existing docs keep their sharing before commit", async () => {
+  it("AS-004: the make-private dialog discloses the keep-shared option keeps docs shared before commit", async () => {
     const user = userEvent.setup();
     projects = [row({ id: "p2", name: "Team", visibility: "public", canToggleVisibility: true })];
     render(<App />);
@@ -177,11 +179,15 @@ describe("project-visibility-fe S-001", () => {
     await user.click(screen.getByTestId("proj-more-p2"));
     await user.click(screen.getByTestId("proj-more-visibility-p2"));
 
-    // The disclosure is on-screen BEFORE the user confirms, and nothing has been sent yet.
-    expect(
-      screen.getByText(/existing shared docs keep their current sharing/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/only docs created afterward/i)).toBeInTheDocument();
+    // project-visibility-cascade S-001: the make-private dialog now offers two options; the
+    // keep-shared option discloses existing docs keep their sharing (the parent behaviour),
+    // on-screen BEFORE the user commits — nothing is sent yet.
+    expect(screen.getByTestId("proj-visibility-keep-p2")).toHaveTextContent(
+      /keep docs shared/i,
+    );
+    expect(screen.getByTestId("proj-visibility-keep-p2")).toHaveTextContent(
+      /existing docs keep their current sharing/i,
+    );
     expect(setProjectVisibility).not.toHaveBeenCalled();
   });
 
@@ -194,7 +200,9 @@ describe("project-visibility-fe S-001", () => {
 
     await user.click(screen.getByTestId("proj-more-p2"));
     await user.click(screen.getByTestId("proj-more-visibility-p2"));
-    await user.click(screen.getByTestId("proj-visibility-confirm-p2"));
+    // project-visibility-cascade S-001: pick keep-shared (parent behaviour) — the rejected toggle
+    // still rolls the optimistic badge back and surfaces the error.
+    await user.click(screen.getByTestId("proj-visibility-keep-p2"));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     // The optimistic Private rolled back — the badge never sticks on a value the server rejected.

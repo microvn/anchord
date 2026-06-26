@@ -24,6 +24,9 @@ export function DocPane({
   htmlAnnotations,
   onHtmlPlaceFailed,
   onHtmlMarkClick,
+  onHtmlMarkEnter,
+  onHtmlMarkLeave,
+  onHtmlMarkRect,
 }: {
   doc: ViewerDocResponse;
   /** S-002: a real selection relayed from the HTML sandbox iframe (gated by role upstream). */
@@ -36,8 +39,14 @@ export function DocPane({
   htmlAnnotations?: { id: string; anchor: BridgeAnchor; hue?: string }[];
   /** HTML-PLACE: an in-iframe placement failure → the rail badges only that id "couldn't place". */
   onHtmlPlaceFailed?: (id: string) => void;
-  /** S-004/AS-011 (C-005): a highlight click inside the iframe → focus that rail thread (html only). */
-  onHtmlMarkClick?: (id: string) => void;
+  /** S-004/AS-011 (C-005) + S-003/AS-016: a highlight click inside the iframe → focus + pin at the
+   *  (page-translated) clicked mark's rect (html only). */
+  onHtmlMarkClick?: (id: string, rect: { x: number; y: number; width: number; height: number } | null) => void;
+  /** S-003/AS-015 (peek): the cursor entered/left an in-iframe mark → the parent dwell + peek (html). */
+  onHtmlMarkEnter?: (id: string, rect: { x: number; y: number; width: number; height: number } | null) => void;
+  onHtmlMarkLeave?: (id: string) => void;
+  /** S-003/AS-021: the in-iframe scroll re-posted the pinned mark's rect → reposition / auto-close. */
+  onHtmlMarkRect?: (id: string, rect: { x: number; y: number; width: number; height: number } | null) => void;
 }) {
   const { kind } = doc.doc;
 
@@ -63,6 +72,9 @@ export function DocPane({
       annotations={htmlAnnotations}
       onPlaceFailed={onHtmlPlaceFailed}
       onMarkClick={onHtmlMarkClick}
+      onMarkEnter={onHtmlMarkEnter}
+      onMarkLeave={onHtmlMarkLeave}
+      onMarkRect={onHtmlMarkRect}
     />
   );
 }

@@ -82,6 +82,13 @@ export type { PlaceResult } from "@anchord/anchor";
  *  - Over port1, parent → bridge (S-003): `{type:'highlights', items:[{anchor, annotationId, hue?, resolved?, kind?, stale?}]}` —
  *    a FULL-set clear-then-redraw sync (unwrap all anno marks, then draw the set; idempotent — C-002).
  *  - Over port1, bridge → parent on placement failure: `{type:'place-failed', annotationId}`.
+ *  - Over port1, bridge → parent (annotation-hover-card S-003): `{type:'mark-click', annotationId, rect}`
+ *    on a mark click (rect = the CLICKED mark's own getBoundingClientRect, iframe-local — the parent adds
+ *    the iframe offset and pins the card there, C-008); `{type:'mark-enter', annotationId, rect}` /
+ *    `{type:'mark-leave', annotationId}` on hover (the parent runs the dwell + shows/hides the peek);
+ *    `{type:'mark-rect', annotationId, rect}` rAF-throttled on in-iframe scroll so a pinned card can
+ *    reposition or auto-close (AS-021). ALL relayed payloads are UNTRUSTED — the parent Zod-validates
+ *    every one, no-ops an annotationId not in its loaded set, and clamps a bad rect (C-006).
  *
  * The nonce is interpolated as a JSON string literal so it cannot break out of the script.
  */
@@ -282,16 +289,67 @@ export function bridgeScript(nonce: string): string {
     }
   };
 
-  // S-004/AS-011 (C-005): a click on a [data-anno] mark relays its id UP the trusted port so the
-  // parent focuses the rail thread (the parent can't read this opaque iframe's DOM — C-001). Capture
-  // phase + closest() so a click on inner content of a mark still resolves the mark.
+  // ANNOTATION-HOVER-CARD S-003: read a mark's CURRENT viewport rect (iframe-local; the parent adds
+  // the iframe offset). Returns null when the rect can't be read. The parent Zod-validates + clamps it
+  // (C-006) — this side only reports what the DOM says.
+  function markRect(mk){
+    try { var r = mk.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }
+    catch (e) { return null; }
+  }
+  // The currently-hovered annotation id (coalesce same-id moves — C-008) and the tracked mark whose
+  // rect an in-iframe scroll re-posts (AS-021). Set by the click (pin) and hover (peek) handlers below.
+  var markEnterId = null;
+  var trackedMark = null;
+
+  // S-004/AS-011 (C-005) + S-003/AS-016: a click on a [data-anno] mark relays its id UP the trusted
+  // port so the parent focuses the rail thread AND (S-003) pins the card at the mark. The mark's own
+  // rect rides along so the parent can anchor the pinned popover outside the sandbox (C-008: the
+  // CLICKED mark's rect, never the first segment). Capture phase + closest() so a click on inner
+  // content of a mark still resolves the mark. annotationId (NOT annoId) stays the field name.
   document.addEventListener("click", function(e){
     var t = e.target;
     var mk = t && t.closest ? t.closest("mark[data-anno]") : null;
     if (mk){
       var id = mk.getAttribute("data-anno");
-      if (id) port.postMessage({ type: "mark-click", annotationId: id });
+      if (id) {
+        // Track the clicked (→ pinned) mark so an in-iframe scroll re-posts its rect (AS-021), even if
+        // the click arrived without a prior hover (a tap, or a click straight onto the mark).
+        trackedMark = mk;
+        port.postMessage({ type: "mark-click", annotationId: id, rect: markRect(mk) });
+      }
     }
+  }, true);
+
+  // S-003/AS-015 (peek): hover enter/leave over a [data-anno] mark relays the id + rect UP so the
+  // parent shows/hides the SAME read-only peek card it renders for markdown — but OUTSIDE the sandbox
+  // (the parent can't read the opaque iframe DOM — C-001). Per the S-001 markdown contract, hover is
+  // detected with mouseover/mouseout + a relatedTarget check (mouseenter/mouseleave don't bubble to a
+  // delegated listener), and moving between marks that share the SAME data-anno is NOT a leave
+  // (coalesce by id — C-008). The parent owns the dwell timer; this side only reports enter/leave.
+  document.addEventListener("mouseover", function(e){
+    var t = e.target;
+    var mk = t && t.closest ? t.closest("mark[data-anno]") : null;
+    if (!mk) return;
+    var id = mk.getAttribute("data-anno");
+    if (!id || id === markEnterId) return; // coalesce: same-id move is not a re-enter (C-008).
+    markEnterId = id;
+    trackedMark = mk;
+    port.postMessage({ type: "mark-enter", annotationId: id, rect: markRect(mk) });
+  }, true);
+  document.addEventListener("mouseout", function(e){
+    if (markEnterId == null) return;
+    var from = e.target;
+    var mk = from && from.closest ? from.closest("mark[data-anno]") : null;
+    if (!mk) return;
+    // relatedTarget = where the cursor is going. Still inside a mark with the SAME id → not a leave
+    // (C-008: a multi_range annotation's N marks coalesce; inner spans of one mark coalesce too).
+    var to = e.relatedTarget;
+    var toMark = to && to.closest ? to.closest("mark[data-anno]") : null;
+    if (toMark && toMark.getAttribute("data-anno") === markEnterId) return;
+    var leftId = markEnterId;
+    markEnterId = null;
+    trackedMark = null;
+    port.postMessage({ type: "mark-leave", annotationId: leftId });
   }, true);
 
   document.addEventListener("mouseup", postSelection, true);
@@ -316,9 +374,20 @@ export function bridgeScript(nonce: string): string {
     }
     port.postMessage({ type: "selection-rect", rect: { x: r.x, y: r.y, width: r.width, height: r.height } });
   }
+  // S-003/AS-021: a pinned card on an HTML doc must auto-close (or reposition) when its mark scrolls
+  // out — but the parent can't see the iframe's own scroll. So when a mark is being TRACKED (the
+  // hovered/pinned one) re-post its CURRENT rect on scroll, rAF-throttled like selection-rect. A null
+  // rect (mark gone) tells the parent to dismiss; the parent re-checks against the viewport too.
+  var markScrollRaf = 0;
+  function postMarkRect(){
+    markScrollRaf = 0;
+    if (!trackedMark) return;
+    port.postMessage({ type: "mark-rect", annotationId: trackedMark.getAttribute("data-anno"), rect: markRect(trackedMark) });
+  }
   window.addEventListener("scroll", function(){
-    if (!pendingRange) return;
-    if (!scrollRaf) scrollRaf = requestAnimationFrame(postSelectionRect);
+    if (!pendingRange && !trackedMark) return;
+    if (pendingRange && !scrollRaf) scrollRaf = requestAnimationFrame(postSelectionRect);
+    if (trackedMark && !markScrollRaf) markScrollRaf = requestAnimationFrame(postMarkRect);
   }, true);
 
   // Handshake LAST, after listeners are wired. Transfer port2 to the parent. The parent

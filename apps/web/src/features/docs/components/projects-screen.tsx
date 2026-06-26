@@ -12,6 +12,7 @@ import type { ProjectVisibility } from "@/features/docs/types";
 import { ProjectCardMoreMenu } from "./project-more-menu";
 import { ProjectVisibilityBadge } from "./project-visibility-badge";
 import { Pagination } from "@/components/pagination";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/icon";
@@ -136,35 +137,59 @@ export function ProjectsScreen() {
                 onClick={() => navigate(`/w/${workspace.id}/projects/${p.id}`)}
                 className="absolute inset-0 z-10 cursor-pointer rounded-[11px]"
               />
-              <div className="relative flex items-center gap-[10px]">
-                <span className="grid size-8 flex-none place-items-center rounded-sm bg-accent-soft text-accent-ink">
+              {/* items-stretch + aspect-square: the folder glyph's height tracks the right column
+                  (title row + badges row), so icon height == title+visibility height. */}
+              <div className="relative flex items-stretch gap-[10px]">
+                <span className="relative grid aspect-square flex-none place-items-center self-stretch rounded-sm bg-accent-soft text-accent-ink">
                   <Icon name="folder" size={17} />
+                  {/* Default project → a pin badge on the folder icon (not a row-2 pill), so it
+                      reads distinctly from the visibility pill. sr-only label keeps it accessible. */}
+                  {p.isDefault && (
+                    <TooltipProvider delayDuration={150}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            data-testid={`proj-default-${p.id}`}
+                            className="absolute -bottom-1 -right-1 z-20 grid size-[15px] cursor-default place-items-center rounded-full bg-accent text-on-accent ring-2 ring-surface"
+                          >
+                            <Icon name="pin" size={9} />
+                            <span className="sr-only">Default</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">Default project</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">
-                  {p.name}
-                </span>
-                {p.archived && (
-                  <span
-                    data-testid={`proj-archived-${p.id}`}
-                    className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle"
-                  >
-                    Archived
-                  </span>
-                )}
-                {/* project-visibility-fe AS-001: Private/Public pill beside the Default badge. */}
-                {p.visibility && (
-                  <ProjectVisibilityBadge visibility={p.visibility} projectId={p.id} />
-                )}
-                {p.isDefault && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
-                    <Icon name="pin" size={11} />
-                    Default
-                  </span>
-                )}
-                {/* z-20 keeps the ⋯ menu above the z-10 nav overlay so it stays clickable. */}
-                <span className="relative z-20 inline-flex">
-                  <ProjectCardMoreMenu project={p} workspaceId={workspace.id} />
-                </span>
+                <div className="flex min-w-0 flex-1 flex-col justify-center gap-[6px]">
+                  {/* Row 1 — title + the ⋯ menu (top-right). */}
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-[18px] text-ink">
+                      {p.name}
+                    </span>
+                    {/* z-20 keeps the ⋯ menu above the z-10 nav overlay so it stays clickable. */}
+                    <span className="relative z-20 -my-1 inline-flex flex-none">
+                      <ProjectCardMoreMenu project={p} workspaceId={workspace.id} />
+                    </span>
+                  </div>
+                  {/* Row 2 — visibility + Default (+ Archived) badges, below the title. */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {p.archived && (
+                      <span
+                        data-testid={`proj-archived-${p.id}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-subtle"
+                      >
+                        Archived
+                      </span>
+                    )}
+                    {/* project-visibility-fe AS-001: Private/Public pill. The Default marker moved to
+                        a pin badge on the folder icon (above), so row 2 carries only the visibility
+                        pill (+ Archived) — no two look-alike pills. */}
+                    {p.visibility && (
+                      <ProjectVisibilityBadge visibility={p.visibility} projectId={p.id} />
+                    )}
+                  </div>
+                </div>
               </div>
               <div className="relative mt-[14px] text-[13px] tabular-nums text-muted">
                 {p.docCount ?? 0} {p.docCount === 1 ? "doc" : "docs"}

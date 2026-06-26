@@ -77,8 +77,12 @@ export const renameProjectBodySchema = z.object({
   name: z.string().min(1, "project name is required").max(MAX_PROJECT_NAME_LENGTH),
 });
 // project-visibility S-003 / C-008: the toggle body — visibility ∈ private | public.
+// project-visibility-cascade S-001 / C-001: an OPTIONAL `cascade` flag. When true AND the
+// transition is public→private, setProjectVisibility also bulk-nulls the project's docs'
+// share_links (both axes). Default false / absent → the parent behaviour (project shell only).
 export const visibilityBodySchema = z.object({
   visibility: z.enum(["private", "public"]),
+  cascade: z.boolean().optional(),
 });
 
 export interface ProjectsRoutesDeps {
@@ -244,7 +248,7 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
     // setProjectVisibility, NOT the plain owner-or-admin manage gate. Touches only the project's
     // visibility — never share_links — so existing docs' access is unchanged (AS-014).
     .patch("/api/w/:workspaceId/projects/:id/visibility", async ({ params, body, actor, ws }) => {
-      const { visibility } = validateBody(visibilityBodySchema, body);
+      const { visibility, cascade } = validateBody(visibilityBodySchema, body);
       try {
         const p = await setProjectVisibility(
           {
@@ -253,6 +257,9 @@ export function projectsRoutes(deps: ProjectsRoutesDeps) {
             actorId: actor.userId,
             isAdmin: ws.role === "admin",
             visibility,
+            // project-visibility-cascade S-001 / C-001: thread the choice through. The service
+            // applies it ONLY on a public→private transition; any other case ignores it.
+            cascade,
           },
           { repo },
         );

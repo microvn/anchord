@@ -54,12 +54,32 @@ export const HtmlSandboxFrame = forwardRef<
     /** HTML-PLACE: the in-iframe bridge couldn't place a posted highlight → surface it so the rail
      *  can badge only that annotation "couldn't place" (markdown reports this via the light-DOM placer). */
     onPlaceFailed?: (id: string) => void;
-    /** S-004/AS-011 (C-005): a highlight click inside the iframe was relayed up the port → focus that
-     *  rail thread (mirrors the markdown click→focus; the parent can't read the opaque iframe DOM). */
-    onMarkClick?: (id: string) => void;
+    /** S-004/AS-011 (C-005) + annotation-hover-card S-003/AS-016: a highlight click inside the iframe
+     *  → focus that rail thread AND pin the card at the mark. The clicked mark's rect (already
+     *  translated to PAGE coords) rides along so the parent anchors the pinned popover (C-008). */
+    onMarkClick?: (id: string, rect: { x: number; y: number; width: number; height: number } | null) => void;
+    /** S-003/AS-015 (peek): the cursor entered an in-iframe mark → the parent runs the dwell + shows
+     *  the peek at the (page-translated) mark rect. Null rect → the bridge couldn't read it. */
+    onMarkEnter?: (id: string, rect: { x: number; y: number; width: number; height: number } | null) => void;
+    /** S-003/AS-015 (peek): the cursor left the mark (not to a same-id sibling) → hide the peek. */
+    onMarkLeave?: (id: string) => void;
+    /** S-003/AS-021: the in-iframe scroll re-posted the hovered/pinned mark's (page-translated) rect →
+     *  reposition or auto-close the pinned card. Null rect (mark gone) → treat as scrolled-out. */
+    onMarkRect?: (id: string, rect: { x: number; y: number; width: number; height: number } | null) => void;
   }
 >(function HtmlSandboxFrame(
-  { contentUrl, onSelection, onClearSelection, onSelectionRect, annotations, onPlaceFailed, onMarkClick },
+  {
+    contentUrl,
+    onSelection,
+    onClearSelection,
+    onSelectionRect,
+    annotations,
+    onPlaceFailed,
+    onMarkClick,
+    onMarkEnter,
+    onMarkLeave,
+    onMarkRect,
+  },
   ref,
 ) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -67,8 +87,26 @@ export const HtmlSandboxFrame = forwardRef<
   // Hold the latest handlers in a ref so the bridge connection (wired once on mount) always calls
   // the current callbacks without re-running the connect effect (which would re-add a window
   // listener and could accept a stale/duplicate handshake).
-  const handlersRef = useRef({ onSelection, onClearSelection, onSelectionRect, onPlaceFailed, onMarkClick });
-  handlersRef.current = { onSelection, onClearSelection, onSelectionRect, onPlaceFailed, onMarkClick };
+  const handlersRef = useRef({
+    onSelection,
+    onClearSelection,
+    onSelectionRect,
+    onPlaceFailed,
+    onMarkClick,
+    onMarkEnter,
+    onMarkLeave,
+    onMarkRect,
+  });
+  handlersRef.current = {
+    onSelection,
+    onClearSelection,
+    onSelectionRect,
+    onPlaceFailed,
+    onMarkClick,
+    onMarkEnter,
+    onMarkLeave,
+    onMarkRect,
+  };
   // HTML-PLACE: true once the bridge handshake is accepted (onReady). The post-existing effect below
   // depends on it so the initial flush waits for the port (postHighlight no-ops before the handshake).
   const [ready, setReady] = useState(false);
@@ -107,8 +145,14 @@ export const HtmlSandboxFrame = forwardRef<
       },
       // HTML-PLACE: relay the in-iframe placement failure up so the rail badges only that id.
       onPlaceFailed: (id) => handlersRef.current.onPlaceFailed?.(id),
-      // S-004/AS-011 (C-005): a highlight click inside the iframe → focus that rail thread.
-      onMarkClick: (id) => handlersRef.current.onMarkClick?.(id),
+      // S-004/AS-011 (C-005) + S-003/AS-016: a highlight click → focus + pin. Translate the clicked
+      // mark's iframe-local rect to PAGE coords so the parent anchors the pinned popover (C-008).
+      onMarkClick: (id, rect) => handlersRef.current.onMarkClick?.(id, rect ? toPageRect(rect) : null),
+      // S-003/AS-015 (peek): hover enter/leave → the parent dwell + peek. Translate the rect to page.
+      onMarkEnter: (id, rect) => handlersRef.current.onMarkEnter?.(id, rect ? toPageRect(rect) : null),
+      onMarkLeave: (id) => handlersRef.current.onMarkLeave?.(id),
+      // S-003/AS-021: the in-iframe scroll re-posted the mark rect → reposition / auto-close the pin.
+      onMarkRect: (id, rect) => handlersRef.current.onMarkRect?.(id, rect ? toPageRect(rect) : null),
       // HTML-PLACE: the port is live → flip `ready` so the post-existing effect flushes the set.
       onReady: () => setReady(true),
     });

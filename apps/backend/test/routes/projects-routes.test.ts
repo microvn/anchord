@@ -69,6 +69,10 @@ function fakeRepo(seed: ProjectRow[] = []) {
       const p = state.projects.find((x) => x.id === id);
       if (p) p.visibility = visibility;
     },
+    async setVisibilityPrivateCascade(id) {
+      const p = state.projects.find((x) => x.id === id);
+      if (p) p.visibility = "private";
+    },
     async countDocs(id) {
       return state.docCounts.get(id) ?? 0;
     },

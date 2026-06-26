@@ -15,7 +15,7 @@
 //     3. wrap the matched char range in a mark carrying data-anno=<id>;
 //     4. zero / multiple / block-missing → "couldn't place" (GAP-005), not a crash.
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 // S-005: the locate ladder (exact → nearest → whitespace-normalized → fuzzy) is the ONE shared
 // matcher in @anchord/anchor — the SAME ladder the in-iframe sandbox bridge uses (C-008). Re-exported
 // here so existing FE importers/tests keep importing `locateRange` from this module.
@@ -259,6 +259,55 @@ export function placeAnnotations(
  * deps (`contentEl`, `annotations`) are stable across a selection re-render — react-query keeps the
  * annotations array referentially stable — so selecting text triggers NO re-place.
  */
+/** S-001: the hover-peek event — the annotation id under the cursor + the HOVERED mark's OWN rect
+ *  (C-008: never `placed.el`, so a multi_range's lower segment anchors to itself). `null` = no peek. */
+export interface HoverPeek {
+  annoId: string;
+  rect: DOMRect;
+}
+
+/** S-002 (C-001/C-004): the click-to-PIN options for useAnnotationMarks. Absent → the click only
+ *  focuses (S-003 back-compat). When present, a marker click ALSO carries the clicked mark's OWN rect
+ *  up so the caller can pin a floating card anchored there (C-008: the clicked mark, never placed.el).
+ *  Suppression (C-001) is SELECTION-based, identical to the peek: a marker click pins ONLY when there
+ *  is no in-progress / non-empty text selection (the annotate-create flow owns that gesture); it pins
+ *  for ANY active tool. The probe is read LIVE inside the delegated listener (no stale closure). */
+export interface PinOptions {
+  /** C-001 (selection-based): true while a non-collapsed text selection exists → no pin. Optional:
+   *  absent → the live `window.getSelection()` collapsed/empty read. Injectable for the test env. */
+  isSelectionActive?: () => boolean;
+  /** Called with the clicked mark's id + its OWN rect when the click is NOT suppressed by a selection. */
+  onPinMark: (peek: HoverPeek) => void;
+}
+
+/** S-001 (C-001/C-008): the hover-peek options for useAnnotationMarks. Absent → no hover behavior
+ *  (back-compat: existing callers that only place + focus pass nothing). */
+export interface HoverPeekOptions {
+  /** C-001 (selection-based, NOT tool-based): the peek is SUPPRESSED only while a non-collapsed /
+   *  non-empty text selection exists — the user is mid-annotate, so the annotate-create flow owns the
+   *  gesture. It is shown for ANY active tool (Markup is the resting default; there is no none/read
+   *  tool, so tool-identity can't gate). Optional: absent → read the live `window.getSelection()`
+   *  collapsed/empty state. Read via a ref inside the delegated listener so it never sees a stale
+   *  closure value (the contract's stale-closure guard); injectable for the layout-less test env. */
+  isSelectionActive?: () => boolean;
+  /** The dwell interval before a hover shows the peek (~200ms in production; tiny under test). */
+  dwellMs?: number;
+  /** Called with the peek (on dwell) or `null` (on leave / suppression). */
+  onHoverPeek: (peek: HoverPeek | null) => void;
+}
+
+const DEFAULT_DWELL_MS = 200;
+
+/** Default selection probe (C-001): true when the live window selection is non-collapsed AND carries
+ *  actual text — i.e. the user is mid-annotate. A collapsed caret or empty/absent selection → false,
+ *  so the peek is shown. SSR / no-window → false. */
+function hasActiveTextSelection(): boolean {
+  if (typeof window === "undefined" || typeof window.getSelection !== "function") return false;
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+  return sel.toString().trim().length > 0;
+}
+
 export function useAnnotationMarks(
   contentEl: HTMLElement | null,
   annotations: PlaceableAnnotation[],
@@ -267,6 +316,10 @@ export function useAnnotationMarks(
   /** Reports which annotations couldn't be anchored at runtime (GAP-005), lifted out of a
    *  render-time memo into this post-commit effect (BUG #1). */
   onUnplaceable?: (ids: string[]) => void,
+  /** S-001: hover-peek (dwell) detection on the shared doc-pane listener. Absent → no hover. */
+  hover?: HoverPeekOptions,
+  /** S-002: click-to-pin on the shared doc-pane listener. Absent → click only focuses (back-compat). */
+  pin?: PinOptions,
 ): void {
   // Place / re-place marks when the content or the annotation set changes.
   useEffect(() => {
@@ -278,17 +331,139 @@ export function useAnnotationMarks(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentEl, annotations]);
 
-  // Click-on-mark → focus its thread (event delegation on the content element).
+  // Click-on-mark → focus its thread (event delegation on the content element). S-002: when a `pin`
+  // option is wired, a non-suppressed click ALSO pins the full card at the CLICKED mark's own rect
+  // (C-008). Suppression (C-001) is SELECTION-based: a click that ended a text selection (the user is
+  // mid-annotate) focuses but does NOT pin (the annotate-create flow owns the gesture, AS-013) — it
+  // pins for ANY active tool. The pin handler/probe live in a ref so the listener binds once and never
+  // reads a stale closure (the same stale-closure guard as the hover path).
+  const pinRef = useRef(pin);
+  pinRef.current = pin;
   useEffect(() => {
     if (!contentEl) return;
     const handler = (e: Event) => {
       const target = e.target as HTMLElement | null;
       const mark = target?.closest?.(MARK_SELECTOR) as HTMLElement | null;
-      if (mark?.dataset.anno) onFocusAnno(mark.dataset.anno);
+      const id = mark?.dataset.anno;
+      if (!id) return;
+      onFocusAnno(id);
+      const pinOpts = pinRef.current;
+      if (!pinOpts) return;
+      // C-001 (AS-013): a non-collapsed text selection in progress → focus only, no pin.
+      const selectionActive = (pinOpts.isSelectionActive ?? hasActiveTextSelection)();
+      if (selectionActive) return;
+      pinOpts.onPinMark({ annoId: id, rect: mark!.getBoundingClientRect() });
     };
     contentEl.addEventListener("click", handler);
     return () => contentEl.removeEventListener("click", handler);
+    // onFocusAnno is stable per caller; pin is read live through pinRef so a handler change never
+    // re-binds and never goes stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentEl, onFocusAnno]);
+
+  // S-001: hover (dwell) detection → the read-only peek. Detected on the SHARED content listener via
+  // mouseover/mouseout (which BUBBLE, unlike mouseenter/mouseleave) with a relatedTarget check.
+  //
+  // (a) Entering a mark starts a dwell timer (~200ms); the callback re-checks the cursor is still
+  //     over the SAME mark before showing — a fast sweep cancels every pending timer (AS-025).
+  // (b) The anchor rect is the HOVERED mark's OWN getBoundingClientRect (e.target.closest), never
+  //     placed.el — so a multi_range's lower segment anchors to itself (C-008 / AS-022).
+  // (c) Moving between two marks that share one data-anno is NOT a leave — coalesced by id (C-008).
+  // (d) C-001 (SELECTION-based, NOT tool-based): the suppression probe is read through a ref so the
+  //     delegated handler never sees a stale closure value; the peek is suppressed ONLY while a
+  //     non-collapsed text selection exists (the user is mid-annotate). It shows for ANY active tool
+  //     (AS-003) — Markup is the resting default; there is no none/read tool, so tool-identity can't
+  //     gate. Default probe reads the live `window.getSelection()`.
+  //
+  // The handlers/options live in refs so the listener is bound ONCE (not re-bound per render) and
+  // always reads the latest probe/callback — avoiding the stale-closure hazard the contract calls out.
+  const hoverRef = useRef(hover);
+  hoverRef.current = hover;
+  useEffect(() => {
+    if (!contentEl || !hover) return;
+    const dwellMs = hover.dwellMs ?? DEFAULT_DWELL_MS;
+
+    let pendingId: string | null = null; // the mark id whose dwell timer is armed (not yet shown)
+    let pendingMark: HTMLElement | null = null;
+    let shownId: string | null = null; // the annotation id whose peek is currently shown
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearTimer = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      pendingId = null;
+      pendingMark = null;
+    };
+    const hide = () => {
+      clearTimer();
+      if (shownId !== null) {
+        shownId = null;
+        hoverRef.current?.onHoverPeek(null);
+      }
+    };
+
+    const selectionActive = () => (hoverRef.current?.isSelectionActive ?? hasActiveTextSelection)();
+
+    const onOver = (e: Event) => {
+      const opts = hoverRef.current;
+      if (!opts) return;
+      // (d) C-001: a non-collapsed text selection is in progress → no peek (annotate-create owns it).
+      if (selectionActive()) {
+        hide();
+        return;
+      }
+      const target = (e as MouseEvent).target as HTMLElement | null;
+      const mark = target?.closest?.(MARK_SELECTOR) as HTMLElement | null;
+      if (!mark?.dataset.anno) return; // not over a mark — leave any shown peek to onOut to clear
+      const id = mark.dataset.anno;
+      // (c) Already showing this annotation, OR already dwelling on it → coalesce, do nothing.
+      if (id === shownId || (id === pendingId && timer)) return;
+      // A new mark (or a different annotation): re-arm the dwell timer on it.
+      clearTimer();
+      pendingId = id;
+      pendingMark = mark;
+      timer = setTimeout(() => {
+        timer = null;
+        // Re-check the cursor is still over the same mark before showing (the dwell guard).
+        const stillThere = pendingMark;
+        if (!stillThere || stillThere.dataset.anno !== id) return;
+        if (selectionActive()) return; // a selection began during the dwell → suppress
+        pendingId = null;
+        pendingMark = null;
+        shownId = id;
+        hoverRef.current?.onHoverPeek({ annoId: id, rect: stillThere.getBoundingClientRect() });
+      }, dwellMs);
+    };
+
+    const onOut = (e: Event) => {
+      const ev = e as MouseEvent;
+      const fromMark = (ev.target as HTMLElement | null)?.closest?.(MARK_SELECTOR) as HTMLElement | null;
+      if (!fromMark?.dataset.anno) return;
+      const related = ev.relatedTarget as HTMLElement | null;
+      const toMark = related?.closest?.(MARK_SELECTOR) as HTMLElement | null;
+      // (c) Coalesce: moving to another mark with the SAME data-anno is NOT a leave.
+      if (toMark?.dataset.anno && toMark.dataset.anno === fromMark.dataset.anno) {
+        // Keep the dwelling mark pointed at the segment under the cursor (so the dwell guard passes).
+        if (pendingId === fromMark.dataset.anno) pendingMark = toMark;
+        return;
+      }
+      // Left this annotation's marks (to plain text, another annotation, or out): cancel + hide.
+      hide();
+    };
+
+    contentEl.addEventListener("mouseover", onOver);
+    contentEl.addEventListener("mouseout", onOut);
+    return () => {
+      contentEl.removeEventListener("mouseover", onOver);
+      contentEl.removeEventListener("mouseout", onOut);
+      clearTimer();
+    };
+    // Bind ONCE per content element (+ whether hover is enabled at all). The tool flag + callback are
+    // read live through hoverRef, so a tool/handler change never re-binds and never goes stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentEl, Boolean(hover)]);
 
   // Keep the focus emphasis class in sync with the focused id.
   useEffect(() => {

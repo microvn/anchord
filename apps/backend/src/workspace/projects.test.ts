@@ -26,11 +26,40 @@ import {
 
 const WS = "ws_1";
 
-function fakeRepo(seed: ProjectRow[] = []) {
+// project-visibility-cascade S-001: a doc's two-axis share_links state + the docs/invites the fake
+// repo models so the cascade's scope can be asserted at the service tier (the bulk-null targets the
+// project's docs only, and never doc_members).
+interface FakeShareLink {
+  docId: string;
+  projectId: string;
+  workspaceRole: "viewer" | "commenter" | "editor" | null;
+  linkRole: "viewer" | "commenter" | "editor" | null;
+}
+interface FakeDocMember {
+  docId: string;
+  userId: string;
+  role: "viewer" | "commenter" | "editor";
+}
+
+function fakeRepo(
+  seed: ProjectRow[] = [],
+  fixtures: { shareLinks?: FakeShareLink[]; docMembers?: FakeDocMember[] } = {},
+) {
   let n = seed.length;
-  const state: { projects: ProjectRow[]; docCounts: Map<string, number> } = {
+  const state: {
+    projects: ProjectRow[];
+    docCounts: Map<string, number>;
+    shareLinks: FakeShareLink[];
+    docMembers: FakeDocMember[];
+    cascadeCalls: string[];
+  } = {
     projects: [...seed],
     docCounts: new Map(),
+    shareLinks: (fixtures.shareLinks ?? []).map((s) => ({ ...s })),
+    // doc_members is a SENTINEL: the cascade must never mutate it. Held by value so a deep-equal
+    // snapshot proves it untouched (AS-002 / C-001).
+    docMembers: (fixtures.docMembers ?? []).map((m) => ({ ...m })),
+    cascadeCalls: [],
   };
   const repo: ProjectRepo = {
     async insert(input) {
@@ -75,6 +104,19 @@ function fakeRepo(seed: ProjectRow[] = []) {
     async setVisibility(projectId, visibility) {
       const p = state.projects.find((x) => x.id === projectId);
       if (p) p.visibility = visibility;
+    },
+    async setVisibilityPrivateCascade(projectId) {
+      state.cascadeCalls.push(projectId);
+      const p = state.projects.find((x) => x.id === projectId);
+      if (p) p.visibility = "private";
+      // Bulk-null BOTH axes for THIS project's docs ONLY (scoped by projectId). doc_members is
+      // deliberately NOT touched — modelling the real SQL, which never writes that table.
+      for (const sl of state.shareLinks) {
+        if (sl.projectId === projectId) {
+          sl.workspaceRole = null;
+          sl.linkRole = null;
+        }
+      }
     },
     async countDocs(projectId) {
       return state.docCounts.get(projectId) ?? 0;
@@ -543,6 +585,119 @@ describe("setProjectVisibility toggle (project-visibility S-003, C-008/C-011)", 
         { repo: f.repo },
       ),
     ).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+// ── project-visibility-cascade S-001 / C-001: make-private cascade (service tier) ──────────
+// The service decides WHEN the cascade fires (public→private + cascade flag) and delegates the
+// bulk-null to the repo. These unit tests drive that decision + the scope against the fake repo
+// (which models share_links + a doc_members SENTINEL). The real SQL scope (other projects untouched)
+// is proven in test/integration/projects.itest.ts.
+describe("project-visibility-cascade S-001 — make-private cascade (C-001)", () => {
+  const proj = (over: Partial<ProjectRow>): ProjectRow => ({
+    id: "p_x",
+    workspaceId: WS,
+    name: "X",
+    ownerId: "u_a",
+    isDefault: false,
+    visibility: "public",
+    archivedAt: null,
+    ...over,
+  });
+
+  test("AS-001: cascade on public→private nulls BOTH axes for every doc in the project", async () => {
+    // A public project with doc A (workspace=commenter) + doc B (link=commenter).
+    const f = fakeRepo(
+      [proj({ id: "p1", ownerId: "u_a", visibility: "public" })],
+      {
+        shareLinks: [
+          { docId: "docA", projectId: "p1", workspaceRole: "commenter", linkRole: null },
+          { docId: "docB", projectId: "p1", workspaceRole: null, linkRole: "commenter" },
+        ],
+      },
+    );
+    const updated = await setProjectVisibility(
+      { workspaceId: WS, projectId: "p1", actorId: "u_a", isAdmin: false, visibility: "private", cascade: true },
+      { repo: f.repo },
+    );
+    // Project private.
+    expect(updated.visibility).toBe("private");
+    expect(f.state.projects.find((p) => p.id === "p1")!.visibility).toBe("private");
+    // BOTH docs end at {null, null} (restricted).
+    const a = f.state.shareLinks.find((s) => s.docId === "docA")!;
+    const b = f.state.shareLinks.find((s) => s.docId === "docB")!;
+    expect(a).toMatchObject({ workspaceRole: null, linkRole: null });
+    expect(b).toMatchObject({ workspaceRole: null, linkRole: null });
+    // The cascade repo path was taken (not the plain setVisibility).
+    expect(f.state.cascadeCalls).toEqual(["p1"]);
+  });
+
+  test("AS-002: cascade preserves a specific doc_members invite (doc_members untouched)", async () => {
+    // Doc D: public link + a specific invite for reviewer R (commenter).
+    const docMembersSeed = [{ docId: "docD", userId: "R", role: "commenter" as const }];
+    const f = fakeRepo(
+      [proj({ id: "p1", ownerId: "u_a", visibility: "public" })],
+      {
+        shareLinks: [{ docId: "docD", projectId: "p1", workspaceRole: null, linkRole: "commenter" }],
+        docMembers: docMembersSeed,
+      },
+    );
+    const before = JSON.parse(JSON.stringify(f.state.docMembers));
+    await setProjectVisibility(
+      { workspaceId: WS, projectId: "p1", actorId: "u_a", isAdmin: false, visibility: "private", cascade: true },
+      { repo: f.repo },
+    );
+    // D's share_links both null...
+    expect(f.state.shareLinks.find((s) => s.docId === "docD")!).toMatchObject({
+      workspaceRole: null,
+      linkRole: null,
+    });
+    // ...but R's doc_members row is byte-identical — the cascade NEVER writes doc_members (C-001).
+    expect(f.state.docMembers).toEqual(before);
+    expect(f.state.docMembers).toEqual([{ docId: "docD", userId: "R", role: "commenter" }]);
+  });
+
+  test("AS-004 (guard): keep-shared (no cascade flag) takes the plain path — share_links untouched", async () => {
+    const f = fakeRepo(
+      [proj({ id: "p1", ownerId: "u_a", visibility: "public" })],
+      {
+        shareLinks: [{ docId: "docA", projectId: "p1", workspaceRole: "commenter", linkRole: null }],
+      },
+    );
+    await setProjectVisibility(
+      // No cascade flag → the keep-shared choice: project flips, docs keep their sharing (AS-014).
+      { workspaceId: WS, projectId: "p1", actorId: "u_a", isAdmin: false, visibility: "private" },
+      { repo: f.repo },
+    );
+    expect(f.state.projects.find((p) => p.id === "p1")!.visibility).toBe("private");
+    // The doc's access is unchanged — the cascade repo method was never called.
+    expect(f.state.shareLinks.find((s) => s.docId === "docA")!).toMatchObject({
+      workspaceRole: "commenter",
+      linkRole: null,
+    });
+    expect(f.state.cascadeCalls).toEqual([]);
+  });
+
+  test("C-001 (guard): private→public NEVER cascades even with cascade:true — no share_links write", async () => {
+    // A private project being made public, with cascade erroneously set: the guard rejects the
+    // cascade (it is public→private ONLY), so no doc's share_links are nulled.
+    const f = fakeRepo(
+      [proj({ id: "p1", ownerId: "u_a", visibility: "private" })],
+      {
+        shareLinks: [{ docId: "docA", projectId: "p1", workspaceRole: "commenter", linkRole: "viewer" }],
+      },
+    );
+    await setProjectVisibility(
+      { workspaceId: WS, projectId: "p1", actorId: "u_a", isAdmin: false, visibility: "public", cascade: true },
+      { repo: f.repo },
+    );
+    expect(f.state.projects.find((p) => p.id === "p1")!.visibility).toBe("public");
+    // Untouched — private→public is not a cascade direction (C-001).
+    expect(f.state.shareLinks.find((s) => s.docId === "docA")!).toMatchObject({
+      workspaceRole: "commenter",
+      linkRole: "viewer",
+    });
+    expect(f.state.cascadeCalls).toEqual([]);
   });
 });
 

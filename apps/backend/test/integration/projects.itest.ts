@@ -22,11 +22,12 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { docs, projects, user as userTable } from "../../src/db/schema";
+import { docs, projects, shareLinks, docMembers, user as userTable } from "../../src/db/schema";
 import { createApp } from "../../src/app";
 import { betterAuthSessionResolver } from "../../src/http/auth-gate";
 import { onUserCreated } from "../../src/auth/auth";
 import { createProjectRepo, createProjectsRouteRepo } from "../../src/workspace/repo";
+import { setProjectVisibility } from "../../src/workspace/projects";
 import { createDocRepo } from "../../src/publish/repo";
 import { annotations, comments } from "../../src/db/schema";
 import { seedWorkspace } from "./harness";
@@ -427,5 +428,107 @@ describe.skipIf(!RUN)("workspace-project S-003: projects + browse (real Postgres
     const list2 = await app.handle(withCookie(`/api/w/${WA}/projects`, A.cookie));
     const ids2 = ((await list2.json()) as any).data.projects.map((p: any) => p.id);
     expect(ids2).toContain(billingId);
+  });
+
+  // ── project-visibility-cascade S-001 / C-001: make-private cascade over REAL Postgres ──────
+  // The unit tests (projects.test.ts) drive the service's WHEN-decision against a fake repo; this
+  // proves the bulk-null SQL itself: it nulls BOTH axes for the target project's docs (AS-001),
+  // leaves a doc in ANOTHER project untouched (C-001 scope), leaves a per-user doc_members invite
+  // untouched (AS-002), and never restores on re-opening public (irreversible). It seeds rows
+  // directly (no auth round-trip) and calls the service with the REAL createProjectRepo.
+  test("AS-001/AS-002/C-001: cascade nulls THIS project's docs' both axes; spares doc_members + another project", async () => {
+    const repo = createProjectRepo(h.db);
+    const docRepo = createDocRepo(h.db);
+    const tag = `casc-${process.pid}`;
+
+    // A standalone owner + their workspace, with TWO public projects: P (the cascade target) and Q
+    // (the control — its doc MUST survive untouched).
+    const [u] = await h.db
+      .insert(userTable)
+      .values({ id: `u-${tag}`, name: "Casc", email: `${tag}@itest.local`, emailVerified: true })
+      .returning({ id: userTable.id });
+    const seeded = await seedWorkspace(h.db, { userId: u!.id });
+    const wsId = seeded.workspaceId;
+    const reviewerId = `r-${tag}`;
+    await h.db
+      .insert(userTable)
+      .values({ id: reviewerId, name: "Reviewer", email: `rev-${tag}@itest.local`, emailVerified: true });
+
+    const [P] = await h.db
+      .insert(projects)
+      .values({ workspaceId: wsId, name: "P", ownerId: u!.id, isDefault: false, visibility: "public" })
+      .returning({ id: projects.id });
+    const [Q] = await h.db
+      .insert(projects)
+      .values({ workspaceId: wsId, name: "Q", ownerId: u!.id, isDefault: false, visibility: "public" })
+      .returning({ id: projects.id });
+
+    // Doc A in P: workspace-shared. Doc D in P: public link + a specific invite for the reviewer.
+    // Doc Z in Q (other project): workspace-shared — must NOT be touched by P's cascade.
+    const dA = await docRepo.createDocWithV1({
+      slug: `${tag}-a`, title: "A", kind: "markdown", content: "# a", contentHash: `${tag}-ha`,
+      ownerId: u!.id, projectId: P!.id,
+    });
+    const dD = await docRepo.createDocWithV1({
+      slug: `${tag}-d`, title: "D", kind: "markdown", content: "# d", contentHash: `${tag}-hd`,
+      ownerId: u!.id, projectId: P!.id,
+    });
+    const dZ = await docRepo.createDocWithV1({
+      slug: `${tag}-z`, title: "Z", kind: "markdown", content: "# z", contentHash: `${tag}-hz`,
+      ownerId: u!.id, projectId: Q!.id,
+    });
+    // createDocWithV1 already inserted a derived share_links row per doc (unique docId), so SET the
+    // exact axes this test needs via onConflictDoUpdate rather than a fresh insert.
+    const setAxes = async (
+      docId: string,
+      workspaceRole: "commenter" | null,
+      linkRole: "commenter" | null,
+    ) => {
+      await h.db
+        .insert(shareLinks)
+        .values({ docId, workspaceRole, linkRole })
+        .onConflictDoUpdate({ target: shareLinks.docId, set: { workspaceRole, linkRole } });
+    };
+    await setAxes(dA.id, "commenter", null);
+    await setAxes(dD.id, null, "commenter");
+    await setAxes(dZ.id, "commenter", null);
+    // A specific per-user invite on doc D — the cascade must NEVER revoke it (AS-002).
+    await h.db.insert(docMembers).values({
+      docId: dD.id, userId: reviewerId, email: `rev-${tag}@itest.local`, role: "commenter",
+      invitedBy: u!.id, status: "active",
+    });
+
+    // Make P private WITH cascade (owner actor).
+    await setProjectVisibility(
+      { workspaceId: wsId, projectId: P!.id, actorId: u!.id, isAdmin: false, visibility: "private", cascade: true },
+      { repo },
+    );
+
+    // AS-001: P is private; BOTH P-docs end at {null, null}.
+    const [pRow] = await h.db.select().from(projects).where(eq(projects.id, P!.id));
+    expect(pRow!.visibility).toBe("private");
+    const [slA] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, dA.id));
+    const [slD] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, dD.id));
+    expect(slA).toMatchObject({ workspaceRole: null, linkRole: null });
+    expect(slD).toMatchObject({ workspaceRole: null, linkRole: null });
+
+    // C-001 (scope): doc Z in the OTHER project Q is completely untouched.
+    const [qRow] = await h.db.select().from(projects).where(eq(projects.id, Q!.id));
+    expect(qRow!.visibility).toBe("public");
+    const [slZ] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, dZ.id));
+    expect(slZ).toMatchObject({ workspaceRole: "commenter", linkRole: null });
+
+    // AS-002: the reviewer's doc_members invite on D survives byte-for-byte (never written).
+    const invites = await h.db.select().from(docMembers).where(eq(docMembers.docId, dD.id));
+    expect(invites).toHaveLength(1);
+    expect(invites[0]).toMatchObject({ userId: reviewerId, role: "commenter", status: "active" });
+
+    // C-001 (irreversible): re-opening P public restores NOTHING — the docs stay restricted.
+    await setProjectVisibility(
+      { workspaceId: wsId, projectId: P!.id, actorId: u!.id, isAdmin: false, visibility: "public" },
+      { repo },
+    );
+    const [slA2] = await h.db.select().from(shareLinks).where(eq(shareLinks.docId, dA.id));
+    expect(slA2).toMatchObject({ workspaceRole: null, linkRole: null });
   });
 });

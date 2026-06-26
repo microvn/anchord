@@ -358,6 +358,15 @@ function ReplyComposer({
             e.preventDefault();
             send();
           }
+          // S-002 (AS-024 / layered Escape): inside a pinned card, Escape cancels the OPEN reply
+          // only — the card stays open and the draft clears. stopPropagation so the pinned card's
+          // own Escape-to-close (a window keydown) does NOT also fire on this same key (it closes
+          // only when no inner composer is open). Harmless in the rail (no outer Escape layer there).
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            setBody("");
+            onClose();
+          }
         }}
         placeholder="Reply"
         rows={2}

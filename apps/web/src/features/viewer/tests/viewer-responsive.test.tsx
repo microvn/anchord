@@ -176,20 +176,23 @@ describe("S-006 — narrow-screen shell (AS-014, drawer mode)", () => {
     expect(screen.getByTestId("annotations-rail")).toBeInTheDocument();
   });
 
-  it("AS-014: tapping a highlight opens the rail drawer in drawer mode", async () => {
+  it("AS-014: tapping a highlight opens the per-thread bottom sheet in drawer mode (S-004 reroute)", async () => {
+    // annotation-hover-card S-004 (AS-018) RE-ROUTES the marker tap in drawer mode: it now opens the
+    // per-thread bottom sheet for THAT annotation, NOT the rail drawer (the rail drawer stays reachable
+    // by the CommentFab — proven by the FAB test above). So a marker tap surfaces the bottom sheet.
     setMode({ drawerMode: true, tocDrawer: true });
     render(<App />);
 
     await screen.findByTestId("markdown-view");
-    // The marks are placed against the doc content (S-003); tapping one focuses its thread AND,
-    // in drawer mode, opens the rail drawer so the reader can see it.
     await waitFor(() => expect(document.querySelector('[data-anno="a1"]')).not.toBeNull());
     const mark = document.querySelector('[data-anno="a1"]') as HTMLElement;
 
     await userEvent.click(mark);
 
-    const drawer = await screen.findByTestId("viewer-rail-drawer");
-    expect(drawer).toBeInTheDocument();
+    // S-004: the bottom sheet opens for the tapped thread; the rail drawer is NOT auto-opened by the tap.
+    const sheet = await screen.findByTestId("annotation-bottom-sheet");
+    expect(sheet).toBeInTheDocument();
+    expect(screen.queryByTestId("viewer-rail-drawer")).toBeNull();
   });
 
   it("AS-014: on desktop there is no CommentFab and the inline rail column is present", async () => {
