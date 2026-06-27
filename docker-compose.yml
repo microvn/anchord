@@ -34,10 +34,18 @@ services:
       # in src/config/env.ts). Defaults to the local bring-up origin; set it in .env to your
       # real public URL (e.g. https://anchord.example.com) for a deployed instance.
       APP_URL: ${APP_URL:-http://localhost:3000}
-      SMTP_HOST: ${SMTP_HOST:?SMTP is mandatory — set SMTP_* in .env}
+      # Email provider — the app requires EITHER the full SMTP group OR RESEND_API_KEY
+      # (config/env.ts; Resend wins when both are set). Both are forwarded as OPTIONAL here
+      # so an operator can configure just one — the app's own boot validation rejects the
+      # "neither" case with a clear message (don't duplicate that gate in compose).
+      SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:?SMTP is mandatory}
-      SMTP_PASS: ${SMTP_PASS:?SMTP is mandatory}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      # From address for outbound mail. Resend/most SMTP relays reject unverified senders,
+      # so set this to your verified-domain sender, e.g. "Anchord <no-reply@anchord.example.com>".
+      EMAIL_FROM: ${EMAIL_FROM:-}
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
       ASSETS_DIR: /data/assets
       # OAuth sign-in (auth S-002). OPTIONAL and per-provider: a provider's button only
