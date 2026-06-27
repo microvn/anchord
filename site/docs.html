@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Anchord Docs — user guide</title>
+  <meta name="description" content="The Anchord user guide: self-hosting, sign-in, workspaces, the annotation viewer, the full sharing & permissions matrix, notifications, trash, and MCP integration." />
+  <link rel="icon" href="assets/mark.svg" />
+  <link rel="stylesheet" href="styles.css?v=9" />
+</head>
+<body>
+  <!-- Lucide icon sprite (inlined, self-contained) -->
+  <svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="ic-menu" viewBox="0 0 24 24"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></symbol>
+    <symbol id="ic-theme" viewBox="0 0 24 24"><path d="M12 8a2.83 2.83 0 0 0 4 4 4 4 0 1 1-4-4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.3 17.7-1.4 1.4"/><path d="m19.1 4.9-1.4 1.4"/></symbol>
+  </svg>
+
+  <!-- NAV -->
+  <header class="nav">
+    <div class="wrap nav__inner" style="max-width:none; padding-left:22px; padding-right:22px;">
+      <button class="iconbtn mobile-only" id="menu" aria-label="Open menu"><svg class="lic"><use href="#ic-menu"/></svg></button>
+      <a class="brand" href="index.html"><img src="assets/mark.svg" alt="" /> Anchord</a>
+      <nav class="nav__links">
+        <a href="index.html" class="hide-sm"><span data-l="en">Home</span><span data-l="vi">Trang chủ</span></a>
+        <a href="#mcp" class="hide-sm">MCP</a>
+        <button class="langbtn" id="lang" title="Switch language" aria-label="Switch language"></button>
+        <button class="iconbtn" id="theme" title="Toggle theme" aria-label="Toggle theme"><svg class="lic"><use href="#ic-theme"/></svg></button>
+        <a class="btn btn--primary" href="#self-hosting"><span data-l="en">Self-host</span><span data-l="vi">Self-host</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="wrap docs" style="max-width:1280px;">
+    <!-- SIDEBAR -->
+    <aside class="docs__side" id="side">
+      <h4><span data-l="en">Getting started</span><span data-l="vi">Bắt đầu</span></h4>
+      <a href="#self-hosting"><span data-l="en">Self-hosting</span><span data-l="vi">Self-hosting</span></a>
+      <a href="#auth"><span data-l="en">Sign in &amp; accounts</span><span data-l="vi">Đăng nhập &amp; tài khoản</span></a>
+      <a href="#navigation"><span data-l="en">Navigating the app</span><span data-l="vi">Điều hướng app</span></a>
+
+      <h4><span data-l="en">Organize</span><span data-l="vi">Sắp xếp</span></h4>
+      <a href="#workspaces"><span data-l="en">Workspaces &amp; members</span><span data-l="vi">Workspace &amp; thành viên</span></a>
+      <a href="#projects"><span data-l="en">Projects &amp; visibility</span><span data-l="vi">Project &amp; hiển thị</span></a>
+      <a href="#publishing"><span data-l="en">Publishing docs</span><span data-l="vi">Đăng tài liệu</span></a>
+      <a href="#versioning"><span data-l="en">Versions &amp; diff</span><span data-l="vi">Version &amp; diff</span></a>
+
+      <h4><span data-l="en">Review</span><span data-l="vi">Review</span></h4>
+      <a href="#annotation"><span data-l="en">The viewer &amp; annotations</span><span data-l="vi">Viewer &amp; annotation</span></a>
+      <a href="#annotation-types"><span data-l="en">Annotation types</span><span data-l="vi">Các loại annotation</span></a>
+      <a href="#pinpoint"><span data-l="en">Pinpoint mode</span><span data-l="vi">Chế độ Pinpoint</span></a>
+      <a href="#hover-cards"><span data-l="en">Hover &amp; thread cards</span><span data-l="vi">Hover &amp; thẻ thread</span></a>
+
+      <h4><span data-l="en">Access</span><span data-l="vi">Truy cập</span></h4>
+      <a href="#sharing"><span data-l="en">Sharing &amp; permissions</span><span data-l="vi">Chia sẻ &amp; phân quyền</span></a>
+
+      <h4><span data-l="en">Stay in sync</span><span data-l="vi">Theo dõi</span></h4>
+      <a href="#notifications"><span data-l="en">Notifications</span><span data-l="vi">Thông báo</span></a>
+      <a href="#your-activity"><span data-l="en">Your activity</span><span data-l="vi">Hoạt động của bạn</span></a>
+      <a href="#workspace-activity"><span data-l="en">Workspace activity</span><span data-l="vi">Hoạt động workspace</span></a>
+      <a href="#trash"><span data-l="en">Delete &amp; Trash</span><span data-l="vi">Xóa &amp; Trash</span></a>
+
+      <h4><span data-l="en">Automate</span><span data-l="vi">Tự động hóa</span></h4>
+      <a href="#mcp"><span data-l="en">MCP integration</span><span data-l="vi">Tích hợp MCP</span></a>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="docs__main">
+      <div class="inner">
+        <h1><span data-l="en">Anchord user guide</span><span data-l="vi">Hướng dẫn sử dụng Anchord</span></h1>
+        <p class="lead muted" style="font-size:17px; margin-top:14px;">
+          <span data-l="en">Everything you need to run Anchord, review docs, and wire your agent into the loop. This guide is
+          generated from the product specs in <code>docs/specs/</code>. Reflects <strong>v0</strong>.</span>
+          <span data-l="vi">Tất cả những gì bạn cần để chạy Anchord, review tài liệu và đưa agent vào vòng lặp. Trang này
+          sinh ra từ spec sản phẩm trong <code>docs/specs/</code>, áp dụng cho <strong>v0</strong>.</span>
+        </p>
+
+        <!-- ===================== SELF-HOSTING ===================== -->
+        <section class="docs__sec" id="self-hosting">
+          <h2><span data-l="en">Self-hosting</span><span data-l="vi">Self-hosting</span></h2>
+          <p class="lead"><span data-l="en">Anchord runs entirely on your own infrastructure — app, database, and storage in one
+            Docker Compose stack. No external telemetry; the only outbound traffic is the email provider and the
+            OAuth sign-in you choose to enable.</span>
+            <span data-l="vi">Anchord chạy hoàn toàn trên hạ tầng của bạn: app, database và phần lưu trữ gói trong một
+            stack Docker Compose. Không có telemetry gửi ra ngoài. Lưu lượng đi ra chỉ gồm email provider và OAuth
+            đăng nhập mà bạn chọn bật.</span></p>
+
+          <h3><span data-l="en">Quick start</span><span data-l="vi">Khởi động nhanh</span></h3>
+          <pre><code>git clone &lt;this-repo&gt; anchord &amp;&amp; cd anchord
+cp .env.example .env
+# edit .env (see below), then:
+docker compose up</code></pre>
+          <p><span data-l="en">That brings up PostgreSQL, waits for it to be healthy, runs migrations idempotently, and serves the
+            app + API. On first run you sign up, and your account auto-creates a default workspace.</span>
+            <span data-l="vi">Lệnh đó dựng PostgreSQL, chờ nó healthy, chạy migration theo kiểu idempotent, rồi chạy app và API.
+            Lần đầu bạn đăng ký xong, tài khoản tự tạo một workspace mặc định.</span></p>
+
+          <div class="note amber">
+            <span class="lbl"><span data-l="en">Fail-closed at boot</span><span data-l="vi">Không khởi động nếu thiếu</span></span>
+            <span data-l="en">The app refuses to start without <code>APP_SECRET</code> and an email provider — no silent
+            misconfiguration. Read the boot log if it exits.</span>
+            <span data-l="vi">App từ chối khởi động nếu thiếu <code>APP_SECRET</code> hoặc một email provider, để không cấu hình
+            sai một cách âm thầm. Nếu nó thoát, hãy đọc log khởi động.</span>
+          </div>
+
+          <h3><span data-l="en">Required configuration</span><span data-l="vi">Cấu hình bắt buộc</span></h3>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Variable</span><span data-l="vi">Biến</span></th><th><span data-l="en">Purpose</span><span data-l="vi">Mục đích</span></th><th><span data-l="en">Notes</span><span data-l="vi">Ghi chú</span></th></tr></thead>
+              <tbody>
+                <tr><td>APP_SECRET</td><td><span data-l="en">Signs sessions, share-link tokens, access tokens</span><span data-l="vi">Ký session, token share-link, access token</span></td><td><span data-l="en">Any random string ≥ 16 chars</span><span data-l="vi">Chuỗi ngẫu nhiên ≥ 16 ký tự</span></td></tr>
+                <tr><td>APP_URL</td><td><span data-l="en">Public base URL of your instance</span><span data-l="vi">URL gốc công khai của instance</span></td><td><span data-l="en">Absolute <code>http(s)://</code> — used in email + share deep-links</span><span data-l="vi">URL tuyệt đối <code>http(s)://</code>, dùng trong email và deep-link chia sẻ</span></td></tr>
+                <tr><td>DATABASE_URL</td><td><span data-l="en">PostgreSQL connection string</span><span data-l="vi">Chuỗi kết nối PostgreSQL</span></td><td><code>postgresql://user:pass@db:5432/anchord</code></td></tr>
+                <tr><td>POSTGRES_USER / _PASSWORD / _DB</td><td><span data-l="en">Database credentials</span><span data-l="vi">Thông tin database</span></td><td><span data-l="en">Operator-set — no default password ships</span><span data-l="vi">Người vận hành tự đặt, không kèm mật khẩu mặc định</span></td></tr>
+                <tr><td>SMTP_HOST / _PORT / _USER / _PASS</td><td><span data-l="en">Email via SMTP</span><span data-l="vi">Email qua SMTP</span></td><td><span data-l="en">One email provider required…</span><span data-l="vi">Cần ít nhất một email provider...</span></td></tr>
+                <tr><td>RESEND_API_KEY</td><td><span data-l="en">Email via Resend HTTP API</span><span data-l="vi">Email qua Resend HTTP API</span></td><td><span data-l="en">…or use Resend instead of SMTP</span><span data-l="vi">...hoặc dùng Resend thay cho SMTP</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><span data-l="en">Optional: <code>APP_PORT</code> (host port, default 3000), <code>ASSETS_DIR</code> (image storage path),
+            <code>CORS_ORIGIN</code>. Email verification and magic-link sign-in both need the email provider.</span>
+            <span data-l="vi">Tùy chọn: <code>APP_PORT</code> (port trên host, mặc định 3000), <code>ASSETS_DIR</code> (đường dẫn lưu ảnh),
+            <code>CORS_ORIGIN</code>. Xác minh email và đăng nhập magic-link đều cần email provider.</span></p>
+
+          <h3><span data-l="en">Backup</span><span data-l="vi">Sao lưu</span></h3>
+          <p><span data-l="en">State lives in two places — back up both: a PostgreSQL dump (text + metadata) and the
+            <code>anchord_assets</code> volume (image/binary uploads). Both persist across container restarts.</span>
+            <span data-l="vi">Dữ liệu nằm ở hai nơi, sao lưu cả hai: một bản dump PostgreSQL (văn bản và metadata) và
+            volume <code>anchord_assets</code> (file ảnh và nhị phân). Cả hai đều giữ nguyên qua các lần restart container.</span></p>
+        </section>
+
+        <!-- ===================== AUTH ===================== -->
+        <section class="docs__sec" id="auth">
+          <h2><span data-l="en">Sign in &amp; accounts</span><span data-l="vi">Đăng nhập &amp; tài khoản</span></h2>
+          <p class="lead"><span data-l="en">How you log in is separate from what you can do — authentication is independent of the
+            roles and sharing covered later. Which methods appear depends on what your operator enabled.</span>
+            <span data-l="vi">Cách bạn đăng nhập tách biệt với những gì bạn làm được: xác thực độc lập với vai trò và
+            chia sẻ ở phần sau. Bạn thấy những phương thức nào là tùy người vận hành đã bật cái gì.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/signin.png" alt="The Anchord sign-in screen." /></div>
+            <figcaption><span data-l="en">Sign-in — email + password, magic link, and optional OAuth providers.</span><span data-l="vi">Màn đăng nhập: email và mật khẩu, magic link, cùng các OAuth provider tùy chọn.</span></figcaption>
+          </figure>
+
+          <h3><span data-l="en">Sign-in methods</span><span data-l="vi">Phương thức đăng nhập</span></h3>
+          <ul>
+            <li><span data-l="en"><strong>Email + password</strong> — sign up with an email and a password (min 8 chars), verify
+              via the link sent to your inbox. Repeated wrong passwords are rate-limited.</span>
+              <span data-l="vi"><strong>Email + mật khẩu</strong>: đăng ký bằng email và mật khẩu (tối thiểu 8 ký tự), rồi xác minh
+              qua link gửi vào hộp thư. Nhập sai mật khẩu nhiều lần sẽ bị giới hạn tốc độ.</span></li>
+            <li><span data-l="en"><strong>Magic link</strong> — passwordless sign-in via an email link.</span>
+              <span data-l="vi"><strong>Magic link</strong>: đăng nhập không cần mật khẩu, qua một link gửi vào email.</span></li>
+            <li><span data-l="en"><strong>GitHub / Google OAuth</strong> — if enabled, one click; first time creates an account
+              with the email pre-verified.</span>
+              <span data-l="vi"><strong>GitHub / Google OAuth</strong>: nếu được bật, chỉ một click. Lần đầu sẽ tạo tài khoản với email
+              đã xác minh sẵn.</span></li>
+          </ul>
+
+          <h3><span data-l="en">Account linking</span><span data-l="vi">Liên kết tài khoản</span></h3>
+          <p><span data-l="en">Sign in with a different method using the <strong>same verified email</strong> and both link to one
+            account — no duplicates. Linking only happens on verified emails, to prevent takeover.</span>
+            <span data-l="vi">Đăng nhập bằng một phương thức khác với <strong>cùng email đã xác minh</strong> thì cả hai cùng trỏ về
+            một tài khoản, không tạo bản trùng. Việc liên kết chỉ xảy ra với email đã xác minh, để chống chiếm tài khoản.</span></p>
+
+          <h3><span data-l="en">Your account</span><span data-l="vi">Tài khoản của bạn</span></h3>
+          <p><span data-l="en">Open <strong>Settings</strong> from the avatar menu (top-right):</span><span data-l="vi">Mở <strong>Settings</strong> từ menu avatar (góc trên phải):</span></p>
+          <ul>
+            <li><span data-l="en"><strong>Account</strong> — display name (1–80 chars), email, sign-in provider, verification status, join date. Sign out here.</span><span data-l="vi"><strong>Account</strong>: tên hiển thị (1–80 ký tự), email, nhà cung cấp đăng nhập, trạng thái xác minh, ngày tham gia. Đăng xuất cũng ở đây.</span></li>
+            <li><span data-l="en"><strong>Appearance</strong> — Dark (canonical default) or Light. Saved per device.</span><span data-l="vi"><strong>Appearance</strong>: Tối (mặc định) hoặc Sáng. Lưu riêng theo từng thiết bị.</span></li>
+            <li><span data-l="en"><strong>Developer</strong> — create &amp; revoke MCP personal access tokens (see <a href="#mcp">MCP integration</a>).</span><span data-l="vi"><strong>Developer</strong>: tạo và thu hồi personal access token cho MCP (xem <a href="#mcp">Tích hợp MCP</a>).</span></li>
+            <li><span data-l="en"><strong>Notifications</strong> — per-event in-app/email toggles (see <a href="#notifications">Notifications</a>).</span><span data-l="vi"><strong>Notifications</strong>: bật/tắt thông báo trong app và email theo từng sự kiện (xem <a href="#notifications">Thông báo</a>).</span></li>
+          </ul>
+        </section>
+
+        <!-- ===================== NAVIGATION ===================== -->
+        <section class="docs__sec" id="navigation">
+          <h2><span data-l="en">Navigating the app</span><span data-l="vi">Điều hướng app</span></h2>
+          <p class="lead"><span data-l="en">Two chrome contexts, never nested: the <strong>app shell</strong> (managing projects,
+            docs, members) and the <strong>doc viewer</strong> (focused 3-pane reading + annotation). Chrome
+            recedes — your content is the high-contrast element.</span>
+            <span data-l="vi">Hai ngữ cảnh giao diện, không lồng nhau: <strong>app shell</strong> (quản lý project, tài liệu,
+            thành viên) và <strong>doc viewer</strong> (chế độ đọc và annotate 3 cột tập trung). Giao diện lùi về sau,
+            nội dung của bạn mới là phần nổi bật tương phản cao.</span></p>
+          <h3><span data-l="en">App shell</span><span data-l="vi">App shell</span></h3>
+          <ul>
+            <li><span data-l="en"><strong>Left sidebar</strong> — brand, a <code>+ New doc</code> button, the workspace switcher
+              (the single workspace anchor), and primary nav: Dashboard · All docs · Projects · Activity. Admins
+              also see Members in the footer. Collapses to an icon rail.</span>
+              <span data-l="vi"><strong>Sidebar trái</strong>: logo, nút <code>+ New doc</code>, bộ chuyển workspace
+              (điểm neo workspace duy nhất), và nav chính: Dashboard · All docs · Projects · Activity. Admin còn
+              thấy Members ở dưới chân. Có thể thu gọn thành dải icon.</span></li>
+            <li><span data-l="en"><strong>Header</strong> — a <code>Workspace › Project › Doc</code> breadcrumb on the left;
+              context actions (e.g. a teal <strong>Share</strong>), search (<kbd>/</kbd>), theme toggle,
+              notification bell, and the avatar menu on the right.</span>
+              <span data-l="vi"><strong>Header</strong>: breadcrumb <code>Workspace › Project › Doc</code> bên trái; bên phải là
+              các hành động theo ngữ cảnh (ví dụ nút <strong>Share</strong> màu teal), tìm kiếm (<kbd>/</kbd>), nút đổi theme,
+              chuông thông báo và menu avatar.</span></li>
+          </ul>
+          <p><span data-l="en">On tablet the sidebar becomes an off-canvas drawer (hamburger); on mobile search/theme/sign-out fold
+            into the avatar menu. Tap targets stay ≥ 40px. Empty states nudge you to create; loading shows
+            skeletons, not spinners; errors offer Retry.</span>
+            <span data-l="vi">Trên tablet, sidebar thành drawer trượt (mở bằng hamburger); trên mobile thì tìm kiếm, theme và đăng xuất
+            gộp vào menu avatar. Vùng chạm luôn ≥ 40px. Màn hình rỗng gợi ý bạn tạo mới, lúc tải hiện skeleton thay vì spinner,
+            còn khi lỗi thì có nút Retry.</span></p>
+        </section>
+
+        <!-- ===================== WORKSPACES ===================== -->
+        <section class="docs__sec" id="workspaces">
+          <h2><span data-l="en">Workspaces &amp; members</span><span data-l="vi">Workspace &amp; thành viên</span></h2>
+          <p class="lead"><span data-l="en">Anchord is multi-workspace. Each account auto-creates its own default workspace on
+            signup (you = owner/admin). Create more, get invited into others, and switch between them — each
+            workspace's projects, docs, and members are fully isolated.</span>
+            <span data-l="vi">Anchord hỗ trợ nhiều workspace. Mỗi tài khoản tự tạo một workspace mặc định khi đăng ký
+            (bạn là owner/admin). Bạn có thể tạo thêm, được mời vào workspace khác và chuyển qua lại. Project, tài liệu và thành
+            viên của mỗi workspace tách biệt hoàn toàn.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/workspace-grid.png" alt="A workspace doc grid." /></div>
+            <figcaption><span data-l="en">A workspace — the doc grid, scoped to the active workspace.</span><span data-l="vi">Một workspace: lưới tài liệu, chỉ trong phạm vi workspace đang chọn.</span></figcaption>
+          </figure>
+
+          <h3><span data-l="en">Workspace roles</span><span data-l="vi">Vai trò workspace</span></h3>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Action</span><span data-l="vi">Hành động</span></th><th class="c">Admin</th><th class="c">Member</th></tr></thead>
+              <tbody>
+                <tr><td><span data-l="en">Create projects &amp; docs</span><span data-l="vi">Tạo project &amp; tài liệu</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Invite members</span><span data-l="vi">Mời thành viên</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+                <tr><td><span data-l="en">Remove members</span><span data-l="vi">Xóa thành viên</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+                <tr><td><span data-l="en">Change member roles</span><span data-l="vi">Đổi vai trò thành viên</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+                <tr><td><span data-l="en">Rename the workspace</span><span data-l="vi">Đổi tên workspace</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+                <tr><td><span data-l="en">See the member list</span><span data-l="vi">Xem danh sách thành viên</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="note"><span class="lbl"><span data-l="en">Invariant</span><span data-l="vi">Bất biến</span></span>
+            <span data-l="en">A workspace always keeps at least one admin — the last admin can't demote or remove themselves.
+            Removing an admin reassigns their owned projects so nothing is orphaned.</span>
+            <span data-l="vi">Workspace luôn còn ít nhất một admin: admin cuối cùng không thể tự hạ quyền hay tự xóa mình.
+            Khi xóa một admin, project họ sở hữu sẽ được chuyển cho người khác để không bị bỏ rơi.</span></div>
+
+          <h3><span data-l="en">Inviting members</span><span data-l="vi">Mời thành viên</span></h3>
+          <p><span data-l="en">Admins invite by email. The invitee opens the accept/reject link — no need to be logged in first:</span>
+            <span data-l="vi">Admin mời qua email. Người được mời mở link để chấp nhận hoặc từ chối, không cần đăng nhập trước:</span></p>
+          <ul>
+            <li><span data-l="en"><strong>Signed in, matching email</strong> → joins immediately.</span><span data-l="vi"><strong>Đang đăng nhập, email khớp</strong> → vào workspace ngay.</span></li>
+            <li><span data-l="en"><strong>Has an account</strong> → sign in, then accept.</span><span data-l="vi"><strong>Đã có tài khoản</strong> → đăng nhập rồi chấp nhận.</span></li>
+            <li><span data-l="en"><strong>No account</strong> → create one inline (name + password ≥ 8) and accept in one step —
+              the invite delivery already proved email ownership, so no separate verification.</span>
+              <span data-l="vi"><strong>Chưa có tài khoản</strong> → tạo ngay tại chỗ (tên và mật khẩu ≥ 8) rồi chấp nhận trong một bước.
+              Việc gửi được lời mời đã chứng minh quyền sở hữu email nên không cần xác minh thêm.</span></li>
+          </ul>
+          <p><span data-l="en">Expired or revoked invites return a neutral "not found" (the system never reveals whether an invite
+            existed). Removing a member revokes access immediately; their owned docs stay in the workspace.</span>
+            <span data-l="vi">Lời mời hết hạn hoặc bị thu hồi sẽ trả về "not found" trung tính (hệ thống không tiết lộ lời mời đó có
+            từng tồn tại hay không). Xóa thành viên thu hồi quyền ngay lập tức, nhưng tài liệu họ sở hữu vẫn ở lại workspace.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/member-view.png" alt="The members screen with roles." /></div>
+            <figcaption><span data-l="en">The members screen — admins manage roles and pending invites here.</span><span data-l="vi">Màn hình thành viên: nơi admin quản lý vai trò và các lời mời đang chờ.</span></figcaption>
+          </figure>
+        </section>
+
+        <!-- ===================== PROJECTS ===================== -->
+        <section class="docs__sec" id="projects">
+          <h2><span data-l="en">Projects &amp; visibility</span><span data-l="vi">Project &amp; hiển thị</span></h2>
+          <p class="lead"><span data-l="en">Projects group related docs inside a workspace. Every doc belongs to a project; every
+            workspace has a default project where quick-publishes land.</span>
+            <span data-l="vi">Project gom các tài liệu liên quan trong một workspace. Mỗi tài liệu thuộc về một project, và mỗi
+            workspace có một project mặc định, nơi nhận các bản đăng nhanh.</span></p>
+
+          <h3><span data-l="en">Private vs public projects</span><span data-l="vi">Project riêng tư vs công khai</span></h3>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Project</span><span data-l="vi">Project</span></th><th><span data-l="en">Who sees it in lists</span><span data-l="vi">Ai thấy trong danh sách</span></th><th><span data-l="en">New-doc default access</span><span data-l="vi">Quyền mặc định tài liệu mới</span></th></tr></thead>
+              <tbody>
+                <tr><td><span data-l="en">Your <strong>default</strong> project</span><span data-l="vi">Project <strong>mặc định</strong> của bạn</span></td><td><span data-l="en">Only you (private shell)</span><span data-l="vi">Chỉ bạn (vỏ riêng tư)</span></td><td><span data-l="en"><strong>Workspace-shared</strong> — colleagues can view + comment</span><span data-l="vi"><strong>Chia sẻ workspace</strong>: đồng nghiệp xem và comment</span></td></tr>
+                <tr><td><span data-l="en"><strong>Public</strong> project</span><span data-l="vi">Project <strong>công khai</strong></span></td><td><span data-l="en">Everyone in the workspace</span><span data-l="vi">Mọi người trong workspace</span></td><td><span data-l="en">Workspace-shared (commenter)</span><span data-l="vi">Chia sẻ workspace (commenter)</span></td></tr>
+                <tr><td><span data-l="en"><strong>Private</strong> project (non-default)</span><span data-l="vi">Project <strong>riêng tư</strong> (không mặc định)</span></td><td><span data-l="en">Only the owner</span><span data-l="vi">Chỉ chủ sở hữu</span></td><td><span data-l="en"><strong>Restricted</strong> — private to you + invitees</span><span data-l="vi"><strong>Hạn chế</strong>: chỉ bạn và người được mời</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><span data-l="en">The central rule: you see a project if <strong>you own it OR it's public</strong>. Workspace admins
+            get no exception — they never see another member's private project. Private-project names are
+            suppressed for non-owners everywhere (cards, breadcrumbs, activity).</span>
+            <span data-l="vi">Quy tắc cốt lõi: bạn thấy một project nếu <strong>bạn sở hữu HOẶC nó công khai</strong>. Admin workspace
+            cũng không ngoại lệ, không bao giờ thấy project riêng tư của thành viên khác. Tên project riêng tư bị ẩn
+            với người ngoài ở mọi nơi (card, breadcrumb, activity).</span></p>
+
+          <div class="note"><span class="lbl"><span data-l="en">Default project quirk</span><span data-l="vi">Điểm đặc biệt của project mặc định</span></span>
+            <span data-l="en">Your default project is a private <em>shell</em>, but docs created in it are workspace-shared by
+            default — so quick-publishes and agent output are never accidentally private.</span>
+            <span data-l="vi">Project mặc định của bạn là một <em>vỏ</em> riêng tư, nhưng tài liệu tạo trong đó lại mặc định được
+            chia sẻ với workspace, nên bản đăng nhanh và output của agent không bao giờ vô tình thành riêng tư.</span></div>
+
+          <h3><span data-l="en">Creating &amp; toggling</span><span data-l="vi">Tạo &amp; chuyển đổi</span></h3>
+          <p><span data-l="en">New user-created projects are <strong>public by default</strong>; tick "private" at creation or
+            toggle later. Toggling visibility affects <strong>new</strong> docs only — existing docs keep their
+            access, except public→private offers an optional cascade to make all existing docs private too.</span>
+            <span data-l="vi">Project do bạn tạo mới sẽ <strong>công khai</strong> theo mặc định; tích "private" lúc tạo hoặc
+            đổi lại sau. Đổi chế độ hiển thị chỉ ảnh hưởng tài liệu <strong>mới</strong>, tài liệu cũ giữ nguyên quyền. Riêng
+            khi chuyển công khai sang riêng tư, bạn có tùy chọn cascade để biến tất cả tài liệu cũ thành riêng tư luôn.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/project-visibility.png" alt="Projects list with private/public badges." /></div>
+            <figcaption><span data-l="en">Projects carry a visibility badge; the doc grid only shows docs you can access.</span><span data-l="vi">Project có một huy hiệu hiển thị; lưới tài liệu chỉ hiện những tài liệu bạn truy cập được.</span></figcaption>
+          </figure>
+
+          <h3><span data-l="en">Browse &amp; search</span><span data-l="vi">Duyệt &amp; tìm kiếm</span></h3>
+          <p><span data-l="en"><strong>All docs</strong> lists every doc you can access across projects, sortable by created /
+            updated / project, paginated (20/page, up to 100). Search matches titles, doc content, and comment
+            bodies — but only ever returns docs you can access; restricted content never leaks via snippets.</span>
+            <span data-l="vi"><strong>All docs</strong> liệt kê mọi tài liệu bạn truy cập được trên khắp các project, sắp theo ngày tạo,
+            ngày cập nhật hoặc project, có phân trang (20/trang, tối đa 100). Tìm kiếm khớp tiêu đề, nội dung và bình luận,
+            nhưng chỉ trả về tài liệu bạn truy cập được; nội dung hạn chế không bao giờ lộ qua trích đoạn.</span></p>
+        </section>
+
+        <!-- ===================== PUBLISHING ===================== -->
+        <section class="docs__sec" id="publishing">
+          <h2><span data-l="en">Publishing docs</span><span data-l="vi">Đăng tài liệu</span></h2>
+          <p class="lead"><span data-l="en">A doc is the unit you share for review. It has an immutable slug, a mutable title, a
+            kind (Markdown / HTML / Image), and a version history. Publish by uploading a file, pasting content,
+            or via MCP.</span>
+            <span data-l="vi">Một doc là đơn vị bạn chia sẻ để review. Nó có slug bất biến, tiêu đề đổi được, một loại
+            (Markdown / HTML / Image) và lịch sử version. Bạn đăng bằng cách upload file, dán nội dung, hoặc qua MCP.</span></p>
+
+          <h3><span data-l="en">The three kinds</span><span data-l="vi">Ba loại</span></h3>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Kind</span><span data-l="vi">Loại</span></th><th><span data-l="en">Renders as</span><span data-l="vi">Hiển thị thành</span></th><th><span data-l="en">Safety</span><span data-l="vi">An toàn</span></th><th><span data-l="en">Use for</span><span data-l="vi">Dùng cho</span></th></tr></thead>
+              <tbody>
+                <tr><td><span class="chip blue">Markdown</span></td><td><span data-l="en">Themed prose in the app</span><span data-l="vi">Văn bản theo theme app</span></td><td><span data-l="en">Scripts stripped</span><span data-l="vi">Loại bỏ script</span></td><td><span data-l="en">Specs, plans, release notes, guides</span><span data-l="vi">Spec, plan, release note, hướng dẫn</span></td></tr>
+                <tr><td><span class="chip amber">HTML</span></td><td><span data-l="en">Interactive, in a sandboxed iframe</span><span data-l="vi">Tương tác, trong iframe sandbox</span></td><td><span data-l="en">Opaque-origin sandbox + strict CSP — can't reach the app session</span><span data-l="vi">Sandbox opaque-origin và CSP nghiêm ngặt, không chạm được session app</span></td><td><span data-l="en">Dashboards, prototypes, rich tools</span><span data-l="vi">Dashboard, prototype, công cụ phức tạp</span></td></tr>
+                <tr><td><span class="chip green">Image</span></td><td><span data-l="en">Zoom + pan viewer</span><span data-l="vi">Viewer zoom + kéo</span></td><td><span data-l="en">SVG also sandboxed</span><span data-l="vi">SVG cũng được sandbox</span></td><td><span data-l="en">Screenshots, diagrams, designs</span><span data-l="vi">Ảnh chụp, sơ đồ, thiết kế</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><span data-l="en">Limits: HTML/Markdown ≤ 5 MB, images ≤ 25 MB. Empty or type-mismatched uploads are rejected. Title
+            is inferred from an HTML <code>&lt;title&gt;</code> or the first Markdown <code>#</code> heading, and
+            stays editable. The doc-kind badge is color-coded so MD / HTML / IMG read apart at a glance.</span>
+            <span data-l="vi">Giới hạn: HTML/Markdown ≤ 5 MB, ảnh ≤ 25 MB. File rỗng hoặc sai loại sẽ bị từ chối. Tiêu đề được suy ra
+            từ thẻ <code>&lt;title&gt;</code> của HTML hoặc heading <code>#</code> Markdown đầu tiên, và vẫn sửa được. Huy hiệu
+            loại tài liệu được tô màu để MD / HTML / IMG phân biệt ngay trong nháy mắt.</span></p>
+
+          <div class="note"><span class="lbl"><span data-l="en">Default access</span><span data-l="vi">Quyền mặc định</span></span>
+            <span data-l="en">Every new doc starts <strong>workspace = commenter, link = off</strong> — your team can view and
+            comment, no public link. Make it private by turning both axes off. See <a href="#sharing">Sharing &amp; permissions</a>.</span>
+            <span data-l="vi">Mỗi tài liệu mới bắt đầu với <strong>workspace = commenter, link = tắt</strong>: nhóm của bạn xem và
+            comment được, không có link công khai. Muốn để riêng tư thì tắt cả hai trục. Xem <a href="#sharing">Chia sẻ &amp; phân quyền</a>.</span></div>
+        </section>
+
+        <!-- ===================== VERSIONING ===================== -->
+        <section class="docs__sec" id="versioning">
+          <h2><span data-l="en">Versions &amp; diff</span><span data-l="vi">Version &amp; diff</span></h2>
+          <p class="lead"><span data-l="en">Versions are immutable. Each content publish appends one (v2, v3, …); editing only the
+            title does <em>not</em>. Nothing is ever deleted — restoring an old version appends a copy.</span>
+            <span data-l="vi">Version là bất biến. Mỗi lần đăng nội dung sẽ thêm một bản mới (v2, v3, ...); còn chỉ sửa tiêu đề thì
+            <em>không</em>. Không có gì bị xóa: khôi phục bản cũ thực chất là thêm một bản sao.</span></p>
+
+          <h3><span data-l="en">Version history</span><span data-l="vi">Lịch sử version</span></h3>
+          <p><span data-l="en">The version button in the viewer opens the history, newest-first, each showing the number, relative
+            time, author, and a <strong>Current</strong> badge on the latest. Older versions offer
+            <strong>Compare</strong> and <strong>Restore</strong>.</span>
+            <span data-l="vi">Nút version trong viewer mở lịch sử, sắp mới nhất lên trước, mỗi mục hiện số bản, thời gian tương đối,
+            tác giả, và huy hiệu <strong>Current</strong> ở bản mới nhất. Bản cũ thì có thêm <strong>Compare</strong> và
+            <strong>Restore</strong>.</span></p>
+
+          <h3><span data-l="en">Comparing</span><span data-l="vi">So sánh</span></h3>
+          <ul>
+            <li><span data-l="en"><strong>Source tab</strong> — line-by-line diff: additions in teal, removals in red strikethrough,
+              with a change count. Always horizontally scrollable.</span>
+              <span data-l="vi"><strong>Tab Source</strong>: diff theo từng dòng, phần thêm màu teal, phần xóa gạch ngang đỏ, kèm số thay đổi.
+              Luôn cuộn ngang được.</span></li>
+            <li><span data-l="en"><strong>Rendered tab</strong> — the two versions side-by-side (stacked below 760px). Markdown/HTML
+              render in sandboxes; images show side-by-side.</span>
+              <span data-l="vi"><strong>Tab Rendered</strong>: hai bản đặt cạnh nhau (xếp dọc khi dưới 760px). Markdown/HTML render trong
+              sandbox, còn ảnh thì hiện song song.</span></li>
+          </ul>
+          <p><span data-l="en">Pick any two versions from the diff header. Default: from = the version you clicked, to = current.</span>
+            <span data-l="vi">Chọn hai bản bất kỳ ở đầu diff. Mặc định: from = bản bạn bấm, to = bản hiện tại.</span></p>
+
+          <h3><span data-l="en">Annotations across versions (re-anchor)</span><span data-l="vi">Annotation qua các version (neo lại)</span></h3>
+          <p><span data-l="en">On every publish, existing annotations re-anchor: an <strong>exact</strong> content match moves the
+            comment forward; a <strong>fuzzy</strong> match (block position + snippet similarity) keeps it close;
+            <strong>no match</strong> sends it to the <strong>detached</strong> list, where you can re-pin or
+            dismiss it. Feedback is never silently lost.</span>
+            <span data-l="vi">Mỗi lần đăng, các annotation hiện có sẽ tự neo lại: khớp nội dung <strong>chính xác</strong> thì đưa bình luận
+            sang bản mới; khớp <strong>fuzzy</strong> (vị trí khối cộng độ giống đoạn trích) thì giữ nó ở vị trí gần đúng;
+            <strong>không khớp</strong> thì đẩy vào danh sách <strong>detached</strong>, nơi bạn neo lại hoặc bỏ qua.
+            Phản hồi không bao giờ bị mất một cách âm thầm.</span></p>
+        </section>
+
+        <!-- ===================== ANNOTATION ===================== -->
+        <section class="docs__sec" id="annotation">
+          <h2><span data-l="en">The viewer &amp; annotations</span><span data-l="vi">Viewer &amp; annotation</span></h2>
+          <p class="lead"><span data-l="en">The viewer is a 3-pane layout: a TOC rail (outline + scroll-spy + P-badges on specs)
+            on the left, the rendered doc in the center (in a sandbox that keeps its own styling), and the
+            annotations rail on the right.</span>
+            <span data-l="vi">Viewer có bố cục 3 cột: dải TOC (mục lục, scroll-spy và P-badge cho spec) bên trái, tài liệu render
+            ở giữa (trong sandbox giữ style riêng của nó), và dải annotation bên phải.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/viewer.png" alt="The 3-pane Anchord viewer with margin annotations." /></div>
+            <figcaption><span data-l="en">3-pane viewer — TOC, rendered doc, and the margin rail of comment threads.</span><span data-l="vi">Viewer 3 cột: TOC, tài liệu render, và dải thread bình luận ở lề.</span></figcaption>
+          </figure>
+
+          <h3><span data-l="en">Creating an annotation</span><span data-l="vi">Tạo một annotation</span></h3>
+          <ol>
+            <li><span data-l="en"><strong>Select text</strong> (drag) — or, in Pinpoint mode, hover and click a whole block.</span><span data-l="vi"><strong>Bôi chọn văn bản</strong> (kéo chuột), hoặc ở chế độ Pinpoint thì rê chuột rồi bấm cả một khối.</span></li>
+            <li><span data-l="en">A <strong>selection popover</strong> floats over the range with the type tools.</span><span data-l="vi">Một <strong>popover</strong> nổi lên trên đoạn vừa bôi, kèm các công cụ chọn loại.</span></li>
+            <li><span data-l="en">Pick a type, add your comment (or pick a label), and send. The annotation anchors instantly and
+              appears both as an inline mark and a thread card in the rail.</span>
+              <span data-l="vi">Chọn loại, thêm bình luận (hoặc chọn label), và gửi. Annotation neo ngay và hiện vừa dưới dạng
+              dấu inline vừa là thẻ thread trong dải.</span></li>
+          </ol>
+
+          <h3><span data-l="en">Threads</span><span data-l="vi">Thread</span></h3>
+          <p><span data-l="en">Each annotation carries a flat thread — a root comment plus replies, with author, time, and the
+            quoted text. Anyone with <strong>commenter</strong>+ can reply, resolve/reopen, and accept/reject
+            redline proposals. Resolved threads dim but stay visible (history is preserved). The rail filters by
+            type and status.</span>
+            <span data-l="vi">Mỗi annotation là một thread phẳng gồm bình luận gốc và các trả lời, kèm tác giả, thời gian và đoạn được trích dẫn. Ai có quyền <strong>commenter</strong> trở lên đều trả lời, resolve/reopen và chấp nhận hay từ chối đề xuất redline được. Thread đã resolve thì mờ đi nhưng vẫn còn đó để giữ lịch sử. Dải bên phải lọc được theo loại và trạng thái.</span></p>
+
+          <h3><span data-l="en">Image regions</span><span data-l="vi">Vùng ảnh</span></h3>
+          <p><span data-l="en">On image docs, click a point or drag a box to anchor a comment by normalized coordinates — the mark
+            holds its position across zoom and resize.</span>
+            <span data-l="vi">Với tài liệu ảnh, bấm một điểm hoặc kéo một khung để neo bình luận theo tọa độ chuẩn hóa; vết đánh dấu giữ nguyên chỗ dù bạn zoom hay đổi kích thước.</span></p>
+
+          <h3><span data-l="en">Guest commenting</span><span data-l="vi">Khách comment</span></h3>
+          <p><span data-l="en">If the link role is commenter+, no-account guests get a random session name (renamable) and can
+            comment — no email required. Guest comments are server-marked and can't impersonate members.</span>
+            <span data-l="vi">Nếu vai trò link từ commenter trở lên, khách không có tài khoản vẫn comment được mà chẳng cần email: họ được cấp một tên phiên ngẫu nhiên và đổi lại được. Bình luận của khách được server đánh dấu rõ nên không thể mạo danh thành viên.</span></p>
+        </section>
+
+        <!-- ===================== ANNOTATION TYPES ===================== -->
+        <section class="docs__sec" id="annotation-types">
+          <h2><span data-l="en">Annotation types</span><span data-l="vi">Các loại annotation</span></h2>
+          <p class="lead"><span data-l="en">Each tool carries its own hue so the toolbar and the rail read by color. The type
+            dimension is orthogonal to status (resolved = green, detached = amber, stale = muted).</span>
+            <span data-l="vi">Mỗi công cụ mang một sắc màu riêng để thanh công cụ và dải đọc được theo màu. Chiều "loại"
+            độc lập với trạng thái (resolved = xanh lá, detached = hổ phách, stale = mờ).</span></p>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Type</span><span data-l="vi">Loại</span></th><th><span data-l="en">Color</span><span data-l="vi">Màu</span></th><th><span data-l="en">What it's for</span><span data-l="vi">Dùng để</span></th><th><span data-l="en">How to create</span><span data-l="vi">Cách tạo</span></th></tr></thead>
+              <tbody>
+                <tr><td><span class="chip teal">Markup</span></td><td><span data-l="en">Teal</span><span data-l="vi">Teal</span></td><td><span data-l="en">The neutral parent tool — opens the type popover</span><span data-l="vi">Công cụ cha trung tính, dùng để mở popover chọn loại</span></td><td><span data-l="en">Select text → choose a type</span><span data-l="vi">Bôi văn bản → chọn loại</span></td></tr>
+                <tr><td><span class="chip amber">Comment</span></td><td><span data-l="en">Amber</span><span data-l="vi">Hổ phách</span></td><td><span data-l="en">A note, question, or request</span><span data-l="vi">Ghi chú, câu hỏi, hoặc yêu cầu</span></td><td><span data-l="en">Select → Comment → type</span><span data-l="vi">Bôi → Comment → gõ</span></td></tr>
+                <tr><td><span class="chip red">Redline</span></td><td><span data-l="en">Red</span><span data-l="vi">Đỏ</span></td><td><span data-l="en">A delete proposal (strike-through — never edits the doc directly)</span><span data-l="vi">Đề xuất xóa, hiện bằng gạch ngang chứ không sửa thẳng vào tài liệu</span></td><td><span data-l="en">Select → Redline</span><span data-l="vi">Bôi → Redline</span></td></tr>
+                <tr><td><span class="chip gold">Label</span></td><td><span data-l="en">Gold</span><span data-l="vi">Vàng kim</span></td><td><span data-l="en">A preset tag (e.g. "Out of scope", "Verify this")</span><span data-l="vi">Nhãn dựng sẵn (vd "Out of scope", "Verify this")</span></td><td><span data-l="en">Select → Label → pick</span><span data-l="vi">Bôi → Label → chọn</span></td></tr>
+                <tr><td><span class="chip green">Like</span></td><td><span data-l="en">Green</span><span data-l="vi">Xanh lá</span></td><td><span data-l="en">"Looks good" — no text needed</span><span data-l="vi">"Ổn rồi", không cần gõ gì thêm</span></td><td><span data-l="en">Select → Like</span><span data-l="vi">Bôi → Like</span></td></tr>
+                <tr><td><span class="chip blue">Pinpoint</span></td><td><span data-l="en">Blue</span><span data-l="vi">Xanh dương</span></td><td><span data-l="en">Whole-block annotation mode (see below)</span><span data-l="vi">Chế độ annotate cả khối (xem dưới)</span></td><td><span data-l="en">Toggle Pinpoint → click a block</span><span data-l="vi">Bật Pinpoint → bấm một khối</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><span data-l="en">Tools collapse to icon-only at rest; the active and hovered tool expand to icon + label + hue.
+            Redlines and replace-suggestions are <strong>proposals</strong> with a status (pending / accepted /
+            rejected / stale) — the owner decides, and an agent applies accepted changes on the next publish.</span>
+            <span data-l="vi">Lúc rảnh, mỗi công cụ chỉ còn lại cái icon; công cụ đang chọn hoặc đang hover thì bung ra cả icon, nhãn và màu. Redline và đề xuất thay thế là những <strong>đề xuất</strong> có trạng thái (pending / accepted / rejected / stale): chủ sở hữu là người quyết, và agent sẽ áp dụng phần được chấp nhận ở lần đăng kế tiếp.</span></p>
+        </section>
+
+        <!-- ===================== PINPOINT ===================== -->
+        <section class="docs__sec" id="pinpoint">
+          <h2><span data-l="en">Pinpoint mode</span><span data-l="vi">Chế độ Pinpoint</span></h2>
+          <p class="lead"><span data-l="en">Pinpoint mode annotates an entire structural block — a paragraph, heading, list item,
+            code block, or table cell — as one unit, instead of a text fragment.</span>
+            <span data-l="vi">Chế độ Pinpoint annotate nguyên một khối cấu trúc như một đơn vị, dù đó là đoạn văn, heading, mục danh sách, khối code hay ô bảng, thay vì chỉ một mẩu chữ nhỏ.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/pinpoint.png" alt="Pinpoint whole-block annotation on an HTML doc." /></div>
+            <figcaption><span data-l="en">Pinpoint — hover outlines the target block; click to annotate the whole block.</span><span data-l="vi">Pinpoint: hover làm nổi viền khối đích, bấm để annotate cả khối.</span></figcaption>
+          </figure>
+
+          <p><span data-l="en">Toggle Pinpoint, hover a block (it outlines), then click to open the same type popover you'd
+            get from a text selection. It works on Markdown blocks and HTML blocks (via iframe relay), and
+            re-anchors across versions just like a range — hinted by the block ID and the full-block text.</span>
+            <span data-l="vi">Bật Pinpoint, hover một khối (nó hiện viền) rồi bấm để mở đúng cái popover loại bạn vẫn thấy khi bôi
+            văn bản. Nó dùng được cho cả khối Markdown lẫn khối HTML (qua relay iframe), và khi sang version mới
+            cũng neo lại như một đoạn, dựa vào block ID và toàn bộ chữ trong khối.</span></p>
+        </section>
+
+        <!-- ===================== HOVER CARDS ===================== -->
+        <section class="docs__sec" id="hover-cards">
+          <h2><span data-l="en">Hover &amp; thread cards</span><span data-l="vi">Hover &amp; thẻ thread</span></h2>
+          <p class="lead"><span data-l="en">Read a thread without leaving the doc: hover a mark for a quick peek, or click it to pin the
+            full thread card right where the annotation sits.</span>
+            <span data-l="vi">Đọc một thread mà không cần rời tài liệu: hover lên một vết đánh dấu để xem nhanh, hoặc bấm vào nó
+            để ghim cả thẻ thread ngay tại chỗ annotation nằm.</span></p>
+
+          <figure class="figure">
+            <div class="peekmock">
+              <div class="peekmock__doc">
+                <p>The checkout flow returns a payment intent. <mark>Retries are capped at 5</mark> within the idempotency window, after which the intent must be recreated.</p>
+                <p>Every error carries a typed code so clients can branch without parsing strings.</p>
+              </div>
+              <div class="peekmock__card">
+                <div class="peekmock__head"><span class="av">Pr</span><span>Priya</span><span class="peekmock__time">2h</span></div>
+                <div class="peekmock__quote">"Retries are capped at 5"</div>
+                <div class="peekmock__body">Good. Can we surface the remaining count in the response too?</div>
+                <div class="peekmock__more">2 replies</div>
+              </div>
+            </div>
+            <figcaption><span data-l="en">Hovering an annotated phrase surfaces its card — peek to read, click to pin the full thread.</span><span data-l="vi">Hover lên một đoạn có annotation sẽ hiện thẻ của nó: hover để đọc lướt, bấm để ghim cả thread.</span></figcaption>
+          </figure>
+
+          <ul>
+            <li><span data-l="en"><strong>Hover peek</strong> — rest on any mark (~200ms) for a read-only card: author, type, the
+              quoted phrase, the root comment (clamped), and a reply count. No buttons.</span>
+              <span data-l="vi"><strong>Hover peek</strong>: dừng chuột trên một vết đánh dấu (~200ms) để xem nhanh một thẻ chỉ-đọc gồm tác giả, loại, đoạn trích, bình luận gốc (cắt gọn) và số trả lời. Không có nút bấm.</span></li>
+            <li><span data-l="en"><strong>Click to pin</strong> — click a mark to pin the full thread card with all actions
+              (reply, resolve, accept/reject). It closes on outside-click, <kbd>Esc</kbd>, re-click, or scroll-out.
+              On mobile it opens as a bottom sheet.</span>
+              <span data-l="vi"><strong>Bấm để ghim</strong>: bấm vào một vết đánh dấu để ghim cả thẻ thread kèm mọi hành động (trả lời, resolve, accept/reject). Thẻ đóng lại khi bạn bấm ra ngoài, nhấn <kbd>Esc</kbd>, bấm lại hoặc cuộn cho khuất. Trên mobile nó hiện dưới dạng bottom sheet.</span></li>
+          </ul>
+          <p><span data-l="en">Hover and click are suppressed while you're selecting text — the annotate flow takes priority.</span>
+            <span data-l="vi">Khi bạn đang bôi văn bản thì hover và bấm tạm tắt, để nhường cho thao tác annotate.</span></p>
+        </section>
+
+        <!-- ===================== SHARING ===================== -->
+        <section class="docs__sec" id="sharing">
+          <h2><span data-l="en">Sharing &amp; permissions</span><span data-l="vi">Chia sẻ &amp; phân quyền</span></h2>
+          <p class="lead"><span data-l="en">This is the differentiator. Anchord uses Google-Docs-style roles on <strong>two
+            independent axes</strong> — who in your workspace gets access, and who with the public link gets
+            access. The two never interfere: sharing externally never demotes your team.</span>
+            <span data-l="vi">Đây chính là điểm khác biệt. Anchord dùng vai trò kiểu Google Docs trên <strong>hai trục độc lập</strong>: một trục cho người trong workspace, một trục cho người cầm link công khai. Hai trục không đụng nhau, nên chia sẻ ra ngoài không bao giờ làm tụt quyền của nhóm bạn.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/share-dialog.png" alt="The share dialog with two-axis access." /></div>
+            <figcaption><span data-l="en">The share dialog — workspace access, link access, invites, and link controls.</span><span data-l="vi">Hộp thoại share: quyền workspace, quyền link, lời mời và các kiểm soát link.</span></figcaption>
+          </figure>
+
+          <h3><span data-l="en">1 · Role capabilities</span><span data-l="vi">1 · Khả năng theo vai trò</span></h3>
+          <p><span data-l="en">Everyone accessing a doc has one effective role. Higher role always wins across sources.</span>
+            <span data-l="vi">Mỗi người truy cập một tài liệu có một vai trò hiệu lực. Vai trò cao luôn thắng trên các nguồn.</span></p>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Capability</span><span data-l="vi">Khả năng</span></th><th class="c"><span class="chip">Viewer</span></th><th class="c"><span class="chip teal">Commenter</span></th><th class="c"><span class="chip blue">Editor</span></th><th class="c"><span class="chip green">Owner</span></th></tr></thead>
+              <tbody>
+                <tr><td><span data-l="en">View the doc</span><span data-l="vi">Xem tài liệu</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Comment / reply / resolve</span><span data-l="vi">Comment / trả lời / resolve</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Publish new versions</span><span data-l="vi">Đăng version mới</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Share / manage invites / link controls</span><span data-l="vi">Share / quản lý lời mời / kiểm soát link</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="partial">✓*</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Toggle "editors can share"</span><span data-l="vi">Bật/tắt "editor được share"</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Delete the doc</span><span data-l="vi">Xóa tài liệu</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="partial">✓†</span></td><td class="c"><span class="yes">✓</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="muted" style="font-size:13px;"><span data-l="en">* Only when "editors can share" is on (default). &nbsp; † Editors can soft-delete to Trash; permanent delete is owner/admin only.</span><span data-l="vi">* Chỉ khi "editor được share" bật (mặc định). &nbsp; † Editor xóa mềm vào Trash được; xóa vĩnh viễn chỉ owner/admin.</span></p>
+
+          <h3><span data-l="en">2 · The two access axes</span><span data-l="vi">2 · Hai trục quyền</span></h3>
+          <p><span data-l="en">A doc's general access is two independent settings. Each can be off, or set to viewer / commenter / editor.</span>
+            <span data-l="vi">Quyền chung của một tài liệu là hai thiết lập độc lập. Mỗi cái có thể tắt, hoặc đặt viewer / commenter / editor.</span></p>
+          <div class="grid grid--2" style="margin:18px 0;">
+            <div class="card">
+              <h3 style="font-size:15px;"><span data-l="en">Workspace access</span><span data-l="vi">Quyền workspace</span></h3>
+              <p><span data-l="en">The role <strong>every member of this doc's workspace</strong> gets. Off = hidden from the
+                workspace (only owner + invitees + link-holders).</span>
+                <span data-l="vi">Vai trò mà <strong>mọi thành viên trong workspace của tài liệu</strong> nhận. Tắt = ẩn khỏi
+                workspace (chỉ owner + người được mời + người giữ link).</span></p>
+            </div>
+            <div class="card">
+              <h3 style="font-size:15px;"><span data-l="en">Link access</span><span data-l="vi">Quyền link</span></h3>
+              <p><span data-l="en">The role <strong>anyone with the share link</strong> gets, including no-account guests. Off =
+                no public link at all.</span>
+                <span data-l="vi">Vai trò mà <strong>bất kỳ ai có link chia sẻ</strong> nhận, gồm cả khách không tài khoản. Tắt =
+                không có link công khai nào.</span></p>
+            </div>
+          </div>
+
+          <h3><span data-l="en">3 · Access combinations</span><span data-l="vi">3 · Tổ hợp quyền</span></h3>
+          <p><span data-l="en">The legacy "level" (restricted / anyone-in-workspace / anyone-with-link) is just a derived
+            read-out of the two axes — it's never stored.</span>
+            <span data-l="vi">"Mức" kiểu cũ (restricted / anyone-in-workspace / anyone-with-link) chỉ là cách diễn giải suy ra từ hai trục, không bao giờ được lưu lại.</span></p>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Workspace</span><span data-l="vi">Workspace</span></th><th>Link</th><th><span data-l="en">Derived level</span><span data-l="vi">Mức suy ra</span></th><th><span data-l="en">Who can do what</span><span data-l="vi">Ai làm được gì</span></th></tr></thead>
+              <tbody>
+                <tr><td><span data-l="en">Off</span><span data-l="vi">Tắt</span></td><td><span data-l="en">Off</span><span data-l="vi">Tắt</span></td><td><strong><span data-l="en">Restricted</span><span data-l="vi">Hạn chế</span></strong></td><td><span data-l="en">Owner + individually-invited people only</span><span data-l="vi">Chỉ owner + người được mời riêng</span></td></tr>
+                <tr><td>Commenter</td><td><span data-l="en">Off</span><span data-l="vi">Tắt</span></td><td><span data-l="en">Anyone in workspace</span><span data-l="vi">Mọi người trong workspace</span></td><td><span data-l="en">Members comment; not public</span><span data-l="vi">Thành viên comment; không công khai</span> <span class="tag" data-l="en">default</span><span class="tag" data-l="vi">mặc định</span></td></tr>
+                <tr><td>Viewer</td><td><span data-l="en">Off</span><span data-l="vi">Tắt</span></td><td><span data-l="en">Anyone in workspace</span><span data-l="vi">Mọi người trong workspace</span></td><td><span data-l="en">Members read-only</span><span data-l="vi">Thành viên chỉ đọc</span></td></tr>
+                <tr><td>Editor</td><td><span data-l="en">Off</span><span data-l="vi">Tắt</span></td><td><span data-l="en">Anyone in workspace</span><span data-l="vi">Mọi người trong workspace</span></td><td><span data-l="en">Members can publish</span><span data-l="vi">Thành viên đăng được</span></td></tr>
+                <tr><td><span data-l="en">Off</span><span data-l="vi">Tắt</span></td><td>Viewer</td><td><span data-l="en">Anyone with link</span><span data-l="vi">Ai có link</span></td><td><span data-l="en">Link-holders read-only (guests included)</span><span data-l="vi">Người giữ link chỉ đọc (gồm khách)</span></td></tr>
+                <tr><td><span data-l="en">Off</span><span data-l="vi">Tắt</span></td><td>Commenter</td><td><span data-l="en">Anyone with link</span><span data-l="vi">Ai có link</span></td><td><span data-l="en">Link-holders + guests comment</span><span data-l="vi">Người giữ link + khách comment</span></td></tr>
+                <tr><td>Commenter</td><td>Commenter</td><td><span data-l="en">Anyone with link</span><span data-l="vi">Ai có link</span></td><td><span data-l="en">Members comment · link-holders + guests comment</span><span data-l="vi">Thành viên comment · người giữ link + khách comment</span></td></tr>
+                <tr><td>Commenter</td><td>Editor</td><td><span data-l="en">Anyone with link</span><span data-l="vi">Ai có link</span></td><td><span data-l="en">Members comment · signed-in link-holders edit · guests capped at comment</span><span data-l="vi">Thành viên comment · người giữ link đã đăng nhập edit · khách trần ở comment</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3><span data-l="en">4 · Guests vs account-holders</span><span data-l="vi">4 · Khách vs người có tài khoản</span></h3>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th>&nbsp;</th><th><span data-l="en">No-account guest</span><span data-l="vi">Khách không tài khoản</span></th><th><span data-l="en">Account-holder</span><span data-l="vi">Người có tài khoản</span></th></tr></thead>
+              <tbody>
+                <tr><td><span data-l="en">View (if link/workspace allows)</span><span data-l="vi">Xem (nếu link/workspace cho phép)</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Comment (if role ≥ commenter)</span><span data-l="vi">Comment (nếu vai trò ≥ commenter)</span></td><td class="c"><span class="yes">✓</span> <span data-l="en">(renamable session name)</span><span data-l="vi">(tên phiên đổi được)</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Edit / publish (if role = editor)</span><span data-l="vi">Edit / đăng (nếu vai trò = editor)</span></td><td class="c"><span class="no" data-l="en">capped at commenter</span><span class="no" data-l="vi">trần ở commenter</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Highest role wins across sources</span><span data-l="vi">Vai trò cao nhất thắng trên các nguồn</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="note"><span class="lbl"><span data-l="en">Key rule</span><span data-l="vi">Quy tắc cốt lõi</span></span>
+            <span data-l="en">Guest commenting has no separate toggle — the link role <em>is</em> the grant. Set link access to
+            commenter+ and anyone with the link can comment.</span>
+            <span data-l="vi">Việc khách comment không có công tắc riêng: vai trò link <em>chính là</em> sự cấp quyền. Cứ đặt quyền link từ commenter trở lên là ai có link cũng comment được.</span></div>
+
+          <h3><span data-l="en">5 · The share link &amp; controls</span><span data-l="vi">5 · Link chia sẻ &amp; kiểm soát</span></h3>
+          <p><span data-l="en">When link access is on, Anchord mints an unguessable capability link like
+            <code>/s/aBc1DeF2…</code> — it contains no part of the title, so the address bar never leaks
+            content. Optional link controls: <strong>password</strong>, <strong>expiry</strong>, and a
+            <strong>view limit</strong>. Wrong passwords rate-limit after 5 tries; changing the view limit
+            resets the counter. Controls never gate people who already have access another way. Turning link
+            access off (or rotating the link) revokes old links instantly.</span>
+            <span data-l="vi">Khi bật quyền link, Anchord tạo một link capability không thể đoán, dạng <code>/s/aBc1DeF2...</code>. Link này không chứa phần nào của tiêu đề nên thanh địa chỉ không lộ nội dung. Bạn có thể thêm vài kiểm soát tùy chọn: <strong>mật khẩu</strong>, <strong>hết hạn</strong> và <strong>giới hạn lượt xem</strong>. Nhập sai mật khẩu 5 lần sẽ bị giới hạn tốc độ; đổi giới hạn lượt xem thì bộ đếm về lại 0. Các kiểm soát này không cản người vốn đã có quyền theo đường khác. Tắt quyền link (hoặc xoay link) sẽ thu hồi link cũ ngay lập tức.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/capability-link.png" alt="A no-account guest opening a capability link." /></div>
+            <figcaption><span data-l="en">A guest opening a capability link — comment with a session name, no account needed.</span><span data-l="vi">Một khách mở link capability: comment bằng tên phiên, không cần tài khoản.</span></figcaption>
+          </figure>
+        </section>
+
+        <!-- ===================== NOTIFICATIONS ===================== -->
+        <section class="docs__sec" id="notifications">
+          <h2><span data-l="en">Notifications</span><span data-l="vi">Thông báo</span></h2>
+          <p class="lead"><span data-l="en">The bell (top-right) shows recent notifications with an unread count (up to "9+").
+            Clicking a row jumps to the exact annotation and marks just that one read. "Mark all read" clears
+            the rest — opening the dropdown alone doesn't.</span>
+            <span data-l="vi">Chuông (góc trên bên phải) hiện các thông báo gần đây kèm số chưa đọc (tối đa "9+"). Bấm vào một dòng sẽ nhảy tới đúng annotation và chỉ đánh dấu riêng dòng đó là đã đọc. Muốn dọn hết thì bấm "Mark all read"; chỉ mở dropdown ra thôi thì không tính.</span></p>
+
+          <h3><span data-l="en">Events &amp; defaults</span><span data-l="vi">Sự kiện &amp; mặc định</span></h3>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Event</span><span data-l="vi">Sự kiện</span></th><th><span data-l="en">Who's notified</span><span data-l="vi">Ai được báo</span></th><th class="c"><span data-l="en">In-app</span><span data-l="vi">Trong app</span></th><th class="c">Email</th></tr></thead>
+              <tbody>
+                <tr><td><span data-l="en">New feedback</span><span data-l="vi">Phản hồi mới</span></td><td><span data-l="en">Doc owner + editors</span><span data-l="vi">Owner + editor của tài liệu</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Thread activity (reply / new comment)</span><span data-l="vi">Hoạt động thread (trả lời / comment mới)</span></td><td><span data-l="en">Thread participants + owner</span><span data-l="vi">Người trong thread + owner</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Suggestion decided</span><span data-l="vi">Đề xuất được quyết</span></td><td><span data-l="en">The suggestion author</span><span data-l="vi">Tác giả đề xuất</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Resolved / reopened</span><span data-l="vi">Resolve / mở lại</span></td><td><span data-l="en">The annotation creator</span><span data-l="vi">Người tạo annotation</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+                <tr><td><span data-l="en">Detached (republish orphaned your anchor)</span><span data-l="vi">Detached (đăng lại làm mất neo)</span></td><td><span data-l="en">The annotation author</span><span data-l="vi">Tác giả annotation</span></td><td class="c"><span class="partial" data-l="en">locked on</span><span class="partial" data-l="vi">khóa bật</span></td><td class="c"><span class="no">—</span></td></tr>
+                <tr><td><span data-l="en">Document shared with you</span><span data-l="vi">Tài liệu được chia sẻ cho bạn</span></td><td><span data-l="en">You</span><span data-l="vi">Bạn</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+                <tr><td><span data-l="en">Workspace invite</span><span data-l="vi">Lời mời workspace</span></td><td><span data-l="en">You (if you have an account)</span><span data-l="vi">Bạn (nếu có tài khoản)</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+                <tr><td><span data-l="en">Member joined</span><span data-l="vi">Thành viên tham gia</span></td><td><span data-l="en">Workspace admins</span><span data-l="vi">Admin workspace</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no" data-l="en">off (opt-in)</span><span class="no" data-l="vi">tắt (tự bật)</span></td></tr>
+                <tr><td><span data-l="en">Removed from workspace</span><span data-l="vi">Bị xóa khỏi workspace</span></td><td><span data-l="en">You</span><span data-l="vi">Bạn</span></td><td class="c"><span class="partial" data-l="en">locked on</span><span class="partial" data-l="vi">khóa bật</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Workspace renamed</span><span data-l="vi">Workspace đổi tên</span></td><td><span data-l="en">All members</span><span data-l="vi">Mọi thành viên</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><span data-l="en">Emails are <strong>plain text</strong> with a deep-link to the exact annotation and no doc body
+            (privacy). Two notifications are locked on in-app — <strong>detached</strong> and <strong>removed
+            from workspace</strong> — though you can still mute the latter's email.</span>
+            <span data-l="vi">Email gửi đi là <strong>văn bản thuần</strong>, có deep-link tới đúng annotation và không kèm nội dung tài liệu để giữ riêng tư. Có hai thông báo luôn bật trong app là <strong>detached</strong> và <strong>bị xóa khỏi workspace</strong>; riêng email của cái sau thì bạn vẫn tắt được.</span></p>
+
+          <h3><span data-l="en">Preferences</span><span data-l="vi">Tùy chỉnh</span></h3>
+          <p><span data-l="en">In <strong>Settings → Notifications</strong>, toggle in-app and email per event type, or flip the
+            master email switch off to silence all email while keeping the bell.</span>
+            <span data-l="vi">Trong <strong>Settings → Notifications</strong>, bật/tắt trong-app và email theo từng loại sự kiện, hoặc
+            tắt công tắc email tổng để im mọi email mà vẫn giữ chuông.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/notif-prefs.png" alt="The notification preferences section." /></div>
+            <figcaption><span data-l="en">Per-event notification preferences, with locked events shown as always-on.</span><span data-l="vi">Tùy chỉnh thông báo theo sự kiện, sự kiện khóa hiện là luôn-bật.</span></figcaption>
+          </figure>
+        </section>
+
+        <!-- ===================== ACTIVITY ===================== -->
+        <section class="docs__sec" id="your-activity">
+          <h2><span data-l="en">Your activity</span><span data-l="vi">Hoạt động của bạn</span></h2>
+          <p class="lead"><span data-l="en">Your personal, cross-workspace page — everything aimed at you and everything you've done, in one place.</span>
+            <span data-l="vi">Trang cá nhân xuyên workspace của bạn — mọi thứ hướng tới bạn và mọi việc bạn đã làm, gom về một chỗ.</span></p>
+          <p><span data-l="en">The <strong>Your activity</strong> page has two tabs:</span><span data-l="vi">Trang <strong>Your activity</strong> có hai tab:</span></p>
+          <ul>
+            <li><span data-l="en"><strong>For you</strong> — your bell, full-page, across all workspaces, grouped by day. Reply,
+              resolve, or accept/decline a workspace invite inline. Already-handled invites degrade to "no
+              longer available" instead of breaking.</span>
+              <span data-l="vi"><strong>For you</strong>: chính là cái chuông của bạn ở dạng toàn trang, gộp mọi workspace và nhóm theo ngày. Bạn trả lời, resolve hay chấp nhận/từ chối lời mời workspace ngay tại đây. Lời mời nào xử lý rồi thì chuyển thành "không còn khả dụng" thay vì báo lỗi.</span></li>
+            <li><span data-l="en"><strong>Your actions</strong> — a read-only feed of what <em>you</em> did (published, commented,
+              resolved, shared, invited), verb-first with action detail. If you've since lost access to a doc,
+              the row stays but its title/link are hidden.</span>
+              <span data-l="vi"><strong>Your actions</strong>: feed chỉ-đọc ghi lại những gì <em>bạn</em> đã làm (đăng, comment, resolve, chia sẻ, mời), viết theo lối động từ trước kèm chi tiết. Nếu sau này bạn mất quyền với một tài liệu, dòng đó vẫn còn nhưng tiêu đề và link bị ẩn đi.</span></li>
+          </ul>
+
+          <div class="figure stack">
+            <div class="shot"><img src="assets/shots/foryou.png" alt="The For-you inbox." /></div>
+            <div class="shot"><img src="assets/shots/your-actions.png" alt="The Your-actions feed." /></div>
+          </div>
+        </section>
+
+        <!-- ===================== WORKSPACE ACTIVITY ===================== -->
+        <section class="docs__sec" id="workspace-activity">
+          <h2><span data-l="en">Workspace activity</span><span data-l="vi">Hoạt động workspace</span></h2>
+          <p class="lead"><span data-l="en">Every workspace has its own append-only activity log — a shared timeline of everything happening
+            across its projects and docs. Open it from <strong>Activity</strong> in the sidebar.</span>
+            <span data-l="vi">Mỗi workspace có một nhật ký hoạt động chỉ-ghi-thêm của riêng nó — một dòng thời gian chung
+            cho mọi việc diễn ra trên các project và tài liệu. Mở từ mục <strong>Activity</strong> ở sidebar.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/workspace-activity.png" alt="The Anchord workspace activity feed: events grouped by day, category filters, and a 7-day stats rail." /></div>
+            <figcaption><span data-l="en">The workspace activity feed — events grouped by day, category filters across the top, and a 7-day stats rail.</span><span data-l="vi">Feed hoạt động workspace — sự kiện gom theo ngày, bộ lọc nhóm ở trên, và dải thống kê 7 ngày bên phải.</span></figcaption>
+          </figure>
+
+          <h3><span data-l="en">What's logged, by category</span><span data-l="vi">Ghi lại những gì, theo nhóm</span></h3>
+          <p><span data-l="en">Events are grouped by day, newest first, and filterable by category (each shows a count):</span>
+            <span data-l="vi">Sự kiện gom theo ngày, mới nhất trước, lọc được theo nhóm (mỗi nhóm có số đếm):</span></p>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Filter</span><span data-l="vi">Bộ lọc</span></th><th><span data-l="en">Events it covers</span><span data-l="vi">Sự kiện bao gồm</span></th></tr></thead>
+              <tbody>
+                <tr><td><span data-l="en">All</span><span data-l="vi">Tất cả</span></td><td><span data-l="en">Every event below</span><span data-l="vi">Mọi sự kiện bên dưới</span></td></tr>
+                <tr><td>Comments</td><td><span data-l="en">New annotations, replies, resolves/reopens, guest feedback from public links</span><span data-l="vi">Annotation mới, trả lời, resolve/mở lại, phản hồi của khách từ link công khai</span></td></tr>
+                <tr><td>Versions</td><td><span data-l="en">Version publishes and restores</span><span data-l="vi">Đăng và khôi phục version</span></td></tr>
+                <tr><td>Sharing</td><td><span data-l="en">Access / role changes, doc deletes &amp; restores</span><span data-l="vi">Đổi quyền / vai trò, xóa &amp; khôi phục tài liệu</span></td></tr>
+                <tr><td>People</td><td><span data-l="en">Member joins &amp; removals, project created, workspace renamed</span><span data-l="vi">Thành viên vào &amp; bị xóa, tạo project, đổi tên workspace</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3><span data-l="en">Detail &amp; stats</span><span data-l="vi">Chi tiết &amp; thống kê</span></h3>
+          <p><span data-l="en">Click any event for a detail page with its metadata, the full thread or diff, and related events on
+            that doc — plus an <strong>Open doc</strong> link that jumps to the exact annotation. A stats rail
+            summarizes the last 7 days: total events, the most active contributors, and the busiest doc.</span>
+            <span data-l="vi">Bấm vào một sự kiện để mở trang chi tiết kèm metadata, nguyên thread hoặc diff, và các sự kiện liên
+            quan trên tài liệu đó — cùng một link <strong>Open doc</strong> nhảy thẳng tới đúng annotation. Dải thống
+            kê tổng hợp 7 ngày gần nhất: tổng số sự kiện, người đóng góp nhiều nhất và tài liệu sôi động nhất.</span></p>
+
+          <div class="note"><span class="lbl"><span data-l="en">Who sees what</span><span data-l="vi">Ai thấy gì</span></span>
+            <span data-l="en">Admins see everything. Members see all workspace-level events plus doc-scoped events only on docs
+            they can currently access — re-checked at read time, so revoking access immediately hides those rows
+            (and a detail page you can't see returns a neutral not-found, never a "forbidden").</span>
+            <span data-l="vi">Admin thấy hết. Thành viên thấy mọi sự kiện cấp workspace, cộng các sự kiện của những tài liệu họ
+            đang có quyền xem — kiểm tra lại ngay lúc đọc, nên vừa thu quyền là các dòng đó biến mất (và trang chi tiết
+            bạn không được xem trả về not-found trung tính, không phải lỗi "forbidden").</span></div>
+        </section>
+
+        <!-- ===================== TRASH ===================== -->
+        <section class="docs__sec" id="trash">
+          <h2><span data-l="en">Delete &amp; Trash</span><span data-l="vi">Xóa &amp; Trash</span></h2>
+          <p class="lead"><span data-l="en">Deleting a doc is a soft-delete to Trash — all versions, annotations, and comments are
+            preserved for restore. There's no separate archive.</span>
+            <span data-l="vi">Xóa một tài liệu chỉ là xóa mềm vào Trash: mọi version, annotation và bình luận vẫn được giữ để khôi phục. Không có kho lưu trữ (archive) riêng.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/doc-menu.png" alt="The doc card menu with a Delete action." /></div>
+            <figcaption><span data-l="en">Delete from the doc card's ⋯ menu, with a confirm step.</span><span data-l="vi">Xóa từ menu ⋯ của card tài liệu, có bước xác nhận.</span></figcaption>
+          </figure>
+
+          <h3><span data-l="en">Who can do what</span><span data-l="vi">Ai làm được gì</span></h3>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Action</span><span data-l="vi">Hành động</span></th><th>Owner</th><th>Editor</th><th><span data-l="en">Workspace admin</span><span data-l="vi">Admin workspace</span></th></tr></thead>
+              <tbody>
+                <tr><td><span data-l="en">Soft-delete to Trash</span><span data-l="vi">Xóa mềm vào Trash</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Restore from Trash</span><span data-l="vi">Khôi phục từ Trash</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="yes">✓</span></td></tr>
+                <tr><td><span data-l="en">Delete forever</span><span data-l="vi">Xóa vĩnh viễn</span></td><td class="c"><span class="yes">✓</span></td><td class="c"><span class="no">—</span></td><td class="c"><span class="yes">✓</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><span data-l="en">A deleted doc leaves grids, search, counts, and its link (people who had access see a "deleted"
+            notice + restore; others get a neutral not-found). Both <code>doc_deleted</code> and
+            <code>doc_restored</code> are logged to workspace activity.</span>
+            <span data-l="vi">Tài liệu đã xóa biến khỏi lưới, tìm kiếm, bộ đếm, và link (người từng có quyền thấy thông báo "đã xóa"
+            + khôi phục; người khác nhận not-found trung tính). Cả <code>doc_deleted</code> và <code>doc_restored</code>
+            được ghi vào hoạt động workspace.</span></p>
+
+          <h3><span data-l="en">Restoring</span><span data-l="vi">Khôi phục</span></h3>
+          <p><span data-l="en">From the <strong>Trash</strong> page, click Restore — the doc returns to its original project (or
+            your default project if that's gone). Restore comes back <strong>private</strong> (both axes cleared,
+            capability token rotated) — re-share if you want it public again. Delete and restore are both
+            idempotent.</span>
+            <span data-l="vi">Vào trang <strong>Trash</strong> rồi bấm Restore, tài liệu sẽ về lại project cũ (hoặc về project mặc định của bạn nếu project cũ không còn). Khi khôi phục, tài liệu trở lại trạng thái <strong>riêng tư</strong> (cả hai trục bị xóa, token capability được xoay mới), nên muốn công khai lại thì bạn share lần nữa. Cả xóa lẫn khôi phục đều idempotent.</span></p>
+
+          <figure class="figure">
+            <div class="shot"><img src="assets/shots/trash.png" alt="The Trash page." /></div>
+            <figcaption><span data-l="en">The Trash page — restore or permanently delete.</span><span data-l="vi">Trang Trash: khôi phục hoặc xóa vĩnh viễn.</span></figcaption>
+          </figure>
+        </section>
+
+        <!-- ===================== MCP ===================== -->
+        <section class="docs__sec" id="mcp">
+          <h2><span data-l="en">MCP integration</span><span data-l="vi">Tích hợp MCP</span></h2>
+          <p class="lead"><span data-l="en">A built-in MCP server (same process as the backend) lets agents — Claude, Cursor,
+            Codex — publish docs, patch blocks, pull human feedback, and close the loop. This is the automated
+            half of the round-trip.</span>
+            <span data-l="vi">Một MCP server tích hợp sẵn (chạy chung tiến trình với backend) cho phép các agent như Claude, Cursor, Codex đăng tài liệu, patch từng khối, kéo phản hồi của con người về và khép vòng. Đây là nửa tự động của vòng khứ hồi.</span></p>
+
+          <h3><span data-l="en">Authenticate</span><span data-l="vi">Xác thực</span></h3>
+          <p><span data-l="en">Create a workspace-scoped <strong>personal access token</strong> in <strong>Settings →
+            Developer</strong> (shown once). The MCP endpoint is Streamable HTTP at <code>/mcp</code> — the
+            token carries its workspace, so the path is the same for everyone:</span>
+            <span data-l="vi">Tạo một <strong>personal access token</strong> gắn theo workspace trong <strong>Settings → Developer</strong> (chỉ hiện một lần). Endpoint MCP là Streamable HTTP ở <code>/mcp</code>; token đã mang sẵn workspace nên đường dẫn giống nhau với mọi người:</span></p>
+          <pre><code>claude mcp add --transport http \
+  --header "Authorization: Bearer anch_pat_&lt;your_token&gt;" \
+  https://&lt;your-anchord-instance&gt;/mcp</code></pre>
+          <p><span data-l="en">A token bound to one workspace can never touch another — strict cross-tenant isolation. Tokens carry
+            granular scopes (docs / annotations / projects × read / write) and revoke immediately.</span>
+            <span data-l="vi">Token gắn với workspace nào thì chỉ tác động trong workspace đó, cách ly chéo tenant rất chặt. Mỗi token mang scope chi tiết (docs / annotations / projects × read / write) và thu hồi được ngay.</span></p>
+
+          <h3><span data-l="en">Tools</span><span data-l="vi">Công cụ</span></h3>
+          <div class="tbl-wrap">
+            <table class="matrix">
+              <thead><tr><th><span data-l="en">Tool</span><span data-l="vi">Công cụ</span></th><th><span data-l="en">Purpose</span><span data-l="vi">Mục đích</span></th><th><span data-l="en">Key inputs → returns</span><span data-l="vi">Input chính → trả về</span></th></tr></thead>
+              <tbody>
+                <tr><td>create_document</td><td><span data-l="en">Publish a new doc</span><span data-l="vi">Đăng tài liệu mới</span></td><td><code>content, format, title?, projectId?</code> → <code>docId, slug, url, version</code></td></tr>
+                <tr><td>update_document</td><td><span data-l="en">Replace whole-doc content</span><span data-l="vi">Thay toàn bộ nội dung</span></td><td><code>docId, content</code> → <code>version</code></td></tr>
+                <tr><td>patch_document</td><td><span data-l="en">Edit specific blocks (token-cheap)</span><span data-l="vi">Sửa từng khối (ít token)</span></td><td><code>docId, expectedVersion, edits[]</code> → <code>version</code></td></tr>
+                <tr><td>read_document</td><td><span data-l="en">Read content + block IDs</span><span data-l="vi">Đọc nội dung + block ID</span></td><td><code>idOrSlug</code> → <code>version, content, blocks[]</code></td></tr>
+                <tr><td>list_documents / search_documents</td><td><span data-l="en">List / search accessible docs</span><span data-l="vi">Liệt kê / tìm tài liệu truy cập được</span></td><td><code>query?, page?, limit?</code> → <code>items[], pagination</code></td></tr>
+                <tr><td>pull_annotations</td><td><span data-l="en">Fetch feedback (incremental)</span><span data-l="vi">Lấy phản hồi (tăng dần)</span></td><td><code>docId, cursor?, status?, type?</code> → <code>annotations[], cursor</code></td></tr>
+                <tr><td>reply_comment / resolve_comment</td><td><span data-l="en">Close the loop</span><span data-l="vi">Khép vòng</span></td><td><code>commentId|annotationId, body?</code></td></tr>
+                <tr><td>list / create / read_project</td><td><span data-l="en">Organize docs</span><span data-l="vi">Sắp xếp tài liệu</span></td><td><code>name | projectId</code></td></tr>
+                <tr><td>delete / restore_document</td><td><span data-l="en">Soft-delete &amp; restore</span><span data-l="vi">Xóa mềm &amp; khôi phục</span></td><td><code>idOrSlug</code> <span data-l="en">(owner/editor only)</span><span data-l="vi">(chỉ owner/editor)</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3><span data-l="en">Patching blocks</span><span data-l="vi">Patch khối</span></h3>
+          <p><span data-l="en">Read the doc to get <code>blocks[]</code> (each with a <code>blockId</code> and, if patchable, its
+            <code>sourceText</code>), then patch with a matching <code>expectedVersion</code> — a stale version
+            is rejected so concurrent publishes never clobber. Each edit's <code>find</code> is a literal that
+            must appear exactly once in the block; <code>replace</code> may be empty (delete). Image docs can't
+            be patched — use <code>update_document</code>.</span>
+            <span data-l="vi">Đọc tài liệu để lấy <code>blocks[]</code> (mỗi khối có <code>blockId</code>, và nếu patch được thì có thêm <code>sourceText</code>), rồi patch kèm <code>expectedVersion</code> khớp. Bản cũ sẽ bị từ chối nên hai lần đăng đồng thời không ghi đè lên nhau. <code>find</code> của mỗi edit là chuỗi nguyên văn và phải xuất hiện đúng một lần trong khối; <code>replace</code> có thể để rỗng, tức là xóa. Tài liệu ảnh không patch được, hãy dùng <code>update_document</code>.</span></p>
+
+          <h3><span data-l="en">Same rules as the web</span><span data-l="vi">Cùng quy tắc với web</span></h3>
+          <p><span data-l="en">MCP-published docs use the same default access (<strong>workspace = commenter, link = off</strong>),
+            respect the same role checks (write needs editor+), and exclude deleted docs from every list/read.</span>
+            <span data-l="vi">Tài liệu đăng qua MCP dùng cùng quyền mặc định (<strong>workspace = commenter, link = tắt</strong>),
+            tuân cùng kiểm tra vai trò (ghi cần editor trở lên), và loại tài liệu đã xóa khỏi mọi list/read.</span></p>
+
+          <div class="note"><span class="lbl"><span data-l="en">The loop</span><span data-l="vi">Vòng lặp</span></span>
+            <span data-l="en">publish → humans annotate → <code>pull_annotations</code> → <code>patch_document</code> →
+            <code>reply_comment</code> + <code>resolve_comment</code> → repeat. Save the pull cursor to process only what's new.</span>
+            <span data-l="vi">đăng → người annotate → <code>pull_annotations</code> → <code>patch_document</code> →
+            <code>reply_comment</code> + <code>resolve_comment</code> → lặp lại. Lưu cursor pull để chỉ xử lý phần mới.</span></div>
+        </section>
+
+        <p class="muted" style="margin-top:40px; font-size:13px;">
+          <span data-l="en">Generated from <code>docs/specs/</code> · Anchord v0 · AGPL-3.0 · <a href="index.html">← back to home</a></span>
+          <span data-l="vi">Tạo từ <code>docs/specs/</code> · Anchord v0 · AGPL-3.0 · <a href="index.html">← về trang chủ</a></span>
+        </p>
+      </div>
+    </main>
+  </div>
+
+  <script src="site.js?v=5"></script>
+</body>
+</html>

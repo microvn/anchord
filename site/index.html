@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Anchord — self-hosted, own-your-data annotation for AI docs</title>
+  <meta name="description" content="Vaultwarden for AI docs. Share a doc as a link, get margin comments back, and let your agent pull the feedback over MCP. Self-hosted, AGPL-3.0, your data never leaves the box." />
+  <link rel="icon" href="assets/mark.svg" />
+  <link rel="stylesheet" href="styles.css?v=9" />
+</head>
+<body>
+  <!-- Lucide icon sprite (inlined, self-contained) -->
+  <svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="ic-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="ic-infinity" viewBox="0 0 24 24"><path d="M6 16c5 0 7-8 12-8a4 4 0 0 1 0 8c-5 0-7-8-12-8a4 4 0 1 0 0 8"/></symbol>
+    <symbol id="ic-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol>
+    <symbol id="ic-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol>
+    <symbol id="ic-pencil" viewBox="0 0 24 24"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></symbol>
+    <symbol id="ic-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></symbol>
+    <symbol id="ic-diff" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></symbol>
+    <symbol id="ic-grid" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></symbol>
+    <symbol id="ic-workflow" viewBox="0 0 24 24"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></symbol>
+    <symbol id="ic-bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></symbol>
+    <symbol id="ic-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+    <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></symbol>
+    <symbol id="ic-container" viewBox="0 0 24 24"><path d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z"/><path d="M10 21.9V14L2.1 9.1"/><path d="m10 14 11.9-6.9"/><path d="M14 19.8v-8.1"/><path d="M18 17.5V9.4"/></symbol>
+    <symbol id="ic-menu" viewBox="0 0 24 24"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></symbol>
+    <symbol id="ic-theme" viewBox="0 0 24 24"><path d="M12 8a2.83 2.83 0 0 0 4 4 4 4 0 1 1-4-4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.3 17.7-1.4 1.4"/><path d="m19.1 4.9-1.4 1.4"/></symbol>
+    <symbol id="ic-highlighter" viewBox="0 0 24 24"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></symbol>
+    <symbol id="ic-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="ic-strike" viewBox="0 0 24 24"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></symbol>
+    <symbol id="ic-tag" viewBox="0 0 24 24"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+    <symbol id="ic-heart" viewBox="0 0 24 24"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></symbol>
+    <symbol id="ic-image" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></symbol>
+  </svg>
+
+  <!-- NAV -->
+  <header class="nav">
+    <div class="wrap nav__inner">
+      <a class="brand" href="index.html"><img src="assets/mark.svg" alt="" /> Anchord</a>
+      <nav class="nav__links">
+        <a href="#features" class="hide-sm"><span data-l="en">Features</span><span data-l="vi">Tính năng</span></a>
+        <a href="#loop" class="hide-sm"><span data-l="en">How it works</span><span data-l="vi">Cách hoạt động</span></a>
+        <a href="#use-cases" class="hide-sm"><span data-l="en">Use cases</span><span data-l="vi">Tình huống</span></a>
+        <a href="docs.html">Docs</a>
+        <button class="langbtn" id="lang" title="Switch language" aria-label="Switch language"></button>
+        <button class="iconbtn" id="theme" title="Toggle theme" aria-label="Toggle theme"><svg class="lic"><use href="#ic-theme"/></svg></button>
+        <a class="btn btn--primary" href="docs.html#self-hosting"><span data-l="en">Self-host</span><span data-l="vi">Self-host</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap">
+      <span class="eyebrow">● Self-hosted · AGPL-3.0 · MCP-native</span>
+      <h1 data-l="en">Share a doc as a link. Get <span class="tl">every comment</span> back.</h1>
+      <h1 data-l="vi">Gửi đi một đường link, nhận về <span class="tl">từng góp ý</span>.</h1>
+      <p class="lede" data-l="en">Anchord is the own-your-data way to share and review HTML, Markdown, and image docs.
+        Publish a spec, plan, or report as a link; reviewers leave comments in the margin; your agent pulls
+        the feedback back over MCP and revises. <strong>Vaultwarden for AI docs.</strong></p>
+      <p class="lede" data-l="vi">Anchord là cách review tài liệu HTML, Markdown và ảnh mà dữ liệu vẫn nằm trong tay bạn.
+        Đăng một spec, plan hay report thành link; người review để lại góp ý ngay trên tài liệu; agent của bạn kéo
+        phản hồi về qua MCP rồi sửa lại. <strong>Vaultwarden cho tài liệu AI.</strong></p>
+      <div class="hero__cta">
+        <a class="btn btn--primary" href="docs.html#self-hosting"><span data-l="en">Get started</span><span data-l="vi">Bắt đầu</span></a>
+        <a class="btn btn--ghost" href="docs.html"><span data-l="en">Read the docs →</span><span data-l="vi">Đọc tài liệu →</span></a>
+      </div>
+      <p class="hero__note" data-l="en">Spin up the whole stack with <code>docker compose up</code> — app + Postgres + a named volume. No telemetry, ever.</p>
+      <p class="hero__note" data-l="vi">Dựng cả stack chỉ với <code>docker compose up</code>: app, Postgres và một named volume. Không telemetry, không bao giờ.</p>
+      <!-- Animated demo: a fake Anchord viewer (doc + comment rail) driven by a simulated MCP terminal -->
+      <div class="demo hero__shot" id="demo" aria-hidden="true">
+        <div class="demo__bar">
+          <span class="demo__title">checkout-api · spec</span>
+          <span class="demo__meta">
+            <span class="demo__live">LIVE</span>
+            <span class="demo__ver" id="demo-ver">v1</span>
+            <span>MD</span>
+            <span class="demo__share">Share</span>
+          </span>
+        </div>
+        <div class="demo__body">
+          <div class="demo__doc">
+            <!-- markup toolbar: the 5 annotation tools (Markup parent + Comment / Redline / Label / Like) -->
+            <div class="demo__tools" data-tools>
+              <span class="demo__tool" data-tool="markup"><svg class="lic"><use href="#ic-highlighter"/></svg><span>Markup</span></span>
+              <span class="demo__tool" data-tool="comment"><svg class="lic"><use href="#ic-message"/></svg><span>Comment</span></span>
+              <span class="demo__tool" data-tool="redline"><svg class="lic"><use href="#ic-strike"/></svg><span>Redline</span></span>
+              <span class="demo__tool" data-tool="label"><svg class="lic"><use href="#ic-tag"/></svg><span>Label</span></span>
+              <span class="demo__tool" data-tool="like"><svg class="lic"><use href="#ic-heart"/></svg><span>Like</span></span>
+            </div>
+            <h4 data-line>Checkout API</h4>
+            <p data-line>The checkout flow accepts a cart and returns a payment intent.
+              <mark data-type="comment" data-mark="comment">Idempotency keys dedupe retries</mark> across network failures.</p>
+            <p data-line data-change>Retries are
+              <span class="demo__old"><mark data-type="redline" data-mark="redline">unlimited until the intent expires</mark></span><span class="demo__new">capped at 5 within the idempotency window</span>.</p>
+            <p data-line>Every error returns a <mark data-type="label" data-mark="label">typed code</mark> plus a
+              human-readable message, so clients can branch safely.</p>
+            <p data-line><mark data-type="like" data-mark="like">Webhooks fire on <code style="font-size:12px">payment.succeeded</code></mark> once the intent settles.</p>
+          </div>
+          <div class="demo__rail">
+            <div class="demo__railhead">Annotations</div>
+            <div class="demo__card" data-card="comment">
+              <div class="demo__cardhead"><span class="demo__av amber">Pr</span><span class="demo__who">Priya</span><span class="demo__badge amber" data-badge>comment</span></div>
+              <p>What's the retry limit here? Should we cap it?</p>
+              <div class="demo__reply" data-reply><span class="demo__av bot">AI</span> Capped at 5 in v2 — thanks!</div>
+            </div>
+            <div class="demo__card" data-card="redline">
+              <div class="demo__cardhead"><span class="demo__av red">Jo</span><span class="demo__who">Jordan</span><span class="demo__badge red">redline</span></div>
+              <p>Delete this — propose capping retries instead.</p>
+            </div>
+            <div class="demo__card" data-card="label">
+              <div class="demo__cardhead"><span class="demo__av gold">Sa</span><span class="demo__who">Sam</span><span class="demo__badge gold">label</span></div>
+              <p>needs-tests · link to the error enum.</p>
+            </div>
+            <div class="demo__card" data-card="like">
+              <div class="demo__cardhead"><span class="demo__av green">Mi</span><span class="demo__who">Mira</span><span class="demo__badge green">like</span></div>
+              <p>Clean webhook contract. 👍</p>
+            </div>
+          </div>
+        </div>
+        <div class="demo__term">
+          <div class="demo__termbar"><span class="demo__termdot"></span><span class="demo__termdot"></span><span class="demo__termdot"></span>&nbsp; agent · mcp</div>
+          <div class="demo__termbody" id="demo-term"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VALUE PROPS -->
+  <section class="section" id="why">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="kicker"><span data-l="en">Why Anchord</span><span data-l="vi">Vì sao Anchord</span></span>
+        <h2 data-l="en">Own your data. Collaborate for free.</h2>
+        <h2 data-l="vi">Làm chủ dữ liệu. Cộng tác miễn phí.</h2>
+        <p data-l="en">The hosted SaaS tools charge per seat and keep your content on someone else's servers. Anchord
+          trades that for two things you can't buy back later.</p>
+        <p data-l="vi">Các SaaS hosted tính tiền theo đầu người và giữ nội dung của bạn trên máy chủ của họ. Anchord
+          đổi điều đó lấy hai thứ mà sau này bạn không mua lại được.</p>
+      </div>
+      <div class="values">
+        <div class="value">
+          <span class="ic"><svg class="lic"><use href="#ic-shield"/></svg></span>
+          <div>
+            <h3 data-l="en">Own your data</h3><h3 data-l="vi">Làm chủ dữ liệu</h3>
+            <p data-l="en">One <code>docker compose up</code> on your box. Text lives in your Postgres; uploads on your
+              volume. No telemetry, no phone-home — outbound only for email and the OAuth you opt into.</p>
+            <p data-l="vi">Chỉ một lệnh <code>docker compose up</code> trên máy của bạn. Văn bản lưu trong Postgres, file upload nằm trên
+              volume của bạn. Không telemetry, không phone-home; chỉ kết nối ra ngoài để gửi email và cho OAuth nếu bạn bật.</p>
+          </div>
+        </div>
+        <div class="value">
+          <span class="ic"><svg class="lic"><use href="#ic-infinity"/></svg></span>
+          <div>
+            <h3 data-l="en">Free collaboration</h3><h3 data-l="vi">Cộng tác miễn phí</h3>
+            <p data-l="en">No per-seat tax. Invite your whole workspace, share a link with no-account guests, annotate
+              without limits. AGPL-3.0 keeps it that way.</p>
+            <p data-l="vi">Không thu phí theo ghế. Mời cả workspace, chia sẻ link cho khách không cần tài khoản, annotate
+              thoải mái. AGPL-3.0 giữ nó như vậy.</p>
+          </div>
+        </div>
+        <div class="value">
+          <span class="ic"><svg class="lic"><use href="#ic-bot"/></svg></span>
+          <div>
+            <h3 data-l="en">Built for AI docs</h3><h3 data-l="vi">Sinh ra cho tài liệu AI</h3>
+            <p data-l="en">A built-in MCP server lets Claude, Cursor, or Codex publish a doc, then pull human feedback
+              straight back into the revise loop — automated.</p>
+            <p data-l="vi">MCP server tích hợp sẵn để Claude, Cursor hay Codex đăng tài liệu, rồi kéo phản hồi của con người
+              thẳng vào vòng sửa, hoàn toàn tự động.</p>
+          </div>
+        </div>
+        <div class="value">
+          <span class="ic"><svg class="lic"><use href="#ic-history"/></svg></span>
+          <div>
+            <h3 data-l="en">Versions that never lose feedback</h3><h3 data-l="vi">Version không bao giờ mất phản hồi</h3>
+            <p data-l="en">Every publish appends an immutable version. Annotations re-anchor onto the new content by
+              meaning, not position — non-matches go to a "detached" list, never dropped.</p>
+            <p data-l="vi">Mỗi lần đăng là thêm một version bất biến. Annotation tự neo lại vào nội dung mới theo ý nghĩa
+              chứ không theo vị trí; phần nào không khớp thì rơi vào danh sách "detached", không bao giờ mất.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE LOOP -->
+  <section class="section" id="loop">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="kicker"><span data-l="en">The round-trip</span><span data-l="vi">Vòng khứ hồi</span></span>
+        <h2 data-l="en">Publish → annotate → re-anchor → pull</h2>
+        <h2 data-l="vi">Đăng → annotate → neo lại → kéo về</h2>
+        <p data-l="en">The core flow runs end-to-end. A human or an agent publishes; reviewers mark up the rendered doc;
+          a new version re-anchors the comments; the agent pulls the feedback over MCP and revises.</p>
+        <p data-l="vi">Luồng cốt lõi chạy trọn vẹn từ đầu đến cuối. Người hoặc agent đăng tài liệu, người review đánh dấu lên đó,
+          version mới neo lại các bình luận, rồi agent kéo phản hồi về qua MCP để sửa.</p>
+      </div>
+      <div class="loop">
+        <div class="step"><h3 data-l="en">Publish</h3><h3 data-l="vi">Đăng</h3><p data-l="en">Drop in Markdown, HTML, or an image — from the web UI or an agent over MCP. You get a shareable link.</p><p data-l="vi">Bỏ vào Markdown, HTML hay ảnh, từ giao diện web hoặc từ agent qua MCP. Bạn nhận lại một link để chia sẻ.</p></div>
+        <div class="step"><h3 data-l="en">Annotate</h3><h3 data-l="vi">Annotate</h3><p data-l="en">Reviewers select a range or a whole block and leave comments, redlines, labels, or likes in the margin.</p><p data-l="vi">Người review bôi một đoạn hoặc cả khối rồi để lại comment, redline, label hay like ngay tại chỗ.</p></div>
+        <div class="step"><h3 data-l="en">Re-anchor</h3><h3 data-l="vi">Neo lại</h3><p data-l="en">Republish a new version; annotations follow the content by hash + fuzzy match, or land in "detached".</p><p data-l="vi">Đăng version mới; annotation bám theo nội dung bằng hash + fuzzy match, hoặc vào "detached".</p></div>
+        <div class="step"><h3 data-l="en">Pull</h3><h3 data-l="vi">Kéo về</h3><p data-l="en">The agent pulls annotations over MCP, patches the exact blocks, replies, and resolves the threads.</p><p data-l="vi">Agent kéo annotation về qua MCP, patch đúng khối, trả lời và resolve các thread.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- USE CASES -->
+  <section class="section" id="use-cases">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="kicker"><span data-l="en">Use cases</span><span data-l="vi">Tình huống dùng</span></span>
+        <h2 data-l="en">Where teams reach for Anchord</h2>
+        <h2 data-l="vi">Những lúc người ta cần Anchord</h2>
+        <p data-l="en">Anywhere a doc needs eyes and edits — without shipping your content to someone else's SaaS.</p>
+        <p data-l="vi">Bất cứ khi nào một tài liệu cần người đọc và sửa, mà không phải đẩy nội dung lên SaaS của người khác.</p>
+      </div>
+      <div class="grid grid--2">
+        <div class="card usecase">
+          <div class="usecase__top">
+            <span class="ic"><svg class="lic"><use href="#ic-bot"/></svg></span>
+            <span class="usecase__tag"><span data-l="en">For AI builders</span><span data-l="vi">Cho người làm với AI</span></span>
+          </div>
+          <h3 data-l="en">Review what your agent writes</h3>
+          <h3 data-l="vi">Soát lại thứ agent của bạn viết ra</h3>
+          <p data-l="en">Claude, Cursor, or Codex publishes a spec or plan as a link. Your team marks it up; the agent pulls the feedback over MCP and ships the next version — no copy-paste in between.</p>
+          <p data-l="vi">Claude, Cursor hay Codex đăng một spec hoặc plan thành link. Cả nhóm đánh dấu lên đó; agent kéo phản hồi về qua MCP rồi ra bản kế tiếp, không phải copy-paste qua lại.</p>
+        </div>
+        <div class="card usecase">
+          <div class="usecase__top">
+            <span class="ic"><svg class="lic"><use href="#ic-image"/></svg></span>
+            <span class="usecase__tag"><span data-l="en">Design review</span><span data-l="vi">Review thiết kế</span></span>
+          </div>
+          <h3 data-l="en">Pin comments to a mockup</h3>
+          <h3 data-l="vi">Ghim bình luận lên mockup</h3>
+          <p data-l="en">Drop a screenshot or an HTML prototype and let reviewers point at the exact spot — a box or a single pixel — instead of describing it in a chat thread.</p>
+          <p data-l="vi">Bỏ vào một ảnh chụp hay prototype HTML, để người review chỉ thẳng vào đúng chỗ, khoanh vùng hay từng điểm, thay vì tả lòng vòng trong chat.</p>
+        </div>
+        <div class="card usecase">
+          <div class="usecase__top">
+            <span class="ic"><svg class="lic"><use href="#ic-tag"/></svg></span>
+            <span class="usecase__tag"><span data-l="en">Decisions</span><span data-l="vi">Chốt quyết định</span></span>
+          </div>
+          <h3 data-l="en">Drive an RFC to consensus</h3>
+          <h3 data-l="vi">Đưa một RFC tới đồng thuận</h3>
+          <p data-l="en">Circulate a proposal, collect labels and redline suggestions, and track every version from draft to approved — the whole discussion stays anchored to the exact line.</p>
+          <p data-l="vi">Gửi một đề xuất đi, thu về label và đề xuất redline, theo dõi từng version từ nháp tới duyệt — cả cuộc thảo luận luôn bám vào đúng dòng văn bản.</p>
+        </div>
+        <div class="card usecase">
+          <div class="usecase__top">
+            <span class="ic"><svg class="lic"><use href="#ic-share"/></svg></span>
+            <span class="usecase__tag"><span data-l="en">Client delivery</span><span data-l="vi">Bàn giao khách hàng</span></span>
+          </div>
+          <h3 data-l="en">Share a report, keep the data</h3>
+          <h3 data-l="vi">Gửi report mà vẫn giữ dữ liệu</h3>
+          <p data-l="en">Send a link to a client or contractor — they comment as a guest with no account — while every byte stays on your own server. No per-seat fees, no third party.</p>
+          <p data-l="vi">Gửi link cho khách hàng hay đối tác, họ comment với tư cách khách không cần tài khoản, còn mọi dữ liệu vẫn nằm trên server của bạn. Không phí theo đầu người, không qua bên thứ ba.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="kicker"><span data-l="en">What's inside</span><span data-l="vi">Bên trong có gì</span></span>
+        <h2 data-l="en">Everything in v0</h2><h2 data-l="vi">Toàn bộ trong v0</h2>
+        <p data-l="en">The whole annotation platform — viewer, sharing, multi-workspace, notifications, and the MCP
+          bridge. Each links into the full guide.</p>
+        <p data-l="vi">Trọn bộ nền tảng annotation: viewer, chia sẻ, đa workspace, thông báo và cầu nối MCP.
+          Mỗi mục dẫn thẳng tới phần tài liệu đầy đủ.</p>
+      </div>
+      <div class="grid grid--3">
+        <a class="card" href="docs.html#annotation">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-pencil"/></svg></span> <span data-l="en">Annotate AI docs</span><span data-l="vi">Annotate tài liệu AI</span></h3>
+          <p data-l="en">3-pane viewer: TOC, rendered doc in a sandboxed iframe, margin threads. Range + whole-block (Pinpoint) + image-region annotations, color-coded by type.</p>
+          <p data-l="vi">Viewer 3 cột: TOC, tài liệu render trong iframe sandbox, thread bình luận bên cạnh. Annotation theo đoạn + cả khối (Pinpoint) + vùng ảnh, tô màu theo loại.</p>
+        </a>
+        <a class="card" href="docs.html#sharing">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-share"/></svg></span> <span data-l="en">Sharing &amp; roles</span><span data-l="vi">Chia sẻ &amp; vai trò</span></h3>
+          <p data-l="en">Google-Docs roles (viewer/commenter/editor/owner) on two independent axes — workspace + public link. Guests comment with no account.</p>
+          <p data-l="vi">Vai trò kiểu Google Docs (viewer/commenter/editor/owner) trên hai trục độc lập: workspace và link công khai. Khách comment không cần tài khoản.</p>
+        </a>
+        <a class="card" href="docs.html#versioning">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-diff"/></svg></span> <span data-l="en">Versioning &amp; diff</span><span data-l="vi">Version &amp; diff</span></h3>
+          <p data-l="en">Immutable versions, side-by-side rendered diff and source line-diff, restore any version, annotations re-anchor across publishes.</p>
+          <p data-l="vi">Version bất biến, diff render cạnh nhau và diff dòng nguồn, khôi phục bất kỳ bản nào, annotation neo lại qua các lần đăng.</p>
+        </a>
+        <a class="card" href="docs.html#workspaces">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-grid"/></svg></span> <span data-l="en">Multi-workspace</span><span data-l="vi">Đa workspace</span></h3>
+          <p data-l="en">Each account gets a default workspace; create more, invite/remove members, switch. Private &amp; public projects organize your docs.</p>
+          <p data-l="vi">Mỗi tài khoản có một workspace mặc định; tạo thêm, mời/xóa thành viên, chuyển đổi. Project riêng tư &amp; công khai để sắp xếp tài liệu.</p>
+        </a>
+        <a class="card" href="docs.html#mcp">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-workflow"/></svg></span> <span data-l="en">MCP round-trip</span><span data-l="vi">Khứ hồi MCP</span></h3>
+          <p data-l="en">Agents publish, patch specific blocks, pull annotations, reply, and resolve — over a built-in, workspace-scoped MCP server.</p>
+          <p data-l="vi">Agent đăng, patch từng khối, kéo annotation, trả lời và resolve, tất cả qua một MCP server tích hợp và giới hạn theo workspace.</p>
+        </a>
+        <a class="card" href="docs.html#notifications">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-bell"/></svg></span> <span data-l="en">Notifications &amp; activity</span><span data-l="vi">Thông báo &amp; hoạt động</span></h3>
+          <p data-l="en">In-app bell + plain-text email for high-signal events, per-type preferences, a workspace activity feed, and your personal inbox.</p>
+          <p data-l="vi">Chuông trong app + email thuần văn bản cho sự kiện quan trọng, tùy chỉnh theo loại, feed hoạt động workspace, và hộp thư cá nhân.</p>
+        </a>
+        <a class="card" href="docs.html#auth">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-key"/></svg></span> <span data-l="en">Self-host auth</span><span data-l="vi">Xác thực self-hosted</span></h3>
+          <p data-l="en">Email + password, magic link, GitHub / Google OAuth — each optional. Server-side revocable sessions, no browser tokens.</p>
+          <p data-l="vi">Email + mật khẩu, magic link, GitHub / Google OAuth, tất cả đều là tùy chọn. Phiên đăng nhập thu hồi được từ phía server, không lưu token trong trình duyệt.</p>
+        </a>
+        <a class="card" href="docs.html#trash">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-trash"/></svg></span> <span data-l="en">Delete &amp; trash</span><span data-l="vi">Xóa &amp; Trash</span></h3>
+          <p data-l="en">Soft-delete to Trash, restore with one click, permanent delete for owners/admins, plus an MCP delete tool.</p>
+          <p data-l="vi">Xóa mềm vào Trash, khôi phục một click, xóa vĩnh viễn cho owner/admin, kèm công cụ xóa qua MCP.</p>
+        </a>
+        <a class="card" href="docs.html#self-hosting">
+          <h3><span class="ic"><svg class="lic"><use href="#ic-container"/></svg></span> <span data-l="en">One-command deploy</span><span data-l="vi">Deploy một lệnh</span></h3>
+          <p data-l="en"><code>docker compose up</code> brings up app + Postgres + volume. Fail-closes without a secret and an email provider — no silent misconfig.</p>
+          <p data-l="vi"><code>docker compose up</code> dựng app, Postgres và volume. Thiếu secret hoặc email provider thì app không chạy, nên không có chuyện cấu hình sai mà vẫn lặng lẽ lên.</p>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOCS CTA -->
+  <section class="section" id="read">
+    <div class="wrap">
+      <div class="section__head" style="margin-bottom:24px;">
+        <span class="kicker"><span data-l="en">Documentation</span><span data-l="vi">Tài liệu</span></span>
+        <h2 data-l="en">A full guide, with screenshots</h2><h2 data-l="vi">Hướng dẫn đầy đủ, có ảnh chụp</h2>
+        <p data-l="en">Self-hosting, sign-in, workspaces, the viewer, the complete sharing matrix, MCP tools, and
+          more — every feature read from the specs and laid out with comparison tables.</p>
+        <p data-l="vi">Self-host, đăng nhập, workspace, viewer, ma trận phân quyền đầy đủ, công cụ MCP và nhiều thứ nữa.
+          Mọi tính năng được rút ra từ spec và trình bày bằng bảng so sánh.</p>
+      </div>
+      <a class="btn btn--primary" href="docs.html"><span data-l="en">Open the docs →</span><span data-l="vi">Mở tài liệu →</span></a>
+      <figure class="shot" style="margin-top:28px;">
+        <img src="assets/shots/share-dialog.png" alt="The Anchord share dialog: two-axis access (workspace role + link role), invites, and link controls." />
+      </figure>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="wrap footer__inner">
+      <div>
+        <a class="brand" href="index.html" style="font-size:15px;"><img src="assets/mark.svg" alt="" style="width:22px;height:22px;" /> Anchord</a>
+        <div style="margin-top:8px;" data-l="en">Self-hosted annotation for the docs your AI writes. AGPL-3.0.</div>
+        <div style="margin-top:8px;" data-l="vi">Công cụ annotation self-hosted cho những tài liệu AI của bạn viết ra. AGPL-3.0.</div>
+      </div>
+      <div style="display:flex; gap:18px;">
+        <a href="docs.html">Docs</a>
+        <a href="docs.html#self-hosting"><span data-l="en">Self-host</span><span data-l="vi">Self-host</span></a>
+        <a href="docs.html#mcp">MCP</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="site.js?v=5"></script>
+</body>
+</html>
