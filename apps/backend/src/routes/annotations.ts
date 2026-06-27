@@ -333,20 +333,33 @@ export interface AnnotationsRoutesDeps {
 
 // ── Zod request schemas ────────────────────────────────────────────────────
 
+// H-5 (DoS hardening): anchor input is attacker-controlled (any commenter, including an
+// anyone-with-link guest). The re-anchor job runs O(annotations × segments × blocks ×
+// snippetLen × blockLen) synchronous Levenshtein on the next publish, so an unbounded
+// snippet / segment count / offset can starve the single-threaded event loop for minutes.
+// Cap every dimension at a value far above any real selection so legitimate use is
+// unaffected while a malicious payload is refused at the edge (400) and never stored.
+/** A snippet is a short quote — 10k chars is already generous for a real selection. */
+const MAX_ANCHOR_SNIPPET_LENGTH = 10_000;
+/** No real selection spans more blocks than this; a multi-range is a handful at most. */
+const MAX_ANCHOR_SEGMENTS = 64;
+/** offset/length index into a block — no block is larger than this; also forbids negatives. */
+const MAX_ANCHOR_BLOCK_INDEX = 1_000_000;
+
 const anchorSegmentSchema = z.object({
   blockId: z.string(),
-  textSnippet: z.string(),
-  offset: z.number().int(),
-  length: z.number().int(),
+  textSnippet: z.string().max(MAX_ANCHOR_SNIPPET_LENGTH),
+  offset: z.number().int().nonnegative().max(MAX_ANCHOR_BLOCK_INDEX),
+  length: z.number().int().nonnegative().max(MAX_ANCHOR_BLOCK_INDEX),
 });
 
 /** Text-range anchor (S-001) — block-scoped snippet + offset/length (+ optional segments). */
 const textAnchorSchema = z.object({
   blockId: z.string(),
-  textSnippet: z.string(),
-  offset: z.number().int(),
-  length: z.number().int(),
-  segments: z.array(anchorSegmentSchema).optional(),
+  textSnippet: z.string().max(MAX_ANCHOR_SNIPPET_LENGTH),
+  offset: z.number().int().nonnegative().max(MAX_ANCHOR_BLOCK_INDEX),
+  length: z.number().int().nonnegative().max(MAX_ANCHOR_BLOCK_INDEX),
+  segments: z.array(anchorSegmentSchema).max(MAX_ANCHOR_SEGMENTS).optional(),
 });
 
 /** Image-region anchor (S-002) — a point or box in normalized 0..1 coords. */

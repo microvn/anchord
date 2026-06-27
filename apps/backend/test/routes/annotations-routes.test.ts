@@ -379,6 +379,61 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     expect(json.error.code).toBe("VALIDATION_ERROR");
   });
 
+  // Regression: H-5 unbounded annotation anchor -> reanchor DoS
+  test("H-5: an oversized anchor textSnippet → 400 VALIDATION_ERROR, nothing persisted", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const huge = "x".repeat(50_000);
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: huge, offset: 0, length: huge.length } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
+
+  // Regression: H-5 unbounded annotation anchor -> reanchor DoS
+  test("H-5: an oversized segments array → 400 VALIDATION_ERROR, nothing persisted", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const segments = Array.from({ length: 5_000 }, (_, i) => ({
+      blockId: `block-p-${i}`,
+      textSnippet: "hello",
+      offset: 0,
+      length: 5,
+    }));
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: { ...TEXT_ANCHOR, segments } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
+
+  // Regression: H-5 unbounded annotation anchor -> reanchor DoS
+  test("H-5: a negative anchor offset → 400 VALIDATION_ERROR, nothing persisted", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ anchor: { blockId: "block-p-1", textSnippet: "hi", offset: -1, length: 2 } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
+
   test("AS-027/C-015: commenter creates a labeled annotation → 201, label persisted verbatim", async () => {
     const ar = fakeAnnotationRepo();
     const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
