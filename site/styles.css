@@ -432,6 +432,8 @@ table.matrix td.c { text-align: center; }
   .nav__links { gap: 10px; }
   .nav__links a:not(.btn) { display: none; }
   .nav .btn { padding: 0 13px; }
+  /* phones: keep the primary App CTA; the secondary Self-host (github) folds away */
+  .nav .btn--ghost { display: none; }
   .hero h1 { font-size: 30px; line-height: 1.18; }
   .hero p.lede { font-size: 16px; }
   .section__head h2 { font-size: 23px; }
