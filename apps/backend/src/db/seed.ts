@@ -32,6 +32,7 @@ import {
   shareLinks,
 } from "./schema";
 import { renderForAnchoring } from "../render/markdown";
+import { extractText } from "../render/extract-text";
 import { injectBlockIds } from "../annotation/block-id";
 import { mintCapabilityToken } from "../sharing/share-token";
 import { BLOCK_SELECTOR } from "@anchord/anchor";
@@ -152,9 +153,22 @@ async function main() {
     const rows = await db.select().from(docVersions).where(eq(docVersions.docId, doc!.id));
     const maxV = rows.reduce((m, r) => Math.max(m, r.version), 0);
     for (let v = maxV + 1; v <= versions.length; v++) {
+      const content = versions[v - 1]!;
       await db.insert(docVersions).values({
-        docId: doc!.id, version: v, content: versions[v - 1]!, contentHash: hash(versions[v - 1]!), publishedBy: demo.id,
+        docId: doc!.id, version: v, content, contentHash: hash(content), publishedBy: demo.id,
+        // Mirror the publish path (publish/service.ts): search matches doc_versions.extracted_text,
+        // not the raw content — without this the seed docs are invisible to full-text search.
+        extractedText: extractText(content, kind),
       });
+    }
+    // Backfill extracted_text on any pre-existing version that lacks it (rows seeded before the
+    // extraction was added). Idempotent: a re-run heals old data without inserting new versions.
+    for (const r of rows) {
+      if (r.extractedText == null) {
+        await db.update(docVersions)
+          .set({ extractedText: extractText(r.content, kind) })
+          .where(eq(docVersions.id, r.id));
+      }
     }
     const [link] = await db.select().from(shareLinks).where(eq(shareLinks.docId, doc!.id));
     if (!link) {
