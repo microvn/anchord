@@ -14,3 +14,9 @@ Anchord-Design/
 anchord-e2e/
 apps/web/anchord-e2e/
 brand/
+
+# self-host runtime data + backups (bind mounts)
+/data/
+/backups/
+.env.docker
+.env.local

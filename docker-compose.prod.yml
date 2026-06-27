@@ -1,0 +1,36 @@
+# Production override for a single-VM deploy behind your own nginx (TLS at nginx).
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Changes vs the base compose:
+#   1) Data moves from Docker named volumes to bind mounts, so it is easy to find,
+#      snapshot, rsync, and back up (see backup.sh). The host paths are env-configurable:
+#         DB_DATA_DIR      Postgres data dir   (default ./data/db)
+#         ASSETS_DATA_DIR  uploaded assets dir (default ./data/assets)
+#      Point them at a mounted disk/volume on the VM, e.g. in .env:
+#         DB_DATA_DIR=/mnt/data/anchord/db
+#         ASSETS_DATA_DIR=/mnt/data/anchord/assets
+#      (backup.sh reads ASSETS_DATA_DIR too, so the tarball follows the same path.)
+#   2) The app port binds to 127.0.0.1 only — reachable through your host nginx
+#      reverse proxy, never directly from the internet.
+#   3) APP_URL / CORS_ORIGIN come from .env; set them to your real https origin.
+services:
+  db:
+    volumes:
+      - type: bind
+        source: ${DB_DATA_DIR:-./data/db}
+        target: /var/lib/postgresql/data
+
+  app:
+    # Loopback only: nginx proxies https://your-domain -> 127.0.0.1:3000 on the host.
+    # !override replaces the base port list (don't append, or 0.0.0.0:3000 stays open).
+    ports: !override
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    volumes:
+      - type: bind
+        source: ${ASSETS_DATA_DIR:-./data/assets}
+        target: /data/assets
+    environment:
+      # Set these in .env. They MUST be your real https origin (nginx terminates TLS)
+      # so deep-links and CORS are correct and session cookies behave as expected.
+      APP_URL: ${APP_URL:?set APP_URL to your https origin, e.g. https://anchord.example.com}
+      CORS_ORIGIN: ${CORS_ORIGIN:?set CORS_ORIGIN to your https origin (do NOT use *)}
