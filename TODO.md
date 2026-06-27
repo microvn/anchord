@@ -49,20 +49,30 @@ email and the digest); a per-recipient pending-email buffer (items + window_expi
 
 ---
 
-## Eden end-to-end typing collapses to `/health` (conditional route mounting)
+## Eden end-to-end typing collapses to `/health` — every FE feature casts `api as any`
 
-**Status:** deferred (works at runtime; cast is centralized). **Source:** workspaces-ui build (S2).
+**Status:** deferred (works at runtime; types are lost). **Source:** workspaces-ui build (S2);
+re-audited 2026-06-27 — worse than first logged.
 
-`createApp(deps)` mounts each data-route group conditionally (`if (deps.x) app.use(...)`), so
-`export type App = typeof app` only statically exposes the unconditionally-mounted routes
-(`/health`). Eden Treaty `treaty<App>` therefore can't type the `/api/w/:id/…` routes — the FE
-reaches them through one typed wrapper (`apps/web/src/features/workspaces/client.ts`) with a
-localized cast. This defeats the locked "end-to-end type safety (Eden)" goal for every FE feature.
+**Real scope (corrected):** the cast did NOT stay in one file. **All 9** `features/*/services/client.ts`
+do `const treaty = api as any` — so the locked "end-to-end type safety (Eden)" goal is defeated
+across the WHOLE frontend, not localized to workspaces.
 
-Fix (when picked up): mount route groups unconditionally so `typeof app` widens to the full surface
-(move the deps-presence guard inside handlers, or assemble the `App` type from the route modules
-directly). Keep the cast centralized in `client.ts` until then — subsequent FE features route
-through it, so the debt stays in one file, not multiplied.
+**Two-layer root cause (the second is the real blocker):**
+1. `createApp(deps)` mounts every group conditionally (`if (deps.x) app.use(...)`, ~20 groups).
+2. More fundamentally, `app` is a `const` built by an INITIAL chain (`new Elysia().use(cors).get("/health")`)
+   and the later `app.use(...)` calls are **statements whose return value is discarded** — so
+   `typeof app` is frozen at the init chain (`/health` only). Elysia accumulates route types ONLY
+   through the fluent `.use().use()…` chain; a discarded-return `app.use()` never widens the type,
+   even with the `if` removed. So `export type App = ReturnType<typeof createApp>` exposes `/health`.
+
+**Fix (when picked up):** rebuild `createApp` as ONE fluent chain that mounts all groups
+UNCONDITIONALLY → `typeof app` widens to the full surface → `App` is real → Eden types flow → drop
+`as any` in all 9 client.ts. Requires: route modules tolerate always-being-mounted (deps always
+supplied, or no-op when a feature is unconfigured — authProviders/mcp/webRoot), and the test harness
+(which composes partial `deps`) updated to provide full deps. Medium refactor touching the
+composition root + many tests — do it as a dedicated `/mf-plan` "Eden full-surface typing" task, not
+folded into a feature.
 
 ---
 
