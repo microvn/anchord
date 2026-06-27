@@ -5,42 +5,17 @@ spec via `/mf-plan` when picked up.
 
 ---
 
-## Notification delivery: preferences + email coalescing + daily digest
+## Notification delivery: email coalescing + daily digest
 
-**Status:** deferred (post-v0). **Source:** workspace-project GAP-002 (resolved to the MVP
-below; this richer design is the follow-up).
+**Status:** deferred (post-v0). **Source:** workspace-project GAP-002.
 
-**MVP shipped instead (v0):** always send, one email per action immediately, no preference,
-no coalescing, no digest. Lives in workspace-project S-006 (notify on reply), AS-011 / C-004.
+**Shipped since (no longer deferred):** all 11 event emitters (reply, new-feedback, resolved,
+suggestion-decided, thread-activity, detached, workspace invited/member-joined/member-removed/
+renamed, doc-invited) + plain-text email delivery (`notifications-email` spec) + per-category /
+per-channel preferences (`notification-preferences` spec — `notify/preferences-matrix.ts`
+enforced on every emit). What remains deferred is ONLY the two delivery-shaping features below.
 
-When picked up, this becomes its own spec `docs/specs/notifications/notifications.md`
-(separate domain from workspace→project→doc organization). Three stories:
-
-### 1. Per-user notification preferences
-
-A settings surface "Choose what you hear about" — per-category, per-channel toggles.
-In-app = the bell; Email = the account address. Defaults ON unless noted.
-
-| Category | In-app | Email | Default |
-|---|---|---|---|
-| New comments on your documents | ✓ | ✓ | on |
-| Replies to your comment threads | ✓ | ✓ | on |
-| Workspace invitations | ✓ | ✓ | on |
-| Workspace members joining | ✓ | ✓ | on |
-| Workspace member removal | ✓ | ✓ | on |
-| Workspace name or URL changes | ✓ | — (in-app only) | on |
-| Documents shared with you | ✓ | ✓ | on |
-| Daily email digest | — | ✓ (email only) | **off** |
-
-- Delivery of each notification is gated by the recipient's per-category, per-channel preference.
-- Email-off for a category → no email for it; in-app still per its own toggle (and vice versa).
-- The settings SCREEN is frontend (needs the React scaffold first). Backend = preference
-  storage + enforcement on every emit.
-- Note: only the `reply` notification is emitted today (S-006). The other 7 categories need
-  their own emitters built before their toggles do anything — that emitter work is part of this
-  follow-up, per category.
-
-### 2. Email coalescing (per-recipient trailing-debounce)
+### Email coalescing (per-recipient trailing-debounce)
 
 In-app stays per-event (one bell item each). Only **email** is coalesced, **per recipient
 globally** (one buffer per user across all threads/docs):
@@ -60,7 +35,7 @@ Worked example (the exact intent):
 - Repeat: each new item pushes the send out another 60s from itself.
 - At 5 items → flush immediately and restart from empty.
 
-### 3. Daily email digest (opt-in, de-duped)
+### Daily email digest (opt-in, de-duped)
 
 - Opt-in (default OFF). Email only.
 - Once per day, summarises **unread** items that were **NOT already delivered** by a per-event
@@ -68,9 +43,9 @@ Worked example (the exact intent):
 - Independent of the per-event email toggles (a user can run both; de-dupe prevents double-notify).
 - Nothing sent when there is no new activity.
 
-**Data model sketch (when built):** `notification_preferences` per-user keyed (category, channel);
-`notifications.emailed_at` (de-dupe marker); a per-recipient pending-email buffer
-(items + window_expires_at + count).
+**Data model sketch (when built):** `notifications.emailed_at` (de-dupe marker between a coalesced
+email and the digest); a per-recipient pending-email buffer (items + window_expires_at + count).
+(`notification_preferences` already exists — shipped with `notification-preferences`.)
 
 ---
 
@@ -101,32 +76,20 @@ server-authoritative mismatch response without leaking invite existence.
 
 ---
 
-## Annotation editor: pinpoint mode + Markup/Redline types (steal Plannotator, FE)
+## Image-region annotation (pinpoint on an image: point / box)
 
-**Status:** deferred — needs spec first (`/mf-plan` on `annotation-core-ui-suggest-image`).
-**Source:** Plannotator engine adoption, 2026-06-11/12 (select-mode engine A+B already landed:
-commits `4528194`, `148f73c`, `bae51c0`).
+**Status:** deferred — the LAST unbuilt piece of the annotation taxonomy. **Source:** pinpoint spec
+"Not in Scope" (image regions are a separate anchor type — `annotation-core` G11 / image S-002).
 
-The select-mode text engine (Comment type) is built + hardened. Remaining annotation surface,
-modelled on Plannotator's **2 modes × types** taxonomy:
+**Shipped since (the rest of this taxonomy is DONE):** text-select engine (Comment), the
+Markup / Comment / Redline / Label / Like types, Select ⇄ Pinpoint modes, **whole-block pinpoint on
+markdown AND HTML** (`pinpoint` spec, v0.3.0), and the hover-peek + click-pin cards
+(`annotation-hover-card`). Block targeting uses our block-scoped anchor + the MessageChannel+nonce
+bridge — NOT Plannotator's `nodePath` / web-highlighter (kept our model on purpose).
 
-- **pinpoint mode (NEW):** pick a whole rendered element dev-tools-style (hover → element outlined →
-  click), anchored to the block by block-id — NOT a text sub-range. Works on md/html (whole block)
-  and on images (point/box region). The image case = `suggest-image` S-003/S-004 (already specced,
-  unbuilt); the **md/html element-picker is new** (no spec yet). Steal from Plannotator
-  `packages/ui/utils/blockTargeting.ts` + the hover-outline overlay (Apache-2.0, keep NOTICE).
-- **Markup type (NEW):** highlight-only annotation (no comment thread) — not in any current spec;
-  add as a new SelectionPopover action + a new annotation kind. Needs a `/mf-plan` line.
-- **Redline type = our existing "Suggest"** (propose a text replace) — `suggest-image` S-001/S-002,
-  unbuilt. Rename Suggest→Redline if we adopt Plannotator's vocabulary.
-- **Label type: DROPPED** (product decision 2026-06-11) — do not build.
-
-Do NOT copy Plannotator's `nodePath` anchor model or `@plannotator/web-highlighter` (whole-doc
-position-based, fragile across reflow). Keep our block-scoped anchor. Our MessageChannel+nonce
-bridge is more secure than theirs — keep it. Adopt only the targeting/UX techniques.
-
-When picked up: `/mf-plan docs/specs/annotation-core/annotation-core-ui-suggest-image.md` to add
-pinpoint mode + Markup, fold in Redline=Suggest, drop Label; then `/mf-build`.
+Remaining: annotate a **region of an image** doc — a point or a box in normalized 0..1 coords
+(distinct from the text/block anchor). When picked up: `/mf-plan` an image-region spec (anchor model
++ the overlay picker + the in-iframe/region draw), then `/mf-build`.
 
 ---
 
