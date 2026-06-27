@@ -16,6 +16,7 @@
 // that transactional, multi-writer correctness is integration-verified-later.
 
 import { extractText, type ExtractKind } from "../render/extract-text";
+import { validateSize } from "../publish/sniff";
 
 /** The doc kind that decides the extract-text render path (mirrors DocKind). */
 export type VersionKind = ExtractKind;
@@ -101,6 +102,14 @@ export async function appendVersion(
   publishedBy: string | null = null,
   kind?: VersionKind,
 ): Promise<AppendResult> {
+  // H-4: enforce the content size cap at the append seam so EVERY write path (web
+  // POST .../versions, .../restore) inherits it — the cap previously lived only in
+  // publishDoc, so version-append bypassed it. Single source of truth: validateSize +
+  // MAX_TEXT_BYTES from sniff.ts (per-kind: text 5MB, image 25MB). Runs BEFORE the DB
+  // write and the extract-text below, so an oversize append never persists or reanchors.
+  // When kind is unknown (seed/legacy append) default to the text cap (most restrictive).
+  validateSize(kind ?? "markdown", new TextEncoder().encode(content).length);
+
   const previousVersion = await repo.currentMaxVersion(docId);
   const version = (previousVersion ?? 0) + 1; // C-002: counter starts at 1, increments, no reuse
 

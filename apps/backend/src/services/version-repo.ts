@@ -13,6 +13,7 @@ import { docs, docVersions, user } from "../db/schema";
 import type { DB } from "../db/client";
 import type { VersionRepo, NewVersionRow, VersionListRow, VersionKind } from "./version";
 import { extractText } from "../render/extract-text";
+import { validateSize } from "../publish/sniff";
 
 /** Construct a VersionRepo backed by a Drizzle DB handle. */
 export function createVersionRepo(db: DB): VersionRepo {
@@ -107,6 +108,12 @@ export async function appendVersionTx(
   // S-005 / C-006: mirror the service-layer appendVersion — the appended content is the
   // new current version, so it must carry extracted_text or content search breaks past
   // v1. No kind context → null (matches publish's null handling for content-less rows).
+  // H-4: enforce the content size cap at the append seam (MCP update path) so an
+  // editor-level token can't append a giant version → OOM / Postgres bloat / reanchor on
+  // huge content. Single source of truth: validateSize + MAX_TEXT_BYTES from sniff.ts
+  // (per-kind: text 5MB, image 25MB). Runs BEFORE the tx/DB write and sha256/reanchor.
+  // Unknown kind (seed/legacy) → text cap (most restrictive).
+  validateSize(kind ?? "markdown", new TextEncoder().encode(content).length);
   const extractedText = kind ? extractText(content, kind) : null;
   return db.transaction(async (tx) => {
     // Per-doc advisory lock keyed on the doc id (hashed to the bigint the lock takes).
@@ -162,6 +169,8 @@ export async function appendVersionTxPinned(
   publishedBy: string | null = null,
   kind?: VersionKind,
 ): Promise<{ docId: string; version: number; previousVersion: number | null }> {
+  // H-4: same content size cap as appendVersionTx, for the MCP patch path.
+  validateSize(kind ?? "markdown", new TextEncoder().encode(content).length);
   const extractedText = kind ? extractText(content, kind) : null;
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${docId}, 0))`);

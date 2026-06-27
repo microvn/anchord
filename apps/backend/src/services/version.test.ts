@@ -184,6 +184,49 @@ test("C-003: only a content change creates a version; a title/metadata change do
   expect(f.rows).toHaveLength(2);
 });
 
+// Regression: H-4 version-append bypassed the content size cap
+// The 5MB MAX_TEXT_BYTES cap (validateSize) was only enforced in publishDoc, so every
+// version-append surface (web POST .../versions, .../restore, MCP update/patch) could
+// store an arbitrarily large version → OOM / Postgres bloat. The cap now lives at the
+// append seam so all of them inherit it.
+test("H-4: appending a version over MAX_TEXT_BYTES is rejected, not written", async () => {
+  const { MAX_TEXT_BYTES, PublishRejected } = await import("../publish/sniff");
+  const f = fakeRepo({ docId: "doc-1", versions: [{ content: "v1 body" }] });
+  const huge = "a".repeat(MAX_TEXT_BYTES + 1); // one byte over the text cap
+
+  await expect(
+    appendVersion("doc-1", huge, sha(huge), f.repo, "u1", "markdown"),
+  ).rejects.toBeInstanceOf(PublishRejected);
+
+  // Nothing was written: still only the original v1 row.
+  expect(f.rows).toHaveLength(1);
+  expect(await f.repo.currentMaxVersion("doc-1")).toBe(1);
+});
+
+test("H-4: restoring still honors the cap path (oversize restore content rejected)", async () => {
+  const { MAX_TEXT_BYTES, PublishRejected } = await import("../publish/sniff");
+  // Seed a doc whose v1 content is already over the text cap (e.g. legacy row), then a
+  // restore of it append-copies that content through appendVersion → must be rejected.
+  const huge = "b".repeat(MAX_TEXT_BYTES + 1);
+  const f = fakeRepo({ docId: "doc-2", versions: [{ content: huge }] });
+
+  await expect(
+    restoreVersion("doc-2", 1, f.repo, "u1", "markdown"),
+  ).rejects.toBeInstanceOf(PublishRejected);
+
+  // No new row appended.
+  expect(f.rows).toHaveLength(1);
+});
+
+test("H-4: a version at exactly MAX_TEXT_BYTES is allowed (boundary, not over)", async () => {
+  const { MAX_TEXT_BYTES } = await import("../publish/sniff");
+  const f = fakeRepo({ docId: "doc-3", versions: [{ content: "v1" }] });
+  const atCap = "c".repeat(MAX_TEXT_BYTES); // exactly the cap — allowed
+  const res = await appendVersion("doc-3", atCap, sha(atCap), f.repo, "u1", "markdown");
+  expect(res.version).toBe(2);
+  expect(f.rows).toHaveLength(2);
+});
+
 // Story S-002: View version history. Read-only mapping over repo rows + a
 // current-marker. listVersionHistory returns rows NEWEST-FIRST (descending by
 // version, current first) — the versioning-diff-ui timeline contract; the service
