@@ -36,8 +36,7 @@ export function AuthAside() {
         </div>
 
         <p className="max-w-[420px] font-serif text-[26px] font-medium leading-[1.3] tracking-[-0.015em] text-ink">
-          Share and annotate AI-generated docs, <span className="text-accent">self-hosted</span> —
-          the data stays in your hands.
+          Share a doc as a link. Get <span className="text-accent">every comment</span> back.
         </p>
 
         <div className="mt-[30px] flex flex-col gap-[13px]">
@@ -49,10 +48,6 @@ export function AuthAside() {
               {label}
             </div>
           ))}
-        </div>
-
-        <div className="mt-5 font-mono text-[11px] uppercase tracking-[0.1em] text-subtle">
-          v1.0 · your server
         </div>
       </div>
     </aside>
