@@ -21,10 +21,13 @@ COPY apps/web/package.json ./apps/web/package.json
 COPY packages/anchor/package.json ./packages/anchor/package.json
 RUN bun install --frozen-lockfile
 COPY . .
-# Run vite in the web package dir, NOT via `bun --filter` (the filter wrapper swallows the
-# child's stderr — a failing vite build only prints "Exited with code 1", hiding the real error —
-# and resolves the workspace `.bin` shim differently). `cd` + `bun run build` streams vite's output.
-RUN cd apps/web && bun run build
+# Build with `bunx --bun vite` (Bun's official Vite recipe), NOT `bun run build`/`--filter`.
+# Going through the workspace `.bin/vite` shim, Bun resolves vite's relative `../dist/node/cli.js`
+# from the SHIM's dir, not vite's real `bin/` — on the x64 Linux bun build this breaks with
+# "Cannot find module '../dist/node/cli.js'" (arm64's layout happens to dodge it). `bunx --bun vite`
+# runs vite's real entry under the bun runtime (ignoring its `#!/usr/bin/env node` shebang), so the
+# path resolves correctly and no node binary is needed. vite is already installed → no download.
+RUN cd apps/web && bunx --bun vite build
 
 FROM oven/bun:1.3.13-slim AS release
 WORKDIR /app
