@@ -149,6 +149,14 @@ async function main() {
       [doc] = await db.insert(docsTable)
         .values({ slug, title, kind, ownerId: demo.id, projectId })
         .returning();
+    } else {
+      // Self-heal an existing demo doc to its canonical state. The public demo shares one login,
+      // so a periodic re-seed (cron) is the restore mechanism: clear any soft-delete tombstone a
+      // visitor set, and pull the doc back to the demo owner + default project if it was moved.
+      [doc] = await db.update(docsTable)
+        .set({ deletedAt: null, projectId, ownerId: demo.id })
+        .where(eq(docsTable.id, doc.id))
+        .returning();
     }
     const rows = await db.select().from(docVersions).where(eq(docVersions.docId, doc!.id));
     const maxV = rows.reduce((m, r) => Math.max(m, r.version), 0);
