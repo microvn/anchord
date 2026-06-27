@@ -659,7 +659,12 @@ const app = createApp({
     },
     allowedOrigins: [`http://localhost:${cfg.PORT}`],
   },
-}).listen(cfg.PORT);
+}).listen({
+  port: cfg.PORT,
+  // H-4 defense-in-depth: reject an over-cap request body with 413 at the transport layer,
+  // before it is fully buffered (the per-kind validateSize cap only fires after buffering).
+  maxRequestBodySize: cfg.MAX_REQUEST_BODY_BYTES,
+});
 
 console.log(`anchord on http://localhost:${cfg.PORT} (${cfg.NODE_ENV})`);
 export type App = typeof app;

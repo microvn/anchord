@@ -25,6 +25,27 @@ test("AS-001: parseConfig accepts a complete valid env", () => {
   expect(cfg.PORT).toBe(3000); // default
 });
 
+test("H-4 defense-in-depth: MAX_REQUEST_BODY_BYTES defaults to 40MB", () => {
+  const cfg = parseConfig(valid);
+  expect(cfg.MAX_REQUEST_BODY_BYTES).toBe(40 * 1024 * 1024);
+});
+
+test("H-4 defense-in-depth: MAX_REQUEST_BODY_BYTES is operator-overridable", () => {
+  const cfg = parseConfig({ ...valid, MAX_REQUEST_BODY_BYTES: "67108864" }); // 64MB
+  expect(cfg.MAX_REQUEST_BODY_BYTES).toBe(64 * 1024 * 1024);
+});
+
+test("H-4 defense-in-depth: a non-positive MAX_REQUEST_BODY_BYTES refuses boot", () => {
+  let err: unknown;
+  try {
+    parseConfig({ ...valid, MAX_REQUEST_BODY_BYTES: "0" });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(ConfigError);
+  expect((err as ConfigError).message).toContain("MAX_REQUEST_BODY_BYTES");
+});
+
 test("AS-003: parseConfig refuses missing APP_SECRET, names it", () => {
   const { APP_SECRET, ...rest } = valid;
   let err: unknown;

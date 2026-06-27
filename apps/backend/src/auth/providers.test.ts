@@ -18,6 +18,7 @@ function cfg(oauth: Config["oauth"]): Config {
     APP_SECRET: "x".repeat(16),
     DATABASE_URL: "postgres://x",
     APP_URL: "https://anchord.example.com",
+    MAX_REQUEST_BODY_BYTES: 40 * 1024 * 1024,
     email: { kind: "smtp", host: "h", port: 587, user: "u", pass: "p" },
     SMTP: { host: "h", port: 587, user: "u", pass: "p" },
     ASSETS_DIR: "/data/assets",

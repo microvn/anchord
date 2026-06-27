@@ -28,6 +28,13 @@ const schema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
     PORT: z.coerce.number().int().positive().default(3000),
+    // H-4 defense-in-depth: a global cap on the raw HTTP request body (passed to Bun.serve's
+    // maxRequestBodySize). Bun rejects an over-cap request with 413 at the transport layer,
+    // before the body is fully buffered — a coarse backstop against a memory-bomb payload that
+    // the per-kind content cap (validateSize) only catches AFTER buffering. Default 40MB sits
+    // above the largest legitimate body (a 25MB image upload + multipart overhead) and far
+    // below Bun's 128MB default; operators serving larger artifacts can raise it.
+    MAX_REQUEST_BODY_BYTES: z.coerce.number().int().positive().default(40 * 1024 * 1024),
     // APP_SECRET signs sessions/share-link tokens — must be hard to guess.
     APP_SECRET: z.string().min(16, "APP_SECRET must be at least 16 characters"),
     DATABASE_URL: z
@@ -98,6 +105,8 @@ export type Config = {
    * No trailing slash is assumed by consumers; they join with a leading-slash path.
    */
   APP_URL: string;
+  /** Global raw-request-body cap in bytes (Bun.serve maxRequestBodySize); 413 over-cap. */
+  MAX_REQUEST_BODY_BYTES: number;
   /**
    * The active email provider, resolved from the SMTP group or RESEND_API_KEY (both → resend).
    * This is what the mail transport selector reads (auth AS-012).
@@ -164,6 +173,7 @@ export function parseConfig(raw: Record<string, unknown>): Config {
     APP_SECRET: d.APP_SECRET,
     DATABASE_URL: d.DATABASE_URL,
     APP_URL: d.APP_URL,
+    MAX_REQUEST_BODY_BYTES: d.MAX_REQUEST_BODY_BYTES,
     email,
     SMTP: smtp,
     ASSETS_DIR: d.ASSETS_DIR,
