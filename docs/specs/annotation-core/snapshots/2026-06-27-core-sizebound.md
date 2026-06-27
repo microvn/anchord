@@ -1,7 +1,14 @@
+# Snapshot: Annotation Core
+**Date:** 2026-06-27
+**Ref:** security-audit H-5
+**Reason:** M6 — new constraint C-019 (anchor input size bound)
+
+---
+
 # Spec: annotation-core
 
 **Created:** 2026-06-07
-**Last updated:** 2026-06-27
+**Last updated:** 2026-06-21
 **Status:** Draft
 
 ## Overview
@@ -103,12 +110,6 @@ AS-021: A user without doc permission cannot read annotations [harden H2]
 - **When:** X tries to read the doc's annotations/comments (via UI or API)
 - **Then:** denied; no annotation/comment content is returned
 - **Data:** X outside the doc's permissions
-
-AS-031: Oversize anchor input is refused
-- **Given:** a doc a commenter (or an anyone-with-link guest at commenter role) can annotate
-- **When:** they create a text annotation whose anchor has a `text_snippet` over 10,000 characters, OR more than 64 `segments`, OR a negative or over-1,000,000 `offset`/`length`
-- **Then:** the request is refused and no annotation is stored
-- **Data:** an 11,000-char snippet → refused; 65 segments → refused; `offset` -1 → refused; a 500-char snippet with 3 segments → accepted
 
 ### S-002: Create an image-region annotation (P0)
 
@@ -487,7 +488,6 @@ AS-029: A create carrying both a label and a suggestion payload is refused
   and `POST …/annotations/:id/comments` serves ONLY replies to an ALREADY-EXISTING annotation (the
   path also used by `mcp-roundtrip`'s reply tool — unchanged). A commentless annotation (a future
   pure highlight) omits the comment and creates the annotation alone. (AS-001)
-- **C-019:** Annotation anchor input is bounded so it cannot drive runaway re-anchor cost (the matcher runs per segment over every block on each publish). A create or re-attach request whose anchor exceeds these limits is refused: `text_snippet` ≤ 10,000 characters, `segments[]` ≤ 64, and each `offset`/`length` a non-negative integer ≤ 1,000,000. Anyone who can comment — including an anyone-with-link guest — can supply an anchor, so the bound is enforced at the create boundary. (AS-031)
 
 ## Linked Fields
 
@@ -725,4 +725,3 @@ AS is now AT the hard cap of 30 — any further AS forces a phase/scope-by-layer
 | 2026-06-20 | Major (M4+M6, snapshot 2026-06-20-3.md): guest identity becomes ONE session-stable random name (persisted client-side for the session, sessionStorage — survives reload/in-tab nav, not shared across sessions) shown as a persistent `GuestIdentityChip` in the top bar next to the Sign in CTA, with Rename. AS-016 Then rewritten (session-stable + header chip + rename); AS-017 rewritten (composer shows NO name AND NO email field — the session name rides up on send); C-007 reworded; UI tree: `GuestIdentityChip`+`SignInCta` added to `ViewerTopBar`, `GuestNameField` removed from `Composer`. No new AS (held at 30-cap). Fixes the per-composer re-rolled name + inline name box. | -- |
 | 2026-06-21 | Minor: AS-016 guest-name FORMAT — drop the "Anonymous" prefix; the session name is now an `adjective-animal-suffix` handle (e.g. "swift-otter-k7m2") with a random alphanumeric suffix for low collision; Rename re-rolls to a different random name. Behavior (one session-stable random name, header chip) unchanged → Minor, no snapshot. | -- |
 | 2026-06-21 | Minor: AS-016 — the guest chip's `?` disc is a hint (ShadCN Tooltip on hover/focus) explaining the handle is a temporary guest identity ("You're commenting as a guest … sign in to comment with your account"), so the bare handle isn't a mystery. Affordance/microcopy only, no behavior contract change → Minor. | -- |
-| 2026-06-27 | Major (M6, snapshot 2026-06-27-core-sizebound.md) — +C-019: annotation anchor input is bounded (text_snippet ≤ 10,000, segments ≤ 64, offset/length non-negative ≤ 1,000,000) and refused at create; an unbounded anchor otherwise drives an O(n·m) re-anchor pass that starves the event loop on the next publish (a commenter, incl. guest, could plant it). +AS-031 (S-001). Reflects shipped fix (commit 7317aaa). See annotation-reanchor:C-009 for the cost dependency. | security-audit H-5 |

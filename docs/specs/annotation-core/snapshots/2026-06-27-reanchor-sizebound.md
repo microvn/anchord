@@ -1,7 +1,14 @@
+# Snapshot: Annotation Re-anchor
+**Date:** 2026-06-27
+**Ref:** security-audit H-5
+**Reason:** M6 — new constraint C-009 (re-anchor cost depends on bounded anchor input)
+
+---
+
 # Spec: annotation-reanchor
 
 **Created:** 2026-06-19
-**Last updated:** 2026-06-27
+**Last updated:** 2026-06-20
 **Status:** Draft
 **Snapshot limit:** 5
 
@@ -223,7 +230,6 @@ AS-010: A regenerated doc detaches its reworded annotations into the detached li
   on every new version — even when the text is byte-identical — and re-attach is refused on markdown
   docs. The doc `kind` is carried into the re-anchor input (required, so a caller cannot forget to
   render). (AS-011) — scope: S-001 (publish/new-version), `annotation-core:S-008` (re-attach), `annotation-core:S-001` (create-anchor validation).
-- **C-009:** The re-anchor matching job (S-001) relies on bounded anchor input (`annotation-core:C-019` — `text_snippet` ≤ 10,000, `segments[]` ≤ 64, `offset`/`length` ≤ 1,000,000). The fuzzy tier runs a Levenshtein comparison per segment against every block of the rendered doc on each publish, so an unbounded snippet length or segment count would let a single planted annotation starve the publish-time re-anchor pass; the upstream create bound is what keeps the per-publish cost bounded. (annotation-core:AS-031)
 
 ## Linked Fields
 
@@ -297,4 +303,3 @@ AS-010: A regenerated doc detaches its reworded annotations into the detached li
 |------|--------|-----|
 | 2026-06-19 | Initial creation (Mode A) — extracted + deepened from `annotation-core:S-005`. The "S1" content-anchored re-anchor model: block_id demoted to a hint, whole-doc text fallback, W3C prefix/suffix context, 0.8 fuzzy threshold (resolves annotation-core:GAP-001), immutable per-(annotation,version) `anchor_resolution` ledger (persists annotation-core:C-012). Kills the row-delete cascade (dogfooded 2026-06-19). Validated vs Hypothes.is/W3C + Plannotator source + principal-eng review. Stages 0/2/3 (structural-diff, semantic, agent-patch) deferred to v0.5; full-rewrite limitation recorded GAP-001. | annotation-core:S-005 |
 | 2026-06-20 | Major (M6, snapshot 2026-06-20-reanchor-render-html.md): + C-008 (re-anchor AND re-attach/create-anchor validation operate on the version's RENDERED HTML; markdown is rendered first because positional block-ids are injected at render time; doc `kind` carried into the re-anchor input, required) + AS-011 (a markdown doc's unchanged-text annotation carries across a new version). Refined C-002 (fuzzy tier also scores whole-block-vs-snippet so a length-changing reword still carries; shared with the FE highlighter) + C-003 (candidate ranking prefers the innermost/most-specific block — a cell, not its parent table/row). Captures the /mf-fix render-markdown signal (commit 9225044, live-verified: publish markdown v2 unchanged → carries; re-attach markdown → succeeds) + the /mf-build S-001/S-002 ladder refinements. | /mf-fix 9225044 + /mf-build S-001/S-002 |
-| 2026-06-27 | Major (M6, snapshot 2026-06-27-reanchor-sizebound.md) — +C-009: the re-anchor matcher's per-publish cost depends on the bounded anchor input enforced upstream at create (annotation-core:C-019); documents the cost dependency the size bound protects. Coverage via annotation-core:AS-031. | security-audit H-5 |
