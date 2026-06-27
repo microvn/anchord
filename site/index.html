@@ -46,7 +46,7 @@
         <button class="langbtn" id="lang" title="Switch language" aria-label="Switch language"></button>
         <button class="iconbtn" id="theme" title="Toggle theme" aria-label="Toggle theme"><svg class="lic"><use href="#ic-theme"/></svg></button>
         <a class="btn btn--ghost" href="https://github.com/microvn/anchord" target="_blank" rel="noopener">Self-host</a>
-        <a class="btn btn--primary" href="https://app.anchord.microvn.net" target="_blank" rel="noopener">App</a>
+        <a class="btn btn--primary" href="https://app.anchord.microvn.net/signin" target="_blank" rel="noopener">Login</a>
       </nav>
     </div>
   </header>
@@ -64,11 +64,13 @@
         Đăng một spec, plan hay report thành link; người review để lại góp ý ngay trên tài liệu; agent của bạn kéo
         phản hồi về qua MCP rồi sửa lại. <strong>Vaultwarden cho tài liệu AI.</strong></p>
       <div class="hero__cta">
-        <a class="btn btn--primary" href="docs.html#self-hosting"><span data-l="en">Get started</span><span data-l="vi">Bắt đầu</span></a>
+        <a class="btn btn--primary" href="https://app.anchord.microvn.net/signin" target="_blank" rel="noopener"><span data-l="en">Try the live demo</span><span data-l="vi">Thử bản demo</span></a>
         <a class="btn btn--ghost" href="docs.html"><span data-l="en">Read the docs →</span><span data-l="vi">Đọc tài liệu →</span></a>
       </div>
-      <p class="hero__note" data-l="en">Spin up the whole stack with <code>docker compose up</code> — app + Postgres + a named volume. No telemetry, ever.</p>
-      <p class="hero__note" data-l="vi">Dựng cả stack chỉ với <code>docker compose up</code>: app, Postgres và một named volume. Không telemetry, không bao giờ.</p>
+      <p class="hero__note" data-l="en">Sign in to the live demo with <code>demo@anchord.microvn.net</code> / <code>correct horse battery staple</code> — a seeded workspace with docs to annotate.</p>
+      <p class="hero__note" data-l="vi">Đăng nhập bản demo bằng <code>demo@anchord.microvn.net</code> / <code>correct horse battery staple</code> — một workspace có sẵn tài liệu để annotate.</p>
+      <p class="hero__note" data-l="en">Or spin up the whole stack with <code>docker compose up</code> — app + Postgres + a named volume. No telemetry, ever.</p>
+      <p class="hero__note" data-l="vi">Hoặc dựng cả stack chỉ với <code>docker compose up</code>: app, Postgres và một named volume. Không telemetry, không bao giờ.</p>
       <!-- Animated demo: a fake Anchord viewer (doc + comment rail) driven by a simulated MCP terminal -->
       <div class="demo hero__shot" id="demo" aria-hidden="true">
         <div class="demo__bar">

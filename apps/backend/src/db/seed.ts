@@ -36,7 +36,7 @@ import { injectBlockIds } from "../annotation/block-id";
 import { mintCapabilityToken } from "../sharing/share-token";
 import { BLOCK_SELECTOR } from "@anchord/anchor";
 
-const DEMO_EMAIL = "demo@anchord.test";
+const DEMO_EMAIL = "demo@anchord.microvn.net";
 const DEMO_PASSWORD = "correct horse battery staple";
 const DEMO_NAME = "Demo User";
 
