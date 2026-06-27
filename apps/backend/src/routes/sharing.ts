@@ -164,6 +164,15 @@ export interface SharingRoutesDeps {
    * retired, so the share dialog's existence-hiding can never disagree with the resolver.
    */
   resolveAccess: (docId: string, viewer: Viewer) => Promise<AccessResult>;
+  /**
+   * C-1 (cross-tenant bind): resolves a doc's OWN workspace (project_id → projects.workspace_id).
+   * The slug lookup is GLOBAL, so `loadVisibleDoc` requires this to equal the path :workspaceId
+   * before any manage-sharing gate runs — otherwise the workspace-admin override (scoped to the
+   * path workspace) would let an admin of workspace A manage a doc in workspace B by its slug.
+   * Mirrors doc-delete.ts's C-007 bind. Optional: built from `db` when omitted; absent (no `db`,
+   * no inject) → the bind is skipped (legacy route tests that wire neither `db` nor this dep).
+   */
+  workspaceOfDoc?: (docId: string) => Promise<string | null>;
   /** Mail wiring for the real enqueueInvite (prod). Omitted in tests (enqueueInvite injected). */
   mailQueue?: MailQueue;
   mailTransport?: MailTransport;
@@ -249,11 +258,24 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
    * (NOT the retired level-switching `canViewDoc` stub), so the share-management read gate and
    * every doc-read route make the SAME visibility decision against the two axes.
    */
-  async function loadVisibleDoc(slug: string, userId: string) {
+  async function loadVisibleDoc(slug: string, userId: string, workspaceId: string) {
     const doc = await lookupRepo.findDocBySlug(slug);
     const viewer: Viewer = { kind: "user", userId };
     const allowed = doc !== null && (await deps.resolveAccess(doc.id, viewer)).canView;
-    return enforceReadAccess({ doc, allowed });
+    const visible = enforceReadAccess({ doc, allowed });
+    // C-1 (cross-tenant bind): the slug lookup is GLOBAL, so require the doc's OWN workspace to
+    // equal the PATH workspace before any manage-sharing gate runs. Without this, the gate's
+    // workspace-admin override (scoped to the path workspace) would let an admin of workspace A
+    // manage a doc that lives in workspace B by its slug. A foreign-workspace (or project-less)
+    // doc is indistinguishable from a non-existent one → 404 (existence-hiding), matching
+    // doc-delete.ts's C-007 bind. Skipped only when no resolver is wired (legacy route tests).
+    if (deps.workspaceOfDoc) {
+      const ownWorkspaceId = await deps.workspaceOfDoc(visible.id);
+      if (ownWorkspaceId == null || ownWorkspaceId !== workspaceId) {
+        throw new NotFoundError();
+      }
+    }
+    return visible;
   }
 
   /**
@@ -294,7 +316,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
       // C-016: gated IDENTICALLY to the management writes (requireManageSharing) and
       // NEVER returns the link password — the aggregator exposes hasPassword only.
       .get("/api/w/:workspaceId/docs/:slug/share", async ({ params, actor, ws }) => {
-        const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+        const doc = await loadVisibleDoc(params.slug, actor.userId, ws.workspaceId); // 404 if missing/hidden
         // 403 if the caller may not manage sharing (AS-027 / C-016) — same gate as writes. The
         // resolved role is also returned as `viewerRole` so the dialog's owner-only gate (C-003)
         // works from any entry point (the docs-list ⋯ preloads no effectiveRole).
@@ -308,7 +330,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
           .use(withValidation(accessBodySchema))
           .put("/api/w/:workspaceId/docs/:slug/access", async ({ params, actor, ws, validBody }) => {
             const body = validBody as z.infer<typeof accessBodySchema>;
-            const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+            const doc = await loadVisibleDoc(params.slug, actor.userId, ws.workspaceId); // 404 if missing/hidden
             // 403 if the caller may not manage sharing (AS-014/AS-023/AS-024).
             const role = await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
             const actorIsOwner = role === "owner";
@@ -380,7 +402,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
           .use(withValidation(inviteBodySchema))
           .post("/api/w/:workspaceId/docs/:slug/invites", async ({ params, actor, ws, validBody, set }) => {
             const body = validBody as z.infer<typeof inviteBodySchema>;
-            const doc = await loadVisibleDoc(params.slug, actor.userId);
+            const doc = await loadVisibleDoc(params.slug, actor.userId, ws.workspaceId);
             await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
             // findUserByEmail: sync port for the service. Resolve over Drizzle here if no
             // fake was injected, then hand the service a resolved closure.
@@ -420,7 +442,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
           .use(withValidation(linkBodySchema))
           .put("/api/w/:workspaceId/docs/:slug/link", async ({ params, actor, ws, validBody }) => {
             const body = validBody as z.infer<typeof linkBodySchema>;
-            const doc = await loadVisibleDoc(params.slug, actor.userId);
+            const doc = await loadVisibleDoc(params.slug, actor.userId, ws.workspaceId);
             await requireManageSharing(ws.workspaceId, doc.id, actor.userId);
             // C-001: build a PARTIAL update so each control is independent — only the
             // controls PRESENT in the body are written; an ABSENT control is left
@@ -461,7 +483,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
       // Edge (C-004): rotating a doc that is NOT anyone_with_link has no link to rotate → 409,
       // not a crash.
       .post("/api/w/:workspaceId/docs/:slug/link/rotate", async ({ params, actor, ws }) => {
-        const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+        const doc = await loadVisibleDoc(params.slug, actor.userId, ws.workspaceId); // 404 if missing/hidden
         await requireManageSharing(ws.workspaceId, doc.id, actor.userId); // 403 if not a manager
         if (!deps.db) {
           throw new Error("sharingRoutes rotate route requires `db` to replace the token");
@@ -487,7 +509,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
             "/api/w/:workspaceId/docs/:slug/members/:memberId",
             async ({ params, actor, ws, validBody }) => {
               const body = validBody as z.infer<typeof memberRoleBodySchema>;
-              const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+              const doc = await loadVisibleDoc(params.slug, actor.userId, ws.workspaceId); // 404 if missing/hidden
               await requireManageSharing(ws.workspaceId, doc.id, actor.userId); // 403 if not a manager
               const updated = await docMemberRepo.updateRole(params.memberId, doc.id, body.role);
               if (!updated) throw new NotFoundError(); // not an active member of THIS doc (AS-032)
@@ -503,7 +525,7 @@ export function sharingRoutes(deps: SharingRoutesDeps) {
       .delete(
         "/api/w/:workspaceId/docs/:slug/members/:memberId",
         async ({ params, actor, ws }) => {
-          const doc = await loadVisibleDoc(params.slug, actor.userId); // 404 if missing/hidden
+          const doc = await loadVisibleDoc(params.slug, actor.userId, ws.workspaceId); // 404 if missing/hidden
           await requireManageSharing(ws.workspaceId, doc.id, actor.userId); // 403 if not a manager
           const removed = await docMemberRepo.remove(params.memberId, doc.id);
           if (!removed) throw new NotFoundError(); // not a member of THIS doc (AS-032)

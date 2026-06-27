@@ -523,6 +523,11 @@ const app = createApp({
     // owner is REMOVED from the workspace they can no longer manage its sharing; the admin
     // becomes the fallback manager and can change the doc's general access.
     isWorkspaceAdmin,
+    // C-1 (cross-tenant bind): the slug lookup is GLOBAL, so the manage-sharing read gate
+    // (loadVisibleDoc) requires the doc's OWN workspace to equal the path :workspaceId before the
+    // workspace-admin override runs — otherwise an admin of workspace A could manage a doc in
+    // workspace B by its slug. Reuses the same tenancy helper the access resolver uses.
+    workspaceOfDoc: (docId: string) => wsAccess.workspaceOfDoc(docId),
     // AS-011/C-009: real invite mail + the secret the accept-link token is minted with.
     mailQueue,
     mailTransport,
