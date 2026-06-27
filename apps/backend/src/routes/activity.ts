@@ -21,6 +21,7 @@
 // row whose stored workspaceId disagrees with the doc's real workspace can never surface.
 
 import { Elysia } from "elysia";
+import { subDays } from "date-fns";
 import { eq, inArray } from "drizzle-orm";
 import { apiEnvelope } from "../http/envelope";
 import { requireSession, requireWorkspaceMember, type SessionResolver, type WorkspaceRoleResolver, type WorkspaceScope } from "../http/auth-gate";
@@ -41,6 +42,15 @@ import type { Actor } from "../http/auth-gate";
 
 // Feed page size: default 20, cap 50 (C-007).
 const activityPage = paginationQuery({ defaultLimit: 20, maxLimit: 50 });
+
+// Stats rail covers a trailing 7-day window (C-006/AS-026) — bound the scan to that window in SQL
+// (uses the (workspace_id, created_at, id) index) instead of loading the all-time log every request.
+const STATS_WINDOW_DAYS = 7;
+// Feed scan cap (perf, GAP-001 mitigation): the visibility gate filters per-doc in JS, so the feed
+// can't paginate in SQL — it loads recent rows, gates them, then slices. Cap the recent-first scan so
+// a million-row workspace log never loads in full. Real workspaces stay well under this; beyond it the
+// feed surfaces the most-recent N visible events (deep-history paging stays deferred — GAP-001).
+const FEED_SCAN_CAP = 5000;
 
 export interface ActivityRoutesDeps {
   db?: DB;
@@ -120,7 +130,9 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       // C-003 / F-7: filter the WHOLE log by per-doc visibility ONCE through the shared gate, THEN
       // derive both the counts and the page from that SAME visible set — so a count can never reveal
       // an event the viewer can't see, and `total` and the page can never disagree (F-STATS, AS-012).
-      const all = await repo.listAllActivity(filter);
+      // GAP-001 mitigation: cap the recent-first scan (FEED_SCAN_CAP) so the whole workspace log
+      // never loads in full; the gate then filters this bounded set and the page is sliced from it.
+      const all = await repo.listAllActivity(filter, { max: FEED_SCAN_CAP });
       const visible = await visibility.filterVisible(all, { userId: actor.userId, role: ws.role });
       // S-003: per-category counts are over the full visible set (NOT the category-filtered set) so
       // every segment shows its own visible count regardless of which filter is active (AS-012).
@@ -149,11 +161,13 @@ export function activityRoutes(deps: ActivityRoutesDeps) {
       const { params } = ctx;
       const { actor, ws } = scope(ctx);
       const filter = { workspaceId: params.workspaceId };
-      const all = await repo.listAllActivity(filter);
-      const visible = await visibility.filterVisible(all, { userId: actor.userId, role: ws.role });
-      // GAP-001 (deferred): per-viewer filtered aggregates cost a full visible-set load + in-process
-      // aggregate on every request — the SAME shape the feed already uses; no cache/cap in v0.
-      const stats = computeStats(visible);
+      // C-006/AS-026: the rail only ever covers the trailing 7-day window — bound the scan to it in
+      // SQL so a 1M-row all-time log isn't read on every stats hit. computeStats(now) re-windows to
+      // the same boundary, so the output is identical to the old full-load + JS-filter path.
+      const now = new Date();
+      const windowed = await repo.listAllActivity(filter, { since: subDays(now, STATS_WINDOW_DAYS) });
+      const visible = await visibility.filterVisible(windowed, { userId: actor.userId, role: ws.role });
+      const stats = computeStats(visible, now);
       // The busiest-doc NAME must be the doc's TITLE, not the row `target` (which now carries the
       // comment's section/anchor, e.g. "§ Sanitization"). Resolve the title at read time (one query).
       if (stats.busiestDoc && deps.db) {

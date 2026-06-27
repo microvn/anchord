@@ -78,6 +78,10 @@ export const docs = pgTable(
     // `deleted_at IS NULL` predicate; this PARTIAL index (WHERE deleted_at IS NULL) keeps
     // active-doc listing scans off the tombstones. Portable — SQLite supports partial indexes.
     index("docs_active_idx").on(t.projectId).where(sql`${t.deletedAt} IS NULL`),
+    // workspace browse "All docs" sorts ORDER BY updated_at DESC, id DESC over the active docs.
+    // Partial (WHERE deleted_at IS NULL) so the sort index stays off tombstones; backward-scanned
+    // for the all-DESC order. Without it the workspace-wide list does a full sort at scale.
+    index("docs_updated_idx").on(t.updatedAt, t.id).where(sql`${t.deletedAt} IS NULL`),
   ],
 );
 
@@ -575,7 +579,13 @@ export const notifications = pgTable(
     read: boolean("read").notNull().default(false),
     createdAt: createdAt(),
   },
-  (t) => [index("notifications_user_read_idx").on(t.userId, t.read)],
+  (t) => [
+    // Unread badge count: WHERE user_id = ? AND read = false.
+    index("notifications_user_read_idx").on(t.userId, t.read),
+    // The bell list: WHERE user_id = ? ORDER BY created_at DESC, id DESC. The (user_id, read) index
+    // can't serve this sort; this composite does (backward scan), and pairs with a future keyset.
+    index("notifications_user_created_idx").on(t.userId, t.createdAt, t.id),
+  ],
 );
 
 // ── activity (workspace-activity S-001) ────────────────────────────────────
@@ -653,8 +663,11 @@ export const activity = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    // C-007: the recent-first feed scan — workspace + created_at.
-    index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt),
+    // C-007: recent-first feed scan + the stats trailing-window range scan (workspace_id = ? AND
+    // created_at >= now()-7d). `id` is the deterministic tie-break of the ORDER BY created_at DESC,
+    // id DESC reads, so including it keeps the sort fully index-ordered (Postgres scans the b-tree
+    // backward for the all-DESC order). Supersedes the prior 2-col (workspace_id, created_at).
+    index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt, t.id),
     // The access-filtered member query (S-002) + the detail "more on this doc" (S-004).
     index("activity_workspace_doc_idx").on(t.workspaceId, t.docId),
     // your-activity-actions S-001 (C2): the cross-workspace own-actions feed

@@ -1,7 +1,7 @@
 // Search repo (workspace-project S-005) — the PORTABILITY BOUNDARY.
 //
 // ⚠️ This is the ONE place Postgres full-text search lives. `to_tsvector` /
-// `websearch_to_tsquery` / the GIN indexes (drizzle/0012) are Postgres-isms that
+// `websearch_to_tsquery` / the GIN indexes (drizzle/0024_fts_gin) are Postgres-isms that
 // CLAUDE.md flags as non-portable. They are deliberately isolated here, the same way
 // computeLineDiff isolates @pierre/diffs and createProjectRepo isolates Drizzle: the
 // rest of the app (route, service) speaks the portable SearchRepo interface below. A
@@ -70,8 +70,8 @@ export interface SearchRepo {
  *
  * "Current version" = the highest `version` row for the doc (that is what the viewer
  * serves). We index that version's extracted_text. Backfill note: versions published
- * before migration 0012 have NULL extracted_text → coalesced to '' → simply don't
- * match on content (they remain findable by title/comment). New publishes populate it.
+ * before publish-time extraction shipped have NULL extracted_text → coalesced to '' →
+ * simply don't match on content (still findable by title/comment). New publishes populate it.
  */
 export function createSearchRepo(db: DB): SearchRepo {
   return {
