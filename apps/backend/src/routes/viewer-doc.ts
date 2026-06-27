@@ -121,7 +121,9 @@ export function viewerDocRoutes(deps: ViewerDocRoutesDeps) {
   return apiEnvelope(new Elysia())
     .use(requireSession({ resolveSession: deps.resolveSession }))
     .use(requireWorkspaceMember({ resolveWorkspaceRole: deps.resolveWorkspaceRole }))
-    .get("/api/w/:workspaceId/docs/:slug", async ({ params, actor }) => {
+    .get("/api/w/:workspaceId/docs/:slug", async ({ params, actor, set }) => {
+      // H-6: never leak a doc URL in a Referer even from the JSON read path (defense in depth).
+      set.headers["Referrer-Policy"] = "no-referrer";
       // The viewer (Viewer) is the SERVER-resolved session actor — never a body field.
       const viewer: Viewer = { kind: "user", userId: actor.userId };
       const payload = await loadViewerDoc(params.slug, viewer);
@@ -191,7 +193,9 @@ export function docViewerRoutes(deps: DocViewerRoutesDeps) {
     return session ? { kind: "user", userId: session.userId } : anonViewer();
   };
 
-  return apiEnvelope(new Elysia()).get("/api/docs/:slug", async ({ params, request }) => {
+  return apiEnvelope(new Elysia()).get("/api/docs/:slug", async ({ params, request, set }) => {
+    // H-6: never leak a doc URL in a Referer even from the JSON read path (defense in depth).
+    set.headers["Referrer-Policy"] = "no-referrer";
     const viewer = await resolveViewer(request);
     const payload = await loadViewerDoc(params.slug, viewer);
     // Existence-hiding (C-004): a missing doc AND a no-access doc return the SAME

@@ -47,6 +47,32 @@ function mimeFor(path: string): string {
   return MIME[ext] ?? "application/octet-stream";
 }
 
+// Regression: H-6 defense-in-depth. The SPA app origin renders kind=markdown docs INLINE
+// (dangerouslySetInnerHTML, light DOM) — untrusted doc content executes in the trusted origin's
+// fetch context. A strict CSP is the load-bearing control that stops a remote-subresource beacon
+// even if a sanitizer gap lets a URL through. The Vite build emits same-origin JS/CSS only and the
+// app makes no cross-origin requests, so 'self' (+ data: images, inline styles for Tailwind) holds.
+// img-src deliberately has NO http(s) host → a `<img src=https://evil…>` cannot load.
+// Referrer-Policy: no-referrer so the Referer header never leaks a doc URL to a third party either.
+export const SPA_CSP =
+  "default-src 'self'; " +
+  "img-src 'self' data:; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "font-src 'self'; " +
+  "connect-src 'self'; " +
+  "frame-src 'self'; " +
+  "object-src 'none'; " +
+  "base-uri 'self'";
+
+/** Security headers applied to every SPA response (app shell + static assets). */
+function spaSecurityHeaders(): Record<string, string> {
+  return {
+    "Content-Security-Policy": SPA_CSP,
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
 /**
  * Serve the built web app for an otherwise-unmatched GET (self-host S-005 / C-007):
  * an existing static file under `webRoot` is served as-is (assets — AS-013); anything else
@@ -63,7 +89,9 @@ export async function serveSpa(webRoot: string, urlPath: string): Promise<Respon
     const file = Bun.file(candidate);
     if (await file.exists()) {
       // Bun.file().exists() is false for a directory, so this only matches real files.
-      return new Response(file, { headers: { "content-type": mimeFor(candidate) } });
+      return new Response(file, {
+        headers: { "content-type": mimeFor(candidate), ...spaSecurityHeaders() },
+      });
     }
   }
 
@@ -72,7 +100,9 @@ export async function serveSpa(webRoot: string, urlPath: string): Promise<Respon
   if (!(await shell.exists())) {
     return new Response("web app not built", { status: 404 });
   }
-  return new Response(shell, { headers: { "content-type": "text/html; charset=utf-8" } });
+  return new Response(shell, {
+    headers: { "content-type": "text/html; charset=utf-8", ...spaSecurityHeaders() },
+  });
 }
 
 /**

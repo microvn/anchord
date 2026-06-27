@@ -33,6 +33,43 @@ test("AS-010 / C-002: renderMarkdown never emits an executable javascript: link"
   expect(html).not.toContain("<a ");
 });
 
+// Regression: H-6 markdown remote-subresource exfiltration
+// Markdown renders in the TRUSTED app origin (not the sandbox iframe), so a remote-loading
+// attribute (`<img src=http…>`, `srcset`, `<video poster>`, `style:url(http…)`) beacons out to
+// an attacker the moment anyone views the doc. DOMPurify's default html profile strips scripts
+// but KEEPS these remote subresource loads — they must be neutralized too.
+test("H-6: renderMarkdown strips remote <img src> (markdown image and raw <img>)", () => {
+  const fromMd = renderMarkdown("![x](https://evil.example/x.png)");
+  expect(fromMd).not.toContain("https://evil.example/x.png");
+  const fromRaw = renderMarkdown('<img src="https://evil.example/x.png">');
+  expect(fromRaw).not.toContain("https://evil.example/x.png");
+});
+
+test("H-6: renderMarkdown strips srcset and <video poster> remote loads", () => {
+  const html = renderMarkdown(
+    '<img src="https://evil.example/x.png" srcset="https://evil.example/2x.png 2x">\n\n' +
+      '<video poster="https://evil.example/p.png"></video>',
+  );
+  expect(html).not.toContain("srcset");
+  expect(html).not.toContain("poster");
+  expect(html).not.toContain("evil.example");
+});
+
+test("H-6: renderMarkdown drops inline style with remote url() (CSS background beacon)", () => {
+  const html = renderMarkdown('<p style="background:url(https://evil.example/b.png)">hi</p>');
+  expect(html).not.toContain("evil.example");
+  expect(html).not.toContain("background:url");
+  // surrounding prose survives
+  expect(html).toContain("hi");
+});
+
+test("H-6: renderMarkdown KEEPS legitimate data: and same-origin relative images", () => {
+  const dataImg = renderMarkdown('<img src="data:image/png;base64,AAAA" alt="inline">');
+  expect(dataImg).toContain("data:image/png;base64,AAAA");
+  const relImg = renderMarkdown('<img src="/local/diagram.png" alt="local">');
+  expect(relImg).toContain("/local/diagram.png");
+});
+
 test("AS-009: empty markdown renders to empty (no crash)", () => {
   expect(renderMarkdown("")).toBe("");
 });

