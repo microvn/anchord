@@ -21,7 +21,10 @@ COPY apps/web/package.json ./apps/web/package.json
 COPY packages/anchor/package.json ./packages/anchor/package.json
 RUN bun install --frozen-lockfile
 COPY . .
-RUN bun --filter web build
+# Run vite in the web package dir, NOT via `bun --filter` (the filter wrapper swallows the
+# child's stderr — a failing vite build only prints "Exited with code 1", hiding the real error —
+# and resolves the workspace `.bin` shim differently). `cd` + `bun run build` streams vite's output.
+RUN cd apps/web && bun run build
 
 FROM oven/bun:1.3.13-alpine AS release
 WORKDIR /app
