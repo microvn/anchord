@@ -21,13 +21,13 @@ COPY apps/web/package.json ./apps/web/package.json
 COPY packages/anchor/package.json ./packages/anchor/package.json
 RUN bun install --frozen-lockfile
 COPY . .
-# Build with `bunx --bun vite` (Bun's official Vite recipe), NOT `bun run build`/`--filter`.
-# Going through the workspace `.bin/vite` shim, Bun resolves vite's relative `../dist/node/cli.js`
-# from the SHIM's dir, not vite's real `bin/` — on the x64 Linux bun build this breaks with
-# "Cannot find module '../dist/node/cli.js'" (arm64's layout happens to dodge it). `bunx --bun vite`
-# runs vite's real entry under the bun runtime (ignoring its `#!/usr/bin/env node` shebang), so the
-# path resolves correctly and no node binary is needed. vite is already installed → no download.
-RUN cd apps/web && bunx --bun vite build
+# Build via Vite's PROGRAMMATIC API, bypassing the workspace `.bin/vite` shim entirely.
+# On the x64 Linux bun build, that shim makes bun resolve vite's relative `../dist/node/cli.js`
+# from the SHIM's dir instead of vite's real `bin/` → "Cannot find module '../dist/node/cli.js'".
+# `bun run build`, `bun --filter`, and `bunx --bun vite` ALL route through the shim → all fail
+# (arm64's layout happens to dodge it). `import("vite")` resolves the package main, never the bin,
+# so build() runs clean. Run from apps/web so vite picks up its vite.config.ts.
+RUN cd apps/web && bun -e 'const { build } = await import("vite"); await build();'
 
 FROM oven/bun:1.3.13-slim AS release
 WORKDIR /app
