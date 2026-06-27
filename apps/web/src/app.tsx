@@ -1,6 +1,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { AuthGuard } from "./app/auth-guard";
+import { GuestGuard } from "./app/guest-guard";
 import { AppShell } from "./app/app-shell";
 import { WorkspaceSidebar } from "./app/workspace-sidebar";
 import { createQueryClient } from "./app/query-client";
@@ -40,9 +41,14 @@ const queryClient = createQueryClient();
 export function AppRoutes() {
   return (
     <Routes>
-      {/* Public pre-session screens (outside AuthGuard). */}
-      <Route path="/signin" element={<SignInScreen />} />
-      <Route path="/signup" element={<SignUpScreen />} />
+      {/* Pre-session screens. Wrapped in GuestGuard so an already-signed-in visitor (e.g. a
+          verify-email link whose callbackURL lands on /signin) is bounced into the app instead
+          of shown a pointless sign-in form. /verify-email stays ungated — it's its own landing
+          and must render the verification result regardless of session state. */}
+      <Route element={<GuestGuard />}>
+        <Route path="/signin" element={<SignInScreen />} />
+        <Route path="/signup" element={<SignUpScreen />} />
+      </Route>
       <Route path="/verify-email" element={<VerifyEmailLanding />} />
 
       {/* doc-access-routing S-003 (AS-013/AS-014): the PUBLIC doc viewer. Addressed by slug alone
