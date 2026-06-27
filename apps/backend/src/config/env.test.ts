@@ -118,6 +118,16 @@ test("C-008: both SMTP and RESEND_API_KEY configured → Resend API wins (email.
   expect(cfg.SMTP?.host).toBe("smtp.example.com");
 });
 
+test("C-012: EMAIL_FROM is optional — unset leaves cfg.EMAIL_FROM undefined (transport uses DEFAULT_FROM)", () => {
+  const cfg = parseConfig(valid);
+  expect(cfg.EMAIL_FROM).toBeUndefined();
+});
+
+test("C-012: EMAIL_FROM, when set, flows through to the config for the mail transport", () => {
+  const cfg = parseConfig({ ...valid, EMAIL_FROM: "Anchord <no-reply@anchord.example.com>" });
+  expect(cfg.EMAIL_FROM).toBe("Anchord <no-reply@anchord.example.com>");
+});
+
 test("C-002: parseConfig refuses a non-postgres DATABASE_URL", () => {
   let err: unknown;
   try { parseConfig({ ...valid, DATABASE_URL: "mysql://x" }); } catch (e) { err = e; }

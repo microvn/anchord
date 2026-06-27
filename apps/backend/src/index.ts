@@ -60,7 +60,7 @@ const trustedOrigins = [
 // invites, and notify all use). Built here (before createAuth) so the auth
 // emailVerification block can enqueue verify mail through the same retry/dead-letter path.
 const mailQueue = new MailQueue();
-const mailTransport = createMailTransport(cfg.email);
+const mailTransport = createMailTransport(cfg.email, { from: cfg.EMAIL_FROM });
 
 // AS-008: the concrete pending-invite repo (sharing-permissions doc_members glue) that
 // auth's afterEmailVerification hook drives to activate invites on email verification.

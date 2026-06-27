@@ -60,6 +60,11 @@ const schema = z
     // Resend HTTP API key — the alternative email provider (auth C-008). Both present
     // → Resend wins.
     RESEND_API_KEY: optionalEnvString,
+    // From address for all outbound mail. Optional: defaults to the transport's built-in
+    // DEFAULT_FROM when unset. Resend (and most SMTP relays) REQUIRE this to be on a
+    // verified sending domain, so a real deploy must set it, e.g.
+    // EMAIL_FROM="Anchord <no-reply@anchord.example.com>".
+    EMAIL_FROM: optionalEnvString,
     // Images live on a volume (C-003); content text lives in Postgres.
     ASSETS_DIR: z.string().default("/data/assets"),
     CORS_ORIGIN: z.string().default("*"),
@@ -112,6 +117,12 @@ export type Config = {
    * This is what the mail transport selector reads (auth AS-012).
    */
   email: EmailProvider;
+  /**
+   * From address for outbound mail (auth C-012). Undefined → the mail transport uses its
+   * built-in DEFAULT_FROM. Set on real deploys to a verified-domain sender (Resend/SMTP
+   * reject unverified senders).
+   */
+  EMAIL_FROM?: string;
   /**
    * Legacy raw SMTP block, present only when the SMTP group was supplied — kept for
    * back-compat. Prefer `email`. Undefined when only Resend is configured.
@@ -175,6 +186,7 @@ export function parseConfig(raw: Record<string, unknown>): Config {
     APP_URL: d.APP_URL,
     MAX_REQUEST_BODY_BYTES: d.MAX_REQUEST_BODY_BYTES,
     email,
+    EMAIL_FROM: d.EMAIL_FROM,
     SMTP: smtp,
     ASSETS_DIR: d.ASSETS_DIR,
     CORS_ORIGIN: d.CORS_ORIGIN,
