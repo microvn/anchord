@@ -450,6 +450,93 @@ main[data-doc-width="focus"] .doc-prose {
 .anno-mark--focus {
   background: color-mix(in oklab, var(--accent) 38%, transparent);
 }
+/* pinpoint S-002 (AS-003): the hover-outline pick affordance — in Pinpoint mode the block under the
+   cursor outlines (the accent ring + a faint tint) to show it is the click-to-annotate target.
+   Toggled imperatively by useBlockPick (.anno-block-hover); cleared on leave / dismiss. Only ever
+   present on a non-empty block (an empty block is never a pick target — AS-006b). */
+.anno-block-hover {
+  outline: 2px dashed color-mix(in oklab, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  cursor: pointer;
+}
+/* pinpoint: a table cell/row clips an OUTSET outline — the 2px ring lands in the neighbouring cell,
+   which paints its own background/border over it. Inset the ring (negative offset) so it draws INSIDE
+   the cell box and is never occluded. Applies to both the hover affordance and the placed mark. */
+:is(td, th, tr).anno-block-hover,
+:is(td, th, tr).anno-block-mark {
+  outline-offset: -2px;
+}
+/* Floating-surface entrance — a gentle slide-up (translateY 6px→0 + subtle scale + fade), shared by
+   the selection/quick-markup popover, the hover peek card, and the pinned thread card. Put this class
+   on the SURFACE wrapper, never the outer positioning element that may carry a translateX(-50%)
+   centering transform — the two transforms would otherwise fight. Reduced-motion → no animation. */
+@keyframes anchord-popover-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .anim-pop-in {
+    animation: anchord-popover-in 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: top center;
+  }
+}
+/* pinpoint S-003 (C-004): a whole-block annotation MARKER — the placed annotation's persistent
+   outline + tint on the block ELEMENT itself (keyed `data-block-anno`), distinct from the transient
+   .anno-block-hover PICK affordance (S-002). Reuses the same accent/--mark-hue vocabulary as a range
+   mark, at block scope: an outline ring + a faint tint. The per-type hue (set via --mark-hue below),
+   resolved, redline, stale + filtered variants mirror the range mark's lifecycle styles. */
+.anno-block-mark {
+  outline: 2px solid color-mix(in oklab, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  cursor: pointer;
+  transition: background 0.12s, outline-color 0.12s;
+}
+.anno-block-mark:hover,
+.anno-block-mark.anno-mark--focus {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  outline-color: var(--accent);
+}
+/* Per-type hue (amber comment / gold label): tint + ring follow --mark-hue, like the range mark. */
+.anno-block-mark[data-anno-hue] {
+  outline-color: color-mix(in oklab, var(--mark-hue) 60%, transparent);
+  background: color-mix(in oklab, var(--mark-hue) 12%, transparent);
+}
+.anno-block-mark[data-anno-hue]:hover,
+.anno-block-mark[data-anno-hue].anno-mark--focus {
+  outline-color: var(--mark-hue);
+  background: color-mix(in oklab, var(--mark-hue) 20%, transparent);
+}
+.anno-block-mark[data-resolved="true"] {
+  outline-color: color-mix(in oklab, var(--green) 55%, transparent);
+  background: color-mix(in oklab, var(--green) 10%, transparent);
+}
+/* Redline block (C-002): a red ring + red-tint — the whole-block delete proposal. */
+.anno-block-mark[data-anno-kind="redline"] {
+  outline-color: color-mix(in oklab, var(--red) 60%, transparent);
+  background: color-mix(in oklab, var(--red) 12%, transparent);
+}
+.anno-block-mark[data-anno-kind="redline"]:hover,
+.anno-block-mark[data-anno-kind="redline"].anno-mark--focus {
+  outline-color: var(--red);
+  background: color-mix(in oklab, var(--red) 20%, transparent);
+}
+/* A STALE redline block: muted/dashed ring, no confident red. */
+.anno-block-mark[data-anno-stale="true"] {
+  outline-style: dashed;
+  outline-color: color-mix(in oklab, var(--color-subtle, currentColor) 55%, transparent);
+  background: transparent;
+  opacity: 0.7;
+}
+/* FILTERED block (chip toggled off): dimmed, still clickable. */
+.anno-block-mark[data-anno-filtered="true"] {
+  outline-color: color-mix(in oklab, currentColor 20%, transparent);
+  background: transparent;
+  opacity: 0.4;
+}
 /* DESIGN.md type/tool palette: a per-type/per-label mark hue (set as --mark-hue by annotation-marks
    — a label/like carries its preset colour, a plain comment the Comment amber). So the in-content
    highlights read multi-colour, matching their rail rows, instead of a single teal. Placed BEFORE

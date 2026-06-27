@@ -65,8 +65,9 @@ export function AnnotationPeekCard({ annotation }: { annotation: ViewerAnnotatio
     <div
       data-testid="annotation-peek-card"
       // .thread vocabulary, condensed: paper, 1px line, r-md, small padding, a soft shadow so it
-      // reads as a floating tooltip over the doc. ~300px wide (UI Notes).
-      className="rounded-md border border-line bg-paper p-[10px] text-left shadow-lg"
+      // reads as a floating tooltip over the doc. ~300px wide (UI Notes). The shared `.anim-pop-in`
+      // gentle slide-up entrance (styles.css) — the same one the selection popover + pinned card use.
+      className="anim-pop-in rounded-md border border-line bg-paper p-[10px] text-left shadow-lg"
       style={{ width: PEEK_WIDTH, maxWidth: "92vw" }}
     >
       {/* HEADER — avatar · author · time. No status marker (removed — the type chip + thread convey

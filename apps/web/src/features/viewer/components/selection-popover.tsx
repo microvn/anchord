@@ -127,24 +127,12 @@ export function SelectionPopover({
 
   useDismissOnOutsideAndEscape(ref, onDismiss);
 
-  // MƯỢT (S-006 polish): Plannotator's popover entrance — scale(0.95)→1 + opacity 0→1, 0.15s ease-out,
-  // origin top-center (it floats ABOVE the selection). The scale rides an inner wrapper's `animation`
-  // so it never fights the outer `translateX(-50%)` centering transform (the two transforms live on
-  // different elements). Reduced-motion → no animation (the keyframes are gated by the media query).
+  // MƯỢT (S-006 polish): the popover entrance — the shared `.anim-pop-in` gentle slide-up (styles.css:
+  // translateY(6px)→0 + scale(0.98)→1 + fade, 0.18s ease-out, origin top-center). It rides the inner
+  // wrapper so it never fights the outer `translateX(-50%)` centering transform. Reduced-motion is
+  // handled in the shared rule. The SAME entrance is used by the hover peek + pinned thread cards.
   return (
     <>
-      <style>{`
-        @keyframes anchord-popover-in {
-          from { opacity: 0; transform: scale(0.95); }
-          to { opacity: 1; transform: scale(1); }
-        }
-        @media (prefers-reduced-motion: no-preference) {
-          [data-testid="selection-popover"] > [data-popover-anim] {
-            animation: anchord-popover-in 0.15s ease-out;
-            transform-origin: top center;
-          }
-        }
-      `}</style>
       <div
         ref={ref}
         data-testid="selection-popover"
@@ -160,7 +148,7 @@ export function SelectionPopover({
             over the range; elev surface, line border, r-md). */}
         <div
           data-popover-anim
-          className="flex items-center gap-0.5 rounded-md border border-line bg-elev p-1 shadow-lg"
+          className="anim-pop-in flex items-center gap-0.5 rounded-md border border-line bg-elev p-1 shadow-lg"
         >
       <PopoverButton type="comment" testId="popover-comment" icon={MessageSquareText} label="Comment" onClick={onComment} />
       <PopoverButton type="like" testId="popover-like" icon={Star} label="Like" onClick={() => onSelectType?.("like")} />

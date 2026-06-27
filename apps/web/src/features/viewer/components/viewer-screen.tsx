@@ -12,7 +12,8 @@ import { Skeleton } from "@/components/skeleton";
 import { DocPane } from "./doc-pane";
 import type { HtmlSandboxFrameHandle } from "./html-sandbox-frame";
 import { clampRectToViewport, isKnownAnnotationId, type BridgeAnchor, type BridgeRect } from "@/features/viewer/lib/bridge";
-import { DocModeToolbar, type MarkupTool } from "./doc-mode-toolbar";
+import { DocModeToolbar, MARKUP_TOOLS, INPUT_MODES, type MarkupTool, type InputMode } from "./doc-mode-toolbar";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { TocSidebar } from "./toc-sidebar";
 import { AnnotationsRail } from "./annotations-rail";
 import {
@@ -31,7 +32,7 @@ import { ViewerTopBar } from "./viewer-top-bar";
 import { MetaStrip } from "./meta-strip";
 import type { SpecMeta } from "@/features/viewer/types";
 import { toast } from "sonner";
-import { useAnnotationMarks, scrollToAnno, type PlaceableAnnotation, type HoverPeekOptions, type PinOptions } from "./annotation-marks";
+import { useAnnotationMarks, useBlockPick, scrollToAnno, type PlaceableAnnotation, type HoverPeekOptions, type PinOptions, type BlockPick } from "./annotation-marks";
 import { useHoverPin } from "@/features/viewer/hooks/use-hover-pin";
 import { AnnotationPeekCard } from "./annotation-peek-card";
 import { PinnedCardPopover } from "./pinned-card-popover";
@@ -370,7 +371,22 @@ function ViewerShell({
   // S-006 (C-009): the active markup tool. Default Markup → preserves S-001 (Markup + select → the
   // 5-type popover). The ACTIVE tool routes a text selection (the effect below): Markup → the popover,
   // Comment → the composer directly, Redline → a red strike directly, Label → the picker directly.
-  const [activeTool, setActiveTool] = useState<MarkupTool>("markup");
+  // Persisted (localStorage) so the chosen tool survives an F5 instead of snapping back to Markup.
+  const [activeTool, setActiveTool] = usePersistentState<MarkupTool>(
+    "anchord-viewer-markup-tool",
+    "markup",
+    MARKUP_TOOLS,
+  );
+  // pinpoint S-001 (C-001): the input mode — OWNED here, lifted above useCompose. "select" (default)
+  // = drag-select text → range annotation; "pinpoint" = hover-outline a block + click → whole-block
+  // annotation (block-pick is S-002). Threaded into useCompose so the text-selection→create popover
+  // path is INERT in Pinpoint (AS-002); the toolbar's Select|Pinpoint chips reflect + toggle it.
+  // Persisted (localStorage) so the mode survives an F5.
+  const [inputMode, setInputMode] = usePersistentState<InputMode>(
+    "anchord-viewer-input-mode",
+    "select",
+    INPUT_MODES,
+  );
   // C-002 (Share affordance gate): only a potential manager (owner, or editor — the editor's
   // editorsCanShare is re-checked after the dialog reads the share state) is shown the Share button.
   // A viewer/commenter — or an absent role (conservative) — never gets a Share affordance that opens
@@ -621,6 +637,60 @@ function ViewerShell({
     // S-007 (AS-017): the session guest name for a guest session, so startRedline (which bypasses the
     // composer) attaches it to the create. Null for a signed-in member.
     guest ? guestIdentity.name : null,
+    // pinpoint S-001 (AS-002 / C-001): the active input mode. In Pinpoint a text drag-selection is
+    // inert — useCompose suppresses the create popover; only a block click creates (S-002).
+    inputMode,
+  );
+
+  // pinpoint S-002 (AS-003/AS-004/AS-005/C-001): block-pick targeting — ACTIVE only in Pinpoint mode
+  // on a markdown doc for a comment-capable role (C-004). Hovering a block outlines it; clicking it
+  // synthesizes a whole-block anchor + the block's own rect and opens the SAME 5-type popover the
+  // text path uses (compose.beginBlockCompose stashes the block anchor + raises the popover). A block
+  // click is NOT a text selection, so it bypasses the selection→commit path (inert in Pinpoint,
+  // S-001). The HTML-iframe block pick is S-004 (relayed over the bridge), so this is markdown-only.
+  // An empty block never outlines and its click is a no-op (AS-006b, in resolvePickableBlock).
+  const onBlockPick = useCallback(
+    (pick: BlockPick) => {
+      compose.beginBlockCompose(pick.blockId, pick.element, {
+        top: pick.rect.top,
+        bottom: pick.rect.bottom,
+        left: pick.rect.left,
+        right: pick.rect.right,
+      });
+    },
+    // compose.beginBlockCompose is a stable callback (deps: canCompose, positionFor).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compose.beginBlockCompose],
+  );
+  const { clearHoverOutline: clearBlockOutline } = useBlockPick(
+    docPaneEl,
+    inputMode === "pinpoint" && canCompose && isMarkdown,
+    onBlockPick,
+  );
+  // AS-004 / S-002 files note: dismissing the synthesized popover must clear the block's outline
+  // state. The 5-type popover's onDismiss already calls compose.dismissPopover; we wrap it so the
+  // picked block stops being outlined too (the create paths that consume the pick — Comment/Like/
+  // Redline/Label — keep their own surfaces, and the outline is cleared when the popover closes).
+  const dismissBlockPopover = useCallback(() => {
+    compose.dismissPopover();
+    clearBlockOutline();
+  }, [compose, clearBlockOutline]);
+
+  // pinpoint S-004/AS-010 (C-001/C-002/C-005): a Pinpoint block-pick relayed from the HTML sandbox
+  // iframe. The parent can't read the opaque iframe DOM, so the in-iframe bridge relays the picked
+  // block's id + its full text (UNTRUSTED, Zod-validated at the boundary — C-005) + the page-translated
+  // rect. Route it into the SAME beginBlockCompose the markdown pick uses (it synthesizes the 5-type
+  // popover + a whole-block anchor from {textContent}), so the create is identical to markdown. An
+  // unresolvable/forged blockId is stored verbatim and the matcher orphans it (AS-011) — the parent
+  // does not (cannot) pre-check it against the cross-origin iframe. canCompose-gated inside
+  // beginBlockCompose (C-001 commenter+, re-authorized server-side).
+  const onHtmlBlockPick = useCallback(
+    (blockId: string, rect: { x: number; y: number; width: number; height: number } | null, text: string) => {
+      compose.beginBlockCompose(blockId, { textContent: text }, rect ? frameRectToViewport(rect) : null);
+    },
+    // compose.beginBlockCompose is a stable callback (deps: canCompose, positionFor).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compose.beginBlockCompose],
   );
 
   // S-006 (C-009 / AS-020..023): the ACTIVE tool routes a text selection. useCompose raises
@@ -864,7 +934,14 @@ function ViewerShell({
               // Wide/Focus is the markdown column measure (.doc-prose max-width); an HTML/image doc
               // renders in its own sandbox frame, so the toggle is meaningless there — hide it.
               showWidth={isMarkdown}
-              onPinpointUnavailable={() => toast("Pinpoint mode is coming soon")}
+              // pinpoint S-001 (C-001): the Select|Pinpoint chips reflect + toggle the live input
+              // mode. Switching mode drops any in-flight selection popover so the new mode applies to
+              // the NEXT interaction only (no stale create popover lingering under Pinpoint).
+              inputMode={inputMode}
+              onModeChange={(m) => {
+                setInputMode(m);
+                compose.dismissPopover();
+              }}
               // S-006/C-009: the markup tool palette — the active tool routes the selection (effect above).
               activeTool={activeTool}
               onTool={(t) => {
@@ -926,6 +1003,12 @@ function ViewerShell({
               // S-003/AS-021: the in-iframe scroll re-posted the pinned mark's rect → reposition /
               // auto-close (the parent can't see the iframe scroll; markdown uses a doc-pane listener).
               onHtmlMarkRect={isHtml && !drawerMode ? onHtmlMarkRect : undefined}
+              // pinpoint S-004/AS-010 (C-001): Pinpoint mode on an HTML doc for a comment-capable role
+              // → enable the in-iframe block-pick + route a relayed pick into the SAME block create the
+              // markdown pick uses. Gated on canCompose so a viewer-only role never picks (C-004); the
+              // create is re-authorized server-side regardless (C-001).
+              htmlPinpoint={isHtml && canCompose && inputMode === "pinpoint"}
+              onHtmlBlockPick={isHtml && canCompose ? onHtmlBlockPick : undefined}
             />
           ) : (
             children
@@ -1019,7 +1102,9 @@ function ViewerShell({
                   ? setLabelPickerAt(compose.popover)
                   : toast(`${type[0]!.toUpperCase()}${type.slice(1)} is coming soon`)
           }
-          onDismiss={compose.dismissPopover}
+          // pinpoint S-002 (AS-004): dismissing the synthesized block popover also clears the picked
+          // block's hover-outline (a text-selection dismiss path no-ops the outline clear — none lit).
+          onDismiss={dismissBlockPopover}
           onMeasure={compose.setPopoverSize}
         />
       )}
@@ -1367,7 +1452,7 @@ function useAnnotations(
   prependAnnotation: (real: ViewerAnnotation) => void;
   /** HTML-PLACE: the placeable anchors to post down the iframe bridge (html docs only draw this way).
    *  Non-orphaned, anchored annotations mapped to the bridge's `{id, anchor}` shape. */
-  htmlPlaceable: { id: string; anchor: BridgeAnchor; hue?: string; filtered?: boolean }[];
+  htmlPlaceable: { id: string; anchor: BridgeAnchor; hue?: string; filtered?: boolean; type?: "block" }[];
   /** HTML-PLACE: route an in-iframe placement failure to the rail's couldn't-place badge (additive). */
   reportUnplaceableHtml: (id: string) => void;
   railProps: {
@@ -1578,6 +1663,9 @@ function useAnnotations(
           // S-007 (C-009): carry the dim state down the bridge so the in-iframe mark dims too (the
           // markdown placer + the HTML bridge are the TWO placement paths; both must dim, AS-023).
           filtered: a.filtered,
+          // pinpoint S-004/AS-012 (C-002): a type=block annotation tells the in-iframe bridge to
+          // outline the whole block ELEMENT (data-block-anno) instead of wrapping a text range.
+          type: a.type === "block" ? ("block" as const) : undefined,
         })),
     [placeable],
   );

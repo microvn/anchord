@@ -31,7 +31,16 @@ import {
 // A `mounted` flag suppresses transitions until after first paint (no mount flash); reduced-motion
 // disables all of it. MIT/Apache technique mirrored from Plannotator.
 
-export type MarkupTool = "markup" | "comment" | "redline" | "label";
+// The runtime list is the single source of truth; the type derives from it so the persisted-state
+// allow-list (usePersistentState) and the union can never drift apart.
+export const MARKUP_TOOLS = ["markup", "comment", "redline", "label"] as const;
+export type MarkupTool = (typeof MARKUP_TOOLS)[number];
+// pinpoint S-001 (C-001): the two mutually-exclusive INPUT modes. Select = drag-select text → range
+// annotation (the default read/select state); Pinpoint = hover-outline a block + click it → whole-
+// block annotation (block-pick is S-002). ViewerScreen OWNS this state; the toolbar only reflects it
+// + asks the parent to switch via onModeChange.
+export const INPUT_MODES = ["select", "pinpoint"] as const;
+export type InputMode = (typeof INPUT_MODES)[number];
 type DocWidth = "wide" | "focus";
 
 // DESIGN.md "Annotation type / tool colors" (PO-approved 2026-06-15): Markup teal · Comment amber ·
@@ -211,7 +220,8 @@ export function DocModeToolbar({
   width,
   onWidth,
   showWidth = true,
-  onPinpointUnavailable,
+  inputMode,
+  onModeChange,
   activeTool = "markup",
   onTool,
 }: {
@@ -220,8 +230,13 @@ export function DocModeToolbar({
   /** Show the Wide|Focus measure toggle. Only meaningful for markdown (the .doc-prose column);
    *  an HTML/image doc renders in its own sandbox frame, so the caller hides it there. Default true. */
   showWidth?: boolean;
-  /** Pinpoint mode is Phase 2 — surface a "coming" note instead of a no-op toggle. */
-  onPinpointUnavailable: () => void;
+  /** pinpoint S-001 (C-001): the active input mode, OWNED by ViewerScreen. The Select|Pinpoint chips
+   *  reflect it (the active chip reads active) and request a switch via onModeChange — Pinpoint is now
+   *  a live toggle, not a "coming soon" note. */
+  inputMode: InputMode;
+  /** pinpoint S-001: switch the input mode (the chip click). The parent flips its state, which flows
+   *  back in as `inputMode` and gates the selection→create path in use-compose. */
+  onModeChange: (mode: InputMode) => void;
   /** S-006/C-009: the active markup tool — exactly one. Defaults to Markup (preserves S-001: Markup +
    *  select → the 5-type popover). The ACTIVE tool routes the selection (the routing is in viewer-screen). */
   activeTool?: MarkupTool;
@@ -247,9 +262,10 @@ export function DocModeToolbar({
       className="sticky top-0 z-[5] flex h-11 items-center gap-2.5 border-b border-line-soft bg-paper/85 px-5 backdrop-blur"
     >
       {/* Select | Pinpoint — the input-method group, SAME expanding chip system as the markup tools
-          (Plannotator parity). Select is the active read/selection mode (a neutral teal-elevated
-          treatment). Pinpoint (whole-block element picker) is Phase 2 — clicking it surfaces a
-          "coming" note via onPinpointUnavailable; it never becomes active (no dead UI). */}
+          (Plannotator parity). pinpoint S-001 (C-001): these are now MUTUALLY-EXCLUSIVE live modes —
+          exactly one is active, driven by the parent's `inputMode`. Select = drag-select text →
+          range annotation; Pinpoint = hover-outline a block + click → whole-block annotation. Each
+          chip requests its mode via onModeChange (no more "coming soon" no-op). */}
       <div
         data-testid="input-mode-group"
         role="group"
@@ -262,11 +278,11 @@ export function DocModeToolbar({
           icon={MousePointer2}
           label="Select"
           hue="#37b3bd"
-          active
+          active={inputMode === "select"}
           mounted={mounted}
           reduceMotion={reduceMotion}
-          ariaPressed
-          onClick={() => {}}
+          ariaPressed={inputMode === "select"}
+          onClick={() => onModeChange("select")}
         />
         <ToolChip
           testId="input-mode-pinpoint"
@@ -274,11 +290,11 @@ export function DocModeToolbar({
           icon={SquareDashedMousePointer}
           label="Pinpoint"
           hue="#37b3bd"
-          active={false}
+          active={inputMode === "pinpoint"}
           mounted={mounted}
           reduceMotion={reduceMotion}
-          ariaPressed={false}
-          onClick={onPinpointUnavailable}
+          ariaPressed={inputMode === "pinpoint"}
+          onClick={() => onModeChange("pinpoint")}
         />
       </div>
 

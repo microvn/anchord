@@ -27,6 +27,8 @@ export function DocPane({
   onHtmlMarkEnter,
   onHtmlMarkLeave,
   onHtmlMarkRect,
+  htmlPinpoint,
+  onHtmlBlockPick,
 }: {
   doc: ViewerDocResponse;
   /** S-002: a real selection relayed from the HTML sandbox iframe (gated by role upstream). */
@@ -36,7 +38,7 @@ export function DocPane({
   onSelectionRect?: (rect: { x: number; y: number; width: number; height: number }) => void;
   htmlFrameRef?: Ref<HtmlSandboxFrameHandle>;
   /** HTML-PLACE: the placeable annotation set to draw inside the iframe via the bridge (html only). */
-  htmlAnnotations?: { id: string; anchor: BridgeAnchor; hue?: string }[];
+  htmlAnnotations?: { id: string; anchor: BridgeAnchor; hue?: string; type?: "block" }[];
   /** HTML-PLACE: an in-iframe placement failure → the rail badges only that id "couldn't place". */
   onHtmlPlaceFailed?: (id: string) => void;
   /** S-004/AS-011 (C-005) + S-003/AS-016: a highlight click inside the iframe → focus + pin at the
@@ -47,6 +49,11 @@ export function DocPane({
   onHtmlMarkLeave?: (id: string) => void;
   /** S-003/AS-021: the in-iframe scroll re-posted the pinned mark's rect → reposition / auto-close. */
   onHtmlMarkRect?: (id: string, rect: { x: number; y: number; width: number; height: number } | null) => void;
+  /** pinpoint S-004/AS-010 (C-001): Pinpoint mode active → enable the in-iframe block-pick (html). */
+  htmlPinpoint?: boolean;
+  /** pinpoint S-004/AS-010 (C-001/C-005): a relayed Pinpoint block-pick → route into the block create
+   *  (html only; the blockId + page-translated rect). */
+  onHtmlBlockPick?: (blockId: string, rect: { x: number; y: number; width: number; height: number } | null, text: string) => void;
 }) {
   const { kind } = doc.doc;
 
@@ -75,6 +82,8 @@ export function DocPane({
       onMarkEnter={onHtmlMarkEnter}
       onMarkLeave={onHtmlMarkLeave}
       onMarkRect={onHtmlMarkRect}
+      pinpoint={htmlPinpoint}
+      onBlockPick={onHtmlBlockPick}
     />
   );
 }

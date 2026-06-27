@@ -15,7 +15,7 @@
 //     3. wrap the matched char range in a mark carrying data-anno=<id>;
 //     4. zero / multiple / block-missing → "couldn't place" (GAP-005), not a crash.
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 // S-005: the locate ladder (exact → nearest → whitespace-normalized → fuzzy) is the ONE shared
 // matcher in @anchord/anchor — the SAME ladder the in-iframe sandbox bridge uses (C-008). Re-exported
 // here so existing FE importers/tests keep importing `locateRange` from this module.
@@ -35,6 +35,10 @@ export interface MarkAnchor {
 
 export interface PlaceableAnnotation {
   id: string;
+  /** pinpoint S-003 (C-002/C-004): when `"block"`, this is a whole-block annotation — the marker is
+   *  placed on the block ELEMENT (outline/tint) via the DISTINCT `data-block-anno` attribute, NOT a
+   *  wrapped text sub-range. Any other value (or absent) → the normal text-range wrap. */
+  type?: string;
   anchor: MarkAnchor;
   /** Backend-detached annotations (isOrphaned) get NO highlight (C-004); they live in the rail's
    *  detached section instead. They are skipped here so they never render as if still anchored. */
@@ -65,7 +69,67 @@ export interface PlaceResult {
 }
 
 const MARK_CLASS = "anno-mark";
-export const MARK_SELECTOR = `[data-anno]`;
+// pinpoint S-003 (C-004): a whole-block annotation marks the block ELEMENT, keyed on a DISTINCT
+// attribute so `closest()` resolves a nested range `<mark data-anno>` and its container block
+// independently — a hit inside the range focuses the range, a hit on bare block area the block.
+const BLOCK_MARK_CLASS = "anno-block-mark";
+const BLOCK_MARK_ATTR = "data-block-anno";
+// The shared resolver matches BOTH a range mark (`data-anno`) and a block mark (`data-block-anno`);
+// `closest()` walks ancestors innermost-first, so a hit inside a nested range still wins the range.
+export const MARK_SELECTOR = `[data-anno],[${BLOCK_MARK_ATTR}]`;
+
+// pinpoint S-002: a block-pick TARGET is any element carrying a positional block id — either form
+// the server emits (`data-block-id` for markdown, `id="block-…"` for the sandbox HTML, mirrored in
+// findBlock above). The hover-outline + click both resolve the nearest such ancestor of the event
+// target, so a click on inline content inside a block still picks the whole block.
+export const BLOCK_PICK_SELECTOR = '[data-block-id], [id^="block-"]';
+// pinpoint S-002 (AS-003): the transient hover-outline class toggled on the block under the cursor in
+// Pinpoint mode. Styled in styles.css; here we only own the data hook + the toggle lifecycle.
+const BLOCK_HOVER_CLASS = "anno-block-hover";
+
+/** pinpoint S-002 (AS-003/AS-006b): resolve the pickable block for an event target — the nearest
+ *  ancestor carrying a block id WHOSE text is non-empty. An empty block (`<hr>`, image-only, an empty
+ *  paragraph) has no text so it is NOT a pick target (the outline never appears, the click is a
+ *  no-op). Returns the block id + element, or null. PURE (no React) so it is directly testable. */
+export function resolvePickableBlock(target: EventTarget | null): { blockId: string; element: HTMLElement } | null {
+  const el = target instanceof Element ? target : null;
+  const block = el?.closest?.(BLOCK_PICK_SELECTOR) as HTMLElement | null;
+  if (!block) return null;
+  // AS-006b: an empty / whitespace-only block is not annotatable — never a pick target.
+  if ((block.textContent ?? "").trim().length === 0) return null;
+  const blockId = block.getAttribute("data-block-id") ?? block.id;
+  if (!blockId) return null;
+  return { blockId, element: block };
+}
+
+/** pinpoint S-003 (C-004): read the annotation id off a mark element, from EITHER a range mark's
+ *  `data-anno` or a block mark's `data-block-anno`. A range mark always wins on its own element (it
+ *  never carries both), and `closest(MARK_SELECTOR)` already walks innermost-first, so a nested range
+ *  resolves before its container block. */
+function annoIdOf(el: HTMLElement | null | undefined): string | undefined {
+  return el?.dataset.anno ?? el?.dataset.blockAnno;
+}
+
+/** pinpoint S-003 (C-004): the SHARED hover/click resolver. Given an event target (an Element or a
+ *  Text node's container), find the nearest annotation mark — a range `[data-anno]` OR a block
+ *  `[data-block-anno]` — and return its id + element. `closest()` walks ancestors innermost-first, so
+ *  a hit inside a nested range `<mark>` resolves to the RANGE, while a hit on bare block area resolves
+ *  to the BLOCK (AS-009b). Returns null when the target is outside any mark. PURE / testable. */
+export function resolveAnnoTarget(
+  target: EventTarget | Node | null,
+): { id: string; el: HTMLElement } | null {
+  // A Text node has no closest(); resolve from its parent element instead.
+  const el =
+    target instanceof Element
+      ? target
+      : target && (target as Node).nodeType === 3
+        ? (target as Node).parentElement
+        : null;
+  const mark = el?.closest?.(MARK_SELECTOR) as HTMLElement | null;
+  const id = annoIdOf(mark);
+  if (!mark || !id) return null;
+  return { id, el: mark };
+}
 
 /** Find the block element for an anchor: id OR data-block-id === blockId. */
 function findBlock(root: ParentNode, blockId: string): HTMLElement | null {
@@ -163,6 +227,20 @@ function wrapRange(block: HTMLElement, range: { start: number; end: number }, id
   return marks;
 }
 
+/** pinpoint S-003: strip a block mark's attribute + class + lifecycle/hue hooks from a block element,
+ *  so a re-place leaves no stale block annotation behind (the block-mark counterpart of unwrapping a
+ *  range `<mark>`). Idempotent. */
+function clearBlockMark(block: HTMLElement): void {
+  block.removeAttribute(BLOCK_MARK_ATTR);
+  block.classList.remove(BLOCK_MARK_CLASS, "anno-mark--focus");
+  delete block.dataset.resolved;
+  delete block.dataset.annoFiltered;
+  delete block.dataset.annoKind;
+  delete block.dataset.annoStale;
+  delete block.dataset.annoHue;
+  block.style.removeProperty("--mark-hue");
+}
+
 /**
  * PURE: place each anchored annotation as a highlight mark in `docRoot`. Idempotent-ish — call on
  * freshly-rendered content; existing marks are cleared first so a re-place doesn't double-wrap.
@@ -174,7 +252,7 @@ export function placeAnnotations(
   // Clear any prior marks (unwrap) so re-runs are stable. One id may map to N marks (cross-inline
   // ranges); unwrap them all and normalize() each parent so split text nodes re-merge.
   const parentsToNormalize = new Set<Node>();
-  docRoot.querySelectorAll<HTMLElement>(MARK_SELECTOR).forEach((m) => {
+  docRoot.querySelectorAll<HTMLElement>("[data-anno]").forEach((m) => {
     const parent = m.parentNode;
     if (!parent) return;
     while (m.firstChild) parent.insertBefore(m.firstChild, m);
@@ -182,12 +260,41 @@ export function placeAnnotations(
     parentsToNormalize.add(parent);
   });
   parentsToNormalize.forEach((p) => (p as Element).normalize());
+  // pinpoint S-003: clear any prior BLOCK marks too — they live ON the block element (no unwrap), so
+  // strip the attribute + class/hue hooks so a re-place leaves no stale block-anno behind.
+  docRoot.querySelectorAll<HTMLElement>(`[${BLOCK_MARK_ATTR}]`).forEach((b) => clearBlockMark(b));
 
   const placed: { id: string; el: HTMLElement }[] = [];
   const unplaceable: string[] = [];
 
   for (const ann of annotations) {
     if (ann.isOrphaned) continue; // detached: no highlight (C-004) — handled by the rail.
+
+    // pinpoint S-003 (C-002/C-004): a `type=block` annotation marks the whole block ELEMENT, not a
+    // text sub-range. Branch BEFORE the locate/wrap path: find the block, tag the ELEMENT with the
+    // DISTINCT `data-block-anno` attribute + the outline class (reusing the same lifecycle/hue hooks),
+    // so it reads independently from any nested range `<mark data-anno>`. A missing block → GAP-005.
+    if (ann.type === "block") {
+      const block = findBlock(docRoot, ann.anchor.blockId);
+      if (!block) {
+        unplaceable.push(ann.id);
+        continue;
+      }
+      block.classList.add(BLOCK_MARK_CLASS);
+      block.setAttribute(BLOCK_MARK_ATTR, ann.id);
+      if (ann.status === "resolved") block.dataset.resolved = "true";
+      if (ann.filtered) block.dataset.annoFiltered = "true";
+      if (ann.kind === "redline") {
+        block.dataset.annoKind = "redline";
+        if (ann.stale) block.dataset.annoStale = "true";
+      } else if (ann.hue) {
+        // Reuse the shared `--mark-hue` system (NOT a new hue scheme) for the block outline/tint.
+        block.dataset.annoHue = "true";
+        block.style.setProperty("--mark-hue", ann.hue);
+      }
+      placed.push({ id: ann.id, el: block });
+      continue;
+    }
 
     // A multi_range anchor carries segments[] (one per intersected block); place EACH. A single
     // range has no segments (or one identical to the top-level fields) → place the primary anchor.
@@ -342,17 +449,18 @@ export function useAnnotationMarks(
   useEffect(() => {
     if (!contentEl) return;
     const handler = (e: Event) => {
-      const target = e.target as HTMLElement | null;
-      const mark = target?.closest?.(MARK_SELECTOR) as HTMLElement | null;
-      const id = mark?.dataset.anno;
-      if (!id) return;
+      // S-003 (C-004): resolve a range mark (data-anno) OR a block mark (data-block-anno), innermost
+      // wins — a click inside a nested range focuses the range, on bare block area the block.
+      const resolved = resolveAnnoTarget(e.target);
+      if (!resolved) return;
+      const { id, el: mark } = resolved;
       onFocusAnno(id);
       const pinOpts = pinRef.current;
       if (!pinOpts) return;
       // C-001 (AS-013): a non-collapsed text selection in progress → focus only, no pin.
       const selectionActive = (pinOpts.isSelectionActive ?? hasActiveTextSelection)();
       if (selectionActive) return;
-      pinOpts.onPinMark({ annoId: id, rect: mark!.getBoundingClientRect() });
+      pinOpts.onPinMark({ annoId: id, rect: mark.getBoundingClientRect() });
     };
     contentEl.addEventListener("click", handler);
     return () => contentEl.removeEventListener("click", handler);
@@ -416,8 +524,8 @@ export function useAnnotationMarks(
       }
       const target = (e as MouseEvent).target as HTMLElement | null;
       const mark = target?.closest?.(MARK_SELECTOR) as HTMLElement | null;
-      if (!mark?.dataset.anno) return; // not over a mark — leave any shown peek to onOut to clear
-      const id = mark.dataset.anno;
+      const id = annoIdOf(mark); // a range mark (data-anno) OR a block mark (data-block-anno)
+      if (!mark || !id) return; // not over a mark — leave any shown peek to onOut to clear
       // (c) Already showing this annotation, OR already dwelling on it → coalesce, do nothing.
       if (id === shownId || (id === pendingId && timer)) return;
       // A new mark (or a different annotation): re-arm the dwell timer on it.
@@ -428,7 +536,7 @@ export function useAnnotationMarks(
         timer = null;
         // Re-check the cursor is still over the same mark before showing (the dwell guard).
         const stillThere = pendingMark;
-        if (!stillThere || stillThere.dataset.anno !== id) return;
+        if (!stillThere || annoIdOf(stillThere) !== id) return;
         if (selectionActive()) return; // a selection began during the dwell → suppress
         pendingId = null;
         pendingMark = null;
@@ -440,13 +548,15 @@ export function useAnnotationMarks(
     const onOut = (e: Event) => {
       const ev = e as MouseEvent;
       const fromMark = (ev.target as HTMLElement | null)?.closest?.(MARK_SELECTOR) as HTMLElement | null;
-      if (!fromMark?.dataset.anno) return;
+      const fromId = annoIdOf(fromMark);
+      if (!fromId) return;
       const related = ev.relatedTarget as HTMLElement | null;
       const toMark = related?.closest?.(MARK_SELECTOR) as HTMLElement | null;
-      // (c) Coalesce: moving to another mark with the SAME data-anno is NOT a leave.
-      if (toMark?.dataset.anno && toMark.dataset.anno === fromMark.dataset.anno) {
+      const toId = annoIdOf(toMark);
+      // (c) Coalesce: moving to another mark with the SAME annotation id is NOT a leave.
+      if (toId && toId === fromId) {
         // Keep the dwelling mark pointed at the segment under the cursor (so the dwell guard passes).
-        if (pendingId === fromMark.dataset.anno) pendingMark = toMark;
+        if (pendingId === fromId) pendingMark = toMark;
         return;
       }
       // Left this annotation's marks (to plain text, another annotation, or out): cancel + hide.
@@ -469,7 +579,9 @@ export function useAnnotationMarks(
   useEffect(() => {
     if (!contentEl) return;
     contentEl.querySelectorAll<HTMLElement>(MARK_SELECTOR).forEach((m) => {
-      m.classList.toggle("anno-mark--focus", m.dataset.anno === focusedId);
+      // S-003 (C-004): the SAME focus emphasis for a range mark (data-anno) and a block mark
+      // (data-block-anno) — both read focusedId off the shared annoIdOf.
+      m.classList.toggle("anno-mark--focus", annoIdOf(m) === focusedId);
     });
   }, [contentEl, focusedId, annotations]);
 }
@@ -477,7 +589,106 @@ export function useAnnotationMarks(
 /** Scroll the highlight for `id` into view + emphasise it (AS-009). Returns the mark, if any. */
 export function scrollToAnno(contentEl: HTMLElement | null, id: string): HTMLElement | null {
   if (!contentEl) return null;
-  const mark = contentEl.querySelector<HTMLElement>(`[data-anno="${id}"]`);
+  // S-003 (C-004): a rail row may target a range mark (data-anno) OR a block mark (data-block-anno) —
+  // the shared focusedId linkage finds either, so a block row scrolls/focuses its block element.
+  const esc = cssEscape(id);
+  const mark = contentEl.querySelector<HTMLElement>(
+    `[data-anno="${esc}"],[${BLOCK_MARK_ATTR}="${esc}"]`,
+  );
   if (mark) mark.scrollIntoView({ behavior: "smooth", block: "center" });
   return mark;
+}
+
+/** pinpoint S-002 (AS-004): the block-pick payload — the picked block's id, its element, and its
+ *  OWN bounding rect (so the caller can synthesize the popover position there — the same role the
+ *  selection rect plays in the text path). */
+export interface BlockPick {
+  blockId: string;
+  element: HTMLElement;
+  rect: DOMRect;
+}
+
+/**
+ * pinpoint S-002 (AS-003/AS-004/C-001): hover-outline + click block targeting on the doc pane, ACTIVE
+ * only in Pinpoint mode (`enabled`). It is a SEPARATE listener pair from useAnnotationMarks' click/
+ * hover (which target EXISTING marks) — this targets BLOCKS to CREATE a new one:
+ *
+ *  (AS-003) mouseover a pickable block → add the hover-outline class; mouseout (to a non-same block) →
+ *           remove it. An empty/zero-length block is never a target (resolvePickableBlock returns null,
+ *           so no outline), so AS-006b's "the block never carries a hover-outline pick target" holds.
+ *  (AS-004) click a pickable block → report the pick (blockId + element + the block's own rect) so the
+ *           caller opens the 5-type popover there. The caller clears the outline when the popover is
+ *           dismissed (the lifecycle lives in the screen; `clearHoverOutline` is exposed for that).
+ *
+ * Disabled (Select mode) → no listeners bound, no outline, so a block click does nothing special and
+ * the normal text-selection create path owns the doc (C-001 mutual exclusivity).
+ */
+export function useBlockPick(
+  contentEl: HTMLElement | null,
+  enabled: boolean,
+  onPick: (pick: BlockPick) => void,
+): { clearHoverOutline: () => void } {
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
+  // Track the currently-outlined block so we can clear it on leave, on a new pick, or on demand
+  // (the screen calls clearHoverOutline when it dismisses the synthesized popover).
+  const outlinedRef = useRef<HTMLElement | null>(null);
+
+  const clearHoverOutline = useCallback(() => {
+    if (outlinedRef.current) {
+      outlinedRef.current.classList.remove(BLOCK_HOVER_CLASS);
+      outlinedRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!contentEl || !enabled) {
+      // Leaving Pinpoint (or unmount): drop any lingering outline so a stale block isn't left lit.
+      clearHoverOutline();
+      return;
+    }
+
+    const setOutline = (block: HTMLElement | null) => {
+      if (outlinedRef.current === block) return;
+      if (outlinedRef.current) outlinedRef.current.classList.remove(BLOCK_HOVER_CLASS);
+      outlinedRef.current = block;
+      if (block) block.classList.add(BLOCK_HOVER_CLASS);
+    };
+
+    const onOver = (e: Event) => {
+      const pickable = resolvePickableBlock((e as MouseEvent).target);
+      // AS-003 / AS-006b: only a non-empty block outlines; an empty one resolves to null → clear.
+      setOutline(pickable?.element ?? null);
+    };
+    const onOut = (e: Event) => {
+      const ev = e as MouseEvent;
+      const from = resolvePickableBlock(ev.target)?.element ?? null;
+      const to = resolvePickableBlock(ev.relatedTarget)?.element ?? null;
+      // Moving WITHIN the same block (between its inline children) is not a leave.
+      if (from && to && from === to) return;
+      if (!to) setOutline(null);
+    };
+    const onClick = (e: Event) => {
+      const pickable = resolvePickableBlock((e as MouseEvent).target);
+      if (!pickable) return; // AS-006b: a click on an empty block (or non-block area) is a no-op.
+      setOutline(pickable.element); // keep the picked block outlined while the popover is open.
+      onPickRef.current({
+        blockId: pickable.blockId,
+        element: pickable.element,
+        rect: pickable.element.getBoundingClientRect(),
+      });
+    };
+
+    contentEl.addEventListener("mouseover", onOver);
+    contentEl.addEventListener("mouseout", onOut);
+    contentEl.addEventListener("click", onClick);
+    return () => {
+      contentEl.removeEventListener("mouseover", onOver);
+      contentEl.removeEventListener("mouseout", onOut);
+      contentEl.removeEventListener("click", onClick);
+      clearHoverOutline();
+    };
+  }, [contentEl, enabled, clearHoverOutline]);
+
+  return { clearHoverOutline };
 }

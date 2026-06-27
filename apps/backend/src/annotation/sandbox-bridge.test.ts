@@ -291,6 +291,25 @@ test("AS-006: the injected stylesheet carries the stale rule — muted/dashed, N
   );
 });
 
+test("AS-012/AS-003 (C-004): the injected stylesheet carries the block hover-outline + block-mark rules — they are VISIBLE in the sandbox", () => {
+  // Regression: the sandboxed iframe loads ONLY MARK_STYLESHEET, never the app styles.css. The block
+  // hover affordance (.anno-block-hover) and the whole-block marker (.anno-block-mark) were styled in
+  // styles.css only, so in-iframe the class was set but invisible — no outline on hover, no drawn
+  // block outline. The rules MUST ship in MARK_STYLESHEET too.
+  expect(MARK_STYLESHEET).toContain(".anno-block-hover");
+  expect(MARK_STYLESHEET).toContain(".anno-block-mark");
+  // each must carry an actual outline declaration (not just the bare class name)
+  expect(MARK_STYLESHEET).toMatch(/\.anno-block-hover\{[^}]*outline:/);
+  expect(MARK_STYLESHEET).toMatch(/\.anno-block-mark\{[^}]*outline:/);
+  // per-type hue + lifecycle variants mirror the range mark (so a redline/resolved block reads right)
+  expect(MARK_STYLESHEET).toContain(".anno-block-mark[data-anno-hue]");
+  expect(MARK_STYLESHEET).toContain('.anno-block-mark[data-anno-kind="redline"]');
+  // and they reach the actually-served HTML, not just the constant
+  const out = injectBridge(injectBlockIds("<p>x</p>"), "n-block-css");
+  expect(out).toContain(".anno-block-hover");
+  expect(out).toContain(".anno-block-mark");
+});
+
 test("C-003: the in-iframe draw sets data-resolved / data-anno-kind / data-anno-stale from the item flags", () => {
   const script = bridgeScript("n-state");
   expect(script).toContain('setAttribute("data-resolved", "true")');
@@ -413,6 +432,99 @@ test("AS-021: the bridge re-posts a mark-rect on in-iframe scroll, rAF-throttled
   expect(script).toContain("trackedMark");
   expect(script).toContain("markScrollRaf");
 });
+
+// ---------------------------------------------------------------------------
+// pinpoint S-004 — in-iframe Pinpoint block-pick relay + block-level mark draw (C-001/C-002/C-005).
+// The PARENT-side block-pick routing + Zod/rect hardening lives in
+// apps/web/src/features/viewer/lib/bridge.test.ts (AS-010/AS-011); this side proves the in-iframe half.
+// ---------------------------------------------------------------------------
+
+test("AS-010: the in-iframe bridge relays a block-pick {blockId, rect} on a Pinpoint block click", () => {
+  const script = bridgeScript("n-block-pick");
+  expect(script).toContain('"block-pick"');
+  // The relayed payload names the block id + its own rect (the parent synthesizes the popover there).
+  expect(script).toMatch(/type:\s*"block-pick",\s*blockId:/);
+  expect(script).toContain("BLOCK_SELECTOR");
+  // It is gated by a Pinpoint flag toggled from the parent — a plain (Select-mode) click must NOT
+  // relay a block-pick (C-001 mutual exclusivity); the parent enables it via a port message.
+  expect(script).toContain("pinpoint");
+});
+
+test("AS-010 (C-001): the parent can toggle Pinpoint mode in the iframe over the port", () => {
+  const script = bridgeScript("n-pinpoint-toggle");
+  // A {type:'pinpoint'} port message flips the in-iframe block-pick on/off so a block click only
+  // relays a block-pick while Pinpoint is active (mirrors the markdown useBlockPick `enabled` gate).
+  expect(script).toContain('msg.type === "pinpoint"');
+});
+
+test("AS-012: a type=block highlight outlines the BLOCK ELEMENT (data-block-anno) — it does NOT wrap text", () => {
+  // Extract the drawHighlight function and run it over happy-dom for a type=block item: it must find
+  // the block by id and mark the ELEMENT with data-block-anno + the .anno-block-mark class, mirroring
+  // the markdown placer — NOT wrap a text sub-range in <mark data-anno>.
+  const win = new Window();
+  win.document.body.innerHTML = '<h1 id="block-h1-1">A heading</h1><p id="block-p-1">Body text</p>';
+  const doc: any = win.document;
+  const draw = drawHighlightFromScript(doc);
+  const placed = draw({ anchor: { blockId: "block-h1-1", textSnippet: "A heading", offset: 0, length: 9 }, annotationId: "a-1", type: "block", hue: "#e0a23b" });
+  expect(placed).toBe(true);
+  const block = doc.querySelector("#block-h1-1");
+  // AS-012 / C-002: the WHOLE block element is marked (data-block-anno), keyed on the DISTINCT
+  // attribute (mirrors the markdown engine), NOT a wrapped text range.
+  expect(block.getAttribute("data-block-anno")).toBe("a-1");
+  expect(block.classList.contains("anno-block-mark")).toBe(true);
+  // The hue rides via --mark-hue (same vocabulary as the range mark), and NO <mark> was created.
+  expect(block.getAttribute("data-anno-hue")).toBe("true");
+  expect(doc.querySelectorAll("mark[data-anno]").length).toBe(0);
+});
+
+test("AS-012: a block element mark is hover/click-relayable like any in-iframe mark (resolver matches data-block-anno)", () => {
+  // The click/hover relay keys on a selector that matches BOTH a range mark (data-anno) AND a block
+  // mark (data-block-anno), so a click on a block-marked element relays its id like any mark.
+  const script = bridgeScript("n-block-click");
+  expect(script).toContain("data-block-anno");
+  // mark-click / mark-enter resolve via a selector covering both attribute forms.
+  expect(script).toMatch(/\[data-anno\][^"']*data-block-anno|data-block-anno[^"']*\[data-anno\]|mark\[data-anno\],\s*\[data-block-anno\]/);
+});
+
+test("AS-012 (C-002): a forged/unresolvable blockId in a type=block highlight never places (orphaned)", () => {
+  // Symmetric with a forged range anchor: the draw stores nothing it can't find — an unresolvable
+  // block id draws no mark and reports a miss (place-failed), it never silently marks the wrong block.
+  const win = new Window();
+  win.document.body.innerHTML = '<h1 id="block-h1-1">A heading</h1>';
+  const doc: any = win.document;
+  const draw = drawHighlightFromScript(doc);
+  const placed = draw({ anchor: { blockId: "nope", textSnippet: "A heading", offset: 0, length: 9 }, annotationId: "a-x", type: "block" });
+  expect(placed).toBe(false);
+  expect(doc.querySelector("#block-h1-1").getAttribute("data-block-anno")).toBeNull();
+});
+
+test("AS-012 (C-002): the batch redraw clears prior block marks too (clear-then-redraw stays idempotent)", () => {
+  // A re-sync that drops a block annotation must REMOVE its data-block-anno + class — otherwise a
+  // deleted block annotation would leave a stale outline. unwrapAllAnnoMarks must strip block marks.
+  const script = bridgeScript("n-block-unwrap");
+  expect(script).toContain("unwrapAllAnnoMarks");
+  expect(script).toContain("data-block-anno");
+});
+
+// Pull the drawHighlight IIFE function out of the bridge script and bind it over a happy-dom document
+// (the in-iframe script is a STRING, so we extract + Function-eval it like the existing drawRange tests).
+function drawHighlightFromScript(doc: any) {
+  const src = bridgeScript("n-extract");
+  const dh = src.match(/function drawHighlight\(item\)\{[\s\S]*?\n  \}/);
+  const dr = src.match(/function drawRange\(anchor, id\)\{[\s\S]*?\n  \}/);
+  const db = src.match(/function drawBlock\(item\)\{[\s\S]*?\n  \}/);
+  const tn = src.match(/function textNodesOf\(root\)\{[\s\S]*?\n  \}/);
+  const fb = src.match(/function findBlockEl\(blockId\)\{[\s\S]*?\n  \}/);
+  const ec = src.match(/function escapeCss\(value\)\{[\s\S]*?\}/);
+  if (!dh || !dr || !db || !tn || !fb || !ec)
+    throw new Error("could not extract drawHighlight/drawRange/drawBlock/textNodesOf/findBlockEl/escapeCss from bridgeScript");
+  const A = { resolveAnchorRange };
+  return new Function(
+    "A",
+    "document",
+    `var BLOCK_MARK_ATTR="data-block-anno",BLOCK_MARK_CLASS="anno-block-mark";\n${ec[0]}\n${fb[0]}\n${tn[0]}\n${dr[0]}\n${db[0]}\n${dh[0]} return drawHighlight;`,
+  )(A, doc);
+}
 
 // ── S-007: in-iframe client-storage shim (render-publish C-010) ──────────────────────────
 

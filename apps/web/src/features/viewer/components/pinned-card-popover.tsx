@@ -81,7 +81,7 @@ export function PinnedCardPopover({
         transform: placement.centered ? "translateX(-50%)" : undefined,
       }}
     >
-      <div className="relative rounded-md shadow-xl">
+      <div className="anim-pop-in relative rounded-md shadow-xl">
         {/* The wrapper-owned close (✕) — AS-010. stopPropagation so the click never bubbles to the
             doc-pane delegation (re-focus / re-pin) and never reads as an outside dismiss. */}
         <button

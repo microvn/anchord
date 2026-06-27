@@ -50,6 +50,9 @@ export const HtmlSandboxFrame = forwardRef<
       stale?: boolean;
       /** S-007 (C-009): the status chip is toggled off → dim the in-iframe highlight. */
       filtered?: boolean;
+      /** pinpoint S-004/AS-012 (C-002): `"block"` → the in-iframe bridge outlines the whole block
+       *  ELEMENT instead of wrapping a text range. Absent → a range highlight. */
+      type?: "block";
     }[];
     /** HTML-PLACE: the in-iframe bridge couldn't place a posted highlight → surface it so the rail
      *  can badge only that annotation "couldn't place" (markdown reports this via the light-DOM placer). */
@@ -66,6 +69,14 @@ export const HtmlSandboxFrame = forwardRef<
     /** S-003/AS-021: the in-iframe scroll re-posted the hovered/pinned mark's (page-translated) rect →
      *  reposition or auto-close the pinned card. Null rect (mark gone) → treat as scrolled-out. */
     onMarkRect?: (id: string, rect: { x: number; y: number; width: number; height: number } | null) => void;
+    /** pinpoint S-004/AS-010 (C-001): Pinpoint mode is ACTIVE → tell the in-iframe bridge so a block
+     *  click relays a block-pick (in Select mode it stays inert). Toggled over the port. */
+    pinpoint?: boolean;
+    /** pinpoint S-004/AS-010 (C-001/C-005): a Pinpoint block click in the iframe relayed a block-pick
+     *  → route the blockId + (page-translated) rect into the SAME block create the markdown pick uses.
+     *  Null rect → the bridge couldn't read one. The parent does NOT pre-check the id against the
+     *  opaque iframe DOM; an unresolvable id orphans (AS-011), symmetric with the range relay. */
+    onBlockPick?: (blockId: string, rect: { x: number; y: number; width: number; height: number } | null, text: string) => void;
   }
 >(function HtmlSandboxFrame(
   {
@@ -79,6 +90,8 @@ export const HtmlSandboxFrame = forwardRef<
     onMarkEnter,
     onMarkLeave,
     onMarkRect,
+    pinpoint,
+    onBlockPick,
   },
   ref,
 ) {
@@ -96,6 +109,7 @@ export const HtmlSandboxFrame = forwardRef<
     onMarkEnter,
     onMarkLeave,
     onMarkRect,
+    onBlockPick,
   });
   handlersRef.current = {
     onSelection,
@@ -106,6 +120,7 @@ export const HtmlSandboxFrame = forwardRef<
     onMarkEnter,
     onMarkLeave,
     onMarkRect,
+    onBlockPick,
   };
   // HTML-PLACE: true once the bridge handshake is accepted (onReady). The post-existing effect below
   // depends on it so the initial flush waits for the port (postHighlight no-ops before the handshake).
@@ -153,6 +168,10 @@ export const HtmlSandboxFrame = forwardRef<
       onMarkLeave: (id) => handlersRef.current.onMarkLeave?.(id),
       // S-003/AS-021: the in-iframe scroll re-posted the mark rect → reposition / auto-close the pin.
       onMarkRect: (id, rect) => handlersRef.current.onMarkRect?.(id, rect ? toPageRect(rect) : null),
+      // pinpoint S-004/AS-010 (C-001/C-005): a relayed Pinpoint block-pick → route the blockId + the
+      // (page-translated) block rect into the parent's block create. The rect is finite/non-negative
+      // (Zod at the boundary, C-005); the parent translates here, then clamps before positioning.
+      onBlockPick: (blockId, rect, text) => handlersRef.current.onBlockPick?.(blockId, rect ? toPageRect(rect) : null, text),
       // HTML-PLACE: the port is live → flip `ready` so the post-existing effect flushes the set.
       onReady: () => setReady(true),
     });
@@ -192,9 +211,19 @@ export const HtmlSandboxFrame = forwardRef<
         stale: a.stale,
         // S-007 (C-009): dim the in-iframe highlight when its chip is toggled off (AS-023).
         filtered: a.filtered,
+        // pinpoint S-004/AS-012 (C-002): a type=block annotation outlines the whole block element.
+        type: a.type,
       })),
     );
   }, [ready, annotations]);
+
+  // pinpoint S-004/AS-010 (C-001): mirror the parent's Pinpoint mode into the iframe over the port so
+  // a block click there relays a block-pick. Re-posts when `ready` flips (so the gate is set after the
+  // handshake) or `pinpoint` toggles. postPinpoint no-ops before the handshake, like the other posts.
+  useEffect(() => {
+    if (!ready) return;
+    connRef.current?.postPinpoint(!!pinpoint);
+  }, [ready, pinpoint]);
 
   useImperativeHandle(
     ref,

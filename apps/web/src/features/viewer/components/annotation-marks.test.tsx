@@ -13,6 +13,8 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import {
   placeAnnotations,
   locateRange,
+  scrollToAnno,
+  resolveAnnoTarget,
   type PlaceableAnnotation,
 } from "@/features/viewer/components/annotation-marks";
 
@@ -334,5 +336,133 @@ describe("placeAnnotations — multi-segment (cross-block)", () => {
     ]);
     expect(root.querySelector('[data-block-id="b1"] [data-anno="m3"]')).not.toBeNull();
     expect(unplaceable).not.toContain("m3"); // at least one segment placed → not unplaceable
+  });
+});
+
+// pinpoint S-003 (AS-007/AS-008/AS-009/AS-009b, C-002/C-004): a `type=block` annotation marks the
+// WHOLE block ELEMENT (outline/tint) via a DISTINCT `data-block-anno` attribute — never a wrapped
+// text sub-range — and reuses the same interaction surfaces (hover peek / click pin / rail focus) as
+// a range, resolved independently so a nested range `<mark data-anno>` never steals the block's hit.
+describe("placeAnnotations — block annotation (pinpoint S-003)", () => {
+  it("AS-007: a block annotation marks the whole block element via data-block-anno (NOT a wrapped sub-range)", () => {
+    const root = mountDoc(
+      `<p data-block-id="block-p-7">The whole paragraph is the annotation target here.</p>`,
+    );
+    const block = root.querySelector('[data-block-id="block-p-7"]') as HTMLElement;
+    const { placed, unplaceable } = placeAnnotations(root, [
+      {
+        id: "blk-1",
+        type: "block",
+        anchor: {
+          blockId: "block-p-7",
+          textSnippet: "The whole paragraph is the annotation target here.",
+          offset: 0,
+          length: 50,
+        },
+      },
+    ]);
+    expect(unplaceable).toEqual([]);
+    expect(placed.map((p) => p.id)).toEqual(["blk-1"]);
+    // The marker is keyed on data-block-anno on the BLOCK element itself — distinct from a range's data-anno.
+    expect(block.dataset.blockAnno).toBe("blk-1");
+    expect(block.classList.contains("anno-block-mark")).toBe(true);
+    // It is NOT a wrapped text sub-range: no <mark data-anno> was created.
+    expect(root.querySelector("[data-anno]")).toBeNull();
+    // The placed el reported for focus/scroll IS the block element.
+    expect(placed[0]!.el).toBe(block);
+    // The block's text is untouched (no wrapping).
+    expect(block.textContent).toBe("The whole paragraph is the annotation target here.");
+  });
+
+  it("AS-007: a comment block carries its type hue (--mark-hue), a redline block the redline hook (red)", () => {
+    const root = mountDoc(
+      `<p data-block-id="block-c">comment block</p><p data-block-id="block-r">redline block</p>`,
+    );
+    placeAnnotations(root, [
+      { id: "c", type: "block", hue: "#cbb24a", anchor: { blockId: "block-c", textSnippet: "comment block", offset: 0, length: 13 } },
+      { id: "r", type: "block", kind: "redline", anchor: { blockId: "block-r", textSnippet: "redline block", offset: 0, length: 13 } },
+    ]);
+    const cBlock = root.querySelector('[data-block-id="block-c"]') as HTMLElement;
+    const rBlock = root.querySelector('[data-block-id="block-r"]') as HTMLElement;
+    // amber-tinted block outline: the --mark-hue prop + the hue hook, reusing the shared system.
+    expect(cBlock.dataset.annoHue).toBe("true");
+    expect(cBlock.style.getPropertyValue("--mark-hue")).toBe("#cbb24a");
+    // redline block → red (the redline kind hook; the hue is ignored, as for a range redline).
+    expect(rBlock.dataset.annoKind).toBe("redline");
+    expect(rBlock.dataset.annoHue).toBeUndefined();
+  });
+
+  it("AS-007: a block annotation whose block is missing is unplaceable (GAP-005), not a crash", () => {
+    const root = mountDoc(`<p data-block-id="block-here">present</p>`);
+    const { placed, unplaceable } = placeAnnotations(root, [
+      { id: "ghost-blk", type: "block", anchor: { blockId: "block-gone", textSnippet: "x", offset: 0, length: 1 } },
+    ]);
+    expect(placed).toEqual([]);
+    expect(unplaceable).toEqual(["ghost-blk"]);
+    expect(root.querySelector("[data-block-anno]")).toBeNull();
+  });
+
+  it("AS-007: re-placing clears a prior block mark (idempotent — no stale data-block-anno)", () => {
+    const root = mountDoc(`<p data-block-id="block-p-7">a block</p>`);
+    const block = root.querySelector('[data-block-id="block-p-7"]') as HTMLElement;
+    placeAnnotations(root, [
+      { id: "blk-1", type: "block", anchor: { blockId: "block-p-7", textSnippet: "a block", offset: 0, length: 7 } },
+    ]);
+    expect(block.dataset.blockAnno).toBe("blk-1");
+    // Re-place with an empty set → the block mark is removed (no lingering attribute/class).
+    placeAnnotations(root, []);
+    expect(block.dataset.blockAnno).toBeUndefined();
+    expect(block.classList.contains("anno-block-mark")).toBe(false);
+  });
+
+  it("AS-008/C-004: resolveAnnoTarget matches a block mark by data-block-anno (the SAME resolver as a range mark)", () => {
+    const root = mountDoc(`<p data-block-id="block-p-7">Out of <strong>scope</strong> block.</p>`);
+    placeAnnotations(root, [
+      { id: "blk-1", type: "block", anchor: { blockId: "block-p-7", textSnippet: "Out of scope block.", offset: 0, length: 19 } },
+    ]);
+    const block = root.querySelector('[data-block-id="block-p-7"]') as HTMLElement;
+    const inline = root.querySelector("strong") as HTMLElement;
+    // A hover/click on the bare block area (or inline content inside it, with no nested range) resolves
+    // to the BLOCK annotation — the same way a range mark resolves to its data-anno.
+    expect(resolveAnnoTarget(block)?.id).toBe("blk-1");
+    expect(resolveAnnoTarget(inline)?.id).toBe("blk-1");
+    expect(resolveAnnoTarget(block)?.el).toBe(block);
+  });
+
+  it("AS-009: scrollToAnno finds a block annotation's element by data-block-anno (shared focusedId)", () => {
+    const root = mountDoc(`<p data-block-id="block-p-7">A block annotation row.</p>`);
+    placeAnnotations(root, [
+      { id: "blk-1", type: "block", anchor: { blockId: "block-p-7", textSnippet: "A block annotation row.", offset: 0, length: 23 } },
+    ]);
+    const block = root.querySelector('[data-block-id="block-p-7"]') as HTMLElement;
+    // A range row finds [data-anno]; a block row must find [data-block-anno] — the rail row click path.
+    const found = scrollToAnno(root, "blk-1");
+    expect(found).toBe(block);
+  });
+
+  it("AS-009b: a block + a nested range on the SAME block resolve independently (innermost wins)", () => {
+    // The block carries BOTH a whole-block annotation (data-block-anno) AND a nested range annotation
+    // (a <mark data-anno> wrapping a phrase inside it). A hit inside the nested range must resolve to
+    // the RANGE; a hit on the bare block area must resolve to the BLOCK — the nested mark never steals it.
+    const root = mountDoc(
+      `<p data-block-id="block-p-7">Margin text and a <em>highlighted phrase</em> after it.</p>`,
+    );
+    placeAnnotations(root, [
+      // The block annotation on the whole paragraph...
+      { id: "blk-1", type: "block", anchor: { blockId: "block-p-7", textSnippet: "Margin text and a highlighted phrase after it.", offset: 0, length: 46 } },
+      // ...AND a range annotation on the phrase "highlighted phrase" inside it.
+      { id: "rng-1", anchor: { blockId: "block-p-7", textSnippet: "highlighted phrase", offset: 18, length: 18 } },
+    ]);
+    const block = root.querySelector('[data-block-id="block-p-7"]') as HTMLElement;
+    const rangeMark = root.querySelector('[data-anno="rng-1"]') as HTMLElement;
+    expect(block.dataset.blockAnno).toBe("blk-1");
+    expect(rangeMark).not.toBeNull();
+    // A hit inside the nested range resolves to the RANGE (innermost wins, not the container block).
+    expect(resolveAnnoTarget(rangeMark)?.id).toBe("rng-1");
+    // A hit on the bare block area (a text node child outside any range mark) resolves to the BLOCK.
+    const bareTextNode = block.firstChild as Node; // "Margin text and a " — outside the range mark
+    expect(resolveAnnoTarget(bareTextNode.parentElement === block ? block : bareTextNode as unknown as Element)?.id).toBe("blk-1");
+    // And directly on the block element itself → the block.
+    expect(resolveAnnoTarget(block)?.id).toBe("blk-1");
   });
 });

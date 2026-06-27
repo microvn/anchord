@@ -120,6 +120,83 @@ describe("bridge relay — HTML peek/pin (S-003)", () => {
   });
 });
 
+describe("bridge relay — Pinpoint block-pick on HTML docs (pinpoint S-004)", () => {
+  it("AS-010: a relayed block-pick routes to onBlockPick with the blockId + rect (parent create)", () => {
+    // Picking an in-iframe block relays {type:'block-pick', blockId, rect} up the trusted port; the
+    // parent routes it to onBlockPick → the SAME beginBlockCompose/create path the markdown pick uses.
+    const seen: { id: string; rect: BridgeRect | null }[] = [];
+    const { deliver } = connectWithPort({
+      onSelection: () => {},
+      onBlockPick: (blockId, rect) => seen.push({ id: blockId, rect }),
+    });
+    deliver({ type: "block-pick", blockId: "block-h1-1", rect: RECT });
+    expect(seen).toEqual([{ id: "block-h1-1", rect: RECT }]);
+  });
+
+  it("AS-010: a block-pick may carry a null/absent rect (the bridge couldn't read one) — still routes", () => {
+    const seen: { id: string; rect: BridgeRect | null }[] = [];
+    const { deliver } = connectWithPort({
+      onSelection: () => {},
+      onBlockPick: (blockId, rect) => seen.push({ id: blockId, rect }),
+    });
+    deliver({ type: "block-pick", blockId: "block-p-3", rect: null });
+    deliver({ type: "block-pick", blockId: "block-p-4" });
+    expect(seen).toEqual([
+      { id: "block-p-3", rect: null },
+      { id: "block-p-4", rect: null },
+    ]);
+  });
+
+  it("AS-011 (C-005): block-pick is in the discriminated union and a valid one parses", () => {
+    expect(
+      relayedMessageSchema.safeParse({ type: "block-pick", blockId: "block-h1-1", rect: RECT }).success,
+    ).toBe(true);
+    // rect is optional/nullable (the bridge may not be able to read one).
+    expect(relayedMessageSchema.safeParse({ type: "block-pick", blockId: "block-p-1", rect: null }).success).toBe(true);
+    expect(relayedMessageSchema.safeParse({ type: "block-pick", blockId: "block-p-1" }).success).toBe(true);
+  });
+
+  it("AS-011 (C-005, security): a block-pick with a malformed rect fails parse and never routes", () => {
+    // The SAME rect hardening as the hover-card relay (C-006): a NaN/Infinity/negative-size rect makes
+    // the WHOLE block-pick fail Zod at the parent boundary → it never reaches onBlockPick (no create).
+    expect(
+      relayedMessageSchema.safeParse({ type: "block-pick", blockId: "block-p-1", rect: { x: 0, y: 0, width: 1e9, height: 1 } })
+        .success,
+    ).toBe(true); // 1e9 is finite/non-negative → parses at the schema level; clampRectToViewport rejects it on use.
+    expect(
+      relayedMessageSchema.safeParse({ type: "block-pick", blockId: "block-p-1", rect: { x: 0, y: 0, width: NaN, height: 1 } })
+        .success,
+    ).toBe(false);
+    expect(
+      relayedMessageSchema.safeParse({ type: "block-pick", blockId: "block-p-1", rect: { x: 0, y: 0, width: -5, height: 1 } })
+        .success,
+    ).toBe(false);
+    expect(
+      relayedMessageSchema.safeParse({ type: "block-pick", blockId: "block-p-1", rect: { x: Infinity, y: 0, width: 1, height: 1 } })
+        .success,
+    ).toBe(false);
+    // A NaN-rect block-pick delivered over the port never calls the handler (the message failed parse).
+    let calls = 0;
+    const { deliver } = connectWithPort({ onSelection: () => {}, onBlockPick: () => (calls += 1) });
+    deliver({ type: "block-pick", blockId: "block-p-1", rect: { x: 0, y: 0, width: NaN, height: 1 } });
+    expect(calls).toBe(0);
+  });
+
+  it("AS-011 (C-005, security): a block-pick with an empty blockId fails parse (a pick must name a block)", () => {
+    expect(relayedMessageSchema.safeParse({ type: "block-pick", blockId: "", rect: RECT }).success).toBe(false);
+  });
+
+  it("AS-011 (C-005): the parent does NOT pre-validate the blockId against the iframe DOM — a forged id still routes (the matcher orphans it)", () => {
+    // The parent can't reach the opaque iframe DOM, so it CANNOT check whether the id resolves. A
+    // forged id ("nope") routes verbatim to onBlockPick → create stores it → the matcher never places
+    // it (orphaned). Symmetric with the existing range relay; block-pick adds no new id gate.
+    const seen: string[] = [];
+    const { deliver } = connectWithPort({ onSelection: () => {}, onBlockPick: (blockId) => seen.push(blockId) });
+    deliver({ type: "block-pick", blockId: "nope", rect: RECT });
+    expect(seen).toEqual(["nope"]);
+  });
+});
+
 describe("C-006 — relayedMessageSchema (Zod-parse every relayed message, AS-027)", () => {
   it("AS-027: a forged shape (not in the protocol) fails parse and is ignored", () => {
     // A body script's `parent.postMessage({annotation:…})` shape that reaches the port: no `type` it

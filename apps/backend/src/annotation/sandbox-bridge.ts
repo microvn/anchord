@@ -207,16 +207,81 @@ export function bridgeScript(nonce: string): string {
     port.postMessage({ type: "selection", anchor: anchor, rect: rect });
   }
 
-  // S-003 (C-002): unwrap EVERY existing anno mark — the "clear" half of the idempotent
-  // clear-then-redraw sync. Delegates to the shared unwrapAnnoMarks (mirrors the FE engine).
+  // pinpoint S-004/C-002/C-004: the block-mark vocabulary, mirroring the markdown engine
+  // (annotation-marks.tsx). A whole-block annotation marks the block ELEMENT — keyed on the DISTINCT
+  // data-block-anno attribute + the .anno-block-mark class — NOT a wrapped text range, so it reads
+  // independently from any nested range <mark data-anno> (a hit inside the range wins the range, a hit
+  // on bare block area the block — same as markdown).
+  var BLOCK_MARK_ATTR = "data-block-anno";
+  var BLOCK_MARK_CLASS = "anno-block-mark";
+  // pinpoint S-004/C-004: the click/hover resolver matches BOTH a range mark (mark[data-anno]) AND a
+  // block mark ([data-block-anno]) so a block-outlined element is hover/click-relayable like any mark.
+  // closest() walks innermost-first, so a hit inside a nested range <mark> resolves the RANGE while a
+  // hit on bare block area resolves the BLOCK (AS-009b parity with the markdown resolver).
+  var MARK_SELECTOR = "mark[data-anno], [" + BLOCK_MARK_ATTR + "]";
+  function annoIdOf(mk){ return mk && (mk.getAttribute("data-anno") || mk.getAttribute(BLOCK_MARK_ATTR)); }
+
+  // pinpoint S-004: find a block element by its positional id — BOTH attribute forms injectBlockIds()
+  // emits: a data-block-id attr (element already had an id) AND a plain id attr starting "block-".
+  // Mirrors the markdown engine findBlock + the shared anchor lookup (IIFE namespace omits findBlock).
+  function escapeCss(value){ return String(value).replace(/["\\\]\[#.:>+~*^$|=()  ]/g, "\\$&"); }
+  function findBlockEl(blockId){
+    if (!blockId) return null;
+    var byBlock = document.querySelector('[data-block-id="' + escapeCss(blockId) + '"]');
+    if (byBlock) return byBlock;
+    try { return document.querySelector("#" + escapeCss(blockId)); } catch (e) { return null; }
+  }
+
+  // S-003 (C-002): unwrap/clear EVERY existing anno mark — the "clear" half of the idempotent
+  // clear-then-redraw sync. Delegates to the shared unwrapAnnoMarks for range <mark>s, AND strips the
+  // block-mark attribute + class/hue/state hooks off every block element (pinpoint S-004) so a dropped
+  // block annotation leaves no stale outline.
   function unwrapAllAnnoMarks(){
     A.unwrapAnnoMarks(document);
+    var blocks = document.querySelectorAll("[" + BLOCK_MARK_ATTR + "]");
+    for (var i = 0; i < blocks.length; i++){
+      var b = blocks[i];
+      b.removeAttribute(BLOCK_MARK_ATTR);
+      if (b.classList) b.classList.remove(BLOCK_MARK_CLASS);
+      b.removeAttribute("data-anno-hue");
+      b.removeAttribute("data-resolved");
+      b.removeAttribute("data-anno-kind");
+      b.removeAttribute("data-anno-stale");
+      b.removeAttribute("data-anno-filtered");
+      if (b.style && b.style.removeProperty) b.style.removeProperty("--mark-hue");
+    }
+  }
+
+  // pinpoint S-004/AS-012 (C-002/C-004): draw a type=block highlight by outlining the block ELEMENT —
+  // find the block by id (via the shared block lookup) and stamp data-block-anno + .anno-block-mark +
+  // the SAME hue/lifecycle hooks the markdown placer uses, NOT a wrapped text range. Returns true if
+  // the block resolved (placed), false on a miss (forged/unresolvable id → orphaned, AS-011 symmetry).
+  function drawBlock(item){
+    var anchor = item.anchor || {};
+    var block = findBlockEl(anchor.blockId);
+    if (!block) return false;
+    block.setAttribute(BLOCK_MARK_ATTR, String(item.annotationId));
+    if (block.classList) block.classList.add(BLOCK_MARK_CLASS);
+    // C-002: a redline carries kind (no hue); otherwise the per-type/label hue rides via --mark-hue.
+    if (item.kind === "redline"){
+      block.setAttribute("data-anno-kind", "redline");
+    } else if (item.hue){
+      block.setAttribute("data-anno-hue", "true");
+      if (block.style && block.style.setProperty) block.style.setProperty("--mark-hue", String(item.hue));
+    }
+    if (item.resolved) block.setAttribute("data-resolved", "true");
+    if (item.stale) block.setAttribute("data-anno-stale", "true");
+    if (item.filtered) block.setAttribute("data-anno-filtered", "true");
+    return true;
   }
 
   // S-001/S-003: draw ONE highlight from a {anchor, annotationId, hue?} item. Returns true if it
   // placed (>=1 mark), false on a placement miss (the caller relays place-failed). Reused by both
   // the single {highlight} handler (back-compat) and the batch {highlights} redraw.
   function drawHighlight(item){
+    // pinpoint S-004/AS-012: a type=block annotation outlines the whole block ELEMENT (data-block-anno)
+    // rather than wrapping a text range — branch BEFORE the range draw, mirroring the markdown placer.
+    if (item.type === "block") return drawBlock(item);
     var marks = drawRange(item.anchor, item.annotationId);
     if (!marks || !marks.length) return false;
     for (var mi = 0; mi < marks.length; mi++){
@@ -253,11 +318,14 @@ export function bridgeScript(nonce: string): string {
   // markdown engine's focus-class sync + scrollToAnno. A null id just clears all emphasis. The parent
   // can't reach the opaque iframe DOM, so this runs in-iframe on a {type:"focus"} port message (C-001).
   function focusAnno(annotationId){
-    var marks = document.querySelectorAll("mark[data-anno]");
+    // pinpoint S-004/AS-012: match BOTH range marks (mark[data-anno]) and block marks
+    // ([data-block-anno]) so focusing a rail thread emphasises + scrolls to a block annotation too.
+    var marks = document.querySelectorAll("mark[data-anno], [data-block-anno]");
     var first = null;
     for (var i = 0; i < marks.length; i++){
       var mk = marks[i];
-      var match = annotationId != null && mk.getAttribute("data-anno") === String(annotationId);
+      var mid = mk.getAttribute("data-anno") || mk.getAttribute("data-block-anno");
+      var match = annotationId != null && mid === String(annotationId);
       if (mk.classList){
         if (match) mk.classList.add("anno-mark--focus"); else mk.classList.remove("anno-mark--focus");
       }
@@ -286,6 +354,13 @@ export function bridgeScript(nonce: string): string {
     } else if (msg.type === "focus"){
       // S-004/AS-012 (C-005): the parent focused a rail thread → emphasise + scroll to its mark.
       focusAnno(msg.annotationId);
+    } else if (msg.type === "pinpoint"){
+      // pinpoint S-004/AS-010 (C-001): the parent toggled Pinpoint mode → flip the in-iframe block-pick
+      // gate. Only while Pinpoint is active does a block click relay a block-pick (in Select mode the
+      // click is inert for picking — C-001 mutual exclusivity). The parent owns the mode; this only
+      // mirrors it, like the markdown useBlockPick enabled gate.
+      pinpoint = !!msg.enabled;
+      if (!pinpoint) clearBlockHover();
     }
   };
 
@@ -300,6 +375,31 @@ export function bridgeScript(nonce: string): string {
   // rect an in-iframe scroll re-posts (AS-021). Set by the click (pin) and hover (peek) handlers below.
   var markEnterId = null;
   var trackedMark = null;
+  // pinpoint S-004/AS-010 (C-001): Pinpoint mode flag (toggled by the parent over the port) + the
+  // block currently outlined under the cursor in Pinpoint mode. A block click relays a block-pick ONLY
+  // while pinpoint is true; in Select mode picking is inert (the text-selection path owns the doc).
+  var pinpoint = false;
+  var hoverBlock = null;
+  var BLOCK_HOVER_CLASS = "anno-block-hover";
+
+  // pinpoint S-004/AS-006b: the nearest pickable block ancestor of an event target whose text is
+  // non-empty (mirrors resolvePickableBlock). An empty block (<hr>, image-only, empty <p>) is NOT a
+  // pick target. Returns {blockId, element} or null.
+  function pickableBlock(target){
+    var el = target && target.closest ? target.closest(BLOCK_SELECTOR) : null;
+    if (!el) return null;
+    if ((el.textContent || "").trim().length === 0) return null; // AS-006b: empty block never picks.
+    var blockId = el.getAttribute("data-block-id") || el.id;
+    if (!blockId) return null;
+    return { blockId: blockId, element: el };
+  }
+  function setBlockHover(block){
+    if (hoverBlock === block) return;
+    if (hoverBlock && hoverBlock.classList) hoverBlock.classList.remove(BLOCK_HOVER_CLASS);
+    hoverBlock = block;
+    if (block && block.classList) block.classList.add(BLOCK_HOVER_CLASS);
+  }
+  function clearBlockHover(){ setBlockHover(null); }
 
   // S-004/AS-011 (C-005) + S-003/AS-016: a click on a [data-anno] mark relays its id UP the trusted
   // port so the parent focuses the rail thread AND (S-003) pins the card at the mark. The mark's own
@@ -307,10 +407,12 @@ export function bridgeScript(nonce: string): string {
   // CLICKED mark's rect, never the first segment). Capture phase + closest() so a click on inner
   // content of a mark still resolves the mark. annotationId (NOT annoId) stays the field name.
   document.addEventListener("click", function(e){
+    if (pinpoint) return; // pinpoint S-004/C-001: in Pinpoint mode a click PICKS a block to create —
+    // the block-pick handler below owns it; existing-mark focus is a Select/read-mode interaction.
     var t = e.target;
-    var mk = t && t.closest ? t.closest("mark[data-anno]") : null;
+    var mk = t && t.closest ? t.closest(MARK_SELECTOR) : null;
     if (mk){
-      var id = mk.getAttribute("data-anno");
+      var id = annoIdOf(mk);
       if (id) {
         // Track the clicked (→ pinned) mark so an in-iframe scroll re-posts its rect (AS-021), even if
         // the click arrived without a prior hover (a tap, or a click straight onto the mark).
@@ -320,6 +422,37 @@ export function bridgeScript(nonce: string): string {
     }
   }, true);
 
+  // pinpoint S-004/AS-010 (C-001): in Pinpoint mode, hovering a pickable block outlines it and a
+  // click relays {type:"block-pick", blockId, rect} UP the trusted port → the parent synthesizes the
+  // 5-type popover + a whole-block anchor (the SAME beginBlockCompose the markdown pick uses). Gated on
+  // pinpoint state so a Select-mode click never relays a block-pick. An empty block is never a target
+  // (pickableBlock returns null → no outline, no pick — AS-006b). The block's OWN rect rides along so
+  // the parent can position the popover (the parent adds the iframe offset, then clamps — C-005).
+  document.addEventListener("mouseover", function(e){
+    if (!pinpoint) return;
+    var p = pickableBlock(e.target);
+    setBlockHover(p ? p.element : null);
+  }, true);
+  document.addEventListener("mouseout", function(e){
+    if (!pinpoint) return;
+    var from = pickableBlock(e.target);
+    var to = pickableBlock(e.relatedTarget);
+    if (from && to && from.element === to.element) return; // moving within the same block isn't a leave.
+    if (!to) setBlockHover(null);
+  }, true);
+  document.addEventListener("click", function(e){
+    if (!pinpoint) return;
+    var p = pickableBlock(e.target);
+    if (!p) return; // AS-006b: a click on an empty block / non-block area is a no-op.
+    setBlockHover(p.element); // keep it outlined while the parent's popover is open.
+    var r = null;
+    try { var br = p.element.getBoundingClientRect(); r = { x: br.x, y: br.y, width: br.width, height: br.height }; } catch (e2) {}
+    // C-002: relay the block's full text so the parent builds the durable whole-block anchor — it
+    // can't read the opaque iframe DOM itself. Capped at the parent (buildBlockAnchor) per the Data
+    // Model; sent verbatim here, treated as plaintext quote at the parent (C-003).
+    port.postMessage({ type: "block-pick", blockId: p.blockId, rect: r, text: p.element.textContent || "" });
+  }, true);
+
   // S-003/AS-015 (peek): hover enter/leave over a [data-anno] mark relays the id + rect UP so the
   // parent shows/hides the SAME read-only peek card it renders for markdown — but OUTSIDE the sandbox
   // (the parent can't read the opaque iframe DOM — C-001). Per the S-001 markdown contract, hover is
@@ -327,10 +460,11 @@ export function bridgeScript(nonce: string): string {
   // delegated listener), and moving between marks that share the SAME data-anno is NOT a leave
   // (coalesce by id — C-008). The parent owns the dwell timer; this side only reports enter/leave.
   document.addEventListener("mouseover", function(e){
+    if (pinpoint) return; // Pinpoint mode: the block hover-outline owns hover; the peek is read/select.
     var t = e.target;
-    var mk = t && t.closest ? t.closest("mark[data-anno]") : null;
+    var mk = t && t.closest ? t.closest(MARK_SELECTOR) : null;
     if (!mk) return;
-    var id = mk.getAttribute("data-anno");
+    var id = annoIdOf(mk);
     if (!id || id === markEnterId) return; // coalesce: same-id move is not a re-enter (C-008).
     markEnterId = id;
     trackedMark = mk;
@@ -339,13 +473,13 @@ export function bridgeScript(nonce: string): string {
   document.addEventListener("mouseout", function(e){
     if (markEnterId == null) return;
     var from = e.target;
-    var mk = from && from.closest ? from.closest("mark[data-anno]") : null;
+    var mk = from && from.closest ? from.closest(MARK_SELECTOR) : null;
     if (!mk) return;
     // relatedTarget = where the cursor is going. Still inside a mark with the SAME id → not a leave
     // (C-008: a multi_range annotation's N marks coalesce; inner spans of one mark coalesce too).
     var to = e.relatedTarget;
-    var toMark = to && to.closest ? to.closest("mark[data-anno]") : null;
-    if (toMark && toMark.getAttribute("data-anno") === markEnterId) return;
+    var toMark = to && to.closest ? to.closest(MARK_SELECTOR) : null;
+    if (toMark && annoIdOf(toMark) === markEnterId) return;
     var leftId = markEnterId;
     markEnterId = null;
     trackedMark = null;
@@ -592,6 +726,25 @@ export const MARK_STYLESHEET = [
   // adjacent-mark padding collapse so a multi-node run reads as one continuous highlight.
   ".anno-mark + .anno-mark{padding-left:0;}",
   ".anno-mark:has(+ .anno-mark){padding-right:0;}",
+  // pinpoint S-002/AS-003: the in-iframe block hover-outline PICK affordance (mirrors styles.css
+  // .anno-block-hover; --accent inlined to teal). Without this rule the class is added on hover but is
+  // invisible in the sandbox — the iframe loads only this stylesheet, never the app styles.css.
+  ".anno-block-hover{outline:2px dashed color-mix(in oklab, #37b3bd 60%, transparent);outline-offset:2px;border-radius:3px;background:color-mix(in oklab, #37b3bd 8%, transparent);cursor:pointer;}",
+  // pinpoint S-003/AS-012 (C-002/C-004): the whole-block annotation MARKER on the block ELEMENT
+  // (keyed data-block-anno), mirroring styles.css .anno-block-mark + its hue/lifecycle variants. The
+  // per-mark --mark-hue is set inline on the element by drawBlock, so var(--mark-hue) resolves here.
+  ".anno-block-mark{outline:2px solid color-mix(in oklab, #37b3bd 55%, transparent);outline-offset:2px;border-radius:3px;background:color-mix(in oklab, #37b3bd 10%, transparent);cursor:pointer;transition:background 0.12s, outline-color 0.12s;}",
+  ".anno-block-mark:hover,.anno-block-mark.anno-mark--focus{background:color-mix(in oklab, #37b3bd 18%, transparent);outline-color:#37b3bd;}",
+  ".anno-block-mark[data-anno-hue]{outline-color:color-mix(in oklab, var(--mark-hue) 60%, transparent);background:color-mix(in oklab, var(--mark-hue) 12%, transparent);}",
+  ".anno-block-mark[data-anno-hue]:hover,.anno-block-mark[data-anno-hue].anno-mark--focus{outline-color:var(--mark-hue);background:color-mix(in oklab, var(--mark-hue) 20%, transparent);}",
+  '.anno-block-mark[data-resolved="true"]{outline-color:color-mix(in oklab, #43b873 55%, transparent);background:color-mix(in oklab, #43b873 10%, transparent);}',
+  '.anno-block-mark[data-anno-kind="redline"]{outline-color:color-mix(in oklab, #f1655d 60%, transparent);background:color-mix(in oklab, #f1655d 12%, transparent);}',
+  '.anno-block-mark[data-anno-kind="redline"]:hover,.anno-block-mark[data-anno-kind="redline"].anno-mark--focus{outline-color:#f1655d;background:color-mix(in oklab, #f1655d 20%, transparent);}',
+  '.anno-block-mark[data-anno-stale="true"]{outline-style:dashed;outline-color:color-mix(in oklab, #677074 55%, transparent);background:transparent;opacity:0.7;}',
+  '.anno-block-mark[data-anno-filtered="true"]{outline-color:color-mix(in oklab, currentColor 20%, transparent);background:transparent;opacity:0.4;}',
+  // pinpoint: a table cell/row clips an OUTSET outline against its neighbours — inset the ring so it
+  // draws INSIDE the cell box and is never occluded (mirrors styles.css :is(td,th,tr) override).
+  "td.anno-block-hover,th.anno-block-hover,tr.anno-block-hover,td.anno-block-mark,th.anno-block-mark,tr.anno-block-mark{outline-offset:-2px;}",
 ].join("");
 
 /** Escape a value for safe use inside a double-quoted HTML attribute. */

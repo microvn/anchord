@@ -398,6 +398,14 @@ const createAnnotationSchema = z
   .refine((b) => !(b.label != null && b.suggestion != null), {
     message: "a label annotation and a suggestion are mutually exclusive",
     path: ["label"],
+  })
+  // pinpoint S-002 (C-002 / AS-005): defense-in-depth — a type=block annotation spans the WHOLE block,
+  // so its (text) anchor MUST start at offset 0. This rejects a forged sub-range masquerading as a
+  // block (a block click only ever builds offset 0 client-side; this guards the wire). An image-region
+  // anchor carries no offset and is not type=block, so it is exempt.
+  .refine((b) => !(b.type === "block" && "offset" in b.anchor && b.anchor.offset !== 0), {
+    message: "a block annotation's anchor must start at offset 0",
+    path: ["anchor", "offset"],
   });
 
 const replySchema = z.object({

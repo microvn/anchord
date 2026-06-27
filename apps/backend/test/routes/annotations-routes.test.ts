@@ -421,6 +421,39 @@ describe("POST /api/docs/:slug/annotations (S-001/S-002)", () => {
     expect(json.error.code).toBe("VALIDATION_ERROR");
     expect(ar.calls.inserts).toHaveLength(0);
   });
+
+  // pinpoint S-002 (C-002 / AS-005): a type=block annotation spans the WHOLE block, so its text
+  // anchor MUST start at offset 0. The defense-in-depth refine rejects a forged sub-range posing as
+  // a block; a well-formed block (offset 0) passes and persists as type=block.
+  test("C-002/AS-005: a whole-block create (type=block, anchor offset 0) → 201, type=block persisted", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ type: "block", anchor: { blockId: "block-p-7", textSnippet: "Out of scope here.", offset: 0, length: 18 } }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(ar.calls.inserts[0]?.type).toBe("block");
+    expect(ar.calls.inserts[0]?.anchor.blockId).toBe("block-p-7");
+    expect(ar.calls.inserts[0]?.anchor.offset).toBe(0);
+  });
+
+  test("C-002/AS-005: a forged type=block with a NON-zero offset → 400 VALIDATION_ERROR, nothing persisted", async () => {
+    const ar = fakeAnnotationRepo();
+    const app = buildApp({ resolveDocRole: asCommenter, annotationRepo: ar });
+    const res = await app.handle(
+      req("/api/w/ws_1/docs/doc-one/annotations", {
+        method: "POST",
+        body: JSON.stringify({ type: "block", anchor: { blockId: "block-p-7", textSnippet: "scope", offset: 7, length: 5 } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as any;
+    expect(json.error.code).toBe("VALIDATION_ERROR");
+    expect(ar.calls.inserts).toHaveLength(0);
+  });
 });
 
 // annotation-create-version-pin (sub-spec of annotation-core) — the optional `expectedVersion`

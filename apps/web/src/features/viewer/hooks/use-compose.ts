@@ -78,6 +78,60 @@ export const LIKE_BODY = "Looks good";
 // (the strike conveys the deletion; this is just the thread's authored anchor). S3 guard.
 export const REDLINE_ROOT_BODY = "Suggested deletion";
 
+// pinpoint S-002 (C-002 / AS-006c): the cap for a whole-block textSnippet. A block can be large (a
+// fenced code block, a wide table) — unlike a range snippet which is small by nature — so we bound
+// the stored snippet to keep the anchor jsonb + the per-version locate scan small. Above the cap we
+// store HEAD + TAIL windows joined by a content-hash marker (not the whole block verbatim, Data
+// Model), and `length` carries the FULL block length in UTF-16 units so offsets never desync.
+export const MAX_BLOCK_SNIPPET = 8192;
+const BLOCK_SNIPPET_WINDOW = 3072; // head + tail window size when capping (head+tail+hash < cap)
+
+/** A tiny, stable, non-crypto content hash (FNV-1a, base36) — the join marker for a capped block
+ *  snippet so two long blocks that share a head+tail still differ. PURE + deterministic. */
+function blockSnippetHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
+ * pinpoint S-002 (C-002 / AS-006c): cap a block's full text for storage. At or below the cap the
+ * snippet is the verbatim text; above it we keep the HEAD + TAIL windows joined by a hash marker so
+ * the stored snippet stays bounded (head+tail+hash) while a large/unicode-heavy block can't blow the
+ * jsonb. The `length` field (built separately) always carries the FULL UTF-16 length, not the cap.
+ */
+export function capBlockSnippet(text: string): string {
+  if (text.length <= MAX_BLOCK_SNIPPET) return text;
+  const head = text.slice(0, BLOCK_SNIPPET_WINDOW);
+  const tail = text.slice(text.length - BLOCK_SNIPPET_WINDOW);
+  return `${head}…⟨${blockSnippetHash(text)}⟩…${tail}`;
+}
+
+/**
+ * pinpoint S-002 (C-002): build a WHOLE-block anchor from a picked block element — the Pinpoint
+ * counterpart of selectionToAnchor. `textSnippet` is the block's full text content (CAPPED per the
+ * Data Model), `offset` is 0, `length` is the block text's UTF-16 code-unit count (the SAME unit the
+ * `@anchord/anchor` matcher counts, so an emoji/CJK-heavy block does not desync — AS-006c), and there
+ * are NO `segments` (a block is single, not a multi-range). Returns null for an empty / whitespace-
+ * only block (`<hr>`, an image-only block, an empty paragraph) so the pick is a NO-OP (AS-006b) —
+ * mirroring `buildAnchor`'s empty-text guard server-side.
+ */
+export function buildBlockAnchor(
+  blockId: string,
+  element: { textContent: string | null },
+): SelectionAnchor | null {
+  const full = element.textContent ?? "";
+  // AS-006b: an empty / whitespace-only block is not annotatable.
+  if (full.trim().length === 0) return null;
+  const textSnippet = capBlockSnippet(full);
+  // AS-006c: length is the FULL block text's UTF-16 length (String.length / locateRange's unit),
+  // even when textSnippet is capped — so offsets stay aligned with the matcher's counting.
+  return { blockId, textSnippet, offset: 0, length: full.length, segments: undefined as unknown as SelectionAnchor["segments"] };
+}
+
 export interface ComposeApi {
   /** popover position when a valid selection is live (else null → no popover). `centered` means
    *  `left` is the CENTER x of the selection and the popover applies translateX(-50%) (above-
@@ -121,6 +175,13 @@ export interface ComposeApi {
    *  Mirrors the Markdown mouseup path: stash the anchor + raise the popover. The rect is the
    *  selection's viewport rect (RectLike); placePopover does the flip/clamp (MƯỢT TASK 1/3). */
   beginCompose: (anchor: ComposeAnchor, rect?: RectLike | null) => void;
+  /** pinpoint S-002 (AS-004 / AS-005 / C-001): a block click in Pinpoint mode opens the SAME 5-type
+   *  popover from a SYNTHESIZED whole-block anchor + rect — a block click is NOT a live text selection,
+   *  so it bypasses the selection→commit path entirely (which is inert in Pinpoint, S-001). Builds the
+   *  whole-block anchor via buildBlockAnchor (offset 0, capped snippet, UTF-16 length); an empty block
+   *  returns false and raises nothing (AS-006b). Gated by canCompose (C-004). Returns whether the
+   *  popover was raised so the caller knows if the block was pickable (drives the outline lifecycle). */
+  beginBlockCompose: (blockId: string, element: { textContent: string | null }, rect?: RectLike | null) => boolean;
   /** MƯỢT TASK 3: reposition the open popover from a fresh selection rect relayed by the iframe
    *  bridge on its in-iframe scroll. No-op when no popover is open. */
   repositionFromRect: (rect: RectLike) => void;
@@ -176,6 +237,12 @@ export function useCompose(
    *  the create `comment` so a guest suggestion carries its name (the composer `send` gets the name
    *  from its own prop). Without this, a guest redline POSTs no name and the server rejects it. */
   guestName?: string | null,
+  /** pinpoint S-001 (AS-002 / C-001): the active input mode (ViewerScreen owns it). In `"pinpoint"`
+   *  a text drag-selection is INERT — the mouseup/selectionchange commit path does NOT raise the
+   *  create popover (only a block click creates, S-002). In `"select"` (the default) the normal
+   *  text-selection→popover→create flow runs. Defaults to "select" so every existing call site keeps
+   *  its current behaviour. The gate lives HERE, not in the toolbar — the toolbar only owns the chip. */
+  inputMode: "select" | "pinpoint" = "select",
 ): ComposeApi {
   const [popover, setPopover] = useState<{ top: number; left: number; centered: boolean } | null>(null);
   const [active, setActive] = useState<SelectionAnchor | null>(null);
@@ -193,6 +260,12 @@ export function useCompose(
   // Hold the anchor the popover was raised for, so Comment uses it even after the DOM selection
   // collapses (a click can clear window.getSelection()).
   const pendingAnchor = useRef<SelectionAnchor | null>(null);
+  // pinpoint S-002 (C-002 / AS-005): true while the pending/active anchor is a WHOLE-BLOCK pick (vs a
+  // text selection), so the create paths send `type=block` instead of range/multi_range. Set in
+  // beginBlockCompose, captured into `activeIsBlock` when the composer opens, and reset by every path
+  // that raises a fresh selection popover (commit / beginCompose) or dismisses.
+  const pendingIsBlock = useRef(false);
+  const [activeIsBlock, setActiveIsBlock] = useState(false);
   // MƯỢT TASK 1: the measured popover size (set by selection-popover via setPopoverSize at render).
   // Falls back to DEFAULT_POPOVER_SIZE until measured (always, under happy-dom).
   const popoverSize = useRef(DEFAULT_POPOVER_SIZE);
@@ -234,6 +307,11 @@ export function useCompose(
     const doc = docPaneEl.ownerDocument;
 
     const commit = () => {
+      // pinpoint S-001 (AS-002 / C-001): in Pinpoint mode a text drag-selection is INERT — never
+      // raise the create popover. Only a block click creates (block-pick is S-002). The mode is the
+      // gate (per C-001), and it lives here so the suppression covers BOTH the mouseup and the touch
+      // selectionchange path that funnel through commit.
+      if (inputMode !== "select") return;
       const sel = doc.getSelection();
       const anchor = selectionToAnchor(sel);
       if (!anchor) {
@@ -249,6 +327,7 @@ export function useCompose(
         return;
       }
       pendingAnchor.current = anchor;
+      pendingIsBlock.current = false; // a text selection is a range, not a block pick (C-002).
       // Re-read THIS document's live selection rect on demand so scroll/resize can reposition.
       liveRect.current = () => selectionRect(doc.getSelection());
       // Position via the pure flip/clamp math. happy-dom returns zeros under test (fine — we assert
@@ -278,7 +357,9 @@ export function useCompose(
 
     docPaneEl.addEventListener("mouseup", commit);
     return () => docPaneEl.removeEventListener("mouseup", commit);
-  }, [canCompose, docPaneEl, positionFor]);
+    // pinpoint S-001: re-bind when inputMode flips so the commit closure reads the current mode (a
+    // Select→Pinpoint switch makes the next drag inert; Pinpoint→Select restores create — AS-002).
+  }, [canCompose, docPaneEl, positionFor, inputMode]);
 
   // MƯỢT TASK 1: while the popover is open, reposition on scroll/resize by re-reading the live
   // selection rect; auto-dismiss when the selection scrolls out of the viewport (closeOnScrollOut —
@@ -349,10 +430,31 @@ export function useCompose(
         return;
       }
       pendingAnchor.current = normalized;
+      pendingIsBlock.current = false; // the bridge relays a text selection, not a block pick (C-002).
       // Bridge path: the iframe owns the selection; there's no parent-readable Range to re-read on
       // scroll, so clear liveRect. The iframe re-posts its rect over the port instead (TASK 3).
       liveRect.current = null;
       setPopover(rect ? positionFor(rect) : { top: 0, left: 0, centered: true });
+    },
+    [canCompose, positionFor],
+  );
+
+  // pinpoint S-002 (AS-004/AS-005/C-001): open the 5-type popover for a PICKED BLOCK. A block click
+  // is not a live text selection, so this bypasses the selection→commit path (inert in Pinpoint,
+  // S-001) and feeds the chooser a SYNTHESIZED whole-block anchor + rect directly. C-004: a viewer-
+  // only role never picks (canCompose false → no-op). AS-006b: an empty block builds a null anchor →
+  // returns false, raises nothing (the caller never outlines an unpickable block). There is no live
+  // Range to re-read on scroll, so liveRect is cleared (the block rect is static for this pick).
+  const beginBlockCompose = useCallback(
+    (blockId: string, element: { textContent: string | null }, rect?: RectLike | null): boolean => {
+      if (!canCompose) return false;
+      const anchor = buildBlockAnchor(blockId, element);
+      if (!anchor) return false; // AS-006b: empty / whitespace-only block → no popover, no create.
+      pendingAnchor.current = anchor;
+      pendingIsBlock.current = true; // C-002: the create paths send type=block for this pick.
+      liveRect.current = null; // a block pick has no live selection Range to re-read.
+      setPopover(rect ? positionFor(rect) : { top: 0, left: 0, centered: true });
+      return true;
     },
     [canCompose, positionFor],
   );
@@ -369,6 +471,7 @@ export function useCompose(
   const dismissPopover = useCallback(() => {
     setPopover(null);
     pendingAnchor.current = null;
+    pendingIsBlock.current = false; // C-002: drop the block-pick flag along with the pending anchor.
     liveRect.current = null;
   }, []);
 
@@ -379,6 +482,7 @@ export function useCompose(
       const anchor = pendingAnchor.current;
       if (!anchor) return;
       setActive(anchor);
+      setActiveIsBlock(pendingIsBlock.current); // C-002: carry the block-pick flag into send.
       setQuote(anchor.textSnippet);
       setComposeLabel(opts?.label ?? null);
       setComposeInitialBody(opts?.initialBody ?? "");
@@ -417,6 +521,7 @@ export function useCompose(
 
   const cancel = useCallback(() => {
     setActive(null);
+    setActiveIsBlock(false);
     setQuote(null);
     setComposerAnchor(null);
     setComposeLabel(null);
@@ -432,6 +537,12 @@ export function useCompose(
   const startRedline = useCallback(() => {
     const anchor = pendingAnchor.current;
     if (!anchor) return;
+    // pinpoint S-002 (C-002): a redline on a picked block creates type=block; else range/multi_range.
+    const redlineType: "range" | "multi_range" | "block" = pendingIsBlock.current
+      ? "block"
+      : anchor.segments && anchor.segments.length > 1
+        ? "multi_range"
+        : "range";
     if (!slug || redlineCtx == null) {
       // No version pin reachable (no doc context) → can't pin `againstVersion`. Close the popover;
       // don't create a ghost that can never persist. (C-018: the redline now rides the doc-addressed
@@ -454,6 +565,8 @@ export function useCompose(
     const optimisticRedline: ViewerAnnotation = {
       id: tempId,
       ...(author.authorId ? { authorId: author.authorId } : {}),
+      // The rail/decide logic keys on type=suggestion (the redline lifecycle); the BLOCK vs range
+      // distinction rides the create request's `type` (redlineType) — the server derives suggestion.
       type: "suggestion",
       status: "unresolved",
       isOrphaned: false,
@@ -519,8 +632,8 @@ export function useCompose(
         const created = await createAnnotation(slug, {
           // The request `type` is the ANCHOR shape — the server DERIVES type="suggestion" from the
           // `suggestion` payload (createAnnotationSchema rejects type:"suggestion"). A single-segment
-          // selection is a range; a cross-block one is multi_range.
-          type: anchor.segments && anchor.segments.length > 1 ? "multi_range" : "range",
+          // selection is a range; a cross-block one is multi_range; a Pinpoint block pick is block.
+          type: redlineType,
           anchor: {
             blockId: anchor.blockId,
             textSnippet: anchor.textSnippet,
@@ -589,9 +702,15 @@ export function useCompose(
       // without a refetch (the "You" placeholder bug). optimisticAuthor owns the precedence.
       const author = optimisticAuthor(currentUser, guestIdentity);
       const attribution = author.comment;
+      // pinpoint S-002 (C-002): a block pick creates type=block; a text selection a range/multi_range.
+      const createType: "range" | "multi_range" | "block" = activeIsBlock
+        ? "block"
+        : anchor.segments && anchor.segments.length > 1
+          ? "multi_range"
+          : "range";
       const optimisticThread: ViewerAnnotation = {
         id: tempId,
-        type: "range",
+        type: createType,
         status: "unresolved",
         isOrphaned: false,
         // C-001: carry the durable authorId so the just-created thread reads as OWN immediately (the
@@ -678,7 +797,9 @@ export function useCompose(
           // second addComment call to compensate for, so the old create-then-comment rollback
           // branch is gone — a refused create simply rolls the optimistic thread back.
           const created = await createAnnotation(slug, {
-            type: "range",
+            // pinpoint S-002 (C-002): type=block for a whole-block pick (offset 0, capped snippet),
+            // else the range/multi_range shape — the server stores the anchor verbatim either way.
+            type: createType,
             anchor: {
               blockId: anchor.blockId,
               textSnippet: anchor.textSnippet,
@@ -722,7 +843,7 @@ export function useCompose(
           // placed by the existing useAnnotationMarks effect when the annotations array changes.
           const real: ViewerAnnotation = {
             id: annotationId,
-            type: "range",
+            type: createType,
             status: "unresolved",
             isOrphaned: false,
             // C-001: same durable authorId as the optimistic temp so the reconciled (no-refetch) row
@@ -761,7 +882,7 @@ export function useCompose(
         }
       })();
     },
-    [active, slug, docPaneEl, composeLabel, quote, composerAnchor, redlineCtx, onCreatedAnnotation, onCreated, onStaleCreate, currentUser?.id, currentUser?.name],
+    [active, activeIsBlock, slug, docPaneEl, composeLabel, quote, composerAnchor, redlineCtx, onCreatedAnnotation, onCreated, onStaleCreate, currentUser?.id, currentUser?.name],
   );
 
   return {
@@ -779,6 +900,7 @@ export function useCompose(
     send,
     cancel,
     beginCompose,
+    beginBlockCompose,
     repositionFromRect,
     setPopoverSize,
     armSelectionIntercept,

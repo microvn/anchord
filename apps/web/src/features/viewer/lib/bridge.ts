@@ -54,6 +54,9 @@ export interface BridgeHighlightItem extends BridgeHighlightState {
   anchor: BridgeAnchor;
   annotationId: string;
   hue?: string;
+  /** pinpoint S-004/AS-012 (C-002): `"block"` → the in-iframe bridge outlines the whole block ELEMENT
+   *  (data-block-anno) instead of wrapping a text range. Absent/undefined → a range highlight. */
+  type?: "block";
 }
 
 /** A selection hint relayed from the iframe over the trusted port. `anchor === null` → clear. */
@@ -119,6 +122,25 @@ const markLeaveSchema = z.object({
   annotationId: z.string().min(1),
 });
 
+/** pinpoint S-004/AS-010/AS-011 (C-005): a relayed Pinpoint block-pick from the sandboxed iframe.
+ *  UNTRUSTED — Zod-validated here at the parent boundary exactly like the hover-card relay: `blockId`
+ *  must be a non-empty string and any `rect` is finite + non-negative (a malformed/NaN/negative rect
+ *  fails parse → the whole message is dropped, never routed). The parent does NOT pre-check the
+ *  blockId against the iframe DOM (cross-origin/opaque) — an unresolvable id is stored verbatim and
+ *  the matcher orphans it, symmetric with the existing range relay. The rect is reused (the same
+ *  `rectSchema`) to position the synthesized 5-type popover. */
+const blockPickSchema = z.object({
+  type: z.literal("block-pick"),
+  blockId: z.string().min(1),
+  rect: rectSchema.nullable().optional(),
+  // C-002: the block's full text rides along so the parent builds the durable whole-block anchor
+  // (textSnippet capped + UTF-16 length) — the parent can't read the opaque iframe DOM to get it
+  // itself. UNTRUSTED like the rest of the message: it is stored as quote/anchor text only and
+  // rendered as literal text (C-003, the existing plaintext rule), never interpreted. Optional so an
+  // older bridge (no text) still parses — the parent then degrades to a blockId-only anchor.
+  text: z.string().optional(),
+});
+
 /** The discriminated union of EVERY message the in-iframe bridge may relay over the port (C-006). A
  *  message that matches none (a forged `{annotation:…}`, a garbage shape) → `success:false` → ignored. */
 export const relayedMessageSchema = z.discriminatedUnion("type", [
@@ -127,6 +149,7 @@ export const relayedMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("place-failed"), annotationId: z.string().min(1) }),
   markEventSchema,
   markLeaveSchema,
+  blockPickSchema,
 ]);
 export type RelayedMessage = z.infer<typeof relayedMessageSchema>;
 
@@ -187,6 +210,13 @@ export interface BridgeHandlers {
    *  reposition or auto-close the pinned card (the parent can't see the iframe scroll). A null rect
    *  (mark gone) → treat as scrolled-out. Zod-validated (C-006). */
   onMarkRect?: (annotationId: string, rect: BridgeRect | null) => void;
+  /** pinpoint S-004/AS-010 (C-001/C-005): a Pinpoint block-pick was relayed from the iframe → route
+   *  it into the SAME beginBlockCompose/create the markdown pick uses. The picked block's iframe-local
+   *  rect rides along (the parent translates + clamps it to position the synthesized 5-type popover);
+   *  `rect` is null when the bridge couldn't read it. Zod-validated before this fires (C-005) — a
+   *  malformed rect already dropped the message. The parent does NOT pre-validate the blockId against
+   *  the opaque iframe DOM; a forged/unresolvable id is stored verbatim and the matcher orphans it. */
+  onBlockPick?: (blockId: string, rect: BridgeRect | null, text: string) => void;
   /** HTML-PLACE: the handshake was accepted and the port captured. Fires ONCE (the first trusted
    *  ready binds the transport). The parent uses this to flush the existing annotation set down the
    *  port — `postHighlight` no-ops before this, so a naive post-on-mount would race the handshake. */
@@ -241,6 +271,9 @@ export interface BridgeConnection {
    *  annotation id (the parent can't reach the opaque iframe — it posts focus over the port). A null
    *  id clears all emphasis. No-op before the handshake (no port yet), like `postHighlight`. */
   postFocus: (annotationId: string | null) => void;
+  /** pinpoint S-004/AS-010 (C-001): toggle Pinpoint mode in the in-iframe bridge so a block click
+   *  relays a block-pick (Select mode = inert). No-op before the handshake, like the other posts. */
+  postPinpoint: (enabled: boolean) => void;
   /** True once the handshake has been accepted and the port captured. */
   isConnected: () => boolean;
   /** Remove the window listener + close the port. Idempotent. */
@@ -313,6 +346,12 @@ export function connectBridge(
       } else if (msg.type === "mark-rect") {
         // S-003/AS-021: the mark's rect re-posted on in-iframe scroll → reposition / auto-close.
         handlers.onMarkRect?.(msg.annotationId, msg.rect ?? null);
+      } else if (msg.type === "block-pick") {
+        // pinpoint S-004/AS-010 (C-005): a Pinpoint block click in the iframe → route the blockId +
+        // (iframe-local) rect into the parent's block create. The rect is already finite/non-negative
+        // (schema); the caller translates + clamps it. The blockId is stored verbatim — an unresolvable
+        // one orphans (AS-011), the SAME outcome a forged range anchor has; no DOM pre-check possible.
+        handlers.onBlockPick?.(msg.blockId, msg.rect ?? null, msg.text ?? "");
       }
     };
     port.start?.();
@@ -342,6 +381,10 @@ export function connectBridge(
       // S-004/AS-012 (C-005): the parent focused a rail thread → ask the in-iframe bridge to
       // emphasise + scroll to the matching mark. No port yet (pre-handshake) → drop, like the others.
       port?.postMessage({ type: "focus", annotationId });
+    },
+    postPinpoint(enabled) {
+      // pinpoint S-004/AS-010 (C-001): toggle the in-iframe block-pick gate. Pre-handshake → drop.
+      port?.postMessage({ type: "pinpoint", enabled });
     },
     isConnected() {
       return port !== null;
