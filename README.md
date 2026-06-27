@@ -14,7 +14,9 @@ _Vaultwarden for AI docs — publish a spec/plan/report as a link, get margin co
 
 ---
 
-<!-- Drop a GIF of the 3-pane viewer (doc + margin comments) here, e.g. docs/assets/anchord.gif -->
+<div align="center">
+  <img src="docs/assets/anchord-viewer.jpg" width="100%" alt="Anchord viewer — a rendered doc with margin annotations, Pinpoint whole-block mode, and the share dialog" />
+</div>
 
 An author publishes a doc as a link — generated in Claude / Cursor / Codex, or written by hand. Reviewers open it, read the rendered doc, and leave **comments, highlights, and suggestions** in a right-hand margin — no account required if the author allows it. The author revises, republishes a new **version**, and the annotations **re-anchor** onto the new content (or land in a "detached" list, never lost). An agent pulls the feedback back over **MCP** to revise. Everything runs on your own infrastructure.
 
