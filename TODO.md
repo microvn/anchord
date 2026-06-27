@@ -64,16 +64,6 @@ Fix (when picked up): mount route groups unconditionally so `typeof app` widens 
 directly). Keep the cast centralized in `client.ts` until then — subsequent FE features route
 through it, so the debt stays in one file, not multiplied.
 
-## Workspace invite mismatch is a uniform 404 (existence-hiding) vs the "not for you" UX
-
-**Status:** accepted for v0. **Source:** workspaces-ui AS-015 (S2).
-
-`POST /api/invitations/:id/accept|reject` require `{token}` and return a uniform 404 on
-email-mismatch (existence-hiding — correct security posture). So the FE's "this invite isn't for
-you" (AS-015) is a client-side pre-check comparing the session email to an `email` param carried in
-the invite link, not an authoritative server signal. Acceptable for v0; revisit if we want a
-server-authoritative mismatch response without leaking invite existence.
-
 ---
 
 ## Image-region annotation (pinpoint on an image: point / box)
