@@ -11,23 +11,25 @@ COPY apps/web/package.json ./apps/web/package.json
 COPY packages/anchor/package.json ./packages/anchor/package.json
 RUN bun install --frozen-lockfile --production
 
-# Web build stage (self-host S-005) — building the SPA needs the FULL dev toolchain (Vite),
-# so this stage does a non-production install, then `vite build` → apps/web/dist.
-FROM oven/bun:1.3.13-slim AS webbuild
+# Web build stage (self-host S-005) — building the SPA needs the FULL dev toolchain (Vite).
+# INSTALL with bun (resolves the workspace `workspace:*` deps + bun.lock), but BUILD with NODE.
+# Why: on the x64 Linux bun build, bun's module resolution is broken for the vite/rollup toolchain
+# — the `.bin/vite` shim resolves vite's `../dist/node/cli.js` from the wrong dir, and bun can't
+# resolve rollup's `rollup/parseAst` subpath export — so EVERY bun-run build (`bun run`, `--filter`,
+# `bunx --bun vite`, programmatic `import("vite")`) fails on x64 (arm64 happens to dodge it). Node's
+# resolution handles both correctly. So: node base image (has node) + bun installed via npm for the
+# workspace install, then `node …/vite` for the actual build.
+FROM node:20-slim AS webbuild
 WORKDIR /app
+RUN npm install -g bun@1.3.13
 COPY package.json bun.lock ./
 COPY apps/backend/package.json ./apps/backend/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/anchor/package.json ./packages/anchor/package.json
 RUN bun install --frozen-lockfile
 COPY . .
-# Build via Vite's PROGRAMMATIC API, bypassing the workspace `.bin/vite` shim entirely.
-# On the x64 Linux bun build, that shim makes bun resolve vite's relative `../dist/node/cli.js`
-# from the SHIM's dir instead of vite's real `bin/` → "Cannot find module '../dist/node/cli.js'".
-# `bun run build`, `bun --filter`, and `bunx --bun vite` ALL route through the shim → all fail
-# (arm64's layout happens to dodge it). `import("vite")` resolves the package main, never the bin,
-# so build() runs clean. Run from apps/web so vite picks up its vite.config.ts.
-RUN cd apps/web && bun -e 'const { build } = await import("vite"); await build();'
+# Build with Node (not bun) — Node resolves vite's bin + rollup subpaths correctly on x64.
+RUN cd apps/web && node node_modules/.bin/vite build
 
 FROM oven/bun:1.3.13-slim AS release
 WORKDIR /app
