@@ -611,7 +611,10 @@ function ViewerShell({
       // PERF: reconcile the create WITHOUT a refetch — prepend the real server row into the
       // react-query cache (newest-first, deduped). The rail re-renders with no network reload.
       anno.prependAnnotation(real);
-      if (drawerMode) setRailOpen(true); // surface the new thread in the rail drawer on tablet/mobile
+      // In drawer mode (tablet/mobile) do NOT auto-open the rail drawer after a create — the overlay
+      // covers the whole screen right after the user annotates, which reads as the panel "popping out"
+      // and blocking the doc. The new thread is still reachable via the CommentFab (its count updates)
+      // and the per-thread bottom sheet on tap. The inline rail (desktop) already shows it with no overlay.
     },
     (anchor, annotationId) => {
       // C-001: this fires only AFTER the server-authorized create succeeded — the highlight is a
