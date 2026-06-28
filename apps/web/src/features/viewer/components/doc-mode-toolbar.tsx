@@ -66,7 +66,7 @@ const EASE = "cubic-bezier(0.25,0.46,0.45,0.94)";
 // markup tool group (parameterised by hue / active / onClick so both groups animate identically). It
 // measures its label off-screen and animates an explicit pixel width (Plannotator's technique), so the
 // expand/collapse is smooth instead of a max-width guess. Collapsed → icon-only square; expanded
-// (active OR hovered OR touch) → icon + label + its hue. `data-expanded` + `data-active` + the label's
+// (active OR hovered) → icon + label + its hue. `data-expanded` + `data-active` + the label's
 // `data-collapsed`/`aria-hidden` are the test hooks; the visual pixel-match is [→MANUAL].
 function ToolChip({
   testId,
@@ -102,10 +102,11 @@ function ToolChip({
     if (measureRef.current) setLabelWidth(measureRef.current.offsetWidth);
   }, [label]);
 
-  const isTouch =
-    typeof window !== "undefined" &&
-    ("ontouchstart" in window || (navigator?.maxTouchPoints ?? 0) > 0);
-  const expanded = active || hovered || isTouch;
+  // Expand ONLY the active chip (plus hover on a pointer device). The earlier `|| isTouch` expanded
+  // EVERY chip on a touch device — which on a phone blew the whole tool group past the viewport and
+  // scrolled the doc sideways. On touch the active chip's label is enough context; the rest stay
+  // icon-only with their `aria-label`/`title`, so the toolbar fits a phone.
+  const expanded = active || hovered;
 
   const expandedWidth = H_PAD + ICON_INNER + GAP + labelWidth + H_PAD;
   const width = expanded ? expandedWidth : ICON_SIZE;
