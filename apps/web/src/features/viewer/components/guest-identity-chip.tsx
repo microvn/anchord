@@ -34,7 +34,9 @@ export function GuestIdentityChip({
               type="button"
               data-testid="guest-id-hint"
               aria-label="About your guest name"
-              className="flex h-6 w-6 flex-none cursor-help items-center justify-center rounded-full border border-line bg-surface text-[12px] text-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              // The `?` hint is a hover/focus tooltip trigger — useless on a touch device and pure
+              // bar-width cost there, so it's hidden below `sm` and the chip stays compact on a phone.
+              className="hidden h-6 w-6 flex-none cursor-help items-center justify-center rounded-full border border-line bg-surface text-[12px] text-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:flex"
             >
               ?
             </button>
@@ -56,7 +58,7 @@ export function GuestIdentityChip({
       <span
         data-testid="guest-name"
         aria-label="Your name"
-        className="max-w-[140px] truncate text-[12px] font-semibold text-ink"
+        className="max-w-[64px] truncate text-[12px] font-semibold text-ink sm:max-w-[140px]"
       >
         {name}
       </span>

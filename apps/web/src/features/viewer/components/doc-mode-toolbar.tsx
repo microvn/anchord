@@ -259,7 +259,7 @@ export function DocModeToolbar({
   return (
     <div
       data-testid="doc-mode-toolbar"
-      className="sticky top-0 z-[5] flex h-11 items-center gap-2.5 border-b border-line-soft bg-paper/85 px-5 backdrop-blur"
+      className="sticky top-0 z-[5] flex h-11 items-center gap-2.5 border-b border-line-soft bg-paper/85 px-3 backdrop-blur sm:px-5"
     >
       {/* Select | Pinpoint — the input-method group, SAME expanding chip system as the markup tools
           (Plannotator parity). pinpoint S-001 (C-001): these are now MUTUALLY-EXCLUSIVE live modes —
@@ -332,7 +332,10 @@ export function DocModeToolbar({
           toggle (kept on transition-colors — NOT converted to chips). Hidden for non-markdown docs
           (HTML/image render in a sandbox frame where the column measure does not apply). */}
       {showWidth && (
-        <div data-testid="doc-width-seg" className="ml-auto">
+        // Responsive: Wide vs Focus is the markdown column measure — on a phone both render at ~screen
+        // width (Focus's 800px cap exceeds the viewport), so the toggle is meaningless there. Hidden
+        // below `sm` to keep the toolbar within the viewport (no sideways scroll of the doc pane).
+        <div data-testid="doc-width-seg" className="ml-auto hidden sm:block">
           <Seg
             options={[
               { key: "wide", label: "Wide" },

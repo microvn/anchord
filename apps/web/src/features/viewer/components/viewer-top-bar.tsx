@@ -137,7 +137,10 @@ export function ViewerTopBar({
       {isLive && (
         <span
           data-testid="vt-live-badge"
-          className="inline-flex flex-none items-center gap-[5px] font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--green)]"
+          // Responsive: the metadata badges (Live / format / version) are secondary chrome — hidden
+          // below `sm` so the doc title keeps room and the bar never overflows on a phone. ≥640 shows
+          // them (the full bar content fits from there up).
+          className="hidden flex-none items-center gap-[5px] font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--green)] sm:inline-flex"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-[var(--green)]" aria-hidden="true" />
           Live
@@ -146,7 +149,7 @@ export function ViewerTopBar({
 
       <span
         data-testid="vt-format-badge"
-        className="flex-none rounded-[4px] bg-accent-soft px-1.5 py-0.5 font-mono text-[11px] font-medium tracking-[0.06em] text-accent-ink"
+        className="hidden flex-none rounded-[4px] bg-accent-soft px-1.5 py-0.5 font-mono text-[11px] font-medium tracking-[0.06em] text-accent-ink sm:inline-block"
       >
         {FORMAT_LABEL[doc.kind]}
       </span>
@@ -155,7 +158,7 @@ export function ViewerTopBar({
         type="button"
         data-testid="vt-version"
         title="Version history"
-        className="flex-none rounded-[4px] px-1 py-0.5 text-[12px] font-medium text-subtle transition-colors hover:bg-elev hover:text-ink"
+        className="hidden flex-none rounded-[4px] px-1 py-0.5 text-[12px] font-medium text-subtle transition-colors hover:bg-elev hover:text-ink sm:inline-block"
         onClick={onVersion}
       >
         v{doc.version}
@@ -177,7 +180,9 @@ export function ViewerTopBar({
           onClick={onShare}
         >
           <Icon name="share" size={14} />
-          Share
+          {/* Label collapses below `sm` → icon-only on a phone, so the CTA stays in the bar without
+              crowding out the title. The title attr keeps it labelled for a11y. */}
+          <span className="hidden sm:inline">Share</span>
         </button>
       )}
 
@@ -198,7 +203,8 @@ export function ViewerTopBar({
           onClick={onSignIn}
         >
           <Icon name="user" size={14} />
-          Sign in
+          {/* Icon-only below `sm` (see Share) — keeps the Sign in CTA without pushing the title out. */}
+          <span className="hidden sm:inline">Sign in</span>
         </button>
       )}
 
