@@ -882,7 +882,10 @@ function ViewerShell({
           // member (canShare gates owner/editor) AND a non-null response workspaceId (the panel is
           // workspace-addressed, C-007). A project-less doc (null workspaceId) → no Share button.
           showShare={canShare && Boolean(memberWorkspaceId)}
-          onOverflow={() => toast("More actions")}
+          // The overflow menu's Download annotations (S-004) serializes the same threads the rail shows.
+          annotations={railAnnotations}
+          // S-005: the slug addresses the raw Download document endpoint (GET /api/docs/:slug/download).
+          slug={slug}
           anonymous={anonymous}
           onSignIn={onSignIn}
           // S-007 (AS-016): a guest's session identity chip — session name + Rename, shown next to

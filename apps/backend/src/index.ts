@@ -303,6 +303,10 @@ const app = createApp({
   // path), session OPTIONAL (anon-capable). Same loader/access model as the /d viewer; a
   // no-access OR missing doc → 404 (existence-hiding), never a 401 → no FE sign-in bounce.
   docViewer: { resolveViewerSession, loaderDeps: viewerLoaderDeps },
+  // viewer-overflow-menu S-005: GET /api/docs/:slug/download — raw "download the document by kind"
+  // (md→.md, html→.html source, image→original bytes). Same loader + access gate as docViewer
+  // (viewer+ under either axis); a no-view caller gets the same 404 (C-007/AS-017).
+  docDownload: { resolveViewerSession, loaderDeps: viewerLoaderDeps },
   // capability-share-link S-002: the anonymous redeem surface POST /s/:token/redeem +
   // GET /s/:token/resolve. Resolves the token → doc (existence-hiding 404 on an unknown
   // token), mints a signed admission cookie bound to docId + token-hash + link role

@@ -594,3 +594,34 @@ main[data-doc-width="focus"] .doc-prose {
 .anno-mark:has(+ .anno-mark) {
   padding-right: 0;
 }
+
+/* viewer-overflow-menu S-003 (AS-011): Print / Save as PDF prints ONLY the document content.
+   The live viewer is a fixed-height (h-dvh) 3-pane grid whose doc column scrolls — printing it
+   raw clips to the visible scroll box (long docs get cut). For print we hide the chrome (top bar,
+   meta strip, outline, comments rail, any open popover) and let the doc column flow at full height
+   across pages. Markdown (rendered in-app) prints fully; html/image render in a sandboxed iframe,
+   which prints what the iframe lays out (best-effort). */
+@media print {
+  [data-testid="viewer-top-bar"],
+  [data-testid="meta-strip"],
+  [data-testid="viewer-toc-slot"],
+  [data-testid="annotations-rail"],
+  [data-slot="popover-content"] {
+    display: none !important;
+  }
+  /* unclip the fixed-height shell so the content paginates instead of being cut */
+  [data-testid="viewer-screen"] {
+    display: block !important;
+    height: auto !important;
+  }
+  [data-testid="viewer-screen"] > div {
+    display: block !important;
+    height: auto !important;
+  }
+  [data-testid="viewer-doc-pane"] {
+    display: block !important;
+    height: auto !important;
+    max-width: none !important;
+    overflow: visible !important;
+  }
+}

@@ -24,9 +24,10 @@ import {
   type SessionResolver,
   type WorkspaceRoleResolver,
 } from "../http/auth-gate";
-import { NotFoundError } from "../http/errors";
+import { NotFoundError, DocDeletedError } from "../http/errors";
 import { renderMarkdown } from "../render/markdown";
 import { injectBlockIds } from "../annotation/block-id";
+import { buildDocDownload } from "../render/document-download";
 import { createLoadViewerDoc, type ViewerLoaderDeps, type ViewerDocPayload } from "../render/viewer-loaders";
 import type { Viewer } from "../sharing/access";
 import { readAdmissionCookie } from "../sharing/capability-cookie";
@@ -203,5 +204,62 @@ export function docViewerRoutes(deps: DocViewerRoutesDeps) {
     // and the FE's global 401 handler can never turn this into a sign-in redirect.
     if (!payload) throw new NotFoundError();
     return toResponse(payload);
+  });
+}
+
+/**
+ * viewer-overflow-menu S-005: the DOC-ADDRESSED raw download `GET /api/docs/:slug/download`.
+ * BARE (no apiEnvelope) — it returns a raw file Response (bytes/text + Content-Disposition), like
+ * the /v/:id content surface, NOT the JSON envelope. It reuses the SAME loader + access model as
+ * the doc read (`docViewerRoutes` → createLoadViewerDoc → resolveAccess): a caller must have at
+ * least viewer access under EITHER axis (workspace/generic OR link/people), or the download is
+ * refused with the same existence-hiding 404 as the read (C-007/AS-017). The body is the faithful
+ * raw source by kind (markdown → .md, html → .html source, image → original bytes; C-006/AS-015/016)
+ * — the loader returns the raw stored content, so html is the pristine source, never the /v/:id
+ * block-id/bridge-injected variant.
+ */
+export function docDownloadRoutes(deps: DocViewerRoutesDeps) {
+  const loadViewerDoc =
+    deps.loadViewerDoc ??
+    (() => {
+      if (!deps.loaderDeps) {
+        throw new Error("docDownloadRoutes requires either `loadViewerDoc` or `loaderDeps`");
+      }
+      return createLoadViewerDoc(deps.loaderDeps);
+    })();
+
+  const resolveViewer = async (request: Request): Promise<Viewer> => {
+    const anonViewer = (): Viewer => ({ kind: "anon", admissionCookie: readAdmissionCookie(request) });
+    if (!deps.resolveViewerSession) return anonViewer();
+    const session = await deps.resolveViewerSession(request);
+    return session ? { kind: "user", userId: session.userId } : anonViewer();
+  };
+
+  return new Elysia().get("/api/docs/:slug/download", async ({ params, request, set }) => {
+    set.headers["Referrer-Policy"] = "no-referrer";
+    const viewer = await resolveViewer(request);
+    let payload: ViewerDocPayload | null;
+    try {
+      payload = await loadViewerDoc(params.slug, viewer);
+    } catch (e) {
+      // A soft-deleted doc the caller could otherwise see → 410 (mirrors the read's deleted notice);
+      // no prior access never reaches here (resolveAccess returns plain DENIED → null → 404 below).
+      if (e instanceof DocDeletedError) return new Response("Gone", { status: 410 });
+      throw e;
+    }
+    // Existence-hiding (C-007/AS-017): a missing doc AND a no-view doc both → 404, never the bytes.
+    if (!payload) return new Response("Not found", { status: 404 });
+
+    const dl = buildDocDownload(payload.content, payload.kind, payload.title);
+    // `dl.body` is string | Uint8Array; both are valid BodyInit at runtime (the DOM lib's typing
+    // omits the Uint8Array<ArrayBufferLike> generic, so cast).
+    return new Response(dl.body as BodyInit, {
+      headers: {
+        "Content-Type": dl.contentType,
+        // RFC 5987: ASCII fallback + UTF-8 form so non-ascii titles download with a sane name.
+        "Content-Disposition": `attachment; filename="${dl.filename}"; filename*=UTF-8''${encodeURIComponent(dl.filename)}`,
+        "Referrer-Policy": "no-referrer",
+      },
+    });
   });
 }

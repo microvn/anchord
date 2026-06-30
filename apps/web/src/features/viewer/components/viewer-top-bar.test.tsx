@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ViewerTopBar } from "@/features/viewer/components/viewer-top-bar";
 import { MetaStrip, type SpecMeta } from "@/features/viewer/components/meta-strip";
@@ -138,6 +138,58 @@ describe("ViewerTopBar S-005 (AS-012)", () => {
     expect(signedInClicked).toBe(true);
     // …and the session-only chrome is hidden: no Share, no account/overflow (member) menu.
     expect(screen.queryByTestId("vt-share")).toBeNull();
+    expect(screen.queryByTestId("vt-overflow")).toBeNull();
+  });
+
+  it("AS-001: a member's ⋯ trigger opens the overflow popover from the top bar (BM.AS-001.topbar-trigger-member)", async () => {
+    render(
+      <ViewerTopBar
+        doc={liveDoc}
+        railVisible
+        onToggleRail={() => {}}
+        onVersion={() => {}}
+        onShare={() => {}}
+        annotations={[]}
+      />,
+    );
+    // trigger present for a member…
+    const trigger = screen.getByTestId("vt-overflow");
+    expect(trigger).toBeInTheDocument();
+    // …and it opens the real popover (not the dead placeholder).
+    await userEvent.click(trigger);
+    await waitFor(() =>
+      expect(screen.getByTestId("viewer-overflow-content")).toBeInTheDocument(),
+    );
+  });
+
+  it("AS-007: the standalone sun/moon theme toggle is gone from the top bar (theme lives in the menu)", () => {
+    render(
+      <ViewerTopBar
+        doc={liveDoc}
+        railVisible
+        onToggleRail={() => {}}
+        onVersion={() => {}}
+        onShare={() => {}}
+        annotations={[]}
+      />,
+    );
+    expect(screen.queryByTestId("vt-theme-toggle")).toBeNull();
+  });
+
+  // C-001: the menu + its ⋯ trigger are session-only — this anon case is the enforcement point.
+  it("AS-002: the ⋯ trigger is absent for an anonymous visitor (BM.AS-002.topbar-trigger-anon)", () => {
+    render(
+      <ViewerTopBar
+        doc={liveDoc}
+        railVisible
+        onToggleRail={() => {}}
+        onVersion={() => {}}
+        onShare={() => {}}
+        annotations={[]}
+        anonymous
+        onSignIn={() => {}}
+      />,
+    );
     expect(screen.queryByTestId("vt-overflow")).toBeNull();
   });
 

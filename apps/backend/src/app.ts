@@ -4,7 +4,7 @@ import { contentHeaders } from "./render/sandbox";
 import { injectBlockIds } from "./annotation/block-id";
 import { injectBridge, injectStorageShim, generateNonce } from "./annotation/sandbox-bridge";
 import { docsRoutes, type DocsRoutesDeps } from "./routes/docs";
-import { viewerDocRoutes, docViewerRoutes, type ViewerDocRoutesDeps, type DocViewerRoutesDeps } from "./routes/viewer-doc";
+import { viewerDocRoutes, docViewerRoutes, docDownloadRoutes, type ViewerDocRoutesDeps, type DocViewerRoutesDeps } from "./routes/viewer-doc";
 import { shareRedeemRoutes, type ShareRedeemRoutesDeps } from "./routes/share-redeem";
 import { versionsRoutes, type VersionsRoutesDeps } from "./routes/versions";
 import { annotationsRoutes, type AnnotationsRoutesDeps } from "./routes/annotations";
@@ -104,6 +104,9 @@ export type AppDeps = {
    * loadViewerDoc (tests). Omit to leave the route unmounted.
    */
   docViewer?: DocViewerRoutesDeps;
+  /** viewer-overflow-menu S-005: the bare raw download GET /api/docs/:slug/download (same gate
+   *  as docViewer). Reuses DocViewerRoutesDeps (resolveViewerSession + loaderDeps). */
+  docDownload?: DocViewerRoutesDeps;
   /**
    * capability-share-link S-002: enables the BARE (envelope-exempt) capability-link redeem
    * surface — `POST /s/:token/redeem` + `GET /s/:token/resolve`. An anonymous visitor turns a
@@ -315,6 +318,13 @@ export function createApp(deps: AppDeps) {
   // sign-in. Markdown → sanitized app-origin HTML; html/image → a /v sandbox reference (C-006).
   if (deps.docViewer) {
     app.use(docViewerRoutes(deps.docViewer));
+  }
+
+  // GET /api/docs/:slug/download — viewer-overflow-menu S-005, the raw "download the document by
+  // kind" surface. BARE (raw file Response, not enveloped), reusing the docViewer access model:
+  // viewer+ under either axis or the same 404 (C-007). Mounted alongside the doc read.
+  if (deps.docDownload) {
+    app.use(docDownloadRoutes(deps.docDownload));
   }
 
   // /s/:token/{redeem,resolve} — capability-share-link S-002, the anonymous redeem surface.

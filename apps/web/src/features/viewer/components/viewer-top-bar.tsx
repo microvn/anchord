@@ -1,12 +1,14 @@
 import { Icon, Brandmark } from "@/components/icon";
-import { useTheme } from "@/app/theme-provider";
-import type { ViewerDocKind } from "@/features/viewer/services/client";
+import type { ViewerAnnotation, ViewerDocKind } from "@/features/viewer/services/client";
 import { GuestIdentityChip } from "./guest-identity-chip";
+import { ViewerOverflowMenu } from "./viewer-overflow-menu";
 
 // ViewerTopBar (S-005, AS-012): the bar ABOVE the 3-pane viewer body. Mirrors the prototype's
 // `.vtop` (viewer-shell.jsx ViewerTopBar) structurally, in Tailwind/DESIGN.md tokens:
 //   brand · outline-toggle (drawer mode) · back · title · LiveBadge · FormatBadge · VersionButton ·
-//   CommentsToggle · ShareButton · ThemeToggle · OverflowMenu.
+//   CommentsToggle · ShareButton · OverflowMenu.
+//   (viewer-overflow-menu S-002: the standalone sun/moon ThemeToggle was REMOVED — theme now lives in
+//   the overflow menu's Appearance control, so theme has one home and the bar is one button leaner.)
 //   (Brand sits at the OUTERMOST left — moved ahead of outline-toggle/back per request 2026-06-20,
 //   a deliberate deviation from the prototype, which placed brand after back.)
 //
@@ -21,7 +23,8 @@ import { GuestIdentityChip } from "./guest-identity-chip";
 //   - ShareButton: opens the share dialog — `sharing-permissions-ui` (NOT built here), placeholder.
 //   - CommentsToggle: shows/hides the AnnotationsRail. The `railVisible` state is LIFTED into the
 //     viewer screen; this button reflects it (aria-pressed) and flips it via onToggleRail.
-//   - ThemeToggle: reuses the app theme provider's `useTheme()` (safe outside a provider).
+//   - OverflowMenu: the ⋯ popover (viewer-overflow-menu) — Appearance (theme) + document actions +
+//     footer. Rendered only when `!anonymous`, so the whole menu stays member-only (C-001).
 
 interface TopBarDoc {
   title: string;
@@ -53,7 +56,8 @@ export function ViewerTopBar({
   onBack,
   onToggleToc,
   showTocToggle = false,
-  onOverflow,
+  slug = "",
+  annotations = [],
   anonymous = false,
   onSignIn,
   guestIdentity,
@@ -74,8 +78,10 @@ export function ViewerTopBar({
   /** opens the TOC drawer (drawer mode only). */
   onToggleToc?: () => void;
   showTocToggle?: boolean;
-  /** overflow menu — caller passes a placeholder. */
-  onOverflow?: () => void;
+  /** the doc slug — forwarded to the overflow menu's Download document endpoint (S-005). */
+  slug?: string;
+  /** the rail's annotation threads — forwarded to the overflow menu's Download annotations (S-004). */
+  annotations?: ViewerAnnotation[];
   /** doc-access-routing S-003 (AS-029): an anonymous (signed-out) visitor. The bar shows the doc
    *  title + a Sign in CTA and HIDES every affordance that requires a session — the Share button
    *  and the account/overflow menu. Reading + (when enabled) guest commenting still work. */
@@ -87,7 +93,6 @@ export function ViewerTopBar({
    *  NEXT TO the Sign in CTA. Present only for a guest (anon + can-comment); absent → no chip. */
   guestIdentity?: { name: string; onRename: () => void };
 }) {
-  const { theme, toggleTheme } = useTheme();
   // "Live" = the doc is shared beyond restricted — the SAME rule the dashboard list uses
   // (projects.ts: generalAccess === "restricted" ? "draft" : "live"). It is NOT the publish state:
   // the backend serves every versioned doc as status:"published", so keying off status lit the badge
@@ -220,28 +225,15 @@ export function ViewerTopBar({
         <Icon name="highlight" size={16} />
       </button>
 
-      <button
-        type="button"
-        data-testid="vt-theme-toggle"
-        aria-label="Toggle theme"
-        className={ICON_BTN}
-        onClick={toggleTheme}
-      >
-        <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
-      </button>
-
-      {/* AS-029: the overflow (account / member actions) menu is session-only — hidden for an anon. */}
+      {/* AS-029 / C-001: the overflow menu is session-only — rendered ONLY for a non-anon visitor, so
+          the ⋯ trigger (and the whole menu) stays hidden for a signed-out / no-account guest. */}
       {!anonymous && (
-        <button
-          type="button"
-          data-testid="vt-overflow"
-          aria-label="More"
-          title="More actions"
-          className={ICON_BTN}
-          onClick={onOverflow}
-        >
-          <Icon name="more" size={16} />
-        </button>
+        <ViewerOverflowMenu
+          doc={{ title: doc.title, version: doc.version, kind: doc.kind }}
+          slug={slug}
+          annotations={annotations}
+          onVersion={onVersion}
+        />
       )}
     </header>
   );
